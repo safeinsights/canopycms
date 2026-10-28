@@ -1770,7 +1770,6 @@ describe('EditorHeader - review actions', () => {
   } satisfies Partial<HeadersProps>
   const reviewer = { userId: 'rita', groups: [RESERVED_GROUPS.REVIEWERS] }
   const creatorAdmin = { userId: 'maker', groups: [RESERVED_GROUPS.ADMINS] }
-  const REASON = /The pull request was closed on GitHub\./
 
   afterEach(() => {
     window.matchMedia = originalMatchMedia
@@ -1833,10 +1832,64 @@ describe('EditorHeader - review actions', () => {
 
     expect(onApprove).toHaveBeenCalledTimes(1)
     expect(onRequestChanges).toHaveBeenCalledTimes(1)
-    for (const handler of [onApprove, onRequestChanges]) {
-      const returnFocusTo = handler.mock.calls[0][0] as () => HTMLElement | null
-      expect(returnFocusTo()).toBe(screen.getByTestId('request-changes-button'))
+    const returnFocusTo = (handler: typeof onApprove) =>
+      handler.mock.calls[0][0] as () => HTMLElement | null
+    // Each returns to its own button while that is mounted.
+    expect(returnFocusTo(onApprove)()).toBe(screen.getByTestId('approve-button'))
+    expect(returnFocusTo(onRequestChanges)()).toBe(screen.getByTestId('request-changes-button'))
+  })
+
+  it('returns an approve to Request changes, the control left, once Approve is gone', async () => {
+    const onApprove = vi.fn()
+    const props: HeadersProps = {
+      ...defaultProps,
+      ...inReview,
+      userContext: reviewer,
+      onApprove,
     }
+    const { rerender } = render(<Headers {...props} />, { wrapper: Wrapper })
+    await userEvent.click(screen.getByTestId('approve-button'))
+    const returnFocusTo = onApprove.mock.calls[0][0] as () => HTMLElement | null
+    rerender(<Headers {...props} branchStatus="approved" />)
+    expect(screen.queryByTestId('approve-button')).toBeNull()
+    expect(returnFocusTo()).toBe(screen.getByTestId('request-changes-button'))
+  })
+
+  it('below md, returns Approve to its button and Request changes to the caret', async () => {
+    stubNarrowWindow()
+    const onApprove = vi.fn()
+    const onRequestChanges = vi.fn()
+    renderHeader({ ...inReview, userContext: reviewer, onApprove, onRequestChanges })
+    await userEvent.click(screen.getByTestId('approve-button'))
+    await userEvent.click(screen.getByTestId('branch-actions-button'))
+    await userEvent.click(await screen.findByTestId('request-changes-menu-item'))
+    const returnFocusTo = (handler: typeof onApprove) =>
+      handler.mock.calls[0][0] as () => HTMLElement | null
+    expect(returnFocusTo(onApprove)()).toBe(screen.getByTestId('approve-button'))
+    expect(returnFocusTo(onRequestChanges)()).toBe(screen.getByTestId('branch-actions-button'))
+  })
+
+  it('names the review caret "More review actions", and keeps "Branch actions" on the others', () => {
+    stubNarrowWindow()
+    renderHeader({ ...inReview, userContext: reviewer })
+    expect(screen.getByRole('button', { name: 'More review actions' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Branch actions' })).toBeNull()
+    cleanup()
+    renderHeader({ ...defaultProps, userContext: { userId: 'u1' }, branchCreatedBy: 'u1' })
+    expect(screen.getByRole('button', { name: 'Branch actions' })).toBeTruthy()
+  })
+
+  it('says in the lock reason that a reviewer approves or requests changes, not withdraws', async () => {
+    renderHeader({ ...inReview, userContext: reviewer, branchReviewing: true })
+    act(() => screen.getByTestId('save-button').focus())
+    expect(
+      await screen.findByText(
+        'This branch is in review. Approve it, or request changes to send it back to its editor.',
+      ),
+    ).toBeTruthy()
+    expect(barStatus().closest('[role="status"]')?.textContent).toContain(
+      'Approve it, or request changes',
+    )
   })
 
   it('does not tell a reviewer with unsaved edits to withdraw, which the bar no longer offers', async () => {
@@ -1847,27 +1900,11 @@ describe('EditorHeader - review actions', () => {
     expect(tooltip.textContent).not.toContain('Withdraw')
   })
 
-  it('disables both, saying the pull request was closed, and acts on neither click', async () => {
-    const onApprove = vi.fn()
-    const onRequestChanges = vi.fn()
-    renderHeader({
-      ...inReview,
-      branchPullRequestState: 'closed',
-      userContext: reviewer,
-      onApprove,
-      onRequestChanges,
-    })
-
-    for (const id of ['approve-button', 'request-changes-button']) {
-      const button = screen.getByTestId(id)
-      expect(button.getAttribute('aria-disabled')).toBe('true')
-      await userEvent.click(button)
-      act(() => button.focus())
-      expect((await screen.findByRole('tooltip')).textContent).toMatch(REASON)
-      act(() => button.blur())
-    }
-    expect(onApprove).not.toHaveBeenCalled()
-    expect(onRequestChanges).not.toHaveBeenCalled()
+  it('offers a reviewer Withdraw, not review buttons, once the pull request is closed', () => {
+    renderHeader({ ...inReview, branchPullRequestState: 'closed', userContext: reviewer })
+    expect(screen.getByTestId('withdraw-button').getAttribute('aria-disabled')).toBeNull()
+    expect(screen.queryByTestId('approve-button')).toBeNull()
+    expect(screen.queryByTestId('request-changes-button')).toBeNull()
   })
 
   it('holds both while a Save all runs or the bar is busy', () => {
@@ -1882,6 +1919,17 @@ describe('EditorHeader - review actions', () => {
 
     renderHeader({ ...inReview, userContext: reviewer, busy: true })
     expect(screen.getByTestId('approve-button').getAttribute('aria-disabled')).toBe('true')
+  })
+
+  it('says a busy bar alone is waiting on a save or load, as the caret items do', async () => {
+    renderHeader({ ...inReview, userContext: reviewer, busy: true })
+    for (const id of ['approve-button', 'request-changes-button']) {
+      act(() => screen.getByTestId(id).focus())
+      expect((await screen.findByRole('tooltip')).textContent).toBe(
+        'Wait for the current save or load to finish.',
+      )
+      act(() => screen.getByTestId(id).blur())
+    }
   })
 
   it('below md, keeps Approve visible and moves Request changes under its caret', async () => {
@@ -1907,15 +1955,6 @@ describe('EditorHeader - review actions', () => {
     expect(screen.getByTestId('request-changes-button')).toBeTruthy()
     expect(screen.queryByTestId('approve-button')).toBeNull()
     expect(screen.queryByTestId('branch-actions-button')).toBeNull()
-  })
-
-  it('below md, blocks the caret item with the closed-pull-request reason', async () => {
-    stubNarrowWindow()
-    renderHeader({ ...inReview, branchPullRequestState: 'closed', userContext: reviewer })
-    await userEvent.click(screen.getByTestId('branch-actions-button'))
-    const item = await screen.findByTestId('request-changes-menu-item')
-    expect(item.getAttribute('aria-disabled')).toBe('true')
-    expect(item.textContent).toMatch(REASON)
   })
 
   it('moves focus to Request changes when an approve leaves it as the only control', () => {

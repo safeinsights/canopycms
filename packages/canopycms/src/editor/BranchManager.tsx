@@ -242,6 +242,8 @@ interface BranchWorkflowAction {
   run: () => void
   /** Why it cannot act now; undefined when it can. */
   blockedReason?: string
+  /** In a menu, the reason is printed by the item above, which blocks for the same one. */
+  reasonShownAbove?: boolean
 }
 
 /**
@@ -286,6 +288,7 @@ const reviewsOthersBranch = (b: BranchSummary, user: UserContext | undefined): b
       users: b.access?.users,
       groups: b.access?.groups,
       isProtected: b.isProtected,
+      pullRequestState: b.pullRequestState,
     },
     user,
   )
@@ -333,10 +336,14 @@ const BranchCard: React.FC<BranchCardProps> = ({
     action && workflowBlockedReason ? { ...action, blockedReason: workflowBlockedReason } : action
   const userIsAdmin = isAdmin(user?.groups)
 
+  // The open branch holds back its review actions as it does its workflow action; the reason is
+  // given only for the open branch.
+  const heldBack = (a: BranchWorkflowAction | undefined) =>
+    a && workflowBlockedReason ? { ...a, blockedReason: workflowBlockedReason } : a
   // Shown to a reviewer other than the creator; the closed PR is the only thing that then blocks it.
   const reviewsOthers =
     isReviewer(user?.groups) && !!user && b.createdBy !== user.userId && !b.isProtected
-  const approve: BranchWorkflowAction | undefined =
+  const approve: BranchWorkflowAction | undefined = heldBack(
     reviewsOthers && b.status === 'submitted'
       ? {
           label: EDITOR_ACTIONS.approve,
@@ -345,8 +352,9 @@ const BranchCard: React.FC<BranchCardProps> = ({
           run: () => onApprove?.(b.name),
           blockedReason: perms.canApprove ? undefined : CLOSED_PULL_REQUEST_REASON,
         }
-      : undefined
-  const requestChanges: BranchWorkflowAction | undefined =
+      : undefined,
+  )
+  const requestChanges: BranchWorkflowAction | undefined = heldBack(
     reviewsOthers && (b.status === 'submitted' || b.status === 'approved')
       ? {
           label: EDITOR_ACTIONS.requestChanges,
@@ -354,13 +362,19 @@ const BranchCard: React.FC<BranchCardProps> = ({
           testId: `request-changes-branch-button-${b.name}`,
           run: () => onRequestChanges?.(b.name),
           blockedReason: perms.canRequestChanges ? undefined : CLOSED_PULL_REQUEST_REASON,
+          // With Approve above it, blocked by the same closed pull request, the reason prints once.
+          reasonShownAbove:
+            !!approve && !perms.canApprove && b.pullRequestState === 'closed' ? true : undefined,
         }
-      : undefined
+      : undefined,
+  )
   const reviewing = reviewsOthersBranch(b, user)
   // Reviewing the open branch: Approve leads with Request changes beside it, or Request changes
   // alone once approved. Reviewing another one, Review opens it and the actions wait in the menu.
   const primary = !isCurrent ? undefined : reviewing ? (approve ?? requestChanges) : workflow
   const secondary = isCurrent && reviewing && approve ? requestChanges : undefined
+  // Two visible actions would crowd the title at the drawer's width, so they take a row below it.
+  const actionRow = !!secondary
   const menuActions = [approve, requestChanges, workflow].filter(
     (a): a is BranchWorkflowAction => !!a && a !== primary && a !== secondary,
   )
@@ -512,8 +526,7 @@ const BranchCard: React.FC<BranchCardProps> = ({
               {reviewing ? EDITOR_ACTIONS.review : 'Open'}
             </Button>
           )}
-          {secondary && <CardActionButton action={secondary} />}
-          {primary && <CardActionButton action={primary} />}
+          {!actionRow && primary && <CardActionButton action={primary} />}
           {hasMenu && (
             <Menu withinPortal shadow="sm" position="bottom-end" width={280} onChange={setMenuOpen}>
               <Tooltip label={menuLabel} disabled={menuOpen}>
@@ -533,6 +546,7 @@ const BranchCard: React.FC<BranchCardProps> = ({
                   <ReasonedMenuItem
                     key={action.testId}
                     blockedReason={action.blockedReason}
+                    showReason={!action.reasonShownAbove}
                     onClick={action.run}
                     data-testid={action.testId}
                   >
@@ -574,6 +588,18 @@ const BranchCard: React.FC<BranchCardProps> = ({
           )}
         </Group>
       </Group>
+      {actionRow && (
+        <Group
+          justify="flex-end"
+          gap={8}
+          wrap="nowrap"
+          mt="sm"
+          data-testid={`branch-action-row-${b.name}`}
+        >
+          {secondary && <CardActionButton action={secondary} />}
+          {primary && <CardActionButton action={primary} />}
+        </Group>
+      )}
     </Paper>
   )
 }

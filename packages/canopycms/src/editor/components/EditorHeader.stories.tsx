@@ -348,10 +348,9 @@ export const ReviewerOnApproved: Story = {
   args: { ...reviewing, branchStatus: 'approved' },
 }
 
-/** The pull request was closed on GitHub: both are blocked, each with its reason on hover or focus. */
+/** The pull request was closed on GitHub: nothing to approve, so the reviewer's way forward is Withdraw. */
 export const ReviewerOnClosedPullRequest: Story = {
   args: { ...reviewing, branchPullRequestState: 'closed' },
-  play: focusReason('approve-button'),
 }
 
 /** An admin who made the submission is its author: Withdraw, as ever. */

@@ -655,13 +655,15 @@ describe('BranchManager', () => {
     const branches: BranchSummary[] = [{ ...baseBranches[1], pullRequestState: 'closed' }]
     renderBranchManager({ branches, user: adminUser, mode: 'prod' })
     await openMenu('feature/test')
-    const item = screen.getByTestId('request-changes-branch-button-feature/test')
     expect(menuItemBlocked('request-changes-branch-button-feature/test')).toBe(true)
+    expect(menuItemBlocked('approve-branch-button-feature/test')).toBe(true)
+    // The reason prints once, under Approve, which comes first.
+    const reason =
+      'The pull request was closed on GitHub. Withdraw the branch from review, then submit it again to open a new one.'
     expect(
-      within(item).getByText(
-        'The pull request was closed on GitHub. Withdraw the branch from review, then submit it again to open a new one.',
-      ),
+      within(screen.getByTestId('approve-branch-button-feature/test')).getByText(reason),
     ).toBeTruthy()
+    expect(screen.getAllByText(reason)).toHaveLength(1)
   })
 
   it('keeps Withdraw enabled when pullRequestState is undefined', async () => {
@@ -1275,7 +1277,7 @@ describe('BranchManager', () => {
         expect(withdraw.closest('[role="menu"]')).not.toBeNull()
       })
 
-      it('blocks Approve and Request changes, saying why, once the pull request is closed', async () => {
+      it('falls back to Withdraw as the way forward once the pull request is closed', async () => {
         const branches: BranchSummary[] = [{ ...baseBranches[1], pullRequestState: 'closed' }]
         renderBranchManager({
           branches,
@@ -1284,15 +1286,12 @@ describe('BranchManager', () => {
           mode: 'prod',
         })
 
-        const primary = screen.getByTestId('approve-branch-button-feature/test')
-        expect(primary.getAttribute('aria-disabled')).toBe('true')
-        expect(
-          screen
-            .getByTestId('request-changes-branch-button-feature/test')
-            .getAttribute('aria-disabled'),
-        ).toBe('true')
-        await userEvent.hover(primary)
-        expect(await screen.findByText(/The pull request was closed on GitHub\./)).toBeTruthy()
+        const primary = screen.getByTestId('withdraw-branch-button-feature/test')
+        expect(primary.getAttribute('aria-disabled')).toBeNull()
+        expect(primary.closest('[role="menu"]')).toBeNull()
+        await openMenu('feature/test')
+        expect(menuItemBlocked('approve-branch-button-feature/test')).toBe(true)
+        expect(menuItemBlocked('request-changes-branch-button-feature/test')).toBe(true)
       })
 
       it.each<[string, Partial<BranchSummary>]>([

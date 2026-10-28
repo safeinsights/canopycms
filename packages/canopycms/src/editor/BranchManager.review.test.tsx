@@ -285,24 +285,12 @@ describe('BranchCard review actions', () => {
   describe('a closed pull request', () => {
     const closed = branch({ pullRequestState: 'closed' })
 
-    it('disables the visible Approve and Request changes, each with the reason', async () => {
-      const onApprove = vi.fn()
-      const onRequestChanges = vi.fn()
-      renderCard(closed, reviewer, true, { onApprove, onRequestChanges })
-
-      for (const id of ['approve', 'request-changes']) {
-        const button = screen.getByTestId(`${id}-branch-button-${NAME}`)
-        expect(button.getAttribute('aria-disabled')).toBe('true')
-        await userEvent.click(button)
-        await userEvent.hover(button)
-        expect((await screen.findAllByText(CLOSED_REASON)).length).toBeGreaterThan(0)
-        await userEvent.unhover(button)
-      }
-      expect(onApprove).not.toHaveBeenCalled()
-      expect(onRequestChanges).not.toHaveBeenCalled()
+    it('leads with Withdraw on the open branch, and shows no review buttons', () => {
+      renderCard(closed, reviewer, true)
+      expect(visibleActions()).toEqual(['withdraw'])
     })
 
-    it('disables them in the menu too, keeping them focusable', async () => {
+    it('blocks Approve and Request changes in the menu, keeping them focusable, with the reason once', async () => {
       renderCard(closed, reviewer, false)
       await userEvent.click(screen.getByTestId(`branch-actions-menu-${NAME}`))
       const menu = await screen.findByRole('menu')
@@ -310,8 +298,19 @@ describe('BranchCard review actions', () => {
         const item = within(menu).getByTestId(`${id}-branch-button-${NAME}`)
         expect(item.getAttribute('aria-disabled')).toBe('true')
         expect(item.hasAttribute('disabled')).toBe(false)
-        expect(within(item).getByText(CLOSED_REASON)).toBeTruthy()
       }
+      expect(within(menu).getAllByText(CLOSED_REASON)).toHaveLength(1)
+      expect(
+        within(within(menu).getByTestId(`approve-branch-button-${NAME}`)).getByText(CLOSED_REASON),
+      ).toBeTruthy()
+    })
+
+    it('shows the reason on Request changes alone once approved, as nothing sits above it', async () => {
+      renderCard(branch({ status: 'approved', pullRequestState: 'closed' }), reviewer, false)
+      await userEvent.click(screen.getByTestId(`branch-actions-menu-${NAME}`))
+      const menu = await screen.findByRole('menu')
+      expect(within(menu).queryByTestId(`approve-branch-button-${NAME}`)).toBeNull()
+      expect(within(menu).getAllByText(CLOSED_REASON)).toHaveLength(1)
     })
 
     it('leaves Withdraw working, as the way out', async () => {
@@ -319,6 +318,62 @@ describe('BranchCard review actions', () => {
       await userEvent.click(screen.getByTestId(`branch-actions-menu-${NAME}`))
       const withdraw = await screen.findByTestId(`withdraw-branch-button-${NAME}`)
       expect(withdraw.getAttribute('aria-disabled')).toBeNull()
+    })
+  })
+
+  describe('layout', () => {
+    it('puts two visible actions on their own row beneath the title, right-aligned', () => {
+      renderCard(branch(), reviewer, true)
+      const row = screen.getByTestId(`branch-action-row-${NAME}`)
+      const card = screen.getByTestId(`branch-list-item-${NAME}`)
+      expect(within(row).getByTestId(`approve-branch-button-${NAME}`)).toBeTruthy()
+      expect(within(row).getByTestId(`request-changes-branch-button-${NAME}`)).toBeTruthy()
+      // The "…" menu and the title stay above it, not in the row.
+      expect(within(row).queryByTestId(`branch-actions-menu-${NAME}`)).toBeNull()
+      expect(row.parentElement).toBe(card)
+      expect(row.style.getPropertyValue('--group-justify')).toBe('flex-end')
+      const title = within(card).getByText(NAME)
+      expect(title.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    })
+
+    it.each([
+      [
+        'a single action on the open branch',
+        branch({ access: { users: ['maker', 'rita'] } }),
+        true,
+      ],
+      ['Review on another branch', branch(), false],
+      ['request changes alone once approved', branch({ status: 'approved' }), true],
+    ])('keeps %s beside the title, with no action row', (_n, b, open) => {
+      renderCard(b, reviewer, open)
+      expect(screen.queryByTestId(`branch-action-row-${NAME}`)).toBeNull()
+    })
+  })
+
+  describe('while the open branch is held back', () => {
+    it('blocks Approve and Request changes with the reason it gives its workflow action', async () => {
+      const onApprove = vi.fn()
+      renderCard(branch(), reviewer, true, {
+        onApprove,
+        currentWorkflowBlockedReason: 'Wait for Save all to finish.',
+      })
+      for (const id of ['approve', 'request-changes']) {
+        const button = screen.getByTestId(`${id}-branch-button-${NAME}`)
+        expect(button.getAttribute('aria-disabled')).toBe('true')
+      }
+      await userEvent.click(screen.getByTestId(`approve-branch-button-${NAME}`))
+      expect(onApprove).not.toHaveBeenCalled()
+      await userEvent.hover(screen.getByTestId(`approve-branch-button-${NAME}`))
+      expect(await screen.findByText('Wait for Save all to finish.')).toBeTruthy()
+    })
+
+    it('does not hold back the review actions of another branch', async () => {
+      renderCard(branch(), reviewer, false, {
+        currentWorkflowBlockedReason: 'Wait for Save all to finish.',
+      })
+      await userEvent.click(screen.getByTestId(`branch-actions-menu-${NAME}`))
+      const item = await screen.findByTestId(`approve-branch-button-${NAME}`)
+      expect(item.getAttribute('aria-disabled')).toBeNull()
     })
   })
 })

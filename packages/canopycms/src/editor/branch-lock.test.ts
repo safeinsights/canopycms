@@ -139,6 +139,19 @@ describe('branchBarStatus', () => {
 })
 
 describe('describeBranchLock', () => {
+  it('names Approve and Request changes, not Withdraw, to a reviewer of the branch', () => {
+    const lock = { branchWriteBlocked: true, reviewing: true }
+    expect(describeBranchLock({ ...lock, branchStatus: 'submitted' })).toBe(
+      'This branch is in review. Approve it, or request changes to send it back to its editor.',
+    )
+    expect(describeBranchLock({ ...lock, branchStatus: 'approved' })).toBe(
+      'This branch is approved. Request changes to send it back to its editor.',
+    )
+    expect(describeBranchLock({ ...lock, reviewing: false, branchStatus: 'approved' })).toBe(
+      'This branch is approved. Withdraw it to make changes.',
+    )
+  })
+
   it('gives a reason exactly when the branch takes no writes', () => {
     expect(describeBranchLock({ branchStatus: 'editing' })).toBeUndefined()
     expect(describeBranchLock({ branchStatus: 'submitted', branchWriteBlocked: true })).toBe(

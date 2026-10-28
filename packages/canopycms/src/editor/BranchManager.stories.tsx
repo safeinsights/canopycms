@@ -274,7 +274,7 @@ export const ReviewerOnApprovedBranch: Story = {
   },
 }
 
-/** The pull request was closed on GitHub: Approve and Request changes are blocked, each with the reason on hover or focus. */
+/** The pull request was closed on GitHub: Withdraw leads, and Approve and Request changes wait in the menu, blocked, with the reason once. */
 export const ReviewerOnClosedPullRequest: Story = {
   args: {
     ...logged,

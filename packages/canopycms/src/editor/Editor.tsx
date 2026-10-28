@@ -51,6 +51,7 @@ import { PermissionManager } from './PermissionManager'
 import { SystemHealthPanel } from './admin/SystemHealthPanel'
 // Import directly from helpers to avoid server-only code in authorization barrel
 import { isAdmin, isPrivileged, isReviewer } from '../authorization/helpers'
+import { isReviewerOfOthersReview } from '../authorization/review-role'
 import { fieldBreadcrumb } from './field-breadcrumb'
 import type { CommentThread } from '../comment-store'
 import {
@@ -397,7 +398,8 @@ const EditorContent: React.FC<EditorProps> = ({
     labels: [],
   }))
   const applySubmitStampsRef = useRef<(stamped: readonly StampedEntry[]) => void>(() => {})
-  // The comment system comes later too; a request for changes may have added a branch comment.
+  // Reloads the open branch's comments after a request for changes, whose note is a comment; the
+  // comment system is built further down.
   const reloadCommentsRef = useRef<(branch: string) => void>(() => {})
   const {
     branchName: branchNameState,
@@ -442,6 +444,18 @@ const EditorContent: React.FC<EditorProps> = ({
   // No lock reason is true yet while the list is unanswered; once it has failed, or answered
   // without this branch, the lock says which.
   const branchPending = !currentBranch && !branchesLoaded && !branchesLoadFailed
+  // The same inputs EditorHeader gives its own check, for the lock copy that names the way forward.
+  const branchReviewing = isReviewerOfOthersReview(
+    {
+      status: currentBranch?.status,
+      createdBy: currentBranch?.createdBy,
+      users: currentBranch?.access.allowedUsers,
+      groups: currentBranch?.access.allowedGroups,
+      isProtected: currentBranch?.isProtected ?? true,
+      pullRequestState: currentBranch?.pullRequestState,
+    },
+    userContext,
+  )
   const branchMissing = !currentBranch && branchesLoaded
   // The bar's lock-state row, with the inputs EditorHeader gets, for the states that must agree.
   const branchBarState = branchBarStatus({
@@ -706,7 +720,8 @@ const EditorContent: React.FC<EditorProps> = ({
   })
 
   reloadCommentsRef.current = (branch) => {
-    if (branch === branchNameState) void loadComments(branch)
+    if (sanitizeBranchName(branch) === sanitizeBranchName(branchNameState))
+      void loadComments(branch)
   }
 
   const {
@@ -2078,6 +2093,7 @@ const EditorContent: React.FC<EditorProps> = ({
                   branchReadOnly: currentBranch?.readOnly,
                   branchWriteBlocked: branchContentLocked,
                   branchMissing,
+                  reviewing: branchReviewing,
                 })
           }
           dirtyPaths={dirtyPaths}
@@ -2238,6 +2254,7 @@ const EditorContent: React.FC<EditorProps> = ({
                 branchLoading={branchLoading}
                 branchPending={branchPending}
                 branchMissing={branchMissing}
+                branchReviewing={branchReviewing}
                 onCollectionOpen={(path) => revealInContentPanel({ kind: 'collection', path })}
                 onEntryReveal={() =>
                   currentEntry && revealInContentPanel({ kind: 'entry', path: currentEntry.path })
@@ -2445,9 +2462,11 @@ const EditorContent: React.FC<EditorProps> = ({
                     handleWithdraw(name).catch((err) => console.error(err))
                   }}
                   onApprove={(name) => {
+                    if (name === branchNameState && isSaveAllRunning()) return
                     handleApprove(name).catch((err) => console.error(err))
                   }}
                   onRequestChanges={(name) => {
+                    if (name === branchNameState && isSaveAllRunning()) return
                     handleRequestChanges(name).catch((err) => console.error(err))
                   }}
                   onDelete={(name) => {

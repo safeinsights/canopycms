@@ -17,7 +17,7 @@ import type { BranchStatus, PullRequestState } from '../../types'
 import type { SaveAllProgress } from '../hooks/save-all'
 import { isAdmin, isLockedOutOfBranch, isReviewer } from '../../authorization/helpers'
 import { branchBarStatus, describeBranchLock, type BranchBarStatus } from '../branch-lock'
-import { CLOSED_PULL_REQUEST_REASON, EDITOR_ACTIONS } from '../copy'
+import { EDITOR_ACTIONS } from '../copy'
 import { isReviewerOfOthersReview } from '../../authorization/review-role'
 import { SYSTEM_USER_ID } from '../../system-users'
 import { TopBar } from '../shell/TopBar'
@@ -128,15 +128,6 @@ export function EditorHeader({
   branchPending = false,
   branchMissing = false,
 }: EditorHeaderProps) {
-  const lock = { branchStatus, branchReadOnly, branchWriteBlocked, branchPending, branchMissing }
-  const branchLockReason = describeBranchLock(lock)
-  const status = branchBarStatus({ ...lock, isProtected: branchServerProtected })
-
-  const theme = useMantineTheme()
-  // Mantine's own below-`md` query, the one `visibleFrom="md"` hides under.
-  const belowMd = `(max-width: ${em(getBreakpointValue('md', theme.breakpoints) - 0.1)})`
-  const narrow = useMediaQuery(belowMd, false, { getInitialValueInEffect: false }) === true
-  const editable = !!branchName && !branchLoading && !branchLockReason
   const workflow = workflowAction({
     branchName,
     busy,
@@ -148,11 +139,28 @@ export function EditorHeader({
     branchPullRequestState,
     savingAll: !!saveAllProgress,
   })
+  const lock = {
+    branchStatus,
+    branchReadOnly,
+    branchWriteBlocked,
+    branchPending,
+    branchMissing,
+    reviewing: workflow?.kind === 'review',
+  }
+  const branchLockReason = describeBranchLock(lock)
+  const status = branchBarStatus({ ...lock, isProtected: branchServerProtected })
+
+  const theme = useMantineTheme()
+  // Mantine's own below-`md` query, the one `visibleFrom="md"` hides under.
+  const belowMd = `(max-width: ${em(getBreakpointValue('md', theme.breakpoints) - 0.1)})`
+  const narrow = useMediaQuery(belowMd, false, { getInitialValueInEffect: false }) === true
+  const editable = !!branchName && !branchLoading && !branchLockReason
   // Below `md` one split button holds the bar's actions: Save all on an editable branch, else the
   // row's way forward, with the workflow action in its caret. Withdraw leads only for a user who
   // may withdraw; anyone else gets Switch branch…, the blocked Withdraw and its reason in the
-  // caret. A reviewer's Approve leads the same way, with Request changes in its own caret. A protected branch keeps New branch… either way. Wide, a Withdraw the user can't take
-  // shows blocked, with no Switch branch… beside it: that stays in the pill's menu.
+  // caret. A reviewer's Approve leads the same way, with Request changes in its own caret. A
+  // protected branch keeps New branch… either way. Wide, a Withdraw the user can't take shows
+  // blocked, with no Switch branch… beside it: that stays in the pill's menu.
   const split = narrow && editable
   const workflowLeads = status.action === 'workflow' && !!workflow?.permitted
   const barAction =
@@ -433,17 +441,21 @@ function workflowAction({
         users: branchAccess?.allowedUsers,
         groups: branchAccess?.allowedGroups,
         isProtected: branchIsProtected,
+        pullRequestState: branchPullRequestState,
       },
       userContext,
     )
   ) {
-    const closed = branchPullRequestState === 'closed'
     return {
       kind: 'review',
       offersApprove: isSubmitted,
-      blocked: !branchName || busy || savingAll || closed,
+      blocked: !branchName || busy || savingAll,
       permitted: true,
-      reason: savingAll ? 'Wait for Save all to finish.' : closed ? CLOSED_PULL_REQUEST_REASON : '',
+      reason: savingAll
+        ? 'Wait for Save all to finish.'
+        : busy
+          ? 'Wait for the current save or load to finish.'
+          : '',
     }
   }
 
@@ -532,19 +544,27 @@ function ReviewButtons({
   narrow,
   ...rest
 }: WorkflowControlProps & { narrow: boolean }) {
-  const approve = (ref?: Ref<HTMLButtonElement>) => (
+  // The bar's hand-off slot goes to the first control: Approve in the split, else Request changes,
+  // which is then the one control left when Approve goes, so `returnFocusTo` finds it.
+  const splitApprove = narrow && action.offersApprove
+  const approveEl = useRef<HTMLButtonElement>(null)
+  const approveRef = useMergedRef(approveEl, splitApprove ? controlRef : undefined)
+  const requestChangesRef = useMergedRef(splitApprove ? undefined : controlRef)
+  // Approve returns focus to its own button while that is mounted, else to the control left.
+  const approveReturn = () => (approveEl.current?.isConnected ? approveEl.current : returnFocusTo())
+  const approve = (
     <ReviewButton
-      buttonRef={ref}
+      buttonRef={approveRef}
       action={action}
       color="brand"
       testId="approve-button"
       label={EDITOR_ACTIONS.approve}
-      onClick={() => onApprove(returnFocusTo)}
+      onClick={() => onApprove(approveReturn)}
     />
   )
-  const requestChanges = (ref?: Ref<HTMLButtonElement>) => (
+  const requestChanges = (
     <ReviewButton
-      buttonRef={ref}
+      buttonRef={requestChangesRef}
       action={action}
       color="orange"
       testId="request-changes-button"
@@ -552,12 +572,12 @@ function ReviewButtons({
       onClick={() => onRequestChanges(returnFocusTo)}
     />
   )
-  if (!action.offersApprove) return requestChanges(controlRef)
+  if (!action.offersApprove) return requestChanges
   if (!narrow) {
     return (
       <Group gap={8} wrap="nowrap" style={{ flexShrink: 0 }}>
-        {requestChanges(controlRef)}
-        {approve()}
+        {requestChanges}
+        {approve}
       </Group>
     )
   }
@@ -566,7 +586,7 @@ function ReviewButtons({
       style={{ flexShrink: 0 }}
       renderRoot={(props) => <div {...props} role="group" aria-label="Review controls" />}
     >
-      {approve(controlRef)}
+      {approve}
       <WorkflowCaret
         {...rest}
         action={action}
@@ -675,13 +695,19 @@ function WorkflowCaret({
   const caretRef = useMergedRef(caret, controlRef)
   const menuFocus = useMenuItemFocusReturn(caret)
   const withdraw = action.kind === 'withdraw'
+  // Beside Approve it holds only Request changes, and a dialog it opens returns to the caret.
+  const reviewCaret = action.kind === 'review' && !includeApprove
+  const caretLabel = reviewCaret ? 'More review actions' : 'Branch actions'
+  const returnToCaret = reviewCaret
+    ? () => (caret.current?.isConnected ? caret.current : returnFocusTo())
+    : returnFocusTo
   const blockedReason = action.blocked
     ? action.reason || 'Wait for the current save or load to finish.'
     : undefined
   return (
     // Bounded, so a blocked item's reason wraps on a phone rather than run off the screen.
     <Menu withinPortal shadow="sm" position="bottom-end" width={280} {...menuFocus.menu}>
-      <Tooltip label="Branch actions" events={{ hover: true, focus: true, touch: false }}>
+      <Tooltip label={caretLabel} events={{ hover: true, focus: true, touch: false }}>
         <Menu.Target>
           <Button
             ref={caretRef}
@@ -689,7 +715,7 @@ function WorkflowCaret({
             color={color}
             size="sm"
             px={8}
-            aria-label="Branch actions"
+            aria-label={caretLabel}
             data-testid="branch-actions-button"
             style={{ borderInlineStart: '1px solid var(--canopy-input-border)' }}
           >
@@ -704,7 +730,7 @@ function WorkflowCaret({
               <ReasonedMenuItem
                 data-testid="approve-menu-item"
                 blockedReason={blockedReason}
-                onClick={() => onApprove(returnFocusTo)}
+                onClick={() => onApprove(returnToCaret)}
               >
                 {EDITOR_ACTIONS.approve}
               </ReasonedMenuItem>
@@ -712,7 +738,7 @@ function WorkflowCaret({
             <ReasonedMenuItem
               data-testid="request-changes-menu-item"
               blockedReason={blockedReason}
-              onClick={() => onRequestChanges(returnFocusTo)}
+              onClick={() => onRequestChanges(returnToCaret)}
             >
               {EDITOR_ACTIONS.requestChanges}
             </ReasonedMenuItem>

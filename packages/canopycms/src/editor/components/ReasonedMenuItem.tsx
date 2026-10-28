@@ -6,6 +6,8 @@ import { Menu, Text, type MenuItemProps } from '@mantine/core'
 export interface ReasonedMenuItemProps extends MenuItemProps {
   /** Why the item can't act now. Set, the item is blocked and shows this beneath its label. */
   blockedReason?: string
+  /** False when a neighbouring item already says why, so the reason is not printed twice. */
+  showReason?: boolean
   onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void
   'data-testid'?: string
   children: React.ReactNode
@@ -18,6 +20,7 @@ export interface ReasonedMenuItemProps extends MenuItemProps {
  */
 export const ReasonedMenuItem: React.FC<ReasonedMenuItemProps> = ({
   blockedReason,
+  showReason = true,
   onClick,
   children,
   color,
@@ -40,7 +43,7 @@ export const ReasonedMenuItem: React.FC<ReasonedMenuItemProps> = ({
     }}
   >
     {children}
-    {blockedReason && (
+    {blockedReason && showReason && (
       <Text size="xs" c="dimmed" component="span" display="block" style={{ whiteSpace: 'normal' }}>
         {blockedReason}
       </Text>
