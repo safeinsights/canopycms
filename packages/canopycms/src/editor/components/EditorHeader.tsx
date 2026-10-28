@@ -297,6 +297,9 @@ export function EditorHeader({
 
 const noopAction = () => {}
 
+/** Why a workflow control waits when the bar is busy and nothing else holds it. */
+const BUSY_REASON = 'Wait for the current save or load to finish.'
+
 const TOOLTIP_EVENTS = { hover: true, focus: true, touch: false }
 
 /**
@@ -451,11 +454,7 @@ function workflowAction({
       offersApprove: isSubmitted,
       blocked: !branchName || busy || savingAll,
       permitted: true,
-      reason: savingAll
-        ? 'Wait for Save all to finish.'
-        : busy
-          ? 'Wait for the current save or load to finish.'
-          : '',
+      reason: savingAll ? 'Wait for Save all to finish.' : busy ? BUSY_REASON : '',
     }
   }
 
@@ -706,9 +705,7 @@ function WorkflowCaret({
   const returnToCaret = reviewCaret
     ? () => (caret.current?.isConnected ? caret.current : returnFocusTo())
     : returnFocusTo
-  const blockedReason = action.blocked
-    ? action.reason || 'Wait for the current save or load to finish.'
-    : undefined
+  const blockedReason = action.blocked ? action.reason || BUSY_REASON : undefined
   return (
     // Bounded, so a blocked item's reason wraps on a phone rather than run off the screen.
     <Menu withinPortal shadow="sm" position="bottom-end" width={280} {...menuFocus.menu}>
