@@ -3,7 +3,7 @@ import { useSWRConfig } from 'swr'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { createMockApiClient, type MockApiClient } from '../../api/__test__/mock-client'
-import type { BranchChangesData } from '../../api/branch-changes'
+import type { BranchChangesData, BranchChangesResponse } from '../../api/branch-changes'
 import { createApiClientWrapper } from './__test__/test-utils'
 import { useBranchChangesData } from './useBranchChangesData'
 
@@ -108,7 +108,7 @@ describe('useBranchChangesData ordering', () => {
     )
     await waitFor(() => expect(result.current.changes.data).toEqual(answer('content/a')))
 
-    let settleReload: (value: unknown) => void = () => {}
+    let settleReload: (value: BranchChangesResponse) => void = () => {}
     client.changes.list.mockImplementationOnce(
       () => new Promise((resolve) => (settleReload = resolve)),
     )
