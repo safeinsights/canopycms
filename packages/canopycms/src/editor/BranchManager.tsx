@@ -373,8 +373,9 @@ const BranchCard: React.FC<BranchCardProps> = ({
   // alone once approved. Reviewing another one, Review opens it and the actions wait in the menu.
   const primary = !isCurrent ? undefined : reviewing ? (approve ?? requestChanges) : workflow
   const secondary = isCurrent && reviewing && approve ? requestChanges : undefined
-  // Two visible actions would crowd the title at the drawer's width, so they take a row below it.
-  const actionRow = !!secondary
+  // Two visible actions, or the long "Withdraw from review", would crowd the title at the drawer's
+  // width, so they take a row below it. Open and Review stay beside the title.
+  const actionRow = !!secondary || primary?.label === EDITOR_ACTIONS.withdrawFromReview
   const menuActions = [approve, requestChanges, workflow].filter(
     (a): a is BranchWorkflowAction => !!a && a !== primary && a !== secondary,
   )

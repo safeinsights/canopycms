@@ -336,14 +336,28 @@ describe('BranchCard review actions', () => {
       expect(title.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     })
 
+    it('gives the long Withdraw from review its own row too, with the menu beside the title', () => {
+      renderCard(branch({ access: { users: ['maker', 'rita'] } }), reviewer, true)
+      const row = screen.getByTestId(`branch-action-row-${NAME}`)
+      expect(within(row).getByTestId(`withdraw-branch-button-${NAME}`)).toBeTruthy()
+      expect(within(row).queryByTestId(`branch-actions-menu-${NAME}`)).toBeNull()
+      expect(screen.getByTestId(`branch-actions-menu-${NAME}`)).toBeTruthy()
+    })
+
+    it('does the same for a reviewer whose way forward is Withdraw after the pull request closed', () => {
+      renderCard(branch({ pullRequestState: 'closed' }), reviewer, true)
+      expect(
+        within(screen.getByTestId(`branch-action-row-${NAME}`)).getByTestId(
+          `withdraw-branch-button-${NAME}`,
+        ),
+      ).toBeTruthy()
+    })
+
     it.each([
-      [
-        'a single action on the open branch',
-        branch({ access: { users: ['maker', 'rita'] } }),
-        true,
-      ],
       ['Review on another branch', branch(), false],
-      ['request changes alone once approved', branch({ status: 'approved' }), true],
+      ['Open on another branch', branch({ createdBy: 'rita' }), false],
+      ['Request changes alone once approved', branch({ status: 'approved' }), true],
+      ['Submit for review on a branch still being edited', branch({ status: 'editing' }), true],
     ])('keeps %s beside the title, with no action row', (_n, b, open) => {
       renderCard(b, reviewer, open)
       expect(screen.queryByTestId(`branch-action-row-${NAME}`)).toBeNull()

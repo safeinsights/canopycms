@@ -31,4 +31,4 @@ export const listFullReason = (maxItems: number, one = 'item', many = 'items'): 
 
 /** Why Approve and Request changes can't act: the pull request they act on is gone. */
 export const CLOSED_PULL_REQUEST_REASON =
-  'The pull request was closed on GitHub. Withdraw the branch from review, then submit it again to open a new one.'
+  'The pull request was closed on GitHub. Use "Withdraw from review", then submit it again to open a new one.'

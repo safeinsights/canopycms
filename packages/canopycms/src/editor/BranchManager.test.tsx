@@ -659,7 +659,7 @@ describe('BranchManager', () => {
     expect(menuItemBlocked('approve-branch-button-feature/test')).toBe(true)
     // The reason prints once, under Approve, which comes first.
     const reason =
-      'The pull request was closed on GitHub. Withdraw the branch from review, then submit it again to open a new one.'
+      'The pull request was closed on GitHub. Use "Withdraw from review", then submit it again to open a new one.'
     expect(
       within(screen.getByTestId('approve-branch-button-feature/test')).getByText(reason),
     ).toBeTruthy()

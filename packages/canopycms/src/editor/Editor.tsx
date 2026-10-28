@@ -51,7 +51,7 @@ import { PermissionManager } from './PermissionManager'
 import { SystemHealthPanel } from './admin/SystemHealthPanel'
 // Import directly from helpers to avoid server-only code in authorization barrel
 import { isAdmin, isPrivileged, isReviewer } from '../authorization/helpers'
-import { isReviewerOfOthersReview } from '../authorization/review-role'
+import { reviewRoleOf } from '../authorization/review-role'
 import { fieldBreadcrumb } from './field-breadcrumb'
 import type { CommentThread } from '../comment-store'
 import {
@@ -445,7 +445,7 @@ const EditorContent: React.FC<EditorProps> = ({
   // without this branch, the lock says which.
   const branchPending = !currentBranch && !branchesLoaded && !branchesLoadFailed
   // The same inputs EditorHeader gives its own check, for the lock copy that names the way forward.
-  const branchReviewing = isReviewerOfOthersReview(
+  const branchReviewRole = reviewRoleOf(
     {
       status: currentBranch?.status,
       createdBy: currentBranch?.createdBy,
@@ -456,6 +456,8 @@ const EditorContent: React.FC<EditorProps> = ({
     },
     userContext,
   )
+  const branchReviewing = branchReviewRole === 'reviewing'
+  const branchPullRequestClosed = branchReviewRole === 'reviewing-closed'
   const branchMissing = !currentBranch && branchesLoaded
   // The bar's lock-state row, with the inputs EditorHeader gets, for the states that must agree.
   const branchBarState = branchBarStatus({
@@ -2094,6 +2096,7 @@ const EditorContent: React.FC<EditorProps> = ({
                   branchWriteBlocked: branchContentLocked,
                   branchMissing,
                   reviewing: branchReviewing,
+                  pullRequestClosed: branchPullRequestClosed,
                 })
           }
           dirtyPaths={dirtyPaths}
@@ -2255,6 +2258,7 @@ const EditorContent: React.FC<EditorProps> = ({
                 branchPending={branchPending}
                 branchMissing={branchMissing}
                 branchReviewing={branchReviewing}
+                branchPullRequestClosed={branchPullRequestClosed}
                 onCollectionOpen={(path) => revealInContentPanel({ kind: 'collection', path })}
                 onEntryReveal={() =>
                   currentEntry && revealInContentPanel({ kind: 'entry', path: currentEntry.path })

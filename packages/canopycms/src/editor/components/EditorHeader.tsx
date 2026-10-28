@@ -18,7 +18,7 @@ import type { SaveAllProgress } from '../hooks/save-all'
 import { isAdmin, isLockedOutOfBranch, isReviewer } from '../../authorization/helpers'
 import { branchBarStatus, describeBranchLock, type BranchBarStatus } from '../branch-lock'
 import { EDITOR_ACTIONS } from '../copy'
-import { isReviewerOfOthersReview } from '../../authorization/review-role'
+import { reviewRoleOf, type ReviewRole } from '../../authorization/review-role'
 import { SYSTEM_USER_ID } from '../../system-users'
 import { TopBar } from '../shell/TopBar'
 import { BranchPill } from './BranchPill'
@@ -128,6 +128,17 @@ export function EditorHeader({
   branchPending = false,
   branchMissing = false,
 }: EditorHeaderProps) {
+  const reviewRole = reviewRoleOf(
+    {
+      status: branchStatus,
+      createdBy: branchCreatedBy,
+      users: branchAccess?.allowedUsers,
+      groups: branchAccess?.allowedGroups,
+      isProtected: branchIsProtected,
+      pullRequestState: branchPullRequestState,
+    },
+    userContext,
+  )
   const workflow = workflowAction({
     branchName,
     busy,
@@ -136,7 +147,7 @@ export function EditorHeader({
     branchCreatedBy,
     branchAccess,
     branchIsProtected,
-    branchPullRequestState,
+    reviewRole,
     savingAll: !!saveAllProgress,
   })
   const lock = {
@@ -146,6 +157,7 @@ export function EditorHeader({
     branchPending,
     branchMissing,
     reviewing: workflow?.kind === 'review',
+    pullRequestClosed: reviewRole === 'reviewing-closed',
   }
   const branchLockReason = describeBranchLock(lock)
   const status = branchBarStatus({ ...lock, isProtected: branchServerProtected })
@@ -397,11 +409,11 @@ interface WorkflowAction {
 type WorkflowActionInput = Pick<
   EditorHeaderProps,
   'branchName' | 'busy' | 'branchStatus' | 'userContext' | 'branchCreatedBy' | 'branchAccess'
-> &
-  Pick<EditorHeaderProps, 'branchPullRequestState'> & {
-    branchIsProtected: boolean
-    savingAll: boolean
-  }
+> & {
+  branchIsProtected: boolean
+  reviewRole: ReviewRole
+  savingAll: boolean
+}
 
 /**
  * Submit for review, or Withdraw from review once submitted or approved, or Approve and Request
@@ -415,7 +427,7 @@ function workflowAction({
   branchCreatedBy,
   branchAccess,
   branchIsProtected,
-  branchPullRequestState,
+  reviewRole,
   savingAll,
 }: WorkflowActionInput): WorkflowAction | null {
   const isSubmitted = branchStatus === 'submitted'
@@ -433,19 +445,7 @@ function workflowAction({
   // wrongly stuck in 'submitted'.
   if (branchIsProtected && !isWithdrawable) return null
 
-  if (
-    isReviewerOfOthersReview(
-      {
-        status: branchStatus,
-        createdBy: branchCreatedBy,
-        users: branchAccess?.allowedUsers,
-        groups: branchAccess?.allowedGroups,
-        isProtected: branchIsProtected,
-        pullRequestState: branchPullRequestState,
-      },
-      userContext,
-    )
-  ) {
+  if (reviewRole === 'reviewing') {
     return {
       kind: 'review',
       offersApprove: isSubmitted,

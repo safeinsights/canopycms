@@ -1900,6 +1900,24 @@ describe('EditorHeader - review actions', () => {
     expect(tooltip.textContent).not.toContain('Withdraw')
   })
 
+  it('says in the bar why a reviewer has Withdraw and not Approve once the pull request is closed', async () => {
+    renderHeader({
+      ...inReview,
+      branchPullRequestState: 'closed',
+      userContext: reviewer,
+      branchPullRequestClosed: true,
+    })
+    act(() => screen.getByTestId('save-button').focus())
+    expect(
+      await screen.findByText(
+        'The pull request was closed on GitHub. Use "Withdraw from review", then submit it again to open a new one.',
+      ),
+    ).toBeTruthy()
+    expect(barStatus().closest('[role="status"]')?.textContent).toContain(
+      'Use "Withdraw from review"',
+    )
+  })
+
   it('offers a reviewer Withdraw, not review buttons, once the pull request is closed', () => {
     renderHeader({ ...inReview, branchPullRequestState: 'closed', userContext: reviewer })
     expect(screen.getByTestId('withdraw-button').getAttribute('aria-disabled')).toBeNull()
