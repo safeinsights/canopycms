@@ -261,7 +261,7 @@ function generateClientCode(namespaces: NamespaceRoutes[]): string {
 
 import { computeContentSha256Hex } from './request-body-hash'
 import { resolveTimeoutMs, runWithDeadline, type RequestOptions, type RequestTimeoutClass } from './request-deadline'
-export { GATEWAY_MAX_TIMEOUT_MS, isApiTimeoutError, WRITE_TIMED_OUT_MESSAGE, type RequestOptions } from './request-deadline'
+export { isApiTimeoutError, WRITE_TIMED_OUT_MESSAGE, type RequestOptions } from './request-deadline'
 import type { ApiResponse } from './types'
 import { readTrailingSlashEnv, withTrailingSlash } from '../utils/url-prefix'
 import { EDITOR_MODE_HEADER, EDITOR_MODE_MISMATCH_STATUS } from '../operating-mode/editor-mode-check'

@@ -1,11 +1,7 @@
 import type { BranchListItem, CreateBranchBody } from '../../api/branch'
 import { isCreatorsRecentBranch } from '../../api/branch-create-window'
-import {
-  GATEWAY_MAX_TIMEOUT_MS,
-  isApiTimeoutError,
-  isNonApiResponse,
-  type CanopyApiClient,
-} from '../../api/client'
+import { isApiTimeoutError, isNonApiResponse, type CanopyApiClient } from '../../api/client'
+import { GATEWAY_MAX_TIMEOUT_MS } from '../../api/request-deadline'
 import { sanitizeBranchName } from '../../paths/branch-name'
 
 /**
