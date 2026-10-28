@@ -851,10 +851,7 @@ describe('useBranchManager', () => {
           await result.current[handler]('new-branch')
         })
 
-        expect(mockClient.workflow[endpoint]).toHaveBeenCalledWith(
-          { branch: 'new-branch' },
-          ...(endpoint === 'requestChanges' ? [{}] : []),
-        )
+        expect(mockClient.workflow[endpoint].mock.calls[0]?.[0]).toEqual({ branch: 'new-branch' })
         expect(mockClient.branches.list).toHaveBeenCalledTimes(2)
         expect(result.current.currentBranch).toEqual(returned)
       },
@@ -1151,9 +1148,11 @@ describe('useBranchManager', () => {
       await result.current.handleSubmit('feature')
     })
 
-    expect(mockClient.workflow.submit).toHaveBeenCalledWith({
-      branch: 'feature',
-    })
+    // The PR body's editor links start from the page the editor runs on.
+    expect(mockClient.workflow.submit).toHaveBeenCalledWith(
+      { branch: 'feature' },
+      { editorUrl: `${window.location.origin}${window.location.pathname}` },
+    )
     expect(mockSetBusy).toHaveBeenCalledWith(true)
     expect(mockSetBusy).toHaveBeenCalledWith(false)
   })
@@ -1347,7 +1346,7 @@ describe('useBranchManager', () => {
         data: { branches: editingFeature, users: [] },
       })
       mockClient.workflow.submit.mockResolvedValueOnce(
-        await gateway.workflow.submit({ branch: 'feature' }),
+        await gateway.workflow.submit({ branch: 'feature' }, {}),
       )
       const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
       await waitFor(() => expect(result.current.branches).toHaveLength(2))
@@ -1781,7 +1780,7 @@ describe('useBranchManager', () => {
         await first
       })
       expect(mockClient.workflow.submit).toHaveBeenCalledTimes(1)
-      expect(mockClient.workflow.submit).toHaveBeenCalledWith({ branch: 'feature' })
+      expect(mockClient.workflow.submit.mock.calls[0]?.[0]).toEqual({ branch: 'feature' })
     })
 
     it('a repeat request while the confirmed work is still in flight opens nothing', async () => {
@@ -1887,7 +1886,7 @@ describe('useBranchManager', () => {
         confirm(opened[0])
         await first
       })
-      expect(mockClient.workflow.submit).toHaveBeenCalledWith({ branch: 'feature-x' })
+      expect(mockClient.workflow.submit.mock.calls[0]?.[0]).toEqual({ branch: 'feature-x' })
 
       act(() => {
         void result.current.handleWithdraw('feature/x')

@@ -878,9 +878,11 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
             }
             options.setBusy(true)
             try {
-              const result = await apiClient.workflow.submit({
-                branch: branchNameToSubmit,
-              })
+              const result = await apiClient.workflow.submit(
+                { branch: branchNameToSubmit },
+                // The PR body links back here; the server checks the host (editor-url.ts).
+                { editorUrl: `${window.location.origin}${window.location.pathname}` },
+              )
               if (!result.ok) throw actionError(result, 'Failed to submit branch')
               const stamped = result.data?.stamped
               if (stamped && branchNameToSubmit === listedName(latest.current.branchName)) {

@@ -572,6 +572,53 @@ describe('services submitBranch', () => {
     })
   })
 
+  describe('entryPaths', () => {
+    it('maps each changed entry file to the logical path the editor opens, and nothing else', async () => {
+      const entryFile = `content/pages/page.home.${generateId()}.md`
+      await fs.mkdir(path.join(localPath, 'content/pages'), { recursive: true })
+      await fs.writeFile(path.join(localPath, entryFile), '---\ntitle: Home\n---\n', 'utf8')
+      await fs.writeFile(path.join(localPath, 'content/pages/logo.png'), 'png', 'utf8')
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'text', 'utf8')
+
+      const result = await services.submitBranch({ context })
+
+      expect(result.changedPaths.sort()).toEqual(['a.txt', 'content/pages/logo.png', entryFile])
+      expect([...result.entryPaths]).toEqual([[entryFile, 'content/pages/home']])
+    })
+
+    it('checks only the paths the PR body lists', async () => {
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'text', 'utf8')
+      const entries = Array.from(
+        { length: 150 },
+        (_, i) => `content/pages/page.p${i}.${generateId()}.md`,
+      )
+      vi.spyOn(GitManager.prototype, 'listChangedPathsSinceBase').mockResolvedValue([
+        'a.txt',
+        ...entries,
+      ])
+      const stat = vi.spyOn(fs, 'stat')
+
+      await services.submitBranch({ context })
+
+      const checked = stat.mock.calls.filter(([p]) => String(p).includes('/content/pages/page.p'))
+      expect(checked).toHaveLength(99)
+    })
+
+    it('links no entry the branch deletes', async () => {
+      const deleted = `content/pages/page.gone.${generateId()}.md`
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'text', 'utf8')
+      vi.spyOn(GitManager.prototype, 'listChangedPathsSinceBase').mockResolvedValue([
+        'a.txt',
+        deleted,
+      ])
+
+      const result = await services.submitBranch({ context })
+
+      expect(result.changedPaths).toEqual(['a.txt', deleted])
+      expect(result.entryPaths.size).toBe(0)
+    })
+  })
+
   describe('[SYNC-C1] content-write lock', () => {
     async function headBranch(): Promise<string> {
       return (await simpleGit({ baseDir: localPath }).revparse(['--abbrev-ref', 'HEAD'])).trim()

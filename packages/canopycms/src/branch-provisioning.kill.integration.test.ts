@@ -173,6 +173,7 @@ async function ageLockMarkers(workspaceRoot: string): Promise<void> {
   for (const marker of [
     path.join(workspaceRoot, 'content-branches', '.feat.init.lock'),
     path.join(workspaceRoot, '.settings-init', 'lock'),
+    path.join(workspaceRoot, '.settings-init', 'build'),
   ]) {
     await fs.utimes(marker, old, old).catch(() => {})
   }
@@ -229,10 +230,14 @@ async function retryBranch(workspaceRoot: string, remoteUrl: string): Promise<vo
   expect(left.filter((name) => /^\.(prov|repair|deleting)-/.test(name))).toEqual([])
 }
 
-async function retrySettings(workspaceRoot: string, remoteUrl: string): Promise<void> {
-  await ageLockMarkers(workspaceRoot)
+async function retrySettings(
+  workspaceRoot: string,
+  remoteUrl: string,
+  { ageMarkers = true, buildWaitMs }: { ageMarkers?: boolean; buildWaitMs?: number } = {},
+): Promise<void> {
+  if (ageMarkers) await ageLockMarkers(workspaceRoot)
   const settingsRoot = path.join(workspaceRoot, 'settings')
-  await new SettingsWorkspaceManager(config(remoteUrl)).ensureGitWorkspace({
+  await new SettingsWorkspaceManager(config(remoteUrl), { buildWaitMs }).ensureGitWorkspace({
     settingsRoot,
     branchName: SETTINGS_BRANCH,
     mode: 'prod',
@@ -370,6 +375,24 @@ describe('settings workspace provisioning under SIGKILL', () => {
     const consoleSpy = mockConsole()
     try {
       await retrySettings(workspaceRoot, remoteUrl)
+    } finally {
+      consoleSpy.restore()
+    }
+  })
+
+  it('killed mid-clone with its build marker still live: the retry builds its own after the bounded wait', async () => {
+    const { workspaceRoot, remoteUrl } = await newWorkspace()
+
+    const run = await runChild('settings', workspaceRoot, remoteUrl, {
+      onLine: { text: 'dir=settings step=clone done', delayMs: 0, pause: true },
+    })
+
+    expect(run.signal, run.stdout).toBe('SIGKILL')
+    await expect(fs.stat(path.join(workspaceRoot, '.settings-init', 'build'))).resolves.toBeTruthy()
+    const consoleSpy = mockConsole()
+    try {
+      await retrySettings(workspaceRoot, remoteUrl, { ageMarkers: false, buildWaitMs: 0 })
+      expect(consoleSpy).toHaveWarned(/settings workspace build did not finish/)
     } finally {
       consoleSpy.restore()
     }
