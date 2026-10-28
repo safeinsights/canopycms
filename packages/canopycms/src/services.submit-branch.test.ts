@@ -16,7 +16,6 @@ import { ContentConflictError, ContentStore } from './content-store'
 import { listEntries } from './content-listing'
 import { flattenSchema } from './config/flatten'
 import { generateId } from './id'
-import { ContentIdIndex } from './content-id-index'
 import type { LogicalPath, Slug } from './paths/types'
 
 // Deliberately does NOT mock 'simple-git' (unlike services.test.ts) -- this
@@ -587,17 +586,18 @@ describe('services submitBranch', () => {
       expect([...result.entryPaths]).toEqual([[entryFile, 'content/pages/home']])
     })
 
-    it('submits without entry links, with a warning, when the entries cannot be read', async () => {
-      const consoleSpy = mockConsole()
+    it('links no entry the branch deletes', async () => {
+      const deleted = `content/pages/page.gone.${generateId()}.md`
       await fs.writeFile(path.join(localPath, 'a.txt'), 'text', 'utf8')
-      vi.spyOn(ContentIdIndex.prototype, 'buildFromFilenames').mockRejectedValue(new Error('EIO'))
+      vi.spyOn(GitManager.prototype, 'listChangedPathsSinceBase').mockResolvedValue([
+        'a.txt',
+        deleted,
+      ])
 
       const result = await services.submitBranch({ context })
 
-      expect(result.changedPaths).toEqual(['a.txt'])
+      expect(result.changedPaths).toEqual(['a.txt', deleted])
       expect(result.entryPaths.size).toBe(0)
-      expect(consoleSpy).toHaveWarned('Could not map the changed entries of feature-1')
-      consoleSpy.restore()
     })
   })
 

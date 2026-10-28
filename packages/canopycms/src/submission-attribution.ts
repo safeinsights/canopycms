@@ -25,6 +25,7 @@ const MAX_ID_LENGTH = 128
 const MAX_EMAIL_LENGTH = 254
 const MAX_DESCRIPTION_LENGTH = 10_000
 const MAX_LISTED_ENTRIES = 100
+const MAX_LINKED_ENTRIES_LENGTH = 30_000
 
 /**
  * The PR body region canopycms owns. On update only the text between these
@@ -270,11 +271,12 @@ export interface PrSectionInput {
 
 /**
  * A URL safe as a Markdown link destination: the characters that could end the destination,
- * open a title or escape are percent-encoded, which leaves the address unchanged.
+ * open a title or escape are percent-encoded, which leaves the address unchanged. Brackets are
+ * legal in a destination and are an IPv6 host's syntax, so they stay.
  */
 function markdownHref(href: string): string {
   return href.replace(
-    /[()<>[\]\\\s'"`]/g,
+    /[()<>\\\s'"`]/g,
     (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`,
   )
 }
@@ -320,17 +322,22 @@ export function buildPrSection(input: PrSectionInput): string {
     .map((raw) => ({ raw, clean: cleanPath(raw) }))
     .filter((p): p is { raw: string; clean: string } => p.clean !== undefined)
   if (paths.length > 0) {
-    const listed = paths.slice(0, MAX_LISTED_ENTRIES).map(({ raw, clean }) => {
-      const entryPath = input.entryPaths?.get(raw)
-      const entryLink = entryPath === undefined ? undefined : link(entryPath)
-      return entryLink
-        ? `- ${codeSpan(clean)} ([open in editor](${entryLink}))`
-        : `- ${codeSpan(clean)}`
-    })
-    if (paths.length > MAX_LISTED_ENTRIES) {
-      listed.push(`- …and ${paths.length - MAX_LISTED_ENTRIES} more`)
+    const list = (withLinks: boolean) => {
+      const listed = paths.slice(0, MAX_LISTED_ENTRIES).map(({ raw, clean }) => {
+        const entryPath = withLinks ? input.entryPaths?.get(raw) : undefined
+        const entryLink = entryPath === undefined ? undefined : link(entryPath)
+        return entryLink
+          ? `- ${codeSpan(clean)} ([open in editor](${entryLink}))`
+          : `- ${codeSpan(clean)}`
+      })
+      if (paths.length > MAX_LISTED_ENTRIES) {
+        listed.push(`- …and ${paths.length - MAX_LISTED_ENTRIES} more`)
+      }
+      return `**Changed entries (${paths.length})**\n\n${listed.join('\n')}`
     }
-    parts.push(`**Changed entries (${paths.length})**\n\n${listed.join('\n')}`)
+    const linked = list(true)
+    // GitHub refuses a body over 65,536 characters; unlinked, the section stays well under.
+    parts.push(linked.length > MAX_LINKED_ENTRIES_LENGTH ? list(false) : linked)
   }
 
   // Last, so an unclosed fence or `<details>` in free Markdown cannot swallow

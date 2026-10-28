@@ -49,7 +49,8 @@ const getBranchStatusHandler = async (
 const submitBranchBodySchema = z
   .object({
     /** The editor page's URL (`location.origin + location.pathname`), for the PR body's links. */
-    editorUrl: z.string().max(2048).optional(),
+    // Any value but a usable URL costs only the links (editor-url.ts), never the submit.
+    editorUrl: z.string().optional().catch(undefined),
   })
   .optional()
 

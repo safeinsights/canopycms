@@ -696,6 +696,28 @@ describe('branch status api', () => {
       consoleSpy.restore()
     })
 
+    it('still submits, without links, when the reported URL is not usable', async () => {
+      const consoleSpy = mockConsole()
+      const body = await submitWith({
+        claimed: `https://cms.example.org/${'a'.repeat(3000)}`,
+        headers: { host: 'cms.example.org' },
+      })
+      expect(body).not.toContain('](')
+      expect(consoleSpy).toHaveWarned(/no editor links/)
+      consoleSpy.restore()
+      for (const editorUrl of ['x'.repeat(3000), 42, null, { a: 1 }]) {
+        const validated = WORKFLOW_ROUTES.submit.validate({
+          params: { branch: 'feature/x' },
+          body: { editorUrl },
+        })
+        expect(validated.ok).toBe(true)
+        if (validated.ok)
+          expect(validated.body?.editorUrl).toBe(
+            editorUrl === 'x'.repeat(3000) ? editorUrl : undefined,
+          )
+      }
+    })
+
     it('uses the configured editor URL whatever the request reports', async () => {
       const body = await submitWith({
         configured: 'https://editor.example.org/cms',

@@ -4,7 +4,12 @@ import path from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ContentIdIndex, extractIdFromFilename, extractSlugFromFilename } from './content-id-index'
+import {
+  ContentIdIndex,
+  entryLogicalPathOfFile,
+  extractIdFromFilename,
+  extractSlugFromFilename,
+} from './content-id-index'
 import {
   unsafeAsLogicalPath,
   unsafeAsSlug,
@@ -714,5 +719,56 @@ describe('extractSlugFromFilename', () => {
     expect(extractSlugFromFilename('Posts.a1b2c3d4e5f6')).toBe('posts')
     // Files without IDs
     expect(extractSlugFromFilename('README.json')).toBe('readme')
+  })
+})
+
+describe('entryLogicalPathOfFile', () => {
+  it.each([
+    ['content/posts.a1b2c3d4e5f6/post.hello.b2c3d4e5f6a1.md', 'content', 'content/posts/hello'],
+    ['content/page.about.c3d4e5f6a1b2.json', 'content', 'content/about'],
+    ['content/posts/post.my.page.a1b2c3d4e5f6.json', 'content', 'content/posts/my.page'],
+    ['content/posts/Hello.a1b2c3d4e5f6.md', 'content', 'content/posts/hello'],
+    ['site/content/docs/doc.intro.a1b2c3d4e5f6.mdx', 'site/content/', 'site/content/docs/intro'],
+  ])('maps %s under %s to %s', (file, root, expected) => {
+    expect(entryLogicalPathOfFile(file, root)).toBe(expected)
+  })
+
+  it.each([
+    ['public/post.hello.a1b2c3d4e5f6.md', 'content'],
+    ['contentx/post.hello.a1b2c3d4e5f6.md', 'content'],
+    ['content/posts/logo.png', 'content'],
+    ['content/posts/.collection.json', 'content'],
+    ['content/.canopy-meta/x.a1b2c3d4e5f6.json', 'content'],
+    ['content/_ids_/a1b2c3d4e5f6', 'content'],
+    ['content', 'content'],
+  ])('maps %s under %s to nothing', (file, root) => {
+    expect(entryLogicalPathOfFile(file, root)).toBeNull()
+  })
+
+  it('agrees with the index built from the same files', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-entry-path-of-file-'))
+    const files = [
+      'content/posts.a1b2c3d4e5f6/post.hello.b2c3d4e5f6a1.md',
+      'content/posts.a1b2c3d4e5f6/2026.c3d4e5f6a1b2/post.My.Page.d4e5f6a1b2c3.json',
+      'content/page.about.e5f6a1b2c3d4.json',
+      'content/posts.a1b2c3d4e5f6/logo.png',
+    ]
+    try {
+      for (const file of files) {
+        await fs.mkdir(path.dirname(path.join(root, file)), { recursive: true })
+        await fs.writeFile(path.join(root, file), '{}')
+      }
+      const index = new ContentIdIndex(root)
+      await index.buildFromFilenames('content')
+      for (const file of files) {
+        const id = index.findByPath(unsafeAsPhysicalPath(file))
+        const location = id ? index.findById(id) : null
+        const expected =
+          location?.type === 'entry' ? `${location.collection}/${location.slug}` : null
+        expect(entryLogicalPathOfFile(file, 'content')).toBe(expected)
+      }
+    } finally {
+      await fs.rm(root, { recursive: true, force: true })
+    }
   })
 })

@@ -27,6 +27,7 @@ import { isValidId } from './id'
 import { isNotFoundError } from './utils/error'
 import { canopyLogWarn } from './utils/logger'
 import { type LogicalPath, type PhysicalPath, type Slug, type ContentId } from './paths'
+import { entryLogicalPath, normalizeFilesystemPath } from './paths/normalize'
 
 /** Logical path representing entries stored at the branch root (no parent collection). Rare in practice. */
 const EMPTY_LOGICAL_PATH = '' as LogicalPath
@@ -41,6 +42,29 @@ function toLogicalCollectionPath(physicalPath: string): LogicalPath {
     .split('/')
     .map((seg) => extractSlugFromFilename(seg))
     .join('/') as LogicalPath
+}
+
+/**
+ * The logical path of the entry a file stores, read from its path the way buildFromFilenames
+ * reads it, or null for a file that is not an entry there: outside `contentRoot`, under a
+ * dot-prefixed or `_ids_` segment, or with no embedded ID. No I/O, so a deleted file still maps.
+ */
+export function entryLogicalPathOfFile(
+  relativePath: string,
+  contentRoot: string,
+): LogicalPath | null {
+  const root = normalizeFilesystemPath(contentRoot)
+  const file = normalizeFilesystemPath(relativePath)
+  if (!file.startsWith(`${root}/`)) return null
+  const below = file.slice(root.length + 1).split('/')
+  if (below.some((s) => s.startsWith('.') || s === '_ids_')) return null
+  const segments = file.split('/')
+  const name = segments[segments.length - 1]
+  if (!extractIdFromFilename(name)) return null
+  return entryLogicalPath(
+    toLogicalCollectionPath(segments.slice(0, -1).join('/')),
+    extractSlugFromFilename(name),
+  )
 }
 
 export interface IdLocation {

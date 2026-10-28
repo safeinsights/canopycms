@@ -15,6 +15,8 @@
  *
  * Module map: ./AGENTS.md.
  */
+import fs from 'node:fs/promises'
+import path from 'node:path'
 import type { CanopyConfig } from './config'
 import type { EntrySchemaRegistry } from './schema/types'
 import { getConfigDefaults } from './config'
@@ -52,9 +54,7 @@ import { readBranchMetadataFile } from './branch-metadata-file'
 import { getErrorMessage, redactCredentials } from './utils/error'
 import { withContentWriteLock } from './utils/content-write-lock'
 import { ContentStore } from './content-store'
-import { ContentIdIndex } from './content-id-index'
-import { entryLogicalPath } from './paths/normalize'
-import type { PhysicalPath } from './paths/types'
+import { entryLogicalPathOfFile } from './content-id-index'
 import { stampNewEntries, type StampedEntry } from './stamp-on-publish'
 
 /**
@@ -423,28 +423,22 @@ async function _createCanopyServicesInternal(
     }
   }
 
-  /** The entries among `paths`, read from filenames; a failure costs only the PR's entry links. */
-  const entryPathsOrWarn = async (
+  /** The entries among `paths` that still exist, for their editor links. */
+  const existingEntryPaths = async (
     context: BranchContext,
     paths: readonly string[],
   ): Promise<Map<string, string>> => {
+    const contentRoot = services.config.contentRoot || 'content'
     const entryPaths = new Map<string, string>()
-    try {
-      const index = new ContentIdIndex(context.branchRoot)
-      await index.buildFromFilenames(services.config.contentRoot || 'content')
-      for (const path of paths) {
-        const id = index.findByPath(path as PhysicalPath)
-        const location = id ? index.findById(id) : null
-        if (location?.type === 'entry' && location.collection !== undefined && location.slug) {
-          entryPaths.set(path, entryLogicalPath(location.collection, location.slug))
-        }
-      }
-    } catch (err) {
-      console.warn(
-        `CanopyCMS: Could not map the changed entries of ${context.branch.name} to editor links:`,
-        getErrorMessage(err),
-      )
-    }
+    await Promise.all(
+      paths.map(async (relativePath) => {
+        const entryPath = entryLogicalPathOfFile(relativePath, contentRoot)
+        if (!entryPath) return
+        // A deleted entry's link would open the editor on some other entry.
+        const stat = await fs.stat(path.join(context.branchRoot, relativePath)).catch(() => null)
+        if (stat?.isFile()) entryPaths.set(relativePath, entryPath)
+      }),
+    )
     return entryPaths
   }
 
@@ -571,7 +565,7 @@ async function _createCanopyServicesInternal(
     return {
       changedPaths: submitted,
       editors: await describeEditors(editorIds, lookupEditor),
-      entryPaths: await entryPathsOrWarn(options.context, submitted),
+      entryPaths: await existingEntryPaths(options.context, submitted),
       stamped,
     }
   }

@@ -430,11 +430,42 @@ describe('buildPrSection editor links', () => {
     const links = [...section.matchAll(/\]\(([^)]*)\)/g)].map((m) => m[1])
     expect(links).toHaveLength(3)
     for (const href of links) {
-      expect(href).toMatch(/^https:\/\/cms\.example\.org\/a%28b%29\/%5Bc%5D\/d%27e\?branch=/)
-      expect(href).not.toMatch(/[\s()<>[\]'"\\`]/)
+      expect(href).toMatch(/^https:\/\/cms\.example\.org\/a%28b%29\/\[c\]\/d%27e\?branch=/)
+      expect(href).not.toMatch(/[\s()<>'"\\`]/)
     }
     expect(section.split(PR_SECTION_END)).toHaveLength(2)
     expect(section).not.toContain('<b>')
+  })
+})
+
+describe('buildPrSection length', () => {
+  it('keeps the brackets of an IPv6 editor host', () => {
+    const section = buildPrSection({
+      branch: 'b',
+      editorUrl: 'http://[::1]:3000/edit',
+      changedPaths: [],
+    })
+    expect(section).toContain('[Open this branch in the editor](http://[::1]:3000/edit?branch=b)')
+  })
+
+  it('drops the entry links, not the entries, when they would make the body too long', () => {
+    const paths = Array.from({ length: 100 }, (_, i) => `content/${'d'.repeat(250)}/p${i}.json`)
+    const input = {
+      branch: 'feature/x',
+      editorUrl: `https://cms.example.org/${'e'.repeat(500)}`,
+      changedPaths: paths,
+      entryPaths: new Map(paths.map((p) => [p, p.replace('.json', '')])),
+      description: 'x'.repeat(20_000),
+    }
+    const section = buildPrSection(input)
+    expect(section.length).toBeLessThan(65_536)
+    expect(section).toContain(`- \`${paths[99]}\`\n`)
+    expect(section).not.toContain('open in editor')
+    expect(section).toContain('[Open this branch in the editor]')
+    // A short list keeps its links.
+    expect(buildPrSection({ ...input, changedPaths: paths.slice(0, 3) })).toContain(
+      'open in editor',
+    )
   })
 })
 

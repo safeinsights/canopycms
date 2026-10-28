@@ -53,6 +53,15 @@ describe('resolveEditorUrl', () => {
     ).toBe('http://localhost:3000/edit')
   })
 
+  it('accepts an IPv6 literal host', () => {
+    expect(
+      resolveEditorUrl({
+        claimed: 'http://[::1]:3000/edit',
+        header: headers({ host: '[::1]:3000' }),
+      }),
+    ).toBe('http://[::1]:3000/edit')
+  })
+
   it('treats the default port as no port', () => {
     expect(resolveEditorUrl({ claimed, header: headers({ host: 'cms.example.org:443' }) })).toBe(
       'https://cms.example.org/edit',

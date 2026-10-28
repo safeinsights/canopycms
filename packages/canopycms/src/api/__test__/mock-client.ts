@@ -8,86 +8,20 @@ import type { CanopyApiClient } from '../client'
 import type { ApiResponse } from '../types'
 import { createLogicalPath, createPhysicalPath } from '../../paths'
 import type { ContentId } from '../../paths'
-import type {
-  BranchDeleteResponse,
-  BranchListItemResponse,
-  BranchListResponse,
-  CreateBranchBody,
-  UpdateBranchAccessBody,
-} from '../branch'
+import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, CreateBranchBody, UpdateBranchAccessBody } from '../branch'
 import type { BranchMergeResponse, SubmitBranchBody, SubmitBranchResponse } from '../branch-status'
-import type {
-  AddCommentBody,
-  AddCommentResponse,
-  CommentsResponse,
-  ResolveCommentResponse,
-} from '../comments'
-import type {
-  ContentReadResponse,
-  ContentWriteResponse,
-  ReferenceValidationResponse,
-  RenameEntryBody,
-  RenameEntryResponse,
-  ValidateReferencesBody,
-  WriteContentBody,
-} from '../content'
+import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from '../comments'
+import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse, RenameEntryBody, RenameEntryResponse, ValidateReferencesBody, WriteContentBody } from '../content'
 import type { ReferenceOptionsResponse } from '../reference-options'
 import type { ResolveReferencesBody, ResolveReferencesResponse } from '../resolve-references'
 import type { DeleteEntryResponse, EntriesResponse } from '../entries'
-import type {
-  AssetKeyBody,
-  AssetVisibilityResponse,
-  AssetsListResponse,
-  FinalizeAssetBody,
-  FinalizeAssetResponse,
-  PresignAssetBody,
-  PresignAssetResponse,
-} from '../assets'
-import type {
-  BatchGetUserMetadataBody,
-  BatchGetUserMetadataResponse,
-  GetUserMetadataResponse,
-  ListGroupsResponse,
-  PermissionsResponse,
-  SearchUsersResponse,
-  UpdatePermissionsBody,
-} from '../permissions'
-import type {
-  ExternalGroupsResponse,
-  InternalGroupsResponse,
-  UpdateInternalGroupsBody,
-  UpdateInternalGroupsResponse,
-} from '../groups'
+import type { AssetKeyBody, AssetVisibilityResponse, AssetsListResponse, FinalizeAssetBody, FinalizeAssetResponse, PresignAssetBody, PresignAssetResponse } from '../assets'
+import type { BatchGetUserMetadataBody, BatchGetUserMetadataResponse, GetUserMetadataResponse, ListGroupsResponse, PermissionsResponse, SearchUsersResponse, UpdatePermissionsBody } from '../permissions'
+import type { ExternalGroupsResponse, InternalGroupsResponse, UpdateInternalGroupsBody, UpdateInternalGroupsResponse } from '../groups'
 import type { UserInfoResponse } from '../user'
-import type {
-  AddEntryTypeApiResponse,
-  CreateCollectionApiResponse,
-  DeleteCollectionApiResponse,
-  GetCollectionApiResponse,
-  GetSchemaApiResponse,
-  InvalidateSchemaCacheApiResponse,
-  RemoveEntryTypeApiResponse,
-  UpdateCollectionApiResponse,
-  UpdateEntryTypeApiResponse,
-  UpdateOrderApiResponse,
-  UpdateOrderBody,
-} from '../schema'
-import type {
-  CreateCollectionInput,
-  CreateEntryTypeInput,
-  UpdateCollectionInput,
-  UpdateEntryTypeInput,
-} from '../../schema/schema-store-types'
-import type {
-  AdminDeleteTaskResponse,
-  AdminRetryTaskResponse,
-  AdminStatusResponse,
-  AdminTasksResponse,
-  BranchHealthResponse,
-  PurgeBranchDirResponse,
-  RepairBranchDirResponse,
-  RepairContentDuplicatesResponse,
-} from '../admin'
+import type { AddEntryTypeApiResponse, CreateCollectionApiResponse, DeleteCollectionApiResponse, GetCollectionApiResponse, GetSchemaApiResponse, InvalidateSchemaCacheApiResponse, RemoveEntryTypeApiResponse, UpdateCollectionApiResponse, UpdateEntryTypeApiResponse, UpdateOrderApiResponse, UpdateOrderBody } from '../schema'
+import type { CreateCollectionInput, CreateEntryTypeInput, UpdateCollectionInput, UpdateEntryTypeInput } from '../../schema/schema-store-types'
+import type { AdminDeleteTaskResponse, AdminRetryTaskResponse, AdminStatusResponse, AdminTasksResponse, BranchHealthResponse, PurgeBranchDirResponse, RepairBranchDirResponse, RepairContentDuplicatesResponse } from '../admin'
 
 /**
  * Type utility to convert CanopyApiClient methods to Vitest mocks.
@@ -95,9 +29,7 @@ import type {
 export type MockApiClient = {
   [K in keyof CanopyApiClient]: CanopyApiClient[K] extends Record<string, any>
     ? {
-        [M in keyof CanopyApiClient[K]]: CanopyApiClient[K][M] extends (
-          ...args: infer Args
-        ) => infer Return
+        [M in keyof CanopyApiClient[K]]: CanopyApiClient[K][M] extends (...args: infer Args) => infer Return
           ? Mock<(...args: Args) => Return>
           : never
       }
@@ -109,286 +41,93 @@ export type MockApiClient = {
  */
 export function createMockApiClient(): MockApiClient {
   return {
-    branches: {
-      list: vi.fn().mockResolvedValue(mockSuccess({ branches: [], users: [] })),
-      create: vi
-        .fn()
-        .mockResolvedValue(
-          mockSuccess({
-            branch: {
-              name: 'test-branch',
-              status: 'editing',
-              access: {},
-              createdBy: 'user-1',
-              createdAt: '2024-01-01',
-              updatedAt: '2024-01-01',
-            },
-          }),
-        ),
-      delete: vi.fn().mockResolvedValue(mockSuccess({ deleted: true })),
-      updateAccess: vi
-        .fn()
-        .mockResolvedValue(
-          mockSuccess({
-            branch: {
-              name: 'test-branch',
-              status: 'editing',
-              access: {},
-              createdBy: 'user-1',
-              createdAt: '2024-01-01',
-              updatedAt: '2024-01-01',
-            },
-          }),
-        ),
-    },
+  branches: {
+    list: vi.fn().mockResolvedValue(mockSuccess({"branches":[],"users":[]})),
+    create: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"test-branch","status":"editing","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})),
+    delete: vi.fn().mockResolvedValue(mockSuccess({"deleted":true})),
+    updateAccess: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"test-branch","status":"editing","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})),
+  },
 
-    workflow: {
-      withdraw: vi
-        .fn()
-        .mockResolvedValue(
-          mockSuccess({
-            branch: {
-              name: 'test-branch',
-              status: 'editing',
-              access: {},
-              createdBy: 'user-1',
-              createdAt: '2024-01-01',
-              updatedAt: '2024-01-01',
-            },
-          }),
-        ),
-      requestChanges: vi
-        .fn()
-        .mockResolvedValue(
-          mockSuccess({
-            branch: {
-              name: 'test-branch',
-              status: 'editing',
-              access: {},
-              createdBy: 'user-1',
-              createdAt: '2024-01-01',
-              updatedAt: '2024-01-01',
-            },
-          }),
-        ),
-      approve: vi
-        .fn()
-        .mockResolvedValue(
-          mockSuccess({
-            branch: {
-              name: 'test-branch',
-              status: 'approved',
-              access: {},
-              createdBy: 'user-1',
-              createdAt: '2024-01-01',
-              updatedAt: '2024-01-01',
-            },
-          }),
-        ),
-      markMerged: vi
-        .fn()
-        .mockResolvedValue(mockSuccess({ branch: { name: 'test-branch', status: 'archived' } })),
-      getStatus: vi
-        .fn()
-        .mockResolvedValue(
-          mockSuccess({
-            branch: {
-              name: 'test-branch',
-              status: 'editing',
-              access: {},
-              createdBy: 'user-1',
-              createdAt: '2024-01-01',
-              updatedAt: '2024-01-01',
-            },
-          }),
-        ),
-      submit: vi
-        .fn()
-        .mockResolvedValue(
-          mockSuccess({
-            branch: {
-              name: 'test-branch',
-              status: 'submitted',
-              access: {},
-              createdBy: 'user-1',
-              createdAt: '2024-01-01',
-              updatedAt: '2024-01-01',
-            },
-          }),
-        ),
-    },
+  workflow: {
+    withdraw: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"test-branch","status":"editing","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})),
+    requestChanges: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"test-branch","status":"editing","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})),
+    approve: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"test-branch","status":"approved","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})),
+    markMerged: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"test-branch","status":"archived"}})),
+    getStatus: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"test-branch","status":"editing","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})),
+    submit: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"test-branch","status":"submitted","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})),
+  },
 
-    comments: {
-      list: vi.fn().mockResolvedValue(mockSuccess({ threads: [], users: [] })),
-      add: vi
-        .fn()
-        .mockResolvedValue(
-          mockSuccess({ threadId: 'mock-thread-id', commentId: 'mock-comment-id' }),
-        ),
-      resolve: vi.fn().mockResolvedValue(mockSuccess({ resolved: true })),
-    },
+  comments: {
+    list: vi.fn().mockResolvedValue(mockSuccess({"threads":[],"users":[]})),
+    add: vi.fn().mockResolvedValue(mockSuccess({"threadId":"mock-thread-id","commentId":"mock-comment-id"})),
+    resolve: vi.fn().mockResolvedValue(mockSuccess({"resolved":true})),
+  },
 
-    content: {
-      read: vi.fn().mockResolvedValue(mockSuccess({ format: 'json', data: {} })),
-      write: vi.fn().mockResolvedValue(mockSuccess({ format: 'json', data: {} })),
-      validateReferences: vi.fn().mockResolvedValue(mockSuccess({ valid: true })),
-      renameEntry: vi.fn().mockResolvedValue(mockSuccess({ newPath: 'content/posts/new-slug' })),
-      getReferenceOptions: vi.fn().mockResolvedValue(mockSuccess({ options: [] })),
-      resolveReferences: vi.fn().mockResolvedValue(mockSuccess({ resolved: {} })),
-    },
+  content: {
+    read: vi.fn().mockResolvedValue(mockSuccess({"format":"json","data":{}})),
+    write: vi.fn().mockResolvedValue(mockSuccess({"format":"json","data":{}})),
+    validateReferences: vi.fn().mockResolvedValue(mockSuccess({"valid":true})),
+    renameEntry: vi.fn().mockResolvedValue(mockSuccess({"newPath":"content/posts/new-slug"})),
+    getReferenceOptions: vi.fn().mockResolvedValue(mockSuccess({"options":[]})),
+    resolveReferences: vi.fn().mockResolvedValue(mockSuccess({"resolved":{}})),
+  },
 
-    entries: {
-      list: vi
-        .fn()
-        .mockResolvedValue(mockSuccess({ entries: [], pagination: { hasMore: false, limit: 50 } })),
-      delete: vi.fn().mockResolvedValue(mockSuccess({ deleted: true })),
-    },
+  entries: {
+    list: vi.fn().mockResolvedValue(mockSuccess({"entries":[],"pagination":{"hasMore":false,"limit":50}})),
+    delete: vi.fn().mockResolvedValue(mockSuccess({"deleted":true})),
+  },
 
-    assets: {
-      presign: vi
-        .fn()
-        .mockResolvedValue(
-          mockSuccess({
-            upload: { mode: 'proxied', stagingKey: 'asset-staging/mock', maxBytes: 52428800 },
-          }),
-        ),
-      finalize: vi
-        .fn()
-        .mockResolvedValue(
-          mockSuccess({
-            asset: {
-              hash32: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-              filename: 'sample.png',
-              slug: 'sample',
-              ext: 'png',
-              mime: 'image/png',
-              size: 1024,
-              width: 100,
-              height: 100,
-              kind: 'raster',
-              uploadedAt: '2024-01-01T00:00:00.000Z',
-              src: '/assets/t/orig/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/sample.png',
-            },
-          }),
-        ),
-      uploadProxied: vi
-        .fn()
-        .mockResolvedValue(
-          mockSuccess({
-            asset: {
-              hash32: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-              filename: 'sample.png',
-              slug: 'sample',
-              ext: 'png',
-              mime: 'image/png',
-              size: 1024,
-              width: 100,
-              height: 100,
-              kind: 'raster',
-              uploadedAt: '2024-01-01T00:00:00.000Z',
-              src: '/assets/t/orig/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/sample.png',
-            },
-          }),
-        ),
-      list: vi.fn().mockResolvedValue(mockSuccess({ assets: [] })),
-      hide: vi.fn().mockResolvedValue(mockSuccess({ hidden: true })),
-      restore: vi.fn().mockResolvedValue(mockSuccess({ hidden: false })),
-    },
+  assets: {
+    presign: vi.fn().mockResolvedValue(mockSuccess({"upload":{"mode":"proxied","stagingKey":"asset-staging/mock","maxBytes":52428800}})),
+    finalize: vi.fn().mockResolvedValue(mockSuccess({"asset":{"hash32":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","filename":"sample.png","slug":"sample","ext":"png","mime":"image/png","size":1024,"width":100,"height":100,"kind":"raster","uploadedAt":"2024-01-01T00:00:00.000Z","src":"/assets/t/orig/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/sample.png"}})),
+    uploadProxied: vi.fn().mockResolvedValue(mockSuccess({"asset":{"hash32":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","filename":"sample.png","slug":"sample","ext":"png","mime":"image/png","size":1024,"width":100,"height":100,"kind":"raster","uploadedAt":"2024-01-01T00:00:00.000Z","src":"/assets/t/orig/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/sample.png"}})),
+    list: vi.fn().mockResolvedValue(mockSuccess({"assets":[]})),
+    hide: vi.fn().mockResolvedValue(mockSuccess({"hidden":true})),
+    restore: vi.fn().mockResolvedValue(mockSuccess({"hidden":false})),
+  },
 
-    permissions: {
-      get: vi.fn().mockResolvedValue(mockSuccess({ permissions: [], version: 0 })),
-      update: vi.fn().mockResolvedValue(mockSuccess({ permissions: [] })),
-      searchUsers: vi.fn().mockResolvedValue(mockSuccess({ users: [] })),
-      listGroups: vi.fn().mockResolvedValue(mockSuccess({ groups: [] })),
-      getUserMetadata: vi.fn().mockResolvedValue(mockSuccess({ user: null })),
-      batchGetUserMetadata: vi.fn().mockResolvedValue(mockSuccess({ users: [] })),
-    },
+  permissions: {
+    get: vi.fn().mockResolvedValue(mockSuccess({"permissions":[],"version":0})),
+    update: vi.fn().mockResolvedValue(mockSuccess({"permissions":[]})),
+    searchUsers: vi.fn().mockResolvedValue(mockSuccess({"users":[]})),
+    listGroups: vi.fn().mockResolvedValue(mockSuccess({"groups":[]})),
+    getUserMetadata: vi.fn().mockResolvedValue(mockSuccess({"user":null})),
+    batchGetUserMetadata: vi.fn().mockResolvedValue(mockSuccess({"users":[]})),
+  },
 
-    groups: {
-      getInternal: vi.fn().mockResolvedValue(mockSuccess({ groups: [], version: 0 })),
-      updateInternal: vi.fn().mockResolvedValue(mockSuccess({})),
-      searchExternal: vi.fn().mockResolvedValue(mockSuccess({ groups: [] })),
-    },
+  groups: {
+    getInternal: vi.fn().mockResolvedValue(mockSuccess({"groups":[],"version":0})),
+    updateInternal: vi.fn().mockResolvedValue(mockSuccess({})),
+    searchExternal: vi.fn().mockResolvedValue(mockSuccess({"groups":[]})),
+  },
 
-    user: {
-      whoami: vi.fn().mockResolvedValue(mockSuccess({ userId: 'mock-user', groups: [] })),
-    },
+  user: {
+    whoami: vi.fn().mockResolvedValue(mockSuccess({"userId":"mock-user","groups":[]})),
+  },
 
-    schema: {
-      get: vi.fn().mockResolvedValue(mockSuccess({ flatSchema: [], entrySchemas: {} })),
-      getCollection: vi.fn().mockResolvedValue(mockSuccess({ collection: null })),
-      createCollection: vi
-        .fn()
-        .mockResolvedValue(mockSuccess({ collectionPath: '', contentId: '' })),
-      updateCollection: vi.fn().mockResolvedValue(mockSuccess({ success: true })),
-      deleteCollection: vi.fn().mockResolvedValue(mockSuccess({ success: true })),
-      addEntryType: vi.fn().mockResolvedValue(mockSuccess({ success: true })),
-      updateEntryType: vi.fn().mockResolvedValue(mockSuccess({ success: true })),
-      removeEntryType: vi.fn().mockResolvedValue(mockSuccess({ success: true })),
-      updateOrder: vi.fn().mockResolvedValue(mockSuccess({ success: true })),
-      invalidateSchemaCache: vi
-        .fn()
-        .mockResolvedValue(mockSuccess({ success: true, message: 'Cache invalidated' })),
-    },
+  schema: {
+    get: vi.fn().mockResolvedValue(mockSuccess({"flatSchema":[],"entrySchemas":{}})),
+    getCollection: vi.fn().mockResolvedValue(mockSuccess({"collection":null})),
+    createCollection: vi.fn().mockResolvedValue(mockSuccess({"collectionPath":"","contentId":""})),
+    updateCollection: vi.fn().mockResolvedValue(mockSuccess({"success":true})),
+    deleteCollection: vi.fn().mockResolvedValue(mockSuccess({"success":true})),
+    addEntryType: vi.fn().mockResolvedValue(mockSuccess({"success":true})),
+    updateEntryType: vi.fn().mockResolvedValue(mockSuccess({"success":true})),
+    removeEntryType: vi.fn().mockResolvedValue(mockSuccess({"success":true})),
+    updateOrder: vi.fn().mockResolvedValue(mockSuccess({"success":true})),
+    invalidateSchemaCache: vi.fn().mockResolvedValue(mockSuccess({"success":true,"message":"Cache invalidated"})),
+  },
 
-    admin: {
-      branchHealth: vi
-        .fn()
-        .mockResolvedValue(mockSuccess({ entries: [], generatedAt: '2024-01-01T00:00:00.000Z' })),
-      purgeBranchDir: vi
-        .fn()
-        .mockResolvedValue(mockSuccess({ trashedAs: '.trash-example-branch-20240101T000000Z' })),
-      repairBranchDir: vi
-        .fn()
-        .mockResolvedValue(
-          mockSuccess({
-            branch: {
-              name: 'example-branch',
-              status: 'editing',
-              access: {},
-              createdBy: 'admin',
-              createdAt: '2024-01-01T00:00:00.000Z',
-              updatedAt: '2024-01-01T00:00:00.000Z',
-            },
-            archivedAs: 'branch.json.corrupt-20240101T000000Z',
-            reset: { status: 'editing', access: {}, createdBy: 'admin' },
-          }),
-        ),
-      repairContentDuplicates: vi
-        .fn()
-        .mockResolvedValue(
-          mockSuccess({
-            resolved: [
-              {
-                id: 'a1b2c3d4e5f6',
-                keptPath: 'content/posts/dune.a1b2c3d4e5f6.json',
-                archivedAs: [
-                  '.duplicate-content-id.20240101T000000Z.post.dune-old.a1b2c3d4e5f6.json',
-                ],
-              },
-            ],
-          }),
-        ),
-      status: vi
-        .fn()
-        .mockResolvedValue(
-          mockSuccess({
-            generatedAt: '2024-01-01T00:00:00.000Z',
-            mode: 'prod',
-            queue: { pending: 0, processing: 0, completed: 0, failed: 0, corrupt: 0 },
-            worker: { state: 'absent' },
-            workerStatus: null,
-            build: { canopycmsVersion: '0.0.0' },
-            assetStore: { configured: false },
-            imageProcessing: { available: true },
-          }),
-        ),
-      listTasks: vi.fn().mockResolvedValue(mockSuccess({ tasks: [] })),
-      retryTask: vi
-        .fn()
-        .mockResolvedValue(mockSuccess({ newTaskId: '00000000-0000-0000-0000-000000000000' })),
-      deleteTask: vi.fn().mockResolvedValue(mockSuccess({ deleted: true })),
-    },
+  admin: {
+    branchHealth: vi.fn().mockResolvedValue(mockSuccess({"entries":[],"generatedAt":"2024-01-01T00:00:00.000Z"})),
+    purgeBranchDir: vi.fn().mockResolvedValue(mockSuccess({"trashedAs":".trash-example-branch-20240101T000000Z"})),
+    repairBranchDir: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"example-branch","status":"editing","access":{},"createdBy":"admin","createdAt":"2024-01-01T00:00:00.000Z","updatedAt":"2024-01-01T00:00:00.000Z"},"archivedAs":"branch.json.corrupt-20240101T000000Z","reset":{"status":"editing","access":{},"createdBy":"admin"}})),
+    repairContentDuplicates: vi.fn().mockResolvedValue(mockSuccess({"resolved":[{"id":"a1b2c3d4e5f6","keptPath":"content/posts/dune.a1b2c3d4e5f6.json","archivedAs":[".duplicate-content-id.20240101T000000Z.post.dune-old.a1b2c3d4e5f6.json"]}]})),
+    status: vi.fn().mockResolvedValue(mockSuccess({"generatedAt":"2024-01-01T00:00:00.000Z","mode":"prod","queue":{"pending":0,"processing":0,"completed":0,"failed":0,"corrupt":0},"worker":{"state":"absent"},"workerStatus":null,"build":{"canopycmsVersion":"0.0.0"},"assetStore":{"configured":false},"imageProcessing":{"available":true}})),
+    listTasks: vi.fn().mockResolvedValue(mockSuccess({"tasks":[]})),
+    retryTask: vi.fn().mockResolvedValue(mockSuccess({"newTaskId":"00000000-0000-0000-0000-000000000000"})),
+    deleteTask: vi.fn().mockResolvedValue(mockSuccess({"deleted":true})),
+  },
   } as MockApiClient
 }
 
@@ -409,141 +148,107 @@ export function mockForbidden(): ApiResponse<never> {
 }
 
 export function mockBranchListResponse(): BranchListResponse {
-  return mockSuccess({ branches: [], users: [] })
+  return mockSuccess({"branches":[],"users":[]})
 }
 
 export function mockBranchListItemResponse(): BranchListItemResponse {
-  return mockSuccess({
-    branch: {
-      name: 'test-branch',
-      status: 'editing',
-      access: {},
-      createdBy: 'user-1',
-      createdAt: '2024-01-01',
-      updatedAt: '2024-01-01',
-    },
-  })
+  return mockSuccess({"branch":{"name":"test-branch","status":"editing","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})
 }
 
 export function mockBranchDeleteResponse(): BranchDeleteResponse {
-  return mockSuccess({ deleted: true })
+  return mockSuccess({"deleted":true})
 }
 
 export function mockBranchMergeResponse(): BranchMergeResponse {
-  return mockSuccess({ branch: { name: 'test-branch', status: 'archived' } })
+  return mockSuccess({"branch":{"name":"test-branch","status":"archived"}})
 }
 
 export function mockSubmitBranchResponse(): SubmitBranchResponse {
-  return mockSuccess({
-    branch: {
-      name: 'test-branch',
-      status: 'submitted',
-      access: {},
-      createdBy: 'user-1',
-      createdAt: '2024-01-01',
-      updatedAt: '2024-01-01',
-    },
-  })
+  return mockSuccess({"branch":{"name":"test-branch","status":"submitted","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})
 }
 
 export function mockCommentsResponse(): CommentsResponse {
-  return mockSuccess({ threads: [], users: [] })
+  return mockSuccess({"threads":[],"users":[]})
 }
 
 export function mockAddCommentResponse(): AddCommentResponse {
-  return mockSuccess({ threadId: 'mock-thread-id', commentId: 'mock-comment-id' })
+  return mockSuccess({"threadId":"mock-thread-id","commentId":"mock-comment-id"})
 }
 
 export function mockResolveCommentResponse(): ResolveCommentResponse {
-  return mockSuccess({ resolved: true })
+  return mockSuccess({"resolved":true})
 }
 
 export function mockContentReadResponse(): ContentReadResponse {
-  return mockSuccess({ format: 'json', data: {} })
+  return mockSuccess({"format":"json","data":{}})
 }
 
 export function mockContentWriteResponse(): ContentWriteResponse {
-  return mockSuccess({ format: 'json', data: {} })
+  return mockSuccess({"format":"json","data":{}})
 }
 
 export function mockReferenceValidationResponse(): ReferenceValidationResponse {
-  return mockSuccess({ valid: true })
+  return mockSuccess({"valid":true})
 }
 
 export function mockRenameEntryResponse(): RenameEntryResponse {
-  return mockSuccess({ newPath: 'content/posts/new-slug' })
+  return mockSuccess({"newPath":"content/posts/new-slug"})
 }
 
 export function mockReferenceOptionsResponse(): ReferenceOptionsResponse {
-  return mockSuccess({ options: [] })
+  return mockSuccess({"options":[]})
 }
 
 export function mockResolveReferencesResponse(): ResolveReferencesResponse {
-  return mockSuccess({ resolved: {} })
+  return mockSuccess({"resolved":{}})
 }
 
 export function mockEntriesResponse(): EntriesResponse {
-  return mockSuccess({ entries: [], pagination: { hasMore: false, limit: 50 } })
+  return mockSuccess({"entries":[],"pagination":{"hasMore":false,"limit":50}})
 }
 
 export function mockDeleteEntryResponse(): DeleteEntryResponse {
-  return mockSuccess({ deleted: true })
+  return mockSuccess({"deleted":true})
 }
 
 export function mockPresignAssetResponse(): PresignAssetResponse {
-  return mockSuccess({
-    upload: { mode: 'proxied', stagingKey: 'asset-staging/mock', maxBytes: 52428800 },
-  })
+  return mockSuccess({"upload":{"mode":"proxied","stagingKey":"asset-staging/mock","maxBytes":52428800}})
 }
 
 export function mockFinalizeAssetResponse(): FinalizeAssetResponse {
-  return mockSuccess({
-    asset: {
-      hash32: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-      filename: 'sample.png',
-      slug: 'sample',
-      ext: 'png',
-      mime: 'image/png',
-      size: 1024,
-      width: 100,
-      height: 100,
-      kind: 'raster',
-      uploadedAt: '2024-01-01T00:00:00.000Z',
-      src: '/assets/t/orig/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/sample.png',
-    },
-  })
+  return mockSuccess({"asset":{"hash32":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","filename":"sample.png","slug":"sample","ext":"png","mime":"image/png","size":1024,"width":100,"height":100,"kind":"raster","uploadedAt":"2024-01-01T00:00:00.000Z","src":"/assets/t/orig/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/sample.png"}})
 }
 
 export function mockAssetsListResponse(): AssetsListResponse {
-  return mockSuccess({ assets: [] })
+  return mockSuccess({"assets":[]})
 }
 
 export function mockAssetVisibilityResponse(): AssetVisibilityResponse {
-  return mockSuccess({ hidden: true })
+  return mockSuccess({"hidden":true})
 }
 
 export function mockPermissionsResponse(): PermissionsResponse {
-  return mockSuccess({ permissions: [], version: 0 })
+  return mockSuccess({"permissions":[],"version":0})
 }
 
 export function mockSearchUsersResponse(): SearchUsersResponse {
-  return mockSuccess({ users: [] })
+  return mockSuccess({"users":[]})
 }
 
 export function mockListGroupsResponse(): ListGroupsResponse {
-  return mockSuccess({ groups: [] })
+  return mockSuccess({"groups":[]})
 }
 
 export function mockGetUserMetadataResponse(): GetUserMetadataResponse {
-  return mockSuccess({ user: null })
+  return mockSuccess({"user":null})
 }
 
 export function mockBatchGetUserMetadataResponse(): BatchGetUserMetadataResponse {
-  return mockSuccess({ users: [] })
+  return mockSuccess({"users":[]})
 }
 
 export function mockInternalGroupsResponse(): InternalGroupsResponse {
-  return mockSuccess({ groups: [], version: 0 })
+  return mockSuccess({"groups":[],"version":0})
 }
 
 export function mockUpdateInternalGroupsResponse(): UpdateInternalGroupsResponse {
@@ -551,109 +256,81 @@ export function mockUpdateInternalGroupsResponse(): UpdateInternalGroupsResponse
 }
 
 export function mockExternalGroupsResponse(): ExternalGroupsResponse {
-  return mockSuccess({ groups: [] })
+  return mockSuccess({"groups":[]})
 }
 
 export function mockUserInfoResponse(): UserInfoResponse {
-  return mockSuccess({ userId: 'mock-user', groups: [] })
+  return mockSuccess({"userId":"mock-user","groups":[]})
 }
 
 export function mockGetSchemaApiResponse(): GetSchemaApiResponse {
-  return mockSuccess({ flatSchema: [], entrySchemas: {} })
+  return mockSuccess({"flatSchema":[],"entrySchemas":{}})
 }
 
 export function mockGetCollectionApiResponse(): GetCollectionApiResponse {
-  return mockSuccess({ collection: null })
+  return mockSuccess({"collection":null})
 }
 
 export function mockCreateCollectionApiResponse(): CreateCollectionApiResponse {
-  return mockSuccess({ collectionPath: createLogicalPath(''), contentId: '' as ContentId })
+  return mockSuccess({"collectionPath":createLogicalPath(""),"contentId":"" as ContentId})
 }
 
 export function mockUpdateCollectionApiResponse(): UpdateCollectionApiResponse {
-  return mockSuccess({ success: true })
+  return mockSuccess({"success":true})
 }
 
 export function mockDeleteCollectionApiResponse(): DeleteCollectionApiResponse {
-  return mockSuccess({ success: true })
+  return mockSuccess({"success":true})
 }
 
 export function mockAddEntryTypeApiResponse(): AddEntryTypeApiResponse {
-  return mockSuccess({ success: true })
+  return mockSuccess({"success":true})
 }
 
 export function mockUpdateEntryTypeApiResponse(): UpdateEntryTypeApiResponse {
-  return mockSuccess({ success: true })
+  return mockSuccess({"success":true})
 }
 
 export function mockRemoveEntryTypeApiResponse(): RemoveEntryTypeApiResponse {
-  return mockSuccess({ success: true })
+  return mockSuccess({"success":true})
 }
 
 export function mockUpdateOrderApiResponse(): UpdateOrderApiResponse {
-  return mockSuccess({ success: true })
+  return mockSuccess({"success":true})
 }
 
 export function mockInvalidateSchemaCacheApiResponse(): InvalidateSchemaCacheApiResponse {
-  return mockSuccess({ success: true, message: 'Cache invalidated' })
+  return mockSuccess({"success":true,"message":"Cache invalidated"})
 }
 
 export function mockBranchHealthResponse(): BranchHealthResponse {
-  return mockSuccess({ entries: [], generatedAt: '2024-01-01T00:00:00.000Z' })
+  return mockSuccess({"entries":[],"generatedAt":"2024-01-01T00:00:00.000Z"})
 }
 
 export function mockPurgeBranchDirResponse(): PurgeBranchDirResponse {
-  return mockSuccess({ trashedAs: '.trash-example-branch-20240101T000000Z' })
+  return mockSuccess({"trashedAs":".trash-example-branch-20240101T000000Z"})
 }
 
 export function mockRepairBranchDirResponse(): RepairBranchDirResponse {
-  return mockSuccess({
-    branch: {
-      name: 'example-branch',
-      status: 'editing',
-      access: {},
-      createdBy: 'admin',
-      createdAt: '2024-01-01T00:00:00.000Z',
-      updatedAt: '2024-01-01T00:00:00.000Z',
-    },
-    archivedAs: 'branch.json.corrupt-20240101T000000Z',
-    reset: { status: 'editing', access: {}, createdBy: 'admin' },
-  })
+  return mockSuccess({"branch":{"name":"example-branch","status":"editing","access":{},"createdBy":"admin","createdAt":"2024-01-01T00:00:00.000Z","updatedAt":"2024-01-01T00:00:00.000Z"},"archivedAs":"branch.json.corrupt-20240101T000000Z","reset":{"status":"editing","access":{},"createdBy":"admin"}})
 }
 
 export function mockRepairContentDuplicatesResponse(): RepairContentDuplicatesResponse {
-  return mockSuccess({
-    resolved: [
-      {
-        id: 'a1b2c3d4e5f6',
-        keptPath: 'content/posts/dune.a1b2c3d4e5f6.json',
-        archivedAs: ['.duplicate-content-id.20240101T000000Z.post.dune-old.a1b2c3d4e5f6.json'],
-      },
-    ],
-  })
+  return mockSuccess({"resolved":[{"id":"a1b2c3d4e5f6","keptPath":"content/posts/dune.a1b2c3d4e5f6.json","archivedAs":[".duplicate-content-id.20240101T000000Z.post.dune-old.a1b2c3d4e5f6.json"]}]})
 }
 
 export function mockAdminStatusResponse(): AdminStatusResponse {
-  return mockSuccess({
-    generatedAt: '2024-01-01T00:00:00.000Z',
-    mode: 'prod',
-    queue: { pending: 0, processing: 0, completed: 0, failed: 0, corrupt: 0 },
-    worker: { state: 'absent' },
-    workerStatus: null,
-    build: { canopycmsVersion: '0.0.0' },
-    assetStore: { configured: false },
-    imageProcessing: { available: true },
-  })
+  return mockSuccess({"generatedAt":"2024-01-01T00:00:00.000Z","mode":"prod","queue":{"pending":0,"processing":0,"completed":0,"failed":0,"corrupt":0},"worker":{"state":"absent"},"workerStatus":null,"build":{"canopycmsVersion":"0.0.0"},"assetStore":{"configured":false},"imageProcessing":{"available":true}})
 }
 
 export function mockAdminTasksResponse(): AdminTasksResponse {
-  return mockSuccess({ tasks: [] })
+  return mockSuccess({"tasks":[]})
 }
 
 export function mockAdminRetryTaskResponse(): AdminRetryTaskResponse {
-  return mockSuccess({ newTaskId: '00000000-0000-0000-0000-000000000000' })
+  return mockSuccess({"newTaskId":"00000000-0000-0000-0000-000000000000"})
 }
 
 export function mockAdminDeleteTaskResponse(): AdminDeleteTaskResponse {
-  return mockSuccess({ deleted: true })
+  return mockSuccess({"deleted":true})
 }
