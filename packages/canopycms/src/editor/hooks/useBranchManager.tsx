@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSWRConfig } from 'swr'
-import { Alert, Stack, Text } from '@mantine/core'
+import { Alert, Stack, Text, Textarea } from '@mantine/core'
 import { IconAlertTriangle } from '@tabler/icons-react'
 import { openConfirm } from '../utils/confirm-modal'
 import { focusReturnProps } from '../utils/focus-return'
@@ -27,6 +27,7 @@ import type { UnsavedSummary } from './useDraftManager'
 import type { StampedEntry } from '../../stamp-on-publish'
 import { describeUnsaved } from './useBranchActions'
 import { writeEditorUrl } from './editor-history'
+import { REQUEST_CHANGES_NOTE_MAX_LENGTH } from '../review-role'
 
 const BRANCHES_LOAD_FAILED_TOAST_ID = 'canopy-branches-load-failed'
 const BRANCH_OUTCOME_UNKNOWN_TOAST_ID = 'canopy-branch-outcome-unknown'
@@ -167,21 +168,89 @@ const showWithdrawConfirmation = (
   })
 }
 
-const showRequestChangesConfirmation = (
+const showApproveConfirmation = (
   branchName: string,
+  pr: BranchPullRequest,
   onConfirm: () => Promise<void>,
   onDismiss: () => void,
+  returnFocusTo?: () => HTMLElement | null,
 ) => {
+  openConfirm({
+    title: EDITOR_ACTIONS.approve,
+    children: (
+      <Text size="sm">
+        {pr.pullRequestNumber
+          ? `Approve "${branchName}"? Its pull request stays open on GitHub for someone with access to merge it.`
+          : `Approve "${branchName}"? It stays locked until it is merged or withdrawn.`}
+      </Text>
+    ),
+    labels: { confirm: EDITOR_ACTIONS.approve, cancel: 'Cancel' },
+    confirmProps: { color: 'brand', 'data-testid': 'confirm-approve-branch' },
+    ...confirmModalHandlers(onConfirm, onDismiss),
+    ...focusReturnProps(returnFocusTo),
+  })
+}
+
+/** The request-changes dialog's body: what happens, and an optional note for the editor. */
+function RequestChangesForm({
+  branchName,
+  pr,
+  onNoteChange,
+}: {
+  branchName: string
+  pr: BranchPullRequest
+  onNoteChange: (note: string) => void
+}) {
+  const [note, setNote] = useState('')
+  return (
+    <Stack gap="sm">
+      <Text size="sm">
+        {`Send "${branchName}" back to its editor? It goes back to editing${pr.pullRequestNumber ? ', and its pull request becomes a draft' : ''}.`}
+      </Text>
+      <Textarea
+        label="Note to the editor"
+        description="Saved as a comment on the branch."
+        value={note}
+        onChange={(event) => {
+          setNote(event.currentTarget.value)
+          onNoteChange(event.currentTarget.value)
+        }}
+        maxLength={REQUEST_CHANGES_NOTE_MAX_LENGTH}
+        autosize
+        minRows={3}
+        maxRows={8}
+        // Mantine's focus trap focuses this rather than the first control, the dialog's close button.
+        data-autofocus
+        data-testid="request-changes-note"
+      />
+    </Stack>
+  )
+}
+
+/** `onConfirm` receives the note as typed; the dialog confirms before reading it. */
+const showRequestChangesConfirmation = (
+  branchName: string,
+  pr: BranchPullRequest,
+  onConfirm: (note: string) => Promise<void>,
+  onDismiss: () => void,
+  returnFocusTo?: () => HTMLElement | null,
+) => {
+  let note = ''
   openConfirm({
     title: EDITOR_ACTIONS.requestChanges,
     children: (
-      <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
-        {`Send "${branchName}" back to its editor?\n\nThis will:\n• Change the branch status back to "editing"\n• Let its editor change it and submit again`}
-      </Text>
+      <RequestChangesForm
+        branchName={branchName}
+        pr={pr}
+        onNoteChange={(value) => {
+          note = value
+        }}
+      />
     ),
     labels: { confirm: EDITOR_ACTIONS.requestChanges, cancel: 'Cancel' },
     confirmProps: { color: 'red', 'data-testid': 'confirm-request-changes' },
-    ...confirmModalHandlers(onConfirm, onDismiss),
+    ...confirmModalHandlers(() => onConfirm(note), onDismiss),
+    ...focusReturnProps(returnFocusTo),
   })
 }
 
@@ -341,6 +410,9 @@ export interface UseBranchManagerOptions {
 
   /** The entries a submit of the open branch stamped (useDraftManager's `applySubmitStamps`). */
   onStamped?: (stamped: StampedEntry[]) => void
+
+  /** A request for changes went through; the branch may now carry the reviewer's note as a comment. */
+  onChangesRequested?: (branchName: string) => void
 }
 
 export interface UseBranchManagerReturn {
@@ -359,7 +431,13 @@ export interface UseBranchManagerReturn {
   handleSubmit: (branchName: string, returnFocusTo?: () => HTMLElement | null) => Promise<void>
   /** Confirms first; the dialog returns focus to `returnFocusTo()` when given, else its opener. */
   handleWithdraw: (branchName: string, returnFocusTo?: () => HTMLElement | null) => Promise<void>
-  handleRequestChanges: (branchName: string) => Promise<void>
+  /** Confirms first; the dialog returns focus to `returnFocusTo()` when given, else its opener. */
+  handleApprove: (branchName: string, returnFocusTo?: () => HTMLElement | null) => Promise<void>
+  /** Confirms first, taking an optional note; focus returns as for `handleApprove`. */
+  handleRequestChanges: (
+    branchName: string,
+    returnFocusTo?: () => HTMLElement | null,
+  ) => Promise<void>
   handleDelete: (branchName: string) => Promise<void>
   handleReloadBranchData: () => Promise<void>
   loadBranches: () => Promise<void>
@@ -580,7 +658,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
    * after the action succeeded.
    */
   const singleFlight = async (
-    action: 'submit' | 'withdraw' | 'request-changes' | 'delete',
+    action: 'submit' | 'withdraw' | 'approve' | 'request-changes' | 'delete',
     branch: string,
     run: () => Promise<void>,
   ): Promise<void> => {
@@ -722,24 +800,74 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     )
   }
 
-  const handleRequestChanges = (branchNameForChanges: string) =>
-    singleFlight(
+  const handleApprove = (requested: string, returnFocusTo?: () => HTMLElement | null) => {
+    const branchNameToApprove = listedName(requested)
+    return singleFlight(
+      'approve',
+      branchNameToApprove,
+      () =>
+        new Promise<void>((resolve, reject) => {
+          showApproveConfirmation(
+            branchNameToApprove,
+            pullRequestOf(branchNameToApprove),
+            async () => {
+              options.setBusy(true)
+              try {
+                const result = await apiClient.workflow.approve({
+                  branch: branchNameToApprove,
+                })
+                if (!result.ok) throw actionError(result, 'Failed to approve branch')
+                notifications.show({ message: 'Branch approved', color: 'green' })
+                updateCreatedBranch(branchNameToApprove, result.data?.branch)
+                await loadBranches()
+                resolve()
+              } catch (err) {
+                await reportActionFailure(err, 'Failed to approve branch', EDITOR_ACTIONS.approve)
+                reject(err)
+              } finally {
+                options.setBusy(false)
+              }
+            },
+            () => resolve(),
+            returnFocusTo,
+          )
+        }),
+    )
+  }
+
+  const handleRequestChanges = (requested: string, returnFocusTo?: () => HTMLElement | null) => {
+    const branchNameForChanges = listedName(requested)
+    return singleFlight(
       'request-changes',
       branchNameForChanges,
       () =>
         new Promise<void>((resolve) => {
           showRequestChangesConfirmation(
             branchNameForChanges,
-            async () => {
+            pullRequestOf(branchNameForChanges),
+            async (note) => {
               options.setBusy(true)
               try {
-                const result = await apiClient.workflow.requestChanges({
-                  branch: branchNameForChanges,
-                })
+                const result = await apiClient.workflow.requestChanges(
+                  { branch: branchNameForChanges },
+                  { note: note.trim() || undefined },
+                )
                 if (!result.ok) throw actionError(result, 'Failed to request changes')
                 notifications.show({ message: 'Changes requested', color: 'blue' })
+                // The note is saved apart from the status change, so it can fail on its own;
+                // the warning stays up until read because the reviewer's words are not saved.
+                const warning = result.data?.warning
+                if (warning) {
+                  notifications.show({
+                    message: warning,
+                    color: 'yellow',
+                    autoClose: false,
+                    withCloseButton: true,
+                  })
+                }
                 updateCreatedBranch(branchNameForChanges, result.data?.branch)
                 await loadBranches()
+                options.onChangesRequested?.(branchNameForChanges)
               } catch (err) {
                 await reportActionFailure(
                   err,
@@ -752,9 +880,11 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               }
             },
             () => resolve(),
+            returnFocusTo,
           )
         }),
     )
+  }
 
   /** After a delete: drop it from the created-branch overlay, and leave it if it is open. */
   const leaveDeletedBranch = (deleted: string, fresh: BranchesData | undefined) => {
@@ -863,6 +993,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     addCreatedBranch,
     handleSubmit,
     handleWithdraw,
+    handleApprove,
     handleRequestChanges,
     handleDelete,
     handleReloadBranchData,

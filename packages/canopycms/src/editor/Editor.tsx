@@ -397,6 +397,8 @@ const EditorContent: React.FC<EditorProps> = ({
     labels: [],
   }))
   const applySubmitStampsRef = useRef<(stamped: readonly StampedEntry[]) => void>(() => {})
+  // The comment system comes later too; a request for changes may have added a branch comment.
+  const reloadCommentsRef = useRef<(branch: string) => void>(() => {})
   const {
     branchName: branchNameState,
     setBranchName,
@@ -407,6 +409,7 @@ const EditorContent: React.FC<EditorProps> = ({
     addCreatedBranch,
     handleSubmit,
     handleWithdraw,
+    handleApprove,
     handleRequestChanges,
     handleDelete,
     handleReloadBranchData,
@@ -419,6 +422,7 @@ const EditorContent: React.FC<EditorProps> = ({
     // The draft manager comes later, as it depends on this hook's branch.
     getUnsaved: () => resolveUnsavedRef.current(),
     onStamped: (stamped) => applySubmitStampsRef.current(stamped),
+    onChangesRequested: (branch) => reloadCommentsRef.current(branch),
   })
 
   // Content mutations (add/delete/rename/reorder entries) are locked whenever the
@@ -687,6 +691,7 @@ const EditorContent: React.FC<EditorProps> = ({
     handleJumpToField,
     handleJumpToEntry,
     handleJumpToBranch,
+    loadComments,
   } = useCommentSystem({
     branchName: branchNameState,
     selectedPath,
@@ -699,6 +704,10 @@ const EditorContent: React.FC<EditorProps> = ({
     onCommentsChange: setCommentsForBranchSummaries,
     onRevealForm: revealForm,
   })
+
+  reloadCommentsRef.current = (branch) => {
+    if (branch === branchNameState) void loadComments(branch)
+  }
 
   const {
     groupsData,
@@ -2113,6 +2122,7 @@ const EditorContent: React.FC<EditorProps> = ({
               draftStorageFailed={draftStorageFailed}
               userContext={userContext}
               branchCreatedBy={currentBranch?.createdBy}
+              branchPullRequestState={currentBranch?.pullRequestState}
               branchAccess={currentBranch?.access}
               // Fail-closed for the same reason branchContentLocked above is:
               // isProtected/writeBlocked gate real actions in EditorHeader and EntryHeader
@@ -2151,6 +2161,16 @@ const EditorContent: React.FC<EditorProps> = ({
               onWithdraw={(returnFocusTo) => {
                 if (branchNameState && !isSaveAllRunning()) {
                   handleWithdraw(branchNameState, returnFocusTo).catch(console.error)
+                }
+              }}
+              onApprove={(returnFocusTo) => {
+                if (branchNameState && !isSaveAllRunning()) {
+                  handleApprove(branchNameState, returnFocusTo).catch(console.error)
+                }
+              }}
+              onRequestChanges={(returnFocusTo) => {
+                if (branchNameState && !isSaveAllRunning()) {
+                  handleRequestChanges(branchNameState, returnFocusTo).catch(console.error)
                 }
               }}
             />
@@ -2423,6 +2443,9 @@ const EditorContent: React.FC<EditorProps> = ({
                   onWithdraw={(name) => {
                     if (name === branchNameState && isSaveAllRunning()) return
                     handleWithdraw(name).catch((err) => console.error(err))
+                  }}
+                  onApprove={(name) => {
+                    handleApprove(name).catch((err) => console.error(err))
                   }}
                   onRequestChanges={(name) => {
                     handleRequestChanges(name).catch((err) => console.error(err))

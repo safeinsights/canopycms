@@ -203,10 +203,11 @@ describe('EditorHeader - locked-down branch', () => {
   })
 
   it.each([RESERVED_GROUPS.ADMINS, RESERVED_GROUPS.REVIEWERS])(
-    'offers Withdraw to a member of %s',
+    'offers Approve and Request changes to a member of %s, whom the lockdown still admits',
     (group) => {
       renderHeader({ ...lockedProps, userContext: { userId: 'boss', groups: [group] } })
-      expect(screen.getByTestId('withdraw-button').getAttribute('aria-disabled')).toBeNull()
+      expect(screen.getByTestId('approve-button').getAttribute('aria-disabled')).toBeNull()
+      expect(screen.getByTestId('request-changes-button').getAttribute('aria-disabled')).toBeNull()
     },
   )
 })
@@ -1740,5 +1741,188 @@ describe('EditorHeader - bar tooltips', () => {
     renderHeader({ ...owner, modifiedCount: 2 })
     expect(await tooltipGap(screen.getByTestId('branch-actions-button'))).toBeLessThan(10)
     expect((await screen.findByRole('tooltip')).textContent).toBe('Branch actions')
+  })
+})
+
+describe('EditorHeader - review actions', () => {
+  const originalMatchMedia = window.matchMedia
+  /** A window below `md`: max-width queries match, min-width ones don't. */
+  const stubNarrowWindow = () => {
+    window.matchMedia = (query: string) =>
+      ({
+        matches: query.startsWith('(max-width:'),
+        media: query,
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      }) as MediaQueryList
+  }
+  const inReview = {
+    branchStatus: 'submitted',
+    branchWriteBlocked: true,
+    hasUnsavedChanges: false,
+    modifiedCount: 0,
+    branchCreatedBy: 'maker',
+    branchAccess: { allowedUsers: ['maker'] },
+  } satisfies Partial<HeadersProps>
+  const reviewer = { userId: 'rita', groups: [RESERVED_GROUPS.REVIEWERS] }
+  const creatorAdmin = { userId: 'maker', groups: [RESERVED_GROUPS.ADMINS] }
+  const REASON = /The pull request was closed on GitHub\./
+
+  afterEach(() => {
+    window.matchMedia = originalMatchMedia
+    cleanup()
+  })
+
+  it("offers a reviewer of someone else's submission Approve and Request changes, not Withdraw", () => {
+    renderHeader({ ...inReview, userContext: reviewer })
+    const approve = screen.getByTestId('approve-button')
+    expect(approve.textContent).toBe('Approve')
+    expect(approve.getAttribute('aria-disabled')).toBeNull()
+    expect(screen.getByTestId('request-changes-button').textContent).toBe('Request changes')
+    expect(screen.queryByTestId('withdraw-button')).toBeNull()
+    expect(screen.queryByTestId('submit-button')).toBeNull()
+  })
+
+  it('offers an admin who did not make the branch the same', () => {
+    renderHeader({ ...inReview, userContext: { userId: 'adam', groups: [RESERVED_GROUPS.ADMINS] } })
+    expect(screen.getByTestId('approve-button')).toBeTruthy()
+    expect(screen.queryByTestId('withdraw-button')).toBeNull()
+  })
+
+  it('still offers an admin who made the branch Withdraw', () => {
+    renderHeader({ ...inReview, userContext: creatorAdmin })
+    expect(screen.getByTestId('withdraw-button').getAttribute('aria-disabled')).toBeNull()
+    expect(screen.queryByTestId('approve-button')).toBeNull()
+    expect(screen.queryByTestId('request-changes-button')).toBeNull()
+  })
+
+  it('still offers a reviewer given access to the branch Withdraw', () => {
+    renderHeader({
+      ...inReview,
+      branchAccess: { allowedUsers: ['maker', 'rita'] },
+      userContext: reviewer,
+    })
+    expect(screen.getByTestId('withdraw-button')).toBeTruthy()
+    expect(screen.queryByTestId('approve-button')).toBeNull()
+  })
+
+  it('shows only Request changes once approved', () => {
+    renderHeader({ ...inReview, branchStatus: 'approved', userContext: reviewer })
+    expect(screen.getByTestId('request-changes-button')).toBeTruthy()
+    expect(screen.queryByTestId('approve-button')).toBeNull()
+    expect(screen.queryByTestId('withdraw-button')).toBeNull()
+  })
+
+  it('leaves the protected base branch stuck in review to Withdraw', () => {
+    renderHeader({ ...inReview, branchIsProtected: true, userContext: reviewer })
+    expect(screen.getByTestId('withdraw-button')).toBeTruthy()
+    expect(screen.queryByTestId('approve-button')).toBeNull()
+  })
+
+  it('opens the dialogs with where focus returns, from the wide buttons', async () => {
+    const onApprove = vi.fn()
+    const onRequestChanges = vi.fn()
+    renderHeader({ ...inReview, userContext: reviewer, onApprove, onRequestChanges })
+
+    await userEvent.click(screen.getByTestId('approve-button'))
+    await userEvent.click(screen.getByTestId('request-changes-button'))
+
+    expect(onApprove).toHaveBeenCalledTimes(1)
+    expect(onRequestChanges).toHaveBeenCalledTimes(1)
+    for (const handler of [onApprove, onRequestChanges]) {
+      const returnFocusTo = handler.mock.calls[0][0] as () => HTMLElement | null
+      expect(returnFocusTo()).toBe(screen.getByTestId('request-changes-button'))
+    }
+  })
+
+  it('does not tell a reviewer with unsaved edits to withdraw, which the bar no longer offers', async () => {
+    renderHeader({ ...inReview, userContext: reviewer, modifiedCount: 2 })
+    act(() => screen.getByTestId('branch-unsaved-count').focus())
+    const tooltip = await screen.findByRole('tooltip')
+    expect(tooltip.textContent).toContain('2 unsaved edits in this browser.')
+    expect(tooltip.textContent).not.toContain('Withdraw')
+  })
+
+  it('disables both, saying the pull request was closed, and acts on neither click', async () => {
+    const onApprove = vi.fn()
+    const onRequestChanges = vi.fn()
+    renderHeader({
+      ...inReview,
+      branchPullRequestState: 'closed',
+      userContext: reviewer,
+      onApprove,
+      onRequestChanges,
+    })
+
+    for (const id of ['approve-button', 'request-changes-button']) {
+      const button = screen.getByTestId(id)
+      expect(button.getAttribute('aria-disabled')).toBe('true')
+      await userEvent.click(button)
+      act(() => button.focus())
+      expect((await screen.findByRole('tooltip')).textContent).toMatch(REASON)
+      act(() => button.blur())
+    }
+    expect(onApprove).not.toHaveBeenCalled()
+    expect(onRequestChanges).not.toHaveBeenCalled()
+  })
+
+  it('holds both while a Save all runs or the bar is busy', () => {
+    renderHeader({
+      ...inReview,
+      userContext: reviewer,
+      saveAllProgress: { done: 1, total: 2 },
+    })
+    expect(screen.getByTestId('approve-button').getAttribute('aria-disabled')).toBe('true')
+    expect(screen.getByTestId('request-changes-button').getAttribute('aria-disabled')).toBe('true')
+    cleanup()
+
+    renderHeader({ ...inReview, userContext: reviewer, busy: true })
+    expect(screen.getByTestId('approve-button').getAttribute('aria-disabled')).toBe('true')
+  })
+
+  it('below md, keeps Approve visible and moves Request changes under its caret', async () => {
+    stubNarrowWindow()
+    const onApprove = vi.fn()
+    const onRequestChanges = vi.fn()
+    renderHeader({ ...inReview, userContext: reviewer, onApprove, onRequestChanges })
+
+    expect(screen.queryByTestId('request-changes-button')).toBeNull()
+    await userEvent.click(screen.getByTestId('approve-button'))
+    expect(onApprove).toHaveBeenCalledTimes(1)
+
+    await userEvent.click(screen.getByTestId('branch-actions-button'))
+    const menu = await screen.findByRole('menu')
+    expect(within(menu).queryByTestId('approve-menu-item')).toBeNull()
+    await userEvent.click(within(menu).getByTestId('request-changes-menu-item'))
+    expect(onRequestChanges).toHaveBeenCalledTimes(1)
+  })
+
+  it('below md, shows Request changes alone, with no caret, once approved', () => {
+    stubNarrowWindow()
+    renderHeader({ ...inReview, branchStatus: 'approved', userContext: reviewer })
+    expect(screen.getByTestId('request-changes-button')).toBeTruthy()
+    expect(screen.queryByTestId('approve-button')).toBeNull()
+    expect(screen.queryByTestId('branch-actions-button')).toBeNull()
+  })
+
+  it('below md, blocks the caret item with the closed-pull-request reason', async () => {
+    stubNarrowWindow()
+    renderHeader({ ...inReview, branchPullRequestState: 'closed', userContext: reviewer })
+    await userEvent.click(screen.getByTestId('branch-actions-button'))
+    const item = await screen.findByTestId('request-changes-menu-item')
+    expect(item.getAttribute('aria-disabled')).toBe('true')
+    expect(item.textContent).toMatch(REASON)
+  })
+
+  it('moves focus to Request changes when an approve leaves it as the only control', () => {
+    const props: HeadersProps = { ...defaultProps, ...inReview, userContext: reviewer }
+    const { rerender } = render(<Headers {...props} />, { wrapper: Wrapper })
+    act(() => screen.getByTestId('request-changes-button').focus())
+    rerender(<Headers {...props} branchStatus="approved" />)
+    expect(document.activeElement).toBe(screen.getByTestId('request-changes-button'))
   })
 })

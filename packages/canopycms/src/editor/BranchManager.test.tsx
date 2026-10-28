@@ -1219,29 +1219,37 @@ describe('BranchManager', () => {
     describe('a reviewer on a branch someone else submitted', () => {
       const reviewer = { userId: 'rita', groups: [RESERVED_GROUPS.REVIEWERS] }
 
-      it('leads with Request changes, and keeps Withdraw in the menu', async () => {
+      it('leads with Approve, with Request changes beside it, and keeps Withdraw in the menu', async () => {
+        const onApprove = vi.fn()
         const onRequestChanges = vi.fn()
         renderBranchManager({
           branches: baseBranches,
           currentBranchName: 'feature/test',
           user: reviewer,
+          onApprove,
           onRequestChanges,
           mode: 'prod',
         })
 
-        const primary = screen.getByTestId('request-changes-branch-button-feature/test')
-        expect(primary.textContent).toBe('Request changes')
+        const primary = screen.getByTestId('approve-branch-button-feature/test')
+        expect(primary.textContent).toBe('Approve')
         expect(primary.closest('[role="menu"]')).toBeNull()
         await userEvent.click(primary)
+        expect(onApprove).toHaveBeenCalledWith('feature/test')
+
+        const secondary = screen.getByTestId('request-changes-branch-button-feature/test')
+        expect(secondary.closest('[role="menu"]')).toBeNull()
+        await userEvent.click(secondary)
         expect(onRequestChanges).toHaveBeenCalledWith('feature/test')
 
         await openMenu('feature/test')
+        expect(screen.getAllByTestId('approve-branch-button-feature/test')).toHaveLength(1)
         expect(screen.getAllByTestId('request-changes-branch-button-feature/test')).toHaveLength(1)
         const withdraw = screen.getByTestId('withdraw-branch-button-feature/test')
         expect(withdraw.closest('[role="menu"]')).not.toBeNull()
       })
 
-      it('blocks the primary Request changes, saying why, once the pull request is closed', async () => {
+      it('blocks Approve and Request changes, saying why, once the pull request is closed', async () => {
         const branches: BranchSummary[] = [{ ...baseBranches[1], pullRequestState: 'closed' }]
         renderBranchManager({
           branches,
@@ -1250,8 +1258,13 @@ describe('BranchManager', () => {
           mode: 'prod',
         })
 
-        const primary = screen.getByTestId('request-changes-branch-button-feature/test')
+        const primary = screen.getByTestId('approve-branch-button-feature/test')
         expect(primary.getAttribute('aria-disabled')).toBe('true')
+        expect(
+          screen
+            .getByTestId('request-changes-branch-button-feature/test')
+            .getAttribute('aria-disabled'),
+        ).toBe('true')
         await userEvent.hover(primary)
         expect(await screen.findByText(/The pull request was closed on GitHub\./)).toBeTruthy()
       })
@@ -1350,11 +1363,17 @@ describe('BranchManager', () => {
         expect(blocked.hasAttribute('disabled')).toBe(false)
         expect(blocked.hasAttribute('data-disabled')).toBe(false)
 
-        // Withdraw is the item above it, enabled; ArrowDown must land on the blocked one.
-        const withdraw = screen.getByTestId('withdraw-branch-button-feature/test')
-        withdraw.focus()
+        // Approve is the item above it, blocked too; ArrowDown must land on this blocked one.
+        const approve = screen.getByTestId('approve-branch-button-feature/test')
+        expect(approve.getAttribute('aria-disabled')).toBe('true')
+        approve.focus()
         await userEvent.keyboard('{ArrowDown}')
         expect(document.activeElement).toBe(blocked)
+        // Withdraw follows, enabled: a blocked item does not end the arrow-key order.
+        await userEvent.keyboard('{ArrowDown}')
+        expect(document.activeElement).toBe(
+          screen.getByTestId('withdraw-branch-button-feature/test'),
+        )
       })
 
       it('does nothing, and leaves the menu open, when chosen', async () => {

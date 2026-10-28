@@ -8,9 +8,7 @@ import { defineEndpoint } from './route-builder'
 import { syncConvertToDraft } from './github-sync'
 import { CommentStore } from '../comment-store'
 import { getErrorMessage } from '../utils/error'
-
-/** Longest note a reviewer can attach to a request for changes. */
-export const REQUEST_CHANGES_NOTE_MAX_LENGTH = 2000
+import { REQUEST_CHANGES_NOTE_MAX_LENGTH } from '../editor/review-role'
 
 /** Optional on the wire: a bodiless request means no note. */
 const requestChangesBodySchema = z

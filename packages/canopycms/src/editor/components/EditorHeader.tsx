@@ -13,11 +13,12 @@ import {
 } from '@mantine/core'
 import { useMediaQuery, useMergedRef } from '@mantine/hooks'
 import { IconChevronDown, IconLock } from '@tabler/icons-react'
-import type { BranchStatus } from '../../types'
+import type { BranchStatus, PullRequestState } from '../../types'
 import type { SaveAllProgress } from '../hooks/save-all'
 import { isAdmin, isLockedOutOfBranch, isReviewer } from '../../authorization/helpers'
 import { branchBarStatus, describeBranchLock, type BranchBarStatus } from '../branch-lock'
-import { EDITOR_ACTIONS } from '../copy'
+import { CLOSED_PULL_REQUEST_REASON, EDITOR_ACTIONS } from '../copy'
+import { isReviewerOfOthersReview } from '../review-role'
 import { SYSTEM_USER_ID } from '../../system-users'
 import { TopBar } from '../shell/TopBar'
 import { BranchPill } from './BranchPill'
@@ -52,6 +53,10 @@ export interface EditorHeaderProps {
   onSubmit: (returnFocusTo?: () => HTMLElement | null) => void
   /** Opens the withdraw dialog, which returns focus to `returnFocusTo()` when given. */
   onWithdraw: (returnFocusTo?: () => HTMLElement | null) => void
+  /** Opens the approve dialog, which returns focus to `returnFocusTo()` when given. */
+  onApprove?: (returnFocusTo?: () => HTMLElement | null) => void
+  /** Opens the request-changes dialog, which returns focus to `returnFocusTo()` when given. */
+  onRequestChanges?: (returnFocusTo?: () => HTMLElement | null) => void
   /** Writing drafts to localStorage failed, so they live only in this tab. */
   draftStorageFailed?: boolean
   /** Current branch status (undefined if unknown). */
@@ -59,6 +64,8 @@ export interface EditorHeaderProps {
   /** Current user context for permission checks. */
   userContext?: { userId: string; groups?: string[] }
   branchCreatedBy?: string
+  /** The PR's state as last observed; a closed one blocks Approve and Request changes. */
+  branchPullRequestState?: PullRequestState
   branchAccess?: {
     allowedUsers?: string[]
     allowedGroups?: string[]
@@ -86,8 +93,8 @@ export interface EditorHeaderProps {
 
 /**
  * The branch bar: the pill, the branch's status and its unsaved count, then the draft-storage
- * warning, Save all, the way forward and Submit or Withdraw. The open entry's own controls are in
- * `EntryHeader`.
+ * warning, Save all, the way forward and Submit or Withdraw, or to a reviewer of someone else's
+ * submission Approve and Request changes. The open entry's own controls are in `EntryHeader`.
  */
 export function EditorHeader({
   branchName,
@@ -105,10 +112,13 @@ export function EditorHeader({
   entryListFailed = false,
   onSubmit,
   onWithdraw,
+  onApprove = noopAction,
+  onRequestChanges = noopAction,
   draftStorageFailed = false,
   branchStatus,
   userContext,
   branchCreatedBy,
+  branchPullRequestState,
   branchAccess,
   branchIsProtected = false,
   branchServerProtected,
@@ -135,12 +145,13 @@ export function EditorHeader({
     branchCreatedBy,
     branchAccess,
     branchIsProtected,
+    branchPullRequestState,
     savingAll: !!saveAllProgress,
   })
   // Below `md` one split button holds the bar's actions: Save all on an editable branch, else the
   // row's way forward, with the workflow action in its caret. Withdraw leads only for a user who
   // may withdraw; anyone else gets Switch branch…, the blocked Withdraw and its reason in the
-  // caret. A protected branch keeps New branch… either way. Wide, a Withdraw the user can't take
+  // caret. A reviewer's Approve leads the same way, with Request changes in its own caret. A protected branch keeps New branch… either way. Wide, a Withdraw the user can't take
   // shows blocked, with no Switch branch… beside it: that stays in the pill's menu.
   const split = narrow && editable
   const workflowLeads = status.action === 'workflow' && !!workflow?.permitted
@@ -156,6 +167,8 @@ export function EditorHeader({
   const workflowControl = {
     onSubmit,
     onWithdraw,
+    onApprove,
+    onRequestChanges,
     controlRef: workflowRef,
     // A withdraw that leaves no workflow action returns focus to the way forward, else Save all.
     returnFocusTo: () => focusTarget(2),
@@ -185,7 +198,7 @@ export function EditorHeader({
               label={unsavedTooltip(
                 branchName ? status : undefined,
                 modifiedCount,
-                !!workflow?.permitted,
+                workflow?.kind === 'withdraw' && workflow.permitted,
               )}
               events={TOOLTIP_EVENTS}
               multiline
@@ -254,13 +267,15 @@ export function EditorHeader({
             />
           )}
           {!split && !caretOnWay && workflow && (
-            <WorkflowButton {...workflowControl} action={workflow} />
+            <WorkflowButton {...workflowControl} action={workflow} narrow={narrow} />
           )}
         </>
       }
     />
   )
 }
+
+const noopAction = () => {}
 
 const TOOLTIP_EVENTS = { hover: true, focus: true, touch: false }
 
@@ -359,7 +374,10 @@ function BranchWayButton({
 
 /** The branch's review action, as both the wide button and the narrow caret offer it. */
 interface WorkflowAction {
-  kind: 'submit' | 'withdraw'
+  /** 'review' is Approve and Request changes, for a reviewer of someone else's submission. */
+  kind: 'submit' | 'withdraw' | 'review'
+  /** Kind 'review': Approve is offered, because the branch is submitted rather than approved. */
+  offersApprove?: boolean
   /** It can't act now. */
   blocked: boolean
   /** The user may take it and the status allows it, whatever else holds it now. */
@@ -371,9 +389,16 @@ interface WorkflowAction {
 type WorkflowActionInput = Pick<
   EditorHeaderProps,
   'branchName' | 'busy' | 'branchStatus' | 'userContext' | 'branchCreatedBy' | 'branchAccess'
-> & { branchIsProtected: boolean; savingAll: boolean }
+> &
+  Pick<EditorHeaderProps, 'branchPullRequestState'> & {
+    branchIsProtected: boolean
+    savingAll: boolean
+  }
 
-/** Submit for review, or Withdraw from review once submitted or approved; null when neither shows. */
+/**
+ * Submit for review, or Withdraw from review once submitted or approved, or Approve and Request
+ * changes to a reviewer of someone else's submission; null when none shows.
+ */
 function workflowAction({
   branchName,
   busy,
@@ -382,6 +407,7 @@ function workflowAction({
   branchCreatedBy,
   branchAccess,
   branchIsProtected,
+  branchPullRequestState,
   savingAll,
 }: WorkflowActionInput): WorkflowAction | null {
   const isSubmitted = branchStatus === 'submitted'
@@ -398,6 +424,29 @@ function workflowAction({
   // Withdraw stays available as the recovery path for a base branch
   // wrongly stuck in 'submitted'.
   if (branchIsProtected && !isWithdrawable) return null
+
+  // Not on the protected base branch: a stuck 'submitted' one is recovered by withdrawing it.
+  if (
+    !branchIsProtected &&
+    isReviewerOfOthersReview(
+      {
+        status: branchStatus,
+        createdBy: branchCreatedBy,
+        users: branchAccess?.allowedUsers,
+        groups: branchAccess?.allowedGroups,
+      },
+      userContext,
+    )
+  ) {
+    const closed = branchPullRequestState === 'closed'
+    return {
+      kind: 'review',
+      offersApprove: isSubmitted,
+      blocked: !branchName || busy || savingAll || closed,
+      permitted: true,
+      reason: savingAll ? 'Wait for Save all to finish.' : closed ? CLOSED_PULL_REQUEST_REASON : '',
+    }
+  }
 
   // Who may submit/withdraw: creator, ACL access, the system branch, or an
   // admin/reviewer (alone on a locked-down branch, and even without ACL access
@@ -449,6 +498,8 @@ interface WorkflowControlProps {
   action: WorkflowAction
   onSubmit: EditorHeaderProps['onSubmit']
   onWithdraw: EditorHeaderProps['onWithdraw']
+  onApprove: NonNullable<EditorHeaderProps['onApprove']>
+  onRequestChanges: NonNullable<EditorHeaderProps['onRequestChanges']>
   /** The control's own button: the wide button, or the caret. */
   controlRef: Ref<HTMLButtonElement>
   /** Where the confirm dialog returns focus: whichever control is mounted as it closes. */
@@ -456,6 +507,119 @@ interface WorkflowControlProps {
 }
 
 function WorkflowButton({
+  narrow,
+  ...props
+}: WorkflowControlProps & {
+  /** Below `md`, where Request changes goes under a caret beside Approve. */
+  narrow: boolean
+}) {
+  return props.action.kind === 'review' ? (
+    <ReviewButtons {...props} narrow={narrow} />
+  ) : (
+    <SubmitOrWithdrawButton {...props} />
+  )
+}
+
+/**
+ * Approve (leading) and Request changes. Below `md`, Approve is a split button whose caret holds
+ * Request changes; with nothing to approve, Request changes stands alone.
+ */
+function ReviewButtons({
+  action,
+  onApprove,
+  onRequestChanges,
+  controlRef,
+  returnFocusTo,
+  narrow,
+  ...rest
+}: WorkflowControlProps & { narrow: boolean }) {
+  const approve = (ref?: Ref<HTMLButtonElement>) => (
+    <ReviewButton
+      buttonRef={ref}
+      action={action}
+      color="brand"
+      testId="approve-button"
+      label={EDITOR_ACTIONS.approve}
+      onClick={() => onApprove(returnFocusTo)}
+    />
+  )
+  const requestChanges = (ref?: Ref<HTMLButtonElement>) => (
+    <ReviewButton
+      buttonRef={ref}
+      action={action}
+      color="orange"
+      testId="request-changes-button"
+      label={EDITOR_ACTIONS.requestChanges}
+      onClick={() => onRequestChanges(returnFocusTo)}
+    />
+  )
+  if (!action.offersApprove) return requestChanges(controlRef)
+  if (!narrow) {
+    return (
+      <Group gap={8} wrap="nowrap" style={{ flexShrink: 0 }}>
+        {requestChanges(controlRef)}
+        {approve()}
+      </Group>
+    )
+  }
+  return (
+    <Button.Group
+      style={{ flexShrink: 0 }}
+      renderRoot={(props) => <div {...props} role="group" aria-label="Review controls" />}
+    >
+      {approve(controlRef)}
+      <WorkflowCaret
+        {...rest}
+        action={action}
+        onApprove={onApprove}
+        onRequestChanges={onRequestChanges}
+        returnFocusTo={returnFocusTo}
+        includeApprove={false}
+        color="brand"
+      />
+    </Button.Group>
+  )
+}
+
+/** One review button, blocked as a whole with the action's reason. */
+function ReviewButton({
+  action,
+  buttonRef,
+  color,
+  testId,
+  label,
+  onClick,
+}: {
+  action: WorkflowAction
+  buttonRef?: Ref<HTMLButtonElement>
+  color: string
+  testId: string
+  label: string
+  onClick: () => void
+}) {
+  return (
+    <Tooltip label={action.reason} disabled={!action.reason} multiline maw={320}>
+      <Button
+        ref={buttonRef}
+        size="sm"
+        variant="light"
+        color={color}
+        style={{ flexShrink: 0 }}
+        onClick={() => {
+          if (!action.blocked) onClick()
+        }}
+        // Blocked, it stays focusable (`aria-disabled`), so its reason opens on focus.
+        data-disabled={action.blocked ? true : undefined}
+        aria-disabled={action.blocked ? true : undefined}
+        data-testid={testId}
+      >
+        {label}
+      </Button>
+    </Tooltip>
+  )
+}
+
+function SubmitOrWithdrawButton({
   action,
   onSubmit,
   onWithdraw,
@@ -488,18 +652,33 @@ function WorkflowButton({
   )
 }
 
-/** Save all's caret below `md`, holding the workflow action. */
+/**
+ * The workflow action's caret below `md`, on Save all or the way forward or, for a review, beside
+ * Approve. `includeApprove` is false there, where Approve is already a button.
+ */
 function WorkflowCaret({
   action,
   onSubmit,
   onWithdraw,
+  onApprove,
+  onRequestChanges,
   controlRef,
   returnFocusTo,
-}: WorkflowControlProps) {
+  includeApprove = true,
+  color,
+}: Omit<WorkflowControlProps, 'controlRef'> & {
+  controlRef?: Ref<HTMLButtonElement>
+  includeApprove?: boolean
+  /** Matches the button it sits beside. */
+  color?: string
+}) {
   const caret = useRef<HTMLButtonElement>(null)
   const caretRef = useMergedRef(caret, controlRef)
   const menuFocus = useMenuItemFocusReturn(caret)
   const withdraw = action.kind === 'withdraw'
+  const blockedReason = action.blocked
+    ? action.reason || 'Wait for the current save or load to finish.'
+    : undefined
   return (
     // Bounded, so a blocked item's reason wraps on a phone rather than run off the screen.
     <Menu withinPortal shadow="sm" position="bottom-end" width={280} {...menuFocus.menu}>
@@ -508,6 +687,7 @@ function WorkflowCaret({
           <Button
             ref={caretRef}
             variant="light"
+            color={color}
             size="sm"
             px={8}
             aria-label="Branch actions"
@@ -519,20 +699,37 @@ function WorkflowCaret({
         </Menu.Target>
       </Tooltip>
       <Menu.Dropdown {...menuFocus.dropdown}>
-        <ReasonedMenuItem
-          data-testid={withdraw ? 'withdraw-menu-item' : 'submit-menu-item'}
-          blockedReason={
-            action.blocked
-              ? action.reason || 'Wait for the current save or load to finish.'
-              : undefined
-          }
-          onClick={() => {
-            if (withdraw) onWithdraw(returnFocusTo)
-            else onSubmit(returnFocusTo)
-          }}
-        >
-          {withdraw ? EDITOR_ACTIONS.withdrawFromReview : EDITOR_ACTIONS.submitForReview}
-        </ReasonedMenuItem>
+        {action.kind === 'review' ? (
+          <>
+            {action.offersApprove && includeApprove && (
+              <ReasonedMenuItem
+                data-testid="approve-menu-item"
+                blockedReason={blockedReason}
+                onClick={() => onApprove(returnFocusTo)}
+              >
+                {EDITOR_ACTIONS.approve}
+              </ReasonedMenuItem>
+            )}
+            <ReasonedMenuItem
+              data-testid="request-changes-menu-item"
+              blockedReason={blockedReason}
+              onClick={() => onRequestChanges(returnFocusTo)}
+            >
+              {EDITOR_ACTIONS.requestChanges}
+            </ReasonedMenuItem>
+          </>
+        ) : (
+          <ReasonedMenuItem
+            data-testid={withdraw ? 'withdraw-menu-item' : 'submit-menu-item'}
+            blockedReason={blockedReason}
+            onClick={() => {
+              if (withdraw) onWithdraw(returnFocusTo)
+              else onSubmit(returnFocusTo)
+            }}
+          >
+            {withdraw ? EDITOR_ACTIONS.withdrawFromReview : EDITOR_ACTIONS.submitForReview}
+          </ReasonedMenuItem>
+        )}
       </Menu.Dropdown>
     </Menu>
   )
