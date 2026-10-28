@@ -38,7 +38,7 @@ test.describe('Conflict Management', () => {
   test('conflict detection shows sidebar badge and form alert after rebase', async ({ page }) => {
     test.setTimeout(120_000)
 
-    const branchName = `conflict-test-${Date.now()}`
+    const branchName = `canopycms-conflict-test-${Date.now()}`
 
     // 0. Restore main content to known state (in case a previous run polluted remote.git)
     await test.step('restore clean main content', async () => {

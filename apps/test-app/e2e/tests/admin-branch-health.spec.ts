@@ -93,7 +93,7 @@ test.describe('Admin Branch Health', () => {
   })
 
   test('lists the base branch and a healthy created branch', async ({ page }) => {
-    const branchName = `healthy-${Date.now()}`
+    const branchName = `canopycms-healthy-${Date.now()}`
     await createBranchViaAPI(BASE_URL, branchName, 'admin')
 
     const adminPage = await openBranchesTab(page)
@@ -263,7 +263,7 @@ test.describe('Admin Branch Health', () => {
   test('rebase-failure indicator shows while editing, suppressed once submitted (A13)', async ({
     page,
   }) => {
-    const branchName = `rebase-fail-${Date.now()}`
+    const branchName = `canopycms-rebase-fail-${Date.now()}`
     await createBranchViaAPI(BASE_URL, branchName, 'admin')
 
     const now = new Date().toISOString()
@@ -285,7 +285,7 @@ test.describe('Admin Branch Health', () => {
   test('mark-merged is offered and works from approved, not just submitted (A14)', async ({
     page,
   }) => {
-    const branchName = `merge-approved-${Date.now()}`
+    const branchName = `canopycms-merge-approved-${Date.now()}`
     await createBranchViaAPI(BASE_URL, branchName, 'admin')
     await saveHomeChangeViaAPI(BASE_URL, branchName, 'admin')
     const submitRes = await submitBranchViaAPI(BASE_URL, branchName, 'admin')
@@ -310,7 +310,7 @@ test.describe('Admin Branch Health', () => {
   test('duplicate content IDs: the badge opens its own confirmation; cancel changes nothing, confirm archives the duplicate', async ({
     page,
   }) => {
-    const branchName = `dup-ids-${Date.now()}`
+    const branchName = `canopycms-dup-ids-${Date.now()}`
     await createBranchViaAPI(BASE_URL, branchName, 'admin')
     const { keptFile, droppedFile } = await seedDuplicateContentId(branchName)
     const repairRequests: string[] = []
