@@ -358,9 +358,6 @@ export class BranchPage {
     await confirmButton.click()
   }
 
-  // NOTE: No approve-branch-button exists in the UI. Branch approval happens
-  // outside the editor (via GitHub PR). Only request-changes is available for reviewers.
-
   /**
    * Request changes on a submitted branch (reviewer action), confirming the dialog.
    *
