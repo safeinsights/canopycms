@@ -190,7 +190,11 @@ describe('GitManager.diffNameStatusAgainst and listUntrackedFiles', () => {
     await write(clonePath, 'content/staged.md', 'staged')
     await clone.raw(['add', '--', 'content/staged.md'])
     await write(clonePath, 'content/new.md', 'untracked')
-    const indexBefore = (await fs.stat(path.join(clonePath, '.git/index'))).mtimeMs
+    // A stat-only change, which `git diff` would refresh and write back to the index.
+    const later = new Date(Date.now() + 60_000)
+    await fs.utimes(path.join(clonePath, 'content/-dash.md'), later, later)
+    const index = path.join(clonePath, '.git/index')
+    const indexBefore = { bytes: await fs.readFile(index), mtimeMs: (await fs.stat(index)).mtimeMs }
 
     expect(sorted(await manager().diffNameStatusAgainst(base))).toEqual([
       { status: 'M', path: 'content/a.md' },
@@ -199,7 +203,8 @@ describe('GitManager.diffNameStatusAgainst and listUntrackedFiles', () => {
       { status: 'D', path: 'other/x.md' },
     ])
     expect(await manager().listUntrackedFiles()).toEqual(['content/new.md'])
-    expect((await fs.stat(path.join(clonePath, '.git/index'))).mtimeMs).toBe(indexBefore)
+    expect((await fs.stat(index)).mtimeMs).toBe(indexBefore.mtimeMs)
+    expect((await fs.readFile(index)).equals(indexBefore.bytes)).toBe(true)
   })
 
   it('drops a file whose stat changed but whose content did not', async () => {
@@ -272,10 +277,12 @@ describe('GitManager.diffNameStatusAgainst and listUntrackedFiles', () => {
     ])
   })
 
-  it('stops resuming past unhashable files after 50 runs, counting the rest as changed', async () => {
-    const unreadable = (n: number) =>
-      Array.from({ length: n }, (_, i) => `content/u${String(i).padStart(3, '0')}.md`)
-    const files = [...unreadable(51), 'content/z-last.md']
+  it('resumes past at most 49 refused files, so a 50th leaves the rest changed', async () => {
+    const unreadable = Array.from(
+      { length: 50 },
+      (_, i) => `content/u${String(i).padStart(3, '0')}.md`,
+    )
+    const files = [...unreadable, 'content/z-last.md']
     for (const file of files) await write(clonePath, file, 'same')
     await clone.raw(['add', '--', ...files])
     await clone.raw(['commit', '-qm', 'many'])
@@ -285,19 +292,16 @@ describe('GitManager.diffNameStatusAgainst and listUntrackedFiles', () => {
     const lock = async (list: string[], mode: number) => {
       for (const file of list) await fs.chmod(path.join(clonePath, file), mode)
     }
+    const changed = async () => (await manager().diffNameStatusAgainst(base)).map((c) => c.path)
     try {
-      await lock(unreadable(51), 0o000)
-      // 51 refusals: the 50th run stops short of the last file, which stays changed.
-      expect((await manager().diffNameStatusAgainst(base)).map((c) => c.path)).toContain(
-        'content/z-last.md',
-      )
-      await lock(unreadable(51).slice(3), 0o644)
-      // 3 refusals: the runs resume past each and reach the last file, which matches.
-      expect((await manager().diffNameStatusAgainst(base)).map((c) => c.path).sort()).toEqual(
-        unreadable(3),
-      )
+      // 50 refusals use all 50 runs, so the last file is never hashed and stays changed.
+      await lock(unreadable, 0o000)
+      expect(await changed()).toContain('content/z-last.md')
+      // 49 refusals leave the 50th run to hash the last file, which matches.
+      await lock(unreadable.slice(49), 0o644)
+      expect((await changed()).sort()).toEqual(unreadable.slice(0, 49))
     } finally {
-      await lock(unreadable(51), 0o644)
+      await lock(unreadable, 0o644)
     }
   }, 60_000)
 

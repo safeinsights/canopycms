@@ -76,7 +76,7 @@ export function useBranchChangesData(
     const started = (startsRef.current.get(cacheKey) ?? 0) + 1
     startsRef.current.set(cacheKey, started)
     try {
-      // The branch comes from the key, so a fetch outliving a branch switch reads its own branch.
+      // The branch is read from the key the fetch was started for, never from the render.
       const data = await fetchBranchChanges(apiClient, cacheKey.slice(KEY_PREFIX.length))
       answersRef.current.set(cacheKey, data)
       return data

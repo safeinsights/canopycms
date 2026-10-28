@@ -125,12 +125,13 @@ const NO_AUTO_GC_CONFIG: readonly string[] = ['gc.auto=0', 'maintenance.auto=fal
 
 /** How long `hash-object --stdin-paths` may go without output before it is killed. */
 const HASH_INACTIVITY_TIMEOUT_MS = 60_000
-/** `hash-object` runs per diff; each run past the first skips one path git refused. */
+/**
+ * `hash-object` runs per diff: each refused path costs a run, so 49 are resumed past and a 50th
+ * leaves the paths after it unhashed.
+ */
 const MAX_HASH_RUNS = 50
 /** How long `ls-remote` may go without output before it is killed. */
 const LS_REMOTE_INACTIVITY_TIMEOUT_MS = 60_000
-const SYMLINK_MODE = '120000'
-const FILE_MODES = new Set(['100644', '100755'])
 
 /**
  * The blob SHA git gives a symlink pointing at `target`, in the object format of `likeSha` (a
@@ -1868,11 +1869,7 @@ export class GitManager {
     ])
     // -z raw output alternates ":<srcmode> <dstmode> <srcsha> <dstsha> <status>" and a path.
     const tokens = output.split('\0')
-    const changes: Array<{
-      status: 'A' | 'M' | 'D'
-      path: string
-      unhashed?: { sha: string; mode: string }
-    }> = []
+    const changes: Array<{ status: 'A' | 'M' | 'D'; path: string; unhashed?: string }> = []
     for (let i = 0; i + 1 < tokens.length; i += 2) {
       const [srcMode, dstMode, srcSha, dstSha, code] = tokens[i].slice(1).split(' ')
       const path = tokens[i + 1]
@@ -1880,13 +1877,12 @@ export class GitManager {
       if (letter === 'A' || letter === 'D') changes.push({ status: letter, path })
       else if (letter === 'M' || letter === 'T') {
         // A mode change (a chmod, a file turned symlink) is a change whatever the bytes.
-        const unhashed =
-          /^0+$/.test(dstSha) && srcMode === dstMode ? { sha: srcSha, mode: srcMode } : undefined
+        const unhashed = /^0+$/.test(dstSha) && srcMode === dstMode ? srcSha : undefined
         changes.push({ status: 'M', path, unhashed })
       }
     }
     const unchanged = await this.matchingBlobs(
-      changes.flatMap((c) => (c.unhashed ? [{ path: c.path, ...c.unhashed }] : [])),
+      changes.flatMap((c) => (c.unhashed ? [{ path: c.path, sha: c.unhashed }] : [])),
     )
     return changes
       .filter((c) => !unchanged.has(c.path))
@@ -1894,17 +1890,16 @@ export class GitManager {
   }
 
   /**
-   * The paths whose working-tree file hashes to `sha` and is of the type `mode` says, as git
-   * hashes it: a symlink's blob is its target, a file's goes through `hash-object --stdin-paths`,
-   * so its attributes' filters apply. A path that is gone, changed type or can't be hashed matches
-   * nothing, so it stays reported as changed. When git refuses a path (exit 128), having printed
+   * The paths whose working-tree file hashes to `sha`, as git hashes it: a symlink's blob is its
+   * target, a file's goes through `hash-object --stdin-paths`, so its attributes' filters apply.
+   * Callers pass only paths whose mode is unchanged, since diff-index reports the working tree's
+   * own mode. A path that is gone or can't be hashed matches nothing, so it stays reported as
+   * changed. When git refuses a path (exit 128), having printed
    * the SHAs before it, the next run resumes past that path, for at most {@link MAX_HASH_RUNS}
    * runs. A run that ends any other way (killed, timed out, a signal) stops the hashing, and the
    * paths it didn't reach stay changed.
    */
-  private async matchingBlobs(
-    files: Array<{ path: string; sha: string; mode: string }>,
-  ): Promise<Set<string>> {
+  private async matchingBlobs(files: Array<{ path: string; sha: string }>): Promise<Set<string>> {
     const matching = new Set<string>()
     const regular: Array<{ path: string; sha: string }> = []
     for (const file of files) {
@@ -1912,12 +1907,12 @@ export class GitManager {
       if (file.path.includes('\n')) continue
       const stat = await fs.lstat(path.join(this.repoPath, file.path)).catch(() => undefined)
       if (!stat) continue
-      if (file.mode === SYMLINK_MODE && stat.isSymbolicLink()) {
+      if (stat.isSymbolicLink()) {
         const target = await fs.readlink(path.join(this.repoPath, file.path)).catch(() => undefined)
         if (target !== undefined && symlinkBlobSha(target, file.sha) === file.sha) {
           matching.add(file.path)
         }
-      } else if (FILE_MODES.has(file.mode) && stat.isFile()) regular.push(file)
+      } else if (stat.isFile()) regular.push(file)
     }
     for (let start = 0, runs = 0; start < regular.length && runs < MAX_HASH_RUNS; runs++) {
       const batch = regular.slice(start)

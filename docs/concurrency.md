@@ -203,8 +203,9 @@ ff-only base-branch refresh in `refreshBaseBranchWorkspace()` and cone re-apply 
 through `invalidateBranchContentCaches()` in content-index-generation.ts, which bumps
 the `content-index` **and** `schema` markers — a rebase can pull in upstream
 `.collection.json` changes, so both caches must be told. `invalidateContentIndexesDurable()`
-(content-index marker only) is for content-only bulk mutations and has no caller:
-`ContentStore` bumps the marker itself (`recordOwnMutation()` -> `bumpContentIndexGeneration()`). Settings workspaces skip
+(content-index marker only) is for content-only bulk mutations (the duplicate-id repair in
+`api/admin-branch-health.ts`); `ContentStore` bumps the marker itself (`recordOwnMutation()` ->
+`bumpContentIndexGeneration()`). Settings workspaces skip
 markers entirely (`skipIndexMarker` on GitManager); their two mutable files follow the
 mutable-JSON recipe instead (see the table row and
 `authorization/settings-file-store.ts`).
