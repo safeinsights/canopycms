@@ -354,8 +354,11 @@ class GatewayRequestHandler {
         return {}
       },
       getPullRequest: async ({ number }, signal) => {
-        const { merged, merged_at, state, node_id } = await gateway.getPullRequest(number, signal)
-        return { merged, merged_at, state, node_id }
+        const { merged, merged_at, state, node_id, body } = await gateway.getPullRequest(
+          number,
+          signal,
+        )
+        return { merged, merged_at, state, node_id, body }
       },
       createOrUpdatePullRequest: async (input, signal) => {
         const { number, url, created } = await gateway.createOrUpdatePullRequest(input, signal)

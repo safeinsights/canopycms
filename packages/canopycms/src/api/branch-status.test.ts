@@ -718,6 +718,29 @@ describe('branch status api', () => {
       }
     })
 
+    it('records a request-derived editor URL on the branch for later comment summaries', async () => {
+      const saved = () => mockMetadataUpdate.mock.calls.at(-1)?.[0].branch
+      mockMetadataUpdate.mockClear()
+      await submitWith({
+        claimed: 'https://cms.example.org/edit',
+        headers: { 'x-forwarded-host': 'cms.example.org' },
+      })
+      expect(saved()).toHaveProperty('editorUrl', 'https://cms.example.org/edit')
+
+      // config.editorUrl is read live, and a refused URL keeps whatever was recorded before.
+      const refused: Parameters<typeof submitWith>[0][] = [
+        { configured: 'https://editor.example.org/cms', headers: {} },
+        { claimed: 'https://evil.example/edit', headers: { host: 'cms.example.org' } },
+      ]
+      for (const options of refused) {
+        mockMetadataUpdate.mockClear()
+        const consoleSpy = mockConsole()
+        await submitWith(options)
+        consoleSpy.restore()
+        expect(saved()).not.toHaveProperty('editorUrl')
+      }
+    })
+
     it('uses the configured editor URL whatever the request reports', async () => {
       const body = await submitWith({
         configured: 'https://editor.example.org/cms',

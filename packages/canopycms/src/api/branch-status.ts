@@ -202,12 +202,13 @@ const submitBranchForMergeHandler = async (
 
   // Create or update PR (sync via githubService, or async via task queue)
   const submittedAt = new Date().toISOString()
+  const editorUrl = submitEditorUrl(ctx, req, body?.editorUrl)
   const prResult = await syncSubmitPr(ctx, branchContext, {
     submitter,
     editors,
     changedPaths,
     entryPaths,
-    editorUrl: submitEditorUrl(ctx, req, body?.editorUrl),
+    editorUrl,
     submittedAt,
   })
 
@@ -232,6 +233,8 @@ const submitBranchForMergeHandler = async (
       status: 'submitted',
       submittedAt,
       ...pushed,
+      // Only a request-derived URL: config.editorUrl is read live by every later re-render.
+      ...(editorUrl && !ctx.services.config.editorUrl ? { editorUrl } : {}),
       syncFailureReason: prResult.syncFailureReason,
       pullRequestUrl: prResult.prUrl ?? branchContext.branch.pullRequestUrl,
       pullRequestNumber: prResult.prNumber ?? branchContext.branch.pullRequestNumber,

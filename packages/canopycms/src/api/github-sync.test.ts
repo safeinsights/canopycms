@@ -1,4 +1,9 @@
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { CommentStore } from '../comment-store'
 import type { GitHubService } from '../github-service'
 import type { CanopyConfig } from '../config'
 import { createMockApiContext, createMockBranchContext } from '../test-utils'
@@ -311,6 +316,59 @@ describe('syncSubmitPr (GIT-H1)', () => {
       expect(call?.body).toContain('Submitted by `Jane Doe` (`user_2abc`) via CanopyCMS.')
       expect(call?.body).toContain('- `content/pages/home.md`')
       expect(call?.body).not.toContain('jane@example.com')
+    })
+
+    it("summarizes the branch's editor comments in the section, on both paths", async () => {
+      const branchRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-sync-comments-'))
+      try {
+        await new CommentStore(branchRoot).addComment({
+          userId: 'u1',
+          text: 'Fix the intro',
+          type: 'entry',
+          entryPath: 'content/pages/home',
+        })
+        const branchContext = createMockBranchContext({ branchName: 'feature/new', branchRoot })
+        const githubService = makeGitHubService()
+        await syncSubmitPr(
+          createMockApiContext({ services: { config: baseConfig, githubService } }),
+          branchContext,
+          submission,
+        )
+        await syncSubmitPr(
+          createMockApiContext({ services: { config: baseConfig } }),
+          branchContext,
+          submission,
+        )
+        const bodies = [
+          vi.mocked(githubService.createOrUpdatePR).mock.calls[0]?.[0].body,
+          mockEnqueueTask.mock.calls[0]?.[1].payload.body,
+        ]
+        for (const body of bodies) {
+          expect(body).toContain('**1 unresolved editor comment thread**')
+          expect(body).toContain('- `content/pages/home` — `Fix the intro`')
+        }
+
+        // A comments.json the store cannot list costs only the summary.
+        await fs.writeFile(
+          path.join(branchRoot, '.canopy-meta', 'comments.json'),
+          '{"version":1,"threads":null}',
+        )
+        const consoleSpy = mockConsole()
+        const unreadable = makeGitHubService()
+        const result = await syncSubmitPr(
+          createMockApiContext({ services: { config: baseConfig, githubService: unreadable } }),
+          branchContext,
+          submission,
+        )
+        expect(result.syncStatus).toBe('synced')
+        expect(vi.mocked(unreadable.createOrUpdatePR).mock.calls[0]?.[0].body).toContain(
+          'The editor comments could not be read.',
+        )
+        expect(consoleSpy).toHaveWarned('Could not read the editor comments of feature/new')
+        consoleSpy.restore()
+      } finally {
+        await fs.rm(branchRoot, { recursive: true, force: true })
+      }
     })
 
     it('updates a known PR by replacing only its section, keeping human text', async () => {

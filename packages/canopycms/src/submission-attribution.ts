@@ -4,6 +4,7 @@ import type { CanopyUser } from './user'
 import { getErrorMessage } from './utils/error'
 import { canopyLogWarn } from './utils/logger'
 import { editorDeepLink } from './editor-url'
+import type { CommentThread } from './comment-store'
 
 /**
  * Who submitted (and edited) a branch, recorded in the submit commit's trailers
@@ -36,6 +37,15 @@ const MAX_SECTION_LENGTH = 45_000
 export const PR_SECTION_START = '<!-- canopycms:submission:start -->'
 /** @internal Exported for tests. */
 export const PR_SECTION_END = '<!-- canopycms:submission:end -->'
+
+/**
+ * The editor-comment summary, nested in the section so a comment change can replace it alone:
+ * the rest of the section is built from the submit (mergeCommentsBlock).
+ * @internal Exported for tests.
+ */
+export const PR_COMMENTS_START = '<!-- canopycms:comments:start -->'
+/** @internal Exported for tests. */
+export const PR_COMMENTS_END = '<!-- canopycms:comments:end -->'
 
 // Cc (C0/C1 controls incl. newlines), Cf (zero-width and bidi overrides), Zl/Zp
 // (Unicode line/paragraph separators) can forge a trailer line or hide text; Cs
@@ -268,6 +278,8 @@ export interface PrSectionInput {
   editorUrl?: string
   /** The entry logical path of each changed path that is an entry, for its deep link. */
   entryPaths?: ReadonlyMap<string, string>
+  /** The branch's editor comment threads (comments.json), or null when they could not be read. */
+  threads?: readonly CommentThread[] | null
 }
 
 /**
@@ -289,6 +301,91 @@ function editorLabel(editor: CleanEditor): string {
   return editor.name
     ? `${codeSpan(editor.name)} (${codeSpan(editor.userId)})`
     : codeSpan(editor.userId)
+}
+
+/** A Markdown-safe editor link for `branch` (and an entry), or undefined without a URL or branch. */
+function editorLinker(branch: string | undefined, editorUrl: string | undefined) {
+  return (entryPath?: string): string | undefined =>
+    branch && editorUrl ? markdownHref(editorDeepLink(editorUrl, branch, entryPath)) : undefined
+}
+
+const MAX_LISTED_THREADS = 50
+const MAX_EXCERPT_LENGTH = 80
+const MAX_COMMENTS_LENGTH = 15_000
+const LINE_BREAK = /\r\n?|\n|\u2028|\u2029/
+
+/**
+ * An entry path from comments.json, which is read without validation, if it is a plain
+ * logical path: the editor's `entry` param matches it exactly, so anything else links nowhere.
+ */
+function threadEntryPath(raw: unknown): string | undefined {
+  if (typeof raw !== 'string' || cleanPath(raw) !== raw) return undefined
+  return raw.split('/').every((s) => s !== '' && s !== '.' && s !== '..') ? raw : undefined
+}
+
+/**
+ * One line per unresolved thread: where it is, the first line of its first comment and a link.
+ * The excerpt is a code span of cleaned text, so a comment cannot mention, reference an issue
+ * (or close one), autolink or carry HTML; it is visible to everyone who can read the PR.
+ */
+function threadLine(thread: CommentThread, link: (entryPath?: string) => string | undefined) {
+  const entryPath = threadEntryPath(thread.entryPath)
+  const field =
+    thread.type === 'field' && typeof thread.canopyPath === 'string'
+      ? cleanText(thread.canopyPath, MAX_NAME_LENGTH)
+      : undefined
+  const where = entryPath
+    ? `${codeSpan(entryPath)}${field ? ` › ${codeSpan(field)}` : ''}`
+    : thread.type === 'branch'
+      ? 'Branch'
+      : 'An entry'
+  const [first] = Array.isArray(thread.comments) ? thread.comments : []
+  const text = typeof first?.text === 'string' ? first.text.split(LINE_BREAK)[0] : undefined
+  const excerpt = cleanText(text, MAX_EXCERPT_LENGTH)
+  const href = entryPath ? link(entryPath) : thread.type === 'branch' ? link() : undefined
+  return [
+    `- ${where}`,
+    excerpt ? ` — ${codeSpan(excerpt)}` : '',
+    href ? ` ([open in editor](${href}))` : '',
+  ].join('')
+}
+
+/**
+ * The editor-comment summary between its markers: the unresolved threads, oldest first, or
+ * that every thread is resolved, or that there are none, or that they could not be read.
+ * comments.json is read without validation, so an entry that is not an object is skipped.
+ */
+export function buildCommentsBlock(
+  threads: readonly CommentThread[] | null,
+  branch?: string,
+  editorUrl?: string,
+): string {
+  if (threads === null) {
+    return `${PR_COMMENTS_START}\nThe editor comments could not be read.\n${PR_COMMENTS_END}`
+  }
+  const open = threads
+    .filter((t) => typeof t === 'object' && t !== null && !t.resolved)
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
+  let body: string
+  if (open.length > 0) {
+    const listed = open.slice(0, MAX_LISTED_THREADS)
+    const linker = editorLinker(branch, editorUrl)
+    let lines = listed.map((t) => threadLine(t, linker))
+    // The PR body's 65,536-character limit is shared with the rest of the section: past the
+    // budget the links go, then lines from the end.
+    if (lines.join('\n').length > MAX_COMMENTS_LENGTH) {
+      lines = listed.map((t) => threadLine(t, () => undefined))
+    }
+    let shown = lines.length
+    while (shown > 0 && lines.slice(0, shown).join('\n').length > MAX_COMMENTS_LENGTH) shown--
+    lines = lines.slice(0, shown)
+    if (open.length > shown) lines.push(`- …and ${open.length - shown} more`)
+    const noun = open.length === 1 ? 'comment thread' : 'comment threads'
+    body = `**${open.length} unresolved editor ${noun}**\n\n${lines.join('\n')}`
+  } else {
+    body = threads.length > 0 ? 'All editor comments resolved.' : 'No editor comments.'
+  }
+  return `${PR_COMMENTS_START}\n${body}\n${PR_COMMENTS_END}`
 }
 
 interface SectionLayout {
@@ -314,9 +411,7 @@ function renderPrSection(input: PrSectionInput, layout: SectionLayout): string {
     parts.push(`Also edited by: ${others.map(editorLabel).join(', ')}`)
   }
 
-  const { branch, editorUrl } = input
-  const link = (entryPath?: string) =>
-    branch && editorUrl ? markdownHref(editorDeepLink(editorUrl, branch, entryPath)) : undefined
+  const link = editorLinker(input.branch, input.editorUrl)
   const branchLink = link()
   if (branchLink) parts.push(`[Open this branch in the editor](${branchLink})`)
   parts.push(
@@ -338,6 +433,14 @@ function renderPrSection(input: PrSectionInput, layout: SectionLayout): string {
     if (paths.length > layout.listed) listed.push(`- …and ${paths.length - layout.listed} more`)
     parts.push(`**Changed entries (${paths.length})**\n\n${listed.join('\n')}`)
   }
+
+  parts.push(
+    buildCommentsBlock(
+      input.threads === undefined ? [] : input.threads,
+      input.branch,
+      input.editorUrl,
+    ),
+  )
 
   // Last, so an unclosed fence or `<details>` in free Markdown cannot swallow
   // the attribution above it.
@@ -364,7 +467,8 @@ function truncateUnits(text: string, max: number): string {
  * The canopycms-owned PR body section, including its start and end markers. GitHub refuses a
  * body over 65,536 characters and the rest of the body is a human's, so a section over
  * MAX_SECTION_LENGTH loses its entry links, then the description's end, then entries from
- * the end of the list. The attribution lines themselves are never cut.
+ * the end of the list. The attribution lines themselves are never cut. The comment block counts
+ * toward it as rendered now; a re-render (mergeCommentsBlock) stays within MAX_COMMENTS_LENGTH.
  */
 export function buildPrSection(input: PrSectionInput): string {
   const raw = input.description?.trim()
@@ -395,13 +499,39 @@ export function buildPrSection(input: PrSectionInput): string {
  */
 export function mergePrSection(existing: string | null | undefined, section: string): string {
   const body = existing ?? ''
-  for (let end = body.indexOf(PR_SECTION_END); end >= 0; ) {
-    const start = body.lastIndexOf(PR_SECTION_START, end - PR_SECTION_START.length)
-    if (start >= 0) {
-      return body.slice(0, start) + section + body.slice(end + PR_SECTION_END.length)
-    }
-    end = body.indexOf(PR_SECTION_END, end + PR_SECTION_END.length)
+  const found = findPrSection(body)
+  if (found) {
+    return body.slice(0, found.start) + section + body.slice(found.end + PR_SECTION_END.length)
   }
   const human = body.split(PR_SECTION_START).join('').split(PR_SECTION_END).join('').trimEnd()
   return human ? `${human}\n\n${section}` : section
+}
+
+/** The index pair of the canopycms section in `body` (see mergePrSection), or undefined. */
+function findPrSection(body: string): { start: number; end: number } | undefined {
+  for (let end = body.indexOf(PR_SECTION_END); end >= 0; ) {
+    const start = body.lastIndexOf(PR_SECTION_START, end - PR_SECTION_START.length)
+    if (start >= 0) return { start, end }
+    end = body.indexOf(PR_SECTION_END, end + PR_SECTION_END.length)
+  }
+  return undefined
+}
+
+/**
+ * `existing` with the comment block inside its canopycms section replaced by `block`, or
+ * undefined when the section or its block is missing (a PR body written before the block
+ * existed, or edited by hand): the next submit writes both. Only markers inside the section
+ * count, and the description in it cannot spell one (neutralizeComments).
+ */
+export function mergeCommentsBlock(
+  existing: string | null | undefined,
+  block: string,
+): string | undefined {
+  const body = existing ?? ''
+  const section = findPrSection(body)
+  if (!section) return undefined
+  const start = body.indexOf(PR_COMMENTS_START, section.start)
+  const end = start < 0 ? -1 : body.indexOf(PR_COMMENTS_END, start)
+  if (start < 0 || end < 0 || end > section.end) return undefined
+  return body.slice(0, start) + block + body.slice(end + PR_COMMENTS_END.length)
 }

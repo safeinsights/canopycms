@@ -124,6 +124,7 @@ export const answers = {
       merged_at: z.string().max(64).nullable(),
       state: z.enum(['open', 'closed']),
       node_id: z.string().max(256),
+      body: pullRequestText.body.nullable(),
     })
     .strict(),
   createOrUpdatePullRequest: pullRequestRef.extend({ created: z.boolean() }).strict(),

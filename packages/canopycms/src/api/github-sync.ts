@@ -9,6 +9,7 @@ import { sanitizeBranchName } from '../paths/branch-name'
 import { buildPrSection, mergePrSection, type SubmissionEditor } from '../submission-attribution'
 import { isNoCommitsBetweenError, isRefAlreadyGoneError } from '../github-service'
 import { baseBranchOf } from '../utils/base-branch'
+import { CommentStore } from '../comment-store'
 
 /**
  * The caller uses this to update branch metadata.
@@ -39,6 +40,19 @@ export interface SubmissionRecord {
   submittedAt?: string
 }
 
+/** The branch's comment threads for the PR body, or null (said so in the body) if unreadable. */
+async function readThreadsOrWarn(context: BranchContext) {
+  try {
+    return await new CommentStore(context.branchRoot).listThreads({ includeResolved: true })
+  } catch (err) {
+    console.warn(
+      `CanopyCMS: Could not read the editor comments of ${context.branch.name} for its PR:`,
+      getErrorMessage(err),
+    )
+    return null
+  }
+}
+
 /**
  * Uses githubService directly if available, otherwise queues a task for the worker.
  *
@@ -53,6 +67,7 @@ export async function syncSubmitPr(
   const { githubService } = ctx.services
   const mode = ctx.services.config.mode
   const prTitle = context.branch.title || `Submit ${context.branch.name}`
+  const threads = await readThreadsOrWarn(context)
   const prSection = buildPrSection({
     description: context.branch.description,
     submitter: submission.submitter,
@@ -61,6 +76,7 @@ export async function syncSubmitPr(
     branch: context.branch.name,
     editorUrl: submission.editorUrl,
     entryPaths: submission.entryPaths,
+    threads,
   })
   // Target the fork point recorded at branch creation when available.
   const baseBranch = context.branch.baseBranch ?? baseBranchOf(ctx.services.config)

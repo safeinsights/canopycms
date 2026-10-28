@@ -40,6 +40,9 @@ vi.mock('../comment-store', () => ({
   }),
 }))
 
+const mockSyncPrComments = vi.hoisted(() => vi.fn().mockResolvedValue(undefined))
+vi.mock('./pr-comment-sync', () => ({ syncPrComments: mockSyncPrComments }))
+
 import { COMMENT_ROUTES } from './comments'
 import { RESERVED_GROUPS } from '../authorization'
 import { createMockApiContext, createMockBranchContext } from '../test-utils'
@@ -284,5 +287,49 @@ describe('comments api - resolveComment', () => {
       { branch: unsafeAsBranchName('feature/x'), threadId: 'thread1' },
     )
     expect(res.ok).toBe(true)
+  })
+})
+
+describe('comments api - PR comment summary', () => {
+  const user = { type: 'authenticated' as const, userId: 'u1', groups: [] }
+  const branch = { branch: unsafeAsBranchName('feature/x') }
+  const fieldComment = {
+    text: 'test',
+    type: 'field' as const,
+    entryPath: unsafeAsLogicalPath('content/posts/hello'),
+    canopyPath: 'title',
+  }
+
+  it('re-renders it after a new thread, a reply and a resolve', async () => {
+    for (const run of [
+      (ctx: ReturnType<typeof makeCtx>) => addComment(ctx, { user }, branch, fieldComment),
+      (ctx: ReturnType<typeof makeCtx>) =>
+        addComment(ctx, { user }, branch, { ...fieldComment, text: 'reply', threadId: 'thread1' }),
+      (ctx: ReturnType<typeof makeCtx>) =>
+        resolveComment(ctx, { user }, { ...branch, threadId: 'thread1' }),
+    ]) {
+      mockSyncPrComments.mockClear()
+      const ctx = makeCtx()
+      const res = await run(ctx)
+      expect(res.ok).toBe(true)
+      expect(mockSyncPrComments).toHaveBeenCalledTimes(1)
+      expect(mockSyncPrComments.mock.calls[0]?.[1]).toMatchObject({
+        branch: { name: 'feature/x' },
+      })
+    }
+  })
+
+  it('leaves it alone when the comment is refused', async () => {
+    mockSyncPrComments.mockClear()
+    const refused = [
+      await addComment(makeCtx(), { user }, branch, { text: 'x', type: 'field' } as any),
+      await resolveComment(
+        makeCtx(),
+        { user: { ...user, userId: 'u2' } },
+        { ...branch, threadId: 'thread1' },
+      ),
+    ]
+    expect(refused.map((r) => r.status)).toEqual([400, 403])
+    expect(mockSyncPrComments).not.toHaveBeenCalled()
   })
 })
