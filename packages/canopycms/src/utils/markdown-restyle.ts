@@ -6,20 +6,21 @@
  * entity is invisible to a tree check.
  *
  * The normalisations, each as Prettier 3 writes them:
- * - emphasis `_`, or `*` where `_` could not delimit it (beside a word character), inside other
- *   emphasis, and after a literal `_` in its block's text (Prettier misreads `a_b _x_`);
- *   strong `**`;
+ * - emphasis `_`, or `*` where `_` could not delimit it (beside a word character) and inside
+ *   other emphasis; strong `**`. Emphasis after a literal `_` in its block keeps `*`, because
+ *   Prettier misreads `a_b _x_` (`underscoreStarts`);
  * - bullets `-`, and ordered delimiters `.`, alternating with `*` / `)` for a list that follows
- *   another; ordered numbering counting up from the first number, or all one number when the
- *   first two match, where that keeps each marker's width;
- * - `---` rules, `# x` headings for one-line setext and ATX headings, backtick fences for `~~~`;
- * - one blank line between blocks (between list items and an item's blocks, only where there
- *   was one, which keeps a list's looseness); no trailing space before a soft line ending; an
- *   escaped `_` between two letters or digits unescaped, outside links;
- * - tables padded to their columns.
+ *   another; ordered numbering by `orderedNumber`, where that keeps each marker's width;
+ * - `---` rules (`***` inside a list, see `ruleIn`), `# x` headings for one-line setext and ATX
+ *   headings, backtick fences for `~~~`;
+ * - one blank line between blocks, none between link definitions; between list items and an
+ *   item's blocks, several blank lines become one, which keeps a list's looseness;
+ * - no trailing space before a soft line ending; an escaped `_` between two letters or digits
+ *   unescaped, except in links and in blocks holding `$` or `[[`;
+ * - tables padded to their columns, when every cell is printable ASCII.
  *
  * Each top-level block's edits are kept only if the text they are part of reads back as the
- * edit (`readsBack`), all at once or, failing that, block by block, so a block that cannot be
+ * edit (`readsBack`): all at once, then halves, within a parse budget, so a block that cannot be
  * restyled leaves the others restyled.
  */
 
@@ -496,8 +497,8 @@ export function restyleMarkdown<T extends MdNode>(
   if (changed.length === 0) return undefined
 
   // The whole restyle first, then halves of it, until each block that does not read back stands
-  // alone: about two parses per such block per halving, so the budget covers about four of them
-  // anywhere in the body. Each parse reads the whole body under the write lock, so past the
+  // alone: about two parses per such block per halving, so the budget covers about five of them
+  // spread through 200 blocks. Each parse reads the whole body under the write lock, so past the
   // budget the restyle keeps what has read back.
   let kept: Edit[] = []
   let best: { text: string; tree: T } | undefined

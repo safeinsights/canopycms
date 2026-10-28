@@ -182,9 +182,8 @@ describe('restyleMarkdown', () => {
 
 /**
  * What a restyle may not change: every character but whitespace and marker characters (`=` for
- * a setext underline), once an
- * escaped `_` (which the restyle may unescape) is read as `_`. Content digits, `.`, `-` and the
- * like are dropped too; the tree check covers those.
+ * a setext underline), once an escaped `_` (which the restyle may unescape) is read as `_`.
+ * Content digits, `.`, `-` and the like are dropped too; the tree check covers those.
  */
 function skeleton(text: string): string {
   return text.replace(/\\(?=_)/g, '').replace(/[\s*_\-+#=~`|:>.)0-9]/g, '')

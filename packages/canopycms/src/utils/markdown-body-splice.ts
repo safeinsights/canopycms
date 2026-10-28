@@ -410,10 +410,10 @@ function gapBetween(
 
 /**
  * Rewrites an output item's marker to the original list's: its bullet character, or for an
- * ordered list its delimiter and numbering scheme (all one number when the original's first two
- * items share one, else counting up from its start). Undefined when the original's markers
- * cannot be read, or when renumbering would change the width of a multi-line item, whose
- * continuation lines are aligned to the old width.
+ * ordered list its delimiter, numbered as Prettier numbers the original (`orderedNumber`) and
+ * zero-padded as it is. Undefined when the original's markers cannot be read, or when
+ * renumbering would change the width of a multi-line item, whose continuation lines are aligned
+ * to the old width.
  */
 function listMarkers(
   text: string,
