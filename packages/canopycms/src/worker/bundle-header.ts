@@ -38,7 +38,8 @@ export const PREREQUISITE_COMMENT_MAX_BYTES = 1024
 
 /**
  * The header must end within this many bytes counting comments too: the bytes read, when
- * refusing; the bytes kept and sent, when shortening. The most a reader holds of a header.
+ * refusing; the bytes kept and sent, when shortening. The most a refusing or shortening reader
+ * holds of a header.
  * @internal Exported for tests.
  */
 export const BUNDLE_HEADER_TOTAL_MAX_BYTES = 256 * 1024
@@ -83,7 +84,8 @@ export interface ReadBundleHeader {
 
 /**
  * Reads a header from a bundle's bytes as they arrive, holding at most
- * {@link BUNDLE_HEADER_TOTAL_MAX_BYTES} of it, however long a comment is. A comment over
+ * {@link BUNDLE_HEADER_TOTAL_MAX_BYTES} of it (`maxBytes`, skipping), however long a comment is.
+ * A comment over
  * {@link PREREQUISITE_COMMENT_MAX_BYTES} is refused (`'refuse'`, the gateway, which keeps no copy
  * of the header) or cut to it (`'shorten'`, the worker, which sends {@link ReadBundleHeader.bytes}
  * in its place). `'skip'` keeps no comment byte at all and bounds only `maxBytes`, for a bundle

@@ -340,9 +340,10 @@ const FETCH_BUNDLE_HEADER_MAX_BYTES = 16 * 1024 * 1024
  * Not `git bundle unbundle`, which first runs a connectivity walk from every ref in `gitDir`:
  * from git 2.56 one corrupt object in any branch's history is fatal to that walk, and so to every
  * fetch until an operator repairs `remote.git`, where a reconcile skips that branch alone. Each
- * prerequisite is checked present as a commit instead, and the pack goes to the
- * `index-pack --fix-thin --stdin` that `bundle unbundle` runs after its walk. A delta whose base
- * is missing still fails, in index-pack.
+ * prerequisite is checked to be a commit by its object header instead, so one torn after its
+ * header is taken like torn history anywhere else, and left to its branch's reconcile. The pack
+ * goes to the `index-pack --fix-thin --stdin` that `bundle unbundle` runs after its walk. A delta
+ * whose base is missing still fails, in index-pack.
  */
 async function unbundle(
   ctx: TransferContext,
