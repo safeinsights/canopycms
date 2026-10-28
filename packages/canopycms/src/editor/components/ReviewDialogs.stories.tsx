@@ -93,7 +93,7 @@ export const NoteNotSaved: Story = {
   render: () => (
     <div style={{ maxWidth: 380, padding: 16 }}>
       <NoteNotSavedMessage
-        warning="Changes were requested, but your note couldn't be saved."
+        message="Changes were requested, but your note couldn't be saved."
         note="Please tighten the headline, and say where the 40% figure comes from."
       />
     </div>

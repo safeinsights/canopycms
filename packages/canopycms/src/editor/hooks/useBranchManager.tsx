@@ -41,6 +41,17 @@ class StaleStatusError extends Error {
   override readonly name = 'StaleStatusError'
 }
 
+/** An answer that refused the action, with its HTTP status: a 4xx is a refusal no retry passes. */
+class RefusedError extends Error {
+  override readonly name = 'RefusedError'
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message)
+  }
+}
+
 /**
  * The error a refused branch action throws; a gateway's 5xx says nothing of whether it ran.
  * With `staleIsConflict`, the API's 409 is a `StaleStatusError`.
@@ -48,10 +59,25 @@ class StaleStatusError extends Error {
 function actionError(result: ApiResponse, fallback: string, staleIsConflict = false): Error {
   if (isGatewayFailure(result)) return new UnansweredError()
   const message = result.error || fallback
-  return staleIsConflict && !result.ok && result.status === 409 && !isNonApiResponse(result)
+  if (result.ok) return new Error(message)
+  return staleIsConflict && result.status === 409 && !isNonApiResponse(result)
     ? new StaleStatusError(message)
-    : new Error(message)
+    : new RefusedError(message, result.status)
 }
+
+type ReviewKind = 'approve' | 'request-changes'
+
+/** Whether a branch's status still lets the reviewer act: Approve needs submitted. */
+const acceptsReview = (status: string | undefined, kind: ReviewKind): boolean =>
+  kind === 'approve' ? status === 'submitted' : status === 'submitted' || status === 'approved'
+
+/** The line for a branch the reviewer's page still showed in review after it left. */
+const leftReviewMessage = (status: string | undefined, kind: ReviewKind): string =>
+  status === 'editing'
+    ? "This branch is no longer in review: it's back with its editor."
+    : status === 'approved' && kind === 'approve'
+      ? 'This branch is already approved.'
+      : `This branch is ${status ?? 'unreadable'}, so ${kind === 'approve' ? "it can't be approved" : "changes can't be requested"}.`
 
 /** @internal Exported for tests. */
 export const branchActionOutcomeUnknown = (
@@ -675,34 +701,93 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     fallback: string,
     action: string,
     follow: {
-      /** Offered on the error, reopening the action's dialog. */
-      retry?: () => void
       /** Where to look after an unanswered write, in place of the branch's status alone. */
       check?: string
-      /** Runs once an unanswered write's branch list has reloaded. */
-      afterUnanswered?: () => void
+      /** Runs once an unanswered write's branch list has reloaded, with that listing. */
+      afterUnanswered?: (fresh: BranchesData | undefined) => void
     } = {},
   ) => {
     if (isUnanswered(err)) {
       showOutcomeUnknown(action, follow.check)
-      await loadBranches()
-      follow.afterUnanswered?.()
+      const fresh = await reloadBranches()
+      follow.afterUnanswered?.(fresh)
       return
     }
-    const message = err instanceof Error ? err.message : fallback
-    if (err instanceof StaleStatusError) {
-      // Nothing is lost yet, so a warning; the list shows where the branch stands now.
-      notifications.show({ message, color: 'yellow', autoClose: false, withCloseButton: true })
-      await loadBranches()
-      return
-    }
-    if (!follow.retry) {
-      notifications.show({ message, color: 'red' })
-      return
-    }
-    const id = `canopy-${action}-failed`
-    const retry = follow.retry
+    notifications.show({ message: err instanceof Error ? err.message : fallback, color: 'red' })
+  }
+
+  // A note typed in the Request changes dialog, by branch, until a request carries it or the
+  // branch leaves review.
+  const noteDrafts = useRef(new Map<string, string>())
+
+  /**
+   * A review action found its branch out of review, or the page already knew it was. A warning,
+   * not an error: nothing is lost yet. A typed note is shown to copy, so it stays up until
+   * dismissed. The draft goes, because the review cycle it belonged to is over.
+   */
+  const showLeftReview = (branch: string, message: string, note: string | undefined) => {
+    const id = `canopy-review-stale-${branch}`
     notifications.hide(id)
+    notifications.show({
+      id,
+      message: note ? (
+        <NoteNotSavedMessage message={message} note={note} hint="Copy it to keep it." />
+      ) : (
+        message
+      ),
+      color: 'yellow',
+      withCloseButton: true,
+      ...(note ? { autoClose: false } : {}),
+    })
+    noteDrafts.current.delete(branch)
+  }
+
+  /** Forgets a branch's draft when the listing shows it out of review. */
+  const dropDraftsOutOfReview = (branches: readonly { name: string; status: string }[]) => {
+    for (const { name, status } of branches) {
+      if (!acceptsReview(status, 'request-changes')) noteDrafts.current.delete(name)
+    }
+  }
+
+  const reviewFailureId = (kind: ReviewKind, branch: string) => `canopy-${kind}-failed-${branch}`
+
+  /**
+   * Shows why an Approve or Request changes failed. Retry is offered only where one can pass: no
+   * answer, or a 5xx. A 4xx is a plain message and a reload, so the buttons catch up with the
+   * branch. A 409 means the branch left review (see `showLeftReview`).
+   */
+  const reportReviewFailure = async (
+    err: unknown,
+    kind: ReviewKind,
+    branch: string,
+    details: {
+      fallback: string
+      label: string
+      /** The reviewer's note as sent, which a 409 shows back to copy. */
+      note?: string
+      /** Reopens the action's dialog. */
+      retry: () => void
+      check?: string
+      afterUnanswered?: (fresh: BranchesData | undefined) => void
+    },
+  ) => {
+    if (err instanceof StaleStatusError) {
+      showLeftReview(branch, err.message, details.note)
+      await loadBranches()
+      return
+    }
+    if (isUnanswered(err)) {
+      await reportActionFailure(err, details.fallback, details.label, details)
+      return
+    }
+    const message = err instanceof Error ? err.message : details.fallback
+    const id = reviewFailureId(kind, branch)
+    notifications.hide(id)
+    if (err instanceof RefusedError && err.status < 500) {
+      notifications.show({ id, message, color: 'red' })
+      await loadBranches()
+      return
+    }
     notifications.show({
       id,
       message: (
@@ -710,7 +795,17 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
           message={message}
           onRetry={() => {
             notifications.hide(id)
-            retry()
+            // The page may be stale by now: a branch that left review has nothing to retry.
+            const status = latest.current.branches.find((b) => b.name === branch)?.status
+            if (status !== undefined && !acceptsReview(status, kind)) {
+              showLeftReview(
+                branch,
+                leftReviewMessage(status, kind),
+                noteDrafts.current.get(branch),
+              )
+              return
+            }
+            details.retry()
           }}
         />
       ),
@@ -718,9 +813,6 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
       autoClose: false,
     })
   }
-
-  // A note typed in the Request changes dialog, by branch, until a request carries it.
-  const noteDrafts = useRef(new Map<string, string>())
 
   const handleSubmit = (requested: string, returnFocusTo?: () => HTMLElement | null) => {
     const branchNameToSubmit = listedName(requested)
@@ -846,12 +938,15 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                   branch: branchNameToApprove,
                 })
                 if (!result.ok) throw actionError(result, 'Failed to approve branch', true)
+                notifications.hide(reviewFailureId('approve', branchNameToApprove))
                 notifications.show({ message: 'Branch approved', color: 'green' })
                 updateCreatedBranch(branchNameToApprove, result.data?.branch)
                 await loadBranches()
                 resolve()
               } catch (err) {
-                await reportActionFailure(err, 'Failed to approve branch', EDITOR_ACTIONS.approve, {
+                await reportReviewFailure(err, 'approve', branchNameToApprove, {
+                  fallback: 'Failed to approve branch',
+                  label: EDITOR_ACTIONS.approve,
                   retry: () =>
                     void handleApprove(branchNameToApprove, returnFocusTo).catch(() => {}),
                 })
@@ -869,6 +964,8 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
 
   const handleRequestChanges = (requested: string, returnFocusTo?: () => HTMLElement | null) => {
     const branchNameForChanges = listedName(requested)
+    // A draft is for the review cycle it was typed in; a branch already out of review starts clean.
+    dropDraftsOutOfReview(latest.current.branches.filter((b) => b.name === branchNameForChanges))
     return singleFlight(
       'request-changes',
       branchNameForChanges,
@@ -891,13 +988,14 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 )
                 if (!result.ok) throw actionError(result, 'Failed to request changes', true)
                 noteDrafts.current.delete(branchNameForChanges)
+                notifications.hide(reviewFailureId('request-changes', branchNameForChanges))
                 notifications.show({ message: 'Changes requested', color: 'blue' })
                 // The note is saved apart from the status change, so it can fail on its own;
                 // the warning stays up, with the note to copy, because the words are not saved.
                 const warning = result.data?.warning
                 if (warning) {
                   notifications.show({
-                    message: <NoteNotSavedMessage warning={warning} note={note.trim()} />,
+                    message: <NoteNotSavedMessage message={warning} note={note.trim()} />,
                     color: 'yellow',
                     autoClose: false,
                     withCloseButton: true,
@@ -907,20 +1005,19 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 await loadBranches()
                 options.onChangesRequested?.(branchNameForChanges)
               } catch (err) {
-                await reportActionFailure(
-                  err,
-                  'Failed to request changes',
-                  EDITOR_ACTIONS.requestChanges,
-                  {
-                    retry: () =>
-                      void handleRequestChanges(branchNameForChanges, returnFocusTo).catch(
-                        () => {},
-                      ),
-                    check: REQUEST_CHANGES_CHECK,
+                await reportReviewFailure(err, 'request-changes', branchNameForChanges, {
+                  fallback: 'Failed to request changes',
+                  label: EDITOR_ACTIONS.requestChanges,
+                  note: note.trim() || undefined,
+                  retry: () =>
+                    void handleRequestChanges(branchNameForChanges, returnFocusTo).catch(() => {}),
+                  check: REQUEST_CHANGES_CHECK,
+                  afterUnanswered: (fresh) => {
                     // The write may have landed along with its note.
-                    afterUnanswered: () => options.onChangesRequested?.(branchNameForChanges),
+                    options.onChangesRequested?.(branchNameForChanges)
+                    if (fresh) dropDraftsOutOfReview(fresh.branches)
                   },
-                )
+                })
               } finally {
                 options.setBusy(false)
                 resolve()

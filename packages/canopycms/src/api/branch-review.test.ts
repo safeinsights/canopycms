@@ -100,7 +100,7 @@ describe('branch review api - requestChanges', () => {
   })
 
   it.each([
-    ['editing', 'This branch is no longer in review. Its editor has it back for editing.'],
+    ['editing', "This branch is no longer in review: it's back with its editor."],
     ['archived', "This branch is archived, so changes can't be requested."],
   ])('answers 409 for a branch that is %s', async (status, error) => {
     const ctx = makeCtx()
@@ -245,7 +245,7 @@ describe('branch review api - requestChanges', () => {
 
   describe('a status that changed after the guard read the branch', () => {
     it.each([
-      ['editing', 'This branch is no longer in review. Its editor has it back for editing.'],
+      ['editing', "This branch is no longer in review: it's back with its editor."],
       ['archived', "This branch is archived, so changes can't be requested."],
       [undefined, "This branch's status can't be read, so changes can't be requested."],
     ])('answers 409 for %s, writing nothing and leaving no note', async (status, error) => {
@@ -388,7 +388,7 @@ describe('branch review api - approveBranch', () => {
   })
 
   it.each([
-    ['editing', 'This branch is no longer in review. Its editor has it back for editing.'],
+    ['editing', "This branch is no longer in review: it's back with its editor."],
     ['approved', 'This branch is already approved.'],
     ['archived', "This branch is archived, so it can't be approved."],
   ])('answers 409 for a branch that is %s', async (status, error) => {
@@ -468,7 +468,7 @@ describe('branch review api - approveBranch', () => {
   })
 
   it.each([
-    ['editing', 'This branch is no longer in review. Its editor has it back for editing.'],
+    ['editing', "This branch is no longer in review: it's back with its editor."],
     ['approved', 'This branch is already approved.'],
     [undefined, "This branch's status can't be read, so it can't be approved."],
   ])('answers 409, writing nothing, when the status on disk became %s', async (status, error) => {

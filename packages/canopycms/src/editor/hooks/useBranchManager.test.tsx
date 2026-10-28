@@ -2351,10 +2351,10 @@ describe('useBranchManager', () => {
       })
       await waitFor(() => expect(mockClient.workflow.approve).toHaveBeenCalledTimes(2))
       expect(vi.mocked(modals.openConfirmModal)).toHaveBeenCalledTimes(2)
-      expect(notifications.hide).toHaveBeenCalledWith('canopy-Approve-failed')
+      expect(notifications.hide).toHaveBeenCalledWith('canopy-approve-failed-feature')
     })
 
-    it('shows a stale-status 409 in yellow, with no Retry, and reloads the list', async () => {
+    it('shows a stale-status 409 in yellow, which closes itself, with no Retry, and reloads the list', async () => {
       const { notifications } = await import('@mantine/notifications')
       mockClient.workflow.approve.mockResolvedValueOnce({
         ok: false,
@@ -2369,12 +2369,108 @@ describe('useBranchManager', () => {
       })
 
       expect(notifications.show).toHaveBeenCalledWith({
+        id: 'canopy-review-stale-feature',
         message: 'This branch is already approved.',
         color: 'yellow',
-        autoClose: false,
         withCloseButton: true,
       })
       expect(mockClient.branches.list).toHaveBeenCalledTimes(1)
+    })
+
+    describe('refusals', () => {
+      it('shows a 4xx plainly, with no Retry, and reloads the list so stale buttons update', async () => {
+        const { notifications } = await import('@mantine/notifications')
+        mockClient.workflow.approve.mockResolvedValueOnce({
+          ok: false,
+          status: 403,
+          error: "You can't approve a branch you created. Ask another reviewer to approve it.",
+        })
+        const { result } = await loaded()
+        mockClient.branches.list.mockClear()
+
+        await act(async () => {
+          await result.current.handleApprove('feature').catch(() => {})
+        })
+
+        expect(notifications.show).toHaveBeenCalledWith({
+          id: 'canopy-approve-failed-feature',
+          message: "You can't approve a branch you created. Ask another reviewer to approve it.",
+          color: 'red',
+        })
+        expect(mockClient.branches.list).toHaveBeenCalledTimes(1)
+      })
+
+      it('offers Retry for a 5xx and for an error with no answer at all', async () => {
+        mockClient.workflow.approve
+          .mockResolvedValueOnce({ ok: false, status: 500, error: 'The disk is full.' })
+          .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+        const { result } = await loaded()
+
+        for (const text of ['The disk is full.', 'Failed to fetch']) {
+          await act(async () => {
+            await result.current.handleApprove('feature').catch(() => {})
+          })
+          const { call, shown } = await lastToast()
+          expect(call.color).toBe('red')
+          expect(shown.getByText(text)).toBeTruthy()
+          expect(shown.getByRole('button', { name: 'Retry' })).toBeTruthy()
+          shown.unmount()
+        }
+      })
+
+      it('puts a stale-status message, not the dialog, where Retry finds the branch out of review', async () => {
+        const { notifications } = await import('@mantine/notifications')
+        const { modals } = await import('@mantine/modals')
+        mockClient.workflow.approve.mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+          error: 'The disk is full.',
+        })
+        const { result } = await loaded()
+        await act(async () => {
+          await result.current.handleApprove('feature').catch(() => {})
+        })
+        const { shown } = await lastToast()
+
+        // The listing now shows the editor has the branch back.
+        listing(editingFeature)
+        await act(async () => {
+          await result.current.loadBranches()
+        })
+        await waitFor(() => expect(result.current.currentBranch?.status).toBe('editing'))
+        vi.mocked(modals.openConfirmModal).mockClear()
+
+        await act(async () => {
+          fireEvent.click(shown.getByRole('button', { name: 'Retry' }))
+        })
+
+        expect(modals.openConfirmModal).not.toHaveBeenCalled()
+        expect(notifications.show).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            id: 'canopy-review-stale-feature',
+            message: "This branch is no longer in review: it's back with its editor.",
+            color: 'yellow',
+          }),
+        )
+      })
+
+      it('takes a failure toast down when the same action later succeeds', async () => {
+        const { notifications } = await import('@mantine/notifications')
+        mockClient.workflow.approve
+          .mockResolvedValueOnce({ ok: false, status: 500, error: 'The disk is full.' })
+          .mockResolvedValueOnce({ ok: true, status: 200 })
+        const { result } = await loaded()
+        await act(async () => {
+          await result.current.handleApprove('feature').catch(() => {})
+        })
+        vi.mocked(notifications.hide).mockClear()
+
+        await act(async () => {
+          await result.current.handleApprove('feature')
+        })
+
+        expect(notifications.hide).toHaveBeenCalledWith('canopy-approve-failed-feature')
+      })
     })
 
     it('says an approve that got no answer may have gone through, and reloads', async () => {
@@ -2596,6 +2692,95 @@ describe('useBranchManager', () => {
         const reopened = await nextDialogNote()
         await call(() => result.current.handleRequestChanges('feature'))
         expect(reopened()).toBe('Fix the intro.')
+      })
+
+      it('is shown back to copy by a 409, which then drops the draft', async () => {
+        // The dialog bodies render while the handler waits, outside any `act` of the hook's own.
+        const { restore } = setupMockConsole(['error'])
+        const { notifications } = await import('@mantine/notifications')
+        mockClient.workflow.requestChanges.mockResolvedValueOnce({
+          ok: false,
+          status: 409,
+          error: "This branch is no longer in review: it's back with its editor.",
+        })
+        await confirmAfter(typeNote('Fix the intro.'))
+        const { result } = await loaded()
+        await call(() => result.current.handleRequestChanges('feature'))
+
+        const { call: toast, shown } = await lastToast()
+        expect(toast).toEqual(
+          expect.objectContaining({
+            id: 'canopy-review-stale-feature',
+            color: 'yellow',
+            autoClose: false,
+            withCloseButton: true,
+          }),
+        )
+        expect(shown.getByTestId('note-not-saved-text').textContent).toBe('Fix the intro.')
+        expect(shown.getByRole('button', { name: 'Copy note' })).toBeTruthy()
+        expect(notifications.hide).toHaveBeenCalledWith('canopy-review-stale-feature')
+
+        const reopened = await nextDialogNote()
+        await call(() => result.current.handleRequestChanges('feature'))
+        expect(reopened()).toBe('')
+        restore()
+      })
+
+      it('is dropped after an unanswered request when the reloaded branch has left review', async () => {
+        // The dialog bodies render while the handler waits, outside any `act` of the hook's own.
+        const { restore } = setupMockConsole(['error'])
+        mockClient.workflow.requestChanges.mockRejectedValueOnce(
+          new ApiTimeoutError('POST', '/x', 1000),
+        )
+        await confirmAfter(typeNote('Fix the intro.'))
+        const { result } = await loaded()
+        // The branch listing the reload brings back shows the request did land.
+        mockClient.branches.list.mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          data: { branches: editingFeature, users: [] },
+        })
+        await call(() => result.current.handleRequestChanges('feature'))
+
+        // The branch is submitted again, a new review cycle: the old note must be gone already.
+        listing(mockBranches)
+        await act(async () => {
+          await result.current.loadBranches()
+        })
+        await waitFor(() => expect(result.current.branches[1].status).toBe('submitted'))
+        const reopened = await nextDialogNote()
+        await call(() => result.current.handleRequestChanges('feature'))
+        expect(reopened()).toBe('')
+        restore()
+      })
+
+      it('is not prefilled once its branch is out of review', async () => {
+        await confirmAfter(typeNote('Fix the intro.'), 'cancel')
+        const { result } = await loaded()
+        await call(() => result.current.handleRequestChanges('feature'))
+
+        listing(editingFeature)
+        await act(async () => {
+          await result.current.loadBranches()
+        })
+        await waitFor(() => expect(result.current.branches[1].status).toBe('editing'))
+        const reopened = await nextDialogNote()
+        await call(() => result.current.handleRequestChanges('feature'))
+        expect(reopened()).toBe('')
+      })
+
+      it('takes the failure toast down when a retried request goes through', async () => {
+        const { notifications } = await import('@mantine/notifications')
+        mockClient.workflow.requestChanges
+          .mockResolvedValueOnce({ ok: false, status: 500, error: 'The disk is full.' })
+          .mockResolvedValueOnce({ ok: true, status: 200 })
+        const { result } = await loaded()
+        await call(() => result.current.handleRequestChanges('feature'))
+        vi.mocked(notifications.hide).mockClear()
+
+        await call(() => result.current.handleRequestChanges('feature'))
+
+        expect(notifications.hide).toHaveBeenCalledWith('canopy-request-changes-failed-feature')
       })
 
       it('is cleared once the request goes through', async () => {

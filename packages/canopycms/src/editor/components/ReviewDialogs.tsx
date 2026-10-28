@@ -67,11 +67,22 @@ export function RequestChangesForm({
   )
 }
 
-/** The notification body for changes that were requested while the note was not saved. */
-export function NoteNotSavedMessage({ warning, note }: { warning: string; note: string }) {
+/**
+ * A notification body that holds a note the reviewer typed, which is not saved: the message, the
+ * note quoted, and a button to copy it. `hint` says what to do with the copy.
+ */
+export function NoteNotSavedMessage({
+  message,
+  note,
+  hint = 'Copy it into a comment on the branch.',
+}: {
+  message: string
+  note: string
+  hint?: string
+}) {
   return (
     <Stack gap={6}>
-      <Text size="sm">{`${warning} Copy it into a comment on the branch.`}</Text>
+      <Text size="sm">{`${message} ${hint}`}</Text>
       <Text
         component="blockquote"
         size="sm"

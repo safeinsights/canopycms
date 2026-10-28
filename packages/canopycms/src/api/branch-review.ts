@@ -29,7 +29,7 @@ const NOTE_NOT_SAVED_WARNING = "Changes were requested, but your note couldn't b
  */
 const staleStatusError = (status: string | undefined, action: string): string =>
   status === 'editing'
-    ? 'This branch is no longer in review. Its editor has it back for editing.'
+    ? "This branch is no longer in review: it's back with its editor."
     : status === undefined
       ? `This branch's status can't be read, so ${action}.`
       : `This branch is ${status}, so ${action}.`
