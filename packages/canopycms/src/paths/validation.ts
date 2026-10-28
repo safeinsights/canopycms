@@ -248,6 +248,10 @@ export function parseCreatedBranchName(
   const valid = parseBranchName(typed)
   if (!valid.ok) return valid
   const created = cmsBranchName(typed)
+  // Every name with no letter, digit, '.' or '_' would otherwise share the one branch "canopycms-".
+  if (created === CMS_BRANCH_PREFIX) {
+    return { ok: false, error: 'Branch name needs at least one letter or digit' }
+  }
   if (created.length > MAX_BRANCH_NAME_LENGTH) {
     return {
       ok: false,
