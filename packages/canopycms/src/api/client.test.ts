@@ -476,7 +476,7 @@ describe('CanopyApiClient', () => {
 
     it('does not cut a long operation off at the standard deadline', async () => {
       const { fetch } = stalledFetch()
-      const pending = new CanopyApiClient({ fetch }).workflow.submit({ branch: 'feature' })
+      const pending = new CanopyApiClient({ fetch }).workflow.submit({ branch: 'feature' }, {})
       let settled = false
       pending.catch(() => {}).finally(() => (settled = true))
 

@@ -3,6 +3,7 @@ import { personName } from './auth/person-name'
 import type { CanopyUser } from './user'
 import { getErrorMessage } from './utils/error'
 import { canopyLogWarn } from './utils/logger'
+import { editorDeepLink } from './editor-url'
 
 /**
  * Who submitted (and edited) a branch, recorded in the submit commit's trailers
@@ -260,7 +261,26 @@ export interface PrSectionInput {
   editors?: readonly SubmissionEditor[]
   /** Repo-relative paths changed on the branch. */
   changedPaths: readonly string[]
+  /** The submitted branch and the editor page URL (editor-url.ts); together they enable links. */
+  branch?: string
+  editorUrl?: string
+  /** The entry logical path of each changed path that is an entry, for its deep link. */
+  entryPaths?: ReadonlyMap<string, string>
 }
+
+/**
+ * A URL safe as a Markdown link destination: the characters that could end the destination,
+ * open a title or escape are percent-encoded, which leaves the address unchanged.
+ */
+function markdownHref(href: string): string {
+  return href.replace(
+    /[()<>[\]\\\s'"`]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`,
+  )
+}
+
+const PR_COMMENTS_NOTICE =
+  'Comments on this pull request do not reach the CanopyCMS editor, so the author will not see them.'
 
 function editorLabel(editor: CleanEditor): string {
   return editor.name
@@ -284,11 +304,29 @@ export function buildPrSection(input: PrSectionInput): string {
     parts.push(`Also edited by: ${others.map(editorLabel).join(', ')}`)
   }
 
+  const { branch, editorUrl } = input
+  const link = (entryPath?: string) =>
+    branch && editorUrl ? markdownHref(editorDeepLink(editorUrl, branch, entryPath)) : undefined
+  const branchLink = link()
+  if (branchLink) parts.push(`[Open this branch in the editor](${branchLink})`)
+  parts.push(
+    `> [!IMPORTANT]\n> ${PR_COMMENTS_NOTICE} ` +
+      (branchLink
+        ? `Comment in the [editor](${branchLink}) instead.`
+        : 'Comment in the editor instead.'),
+  )
+
   const paths = [...new Set(input.changedPaths)]
-    .map(cleanPath)
-    .filter((p): p is string => p !== undefined)
+    .map((raw) => ({ raw, clean: cleanPath(raw) }))
+    .filter((p): p is { raw: string; clean: string } => p.clean !== undefined)
   if (paths.length > 0) {
-    const listed = paths.slice(0, MAX_LISTED_ENTRIES).map((p) => `- ${codeSpan(p)}`)
+    const listed = paths.slice(0, MAX_LISTED_ENTRIES).map(({ raw, clean }) => {
+      const entryPath = input.entryPaths?.get(raw)
+      const entryLink = entryPath === undefined ? undefined : link(entryPath)
+      return entryLink
+        ? `- ${codeSpan(clean)} ([open in editor](${entryLink}))`
+        : `- ${codeSpan(clean)}`
+    })
     if (paths.length > MAX_LISTED_ENTRIES) {
       listed.push(`- …and ${paths.length - MAX_LISTED_ENTRIES} more`)
     }

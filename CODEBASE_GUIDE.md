@@ -700,6 +700,7 @@ All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 - `settings-branch-utils.ts` — settings branch helpers
 - `github-service.ts` — GitHub API integration: `createOrUpdatePullRequest`, `createCanopyOctokit`, `isRefAlreadyGoneError`, the rate-limit retry predicates
 - `submission-attribution.ts` — sanitized editor identity, `describeEditors`: `Edited-by:` / `Co-authored-by:` commit trailers and the PR body's marker-delimited section
+- `editor-url.ts` — the editor URL PR bodies link to, and its deep links
 
 Key types: `BranchContext` (branch state plus `branchRoot` / `baseRoot`), `BranchMetadata`,
 `BranchPaths`, `SyncStatus` (`synced`, `pending-sync`, `sync-failed`).

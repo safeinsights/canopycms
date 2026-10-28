@@ -283,6 +283,9 @@ describe('buildPrSection', () => {
         PR_SECTION_START,
         'Submitted by `Jane Doe` (`user_2abc`) via CanopyCMS.',
         '',
+        '> [!IMPORTANT]',
+        '> Comments on this pull request do not reach the CanopyCMS editor, so the author will not see them. Comment in the editor instead.',
+        '',
         '**Changed entries (2)**',
         '',
         '- `content/pages/home.md`',
@@ -377,6 +380,61 @@ describe('buildPrSection', () => {
     expect(section).toContain('- `content/p99.md`')
     expect(section).not.toContain('- `content/p100.md`')
     expect(section).toContain('- …and 5 more')
+  })
+})
+
+describe('buildPrSection editor links', () => {
+  const editorUrl = 'https://cms.example.org/edit'
+  const linked = {
+    branch: 'feature/home',
+    editorUrl,
+    changedPaths: ['content/pages/home.a1b2c3d4e5f6.json', 'public/logo.png'],
+    entryPaths: new Map([['content/pages/home.a1b2c3d4e5f6.json', 'content/pages/home']]),
+  }
+
+  it('links the branch, the notice and each entry into the editor', () => {
+    const lines = buildPrSection(linked).split('\n')
+    const branchLink = 'https://cms.example.org/edit?branch=feature%2Fhome'
+    expect(lines).toContain(`[Open this branch in the editor](${branchLink})`)
+    expect(lines).toContain('> [!IMPORTANT]')
+    expect(lines).toContain(
+      `> Comments on this pull request do not reach the CanopyCMS editor, so the author will not see them. Comment in the [editor](${branchLink}) instead.`,
+    )
+    expect(lines).toContain(
+      `- \`content/pages/home.a1b2c3d4e5f6.json\` ([open in editor](${branchLink}&entry=content%2Fpages%2Fhome))`,
+    )
+    expect(lines).toContain('- `public/logo.png`')
+  })
+
+  it('keeps the notice but drops every link without an editor URL or a branch', () => {
+    for (const input of [
+      { ...linked, editorUrl: undefined },
+      { ...linked, branch: undefined },
+    ]) {
+      const section = buildPrSection(input)
+      expect(section).toContain('> [!IMPORTANT]')
+      expect(section).not.toContain('](')
+      expect(section).toContain('- `content/pages/home.a1b2c3d4e5f6.json`\n')
+    }
+  })
+
+  it('keeps hostile branch and entry names inside the link destination', () => {
+    const section = buildPrSection({
+      ...linked,
+      editorUrl: "https://cms.example.org/a(b)/[c]/d'e",
+      branch: 'x) [y](https://evil.example "t") <b>',
+      entryPaths: new Map([
+        ['content/pages/home.a1b2c3d4e5f6.json', `content/p) ${PR_SECTION_END}\n# h`],
+      ]),
+    })
+    const links = [...section.matchAll(/\]\(([^)]*)\)/g)].map((m) => m[1])
+    expect(links).toHaveLength(3)
+    for (const href of links) {
+      expect(href).toMatch(/^https:\/\/cms\.example\.org\/a%28b%29\/%5Bc%5D\/d%27e\?branch=/)
+      expect(href).not.toMatch(/[\s()<>[\]'"\\`]/)
+    }
+    expect(section.split(PR_SECTION_END)).toHaveLength(2)
+    expect(section).not.toContain('<b>')
   })
 })
 

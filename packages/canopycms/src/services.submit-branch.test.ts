@@ -16,6 +16,7 @@ import { ContentConflictError, ContentStore } from './content-store'
 import { listEntries } from './content-listing'
 import { flattenSchema } from './config/flatten'
 import { generateId } from './id'
+import { ContentIdIndex } from './content-id-index'
 import type { LogicalPath, Slug } from './paths/types'
 
 // Deliberately does NOT mock 'simple-git' (unlike services.test.ts) -- this
@@ -568,6 +569,34 @@ describe('services submitBranch', () => {
       expect(result.changedPaths).toEqual(['a.txt'])
       expect(await remoteBranchSha('feature-1')).toBe(await localSha())
       expect(consoleSpy).toHaveWarned('Could not list the changes on feature-1')
+      consoleSpy.restore()
+    })
+  })
+
+  describe('entryPaths', () => {
+    it('maps each changed entry file to the logical path the editor opens, and nothing else', async () => {
+      const entryFile = `content/pages/page.home.${generateId()}.md`
+      await fs.mkdir(path.join(localPath, 'content/pages'), { recursive: true })
+      await fs.writeFile(path.join(localPath, entryFile), '---\ntitle: Home\n---\n', 'utf8')
+      await fs.writeFile(path.join(localPath, 'content/pages/logo.png'), 'png', 'utf8')
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'text', 'utf8')
+
+      const result = await services.submitBranch({ context })
+
+      expect(result.changedPaths.sort()).toEqual(['a.txt', 'content/pages/logo.png', entryFile])
+      expect([...result.entryPaths]).toEqual([[entryFile, 'content/pages/home']])
+    })
+
+    it('submits without entry links, with a warning, when the entries cannot be read', async () => {
+      const consoleSpy = mockConsole()
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'text', 'utf8')
+      vi.spyOn(ContentIdIndex.prototype, 'buildFromFilenames').mockRejectedValue(new Error('EIO'))
+
+      const result = await services.submitBranch({ context })
+
+      expect(result.changedPaths).toEqual(['a.txt'])
+      expect(result.entryPaths.size).toBe(0)
+      expect(consoleSpy).toHaveWarned('Could not map the changed entries of feature-1')
       consoleSpy.restore()
     })
   })

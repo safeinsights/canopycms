@@ -7,27 +7,101 @@
  */
 
 import { computeContentSha256Hex } from './request-body-hash'
-import { resolveTimeoutMs, runWithDeadline, type RequestOptions, type RequestTimeoutClass } from './request-deadline'
+import {
+  resolveTimeoutMs,
+  runWithDeadline,
+  type RequestOptions,
+  type RequestTimeoutClass,
+} from './request-deadline'
 export { isApiTimeoutError, WRITE_TIMED_OUT_MESSAGE, type RequestOptions } from './request-deadline'
 import type { ApiResponse } from './types'
 import { readTrailingSlashEnv, withTrailingSlash } from '../utils/url-prefix'
-import { EDITOR_MODE_HEADER, EDITOR_MODE_MISMATCH_STATUS } from '../operating-mode/editor-mode-check'
+import {
+  EDITOR_MODE_HEADER,
+  EDITOR_MODE_MISMATCH_STATUS,
+} from '../operating-mode/editor-mode-check'
 import type { OperatingMode } from '../operating-mode/types'
 
-import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, CreateBranchBody, UpdateBranchAccessBody } from './branch'
-import type { BranchMergeResponse, SubmitBranchResponse } from './branch-status'
-import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from './comments'
-import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse, RenameEntryBody, RenameEntryResponse, ValidateReferencesBody, WriteContentBody } from './content'
+import type {
+  BranchDeleteResponse,
+  BranchListItemResponse,
+  BranchListResponse,
+  CreateBranchBody,
+  UpdateBranchAccessBody,
+} from './branch'
+import type { BranchMergeResponse, SubmitBranchBody, SubmitBranchResponse } from './branch-status'
+import type {
+  AddCommentBody,
+  AddCommentResponse,
+  CommentsResponse,
+  ResolveCommentResponse,
+} from './comments'
+import type {
+  ContentReadResponse,
+  ContentWriteResponse,
+  ReferenceValidationResponse,
+  RenameEntryBody,
+  RenameEntryResponse,
+  ValidateReferencesBody,
+  WriteContentBody,
+} from './content'
 import type { ReferenceOptionsResponse } from './reference-options'
 import type { ResolveReferencesBody, ResolveReferencesResponse } from './resolve-references'
 import type { DeleteEntryResponse, EntriesResponse } from './entries'
-import type { AssetKeyBody, AssetVisibilityResponse, AssetsListResponse, FinalizeAssetBody, FinalizeAssetResponse, PresignAssetBody, PresignAssetResponse } from './assets'
-import type { BatchGetUserMetadataBody, BatchGetUserMetadataResponse, GetUserMetadataResponse, ListGroupsResponse, PermissionsResponse, SearchUsersResponse, UpdatePermissionsBody } from './permissions'
-import type { ExternalGroupsResponse, InternalGroupsResponse, UpdateInternalGroupsBody, UpdateInternalGroupsResponse } from './groups'
+import type {
+  AssetKeyBody,
+  AssetVisibilityResponse,
+  AssetsListResponse,
+  FinalizeAssetBody,
+  FinalizeAssetResponse,
+  PresignAssetBody,
+  PresignAssetResponse,
+} from './assets'
+import type {
+  BatchGetUserMetadataBody,
+  BatchGetUserMetadataResponse,
+  GetUserMetadataResponse,
+  ListGroupsResponse,
+  PermissionsResponse,
+  SearchUsersResponse,
+  UpdatePermissionsBody,
+} from './permissions'
+import type {
+  ExternalGroupsResponse,
+  InternalGroupsResponse,
+  UpdateInternalGroupsBody,
+  UpdateInternalGroupsResponse,
+} from './groups'
 import type { UserInfoResponse } from './user'
-import type { AddEntryTypeApiResponse, CreateCollectionApiResponse, DeleteCollectionApiResponse, GetCollectionApiResponse, GetSchemaApiResponse, InvalidateSchemaCacheApiResponse, RemoveEntryTypeApiResponse, UpdateCollectionApiResponse, UpdateEntryTypeApiResponse, UpdateOrderApiResponse, UpdateOrderBody } from './schema'
-import type { CreateCollectionInput, CreateEntryTypeInput, UpdateCollectionInput, UpdateEntryTypeInput } from './../schema/schema-store-types'
-import type { AdminDeleteTaskResponse, AdminRetryTaskResponse, AdminStatusResponse, AdminTasksResponse, BranchHealthResponse, PurgeBranchDirResponse, RepairBranchDirResponse, RepairContentDuplicatesResponse } from './admin'
+import type {
+  AddEntryTypeApiResponse,
+  CreateCollectionApiResponse,
+  DeleteCollectionApiResponse,
+  GetCollectionApiResponse,
+  GetSchemaApiResponse,
+  InvalidateSchemaCacheApiResponse,
+  RemoveEntryTypeApiResponse,
+  UpdateCollectionApiResponse,
+  UpdateEntryTypeApiResponse,
+  UpdateOrderApiResponse,
+  UpdateOrderBody,
+} from './schema'
+import type {
+  CreateCollectionInput,
+  CreateEntryTypeInput,
+  UpdateCollectionInput,
+  UpdateEntryTypeInput,
+} from './../schema/schema-store-types'
+import type {
+  AdminDeleteTaskResponse,
+  AdminRetryTaskResponse,
+  AdminStatusResponse,
+  AdminTasksResponse,
+  BranchHealthResponse,
+  PurgeBranchDirResponse,
+  RepairBranchDirResponse,
+  RepairContentDuplicatesResponse,
+} from './admin'
 
 /** Options for {@link createApiClient}. */
 export interface ApiClientOptions {
@@ -92,106 +166,274 @@ export class CanopyApiClient {
     },
 
     /** DELETE /:branch */
-    delete: (params: Record<string, string>, options?: RequestOptions): Promise<BranchDeleteResponse> => {
-      return this.request('DELETE', this.buildPath('/:branch', params), undefined, 'standard', options)
+    delete: (
+      params: Record<string, string>,
+      options?: RequestOptions,
+    ): Promise<BranchDeleteResponse> => {
+      return this.request(
+        'DELETE',
+        this.buildPath('/:branch', params),
+        undefined,
+        'standard',
+        options,
+      )
     },
 
     /** PATCH /:branch/access */
-    updateAccess: (params: Record<string, string>, body: UpdateBranchAccessBody, options?: RequestOptions): Promise<BranchListItemResponse> => {
-      return this.request('PATCH', this.buildPath('/:branch/access', params), body, 'standard', options)
+    updateAccess: (
+      params: Record<string, string>,
+      body: UpdateBranchAccessBody,
+      options?: RequestOptions,
+    ): Promise<BranchListItemResponse> => {
+      return this.request(
+        'PATCH',
+        this.buildPath('/:branch/access', params),
+        body,
+        'standard',
+        options,
+      )
     },
   }
 
   readonly workflow = {
     /** POST /:branch/withdraw */
-    withdraw: (params: Record<string, string>, options?: RequestOptions): Promise<BranchListItemResponse> => {
-      return this.request('POST', this.buildPath('/:branch/withdraw', params), undefined, 'standard', options)
+    withdraw: (
+      params: Record<string, string>,
+      options?: RequestOptions,
+    ): Promise<BranchListItemResponse> => {
+      return this.request(
+        'POST',
+        this.buildPath('/:branch/withdraw', params),
+        undefined,
+        'standard',
+        options,
+      )
     },
 
     /** POST /:branch/request-changes */
-    requestChanges: (params: Record<string, string>, options?: RequestOptions): Promise<BranchListItemResponse> => {
-      return this.request('POST', this.buildPath('/:branch/request-changes', params), undefined, 'standard', options)
+    requestChanges: (
+      params: Record<string, string>,
+      options?: RequestOptions,
+    ): Promise<BranchListItemResponse> => {
+      return this.request(
+        'POST',
+        this.buildPath('/:branch/request-changes', params),
+        undefined,
+        'standard',
+        options,
+      )
     },
 
     /** POST /:branch/approve */
-    approve: (params: Record<string, string>, options?: RequestOptions): Promise<BranchListItemResponse> => {
-      return this.request('POST', this.buildPath('/:branch/approve', params), undefined, 'standard', options)
+    approve: (
+      params: Record<string, string>,
+      options?: RequestOptions,
+    ): Promise<BranchListItemResponse> => {
+      return this.request(
+        'POST',
+        this.buildPath('/:branch/approve', params),
+        undefined,
+        'standard',
+        options,
+      )
     },
 
     /** POST /:branch/mark-merged */
-    markMerged: (params: Record<string, string>, options?: RequestOptions): Promise<BranchMergeResponse> => {
-      return this.request('POST', this.buildPath('/:branch/mark-merged', params), undefined, 'standard', options)
+    markMerged: (
+      params: Record<string, string>,
+      options?: RequestOptions,
+    ): Promise<BranchMergeResponse> => {
+      return this.request(
+        'POST',
+        this.buildPath('/:branch/mark-merged', params),
+        undefined,
+        'standard',
+        options,
+      )
     },
 
     /** GET /:branch/status */
-    getStatus: (params: Record<string, string>, options?: RequestOptions): Promise<BranchListItemResponse> => {
-      return this.request('GET', this.buildPath('/:branch/status', params), undefined, 'standard', options)
+    getStatus: (
+      params: Record<string, string>,
+      options?: RequestOptions,
+    ): Promise<BranchListItemResponse> => {
+      return this.request(
+        'GET',
+        this.buildPath('/:branch/status', params),
+        undefined,
+        'standard',
+        options,
+      )
     },
 
     /** POST /:branch/submit */
-    submit: (params: Record<string, string>, options?: RequestOptions): Promise<SubmitBranchResponse> => {
-      return this.request('POST', this.buildPath('/:branch/submit', params), undefined, 'long', options)
+    submit: (
+      params: Record<string, string>,
+      body: SubmitBranchBody,
+      options?: RequestOptions,
+    ): Promise<SubmitBranchResponse> => {
+      return this.request('POST', this.buildPath('/:branch/submit', params), body, 'long', options)
     },
   }
 
   readonly comments = {
     /** GET /:branch/comments */
     list: (params: Record<string, string>, options?: RequestOptions): Promise<CommentsResponse> => {
-      return this.request('GET', this.buildPath('/:branch/comments', params), undefined, 'standard', options)
+      return this.request(
+        'GET',
+        this.buildPath('/:branch/comments', params),
+        undefined,
+        'standard',
+        options,
+      )
     },
 
     /** POST /:branch/comments */
-    add: (params: Record<string, string>, body: AddCommentBody, options?: RequestOptions): Promise<AddCommentResponse> => {
-      return this.request('POST', this.buildPath('/:branch/comments', params), body, 'standard', options)
+    add: (
+      params: Record<string, string>,
+      body: AddCommentBody,
+      options?: RequestOptions,
+    ): Promise<AddCommentResponse> => {
+      return this.request(
+        'POST',
+        this.buildPath('/:branch/comments', params),
+        body,
+        'standard',
+        options,
+      )
     },
 
     /** POST /:branch/comments/:threadId/resolve */
-    resolve: (params: Record<string, string>, options?: RequestOptions): Promise<ResolveCommentResponse> => {
-      return this.request('POST', this.buildPath('/:branch/comments/:threadId/resolve', params), undefined, 'standard', options)
+    resolve: (
+      params: Record<string, string>,
+      options?: RequestOptions,
+    ): Promise<ResolveCommentResponse> => {
+      return this.request(
+        'POST',
+        this.buildPath('/:branch/comments/:threadId/resolve', params),
+        undefined,
+        'standard',
+        options,
+      )
     },
   }
 
   readonly content = {
     /** GET /:branch/content/...path */
-    read: (params: Record<string, string>, options?: RequestOptions): Promise<ContentReadResponse> => {
-      return this.request('GET', this.buildPath('/:branch/content/...path', params), undefined, 'standard', options)
+    read: (
+      params: Record<string, string>,
+      options?: RequestOptions,
+    ): Promise<ContentReadResponse> => {
+      return this.request(
+        'GET',
+        this.buildPath('/:branch/content/...path', params),
+        undefined,
+        'standard',
+        options,
+      )
     },
 
     /** PUT /:branch/content/...path */
-    write: (params: Record<string, string>, body: WriteContentBody, options?: RequestOptions): Promise<ContentWriteResponse> => {
-      return this.request('PUT', this.buildPath('/:branch/content/...path', params), body, 'standard', options)
+    write: (
+      params: Record<string, string>,
+      body: WriteContentBody,
+      options?: RequestOptions,
+    ): Promise<ContentWriteResponse> => {
+      return this.request(
+        'PUT',
+        this.buildPath('/:branch/content/...path', params),
+        body,
+        'standard',
+        options,
+      )
     },
 
     /** POST /:branch/validate-references/...path */
-    validateReferences: (params: Record<string, string>, body: ValidateReferencesBody, options?: RequestOptions): Promise<ReferenceValidationResponse> => {
-      return this.request('POST', this.buildPath('/:branch/validate-references/...path', params), body, 'standard', options, true)
+    validateReferences: (
+      params: Record<string, string>,
+      body: ValidateReferencesBody,
+      options?: RequestOptions,
+    ): Promise<ReferenceValidationResponse> => {
+      return this.request(
+        'POST',
+        this.buildPath('/:branch/validate-references/...path', params),
+        body,
+        'standard',
+        options,
+        true,
+      )
     },
 
     /** PATCH /:branch/rename-entry/...path */
-    renameEntry: (params: Record<string, string>, body: RenameEntryBody, options?: RequestOptions): Promise<RenameEntryResponse> => {
-      return this.request('PATCH', this.buildPath('/:branch/rename-entry/...path', params), body, 'standard', options)
+    renameEntry: (
+      params: Record<string, string>,
+      body: RenameEntryBody,
+      options?: RequestOptions,
+    ): Promise<RenameEntryResponse> => {
+      return this.request(
+        'PATCH',
+        this.buildPath('/:branch/rename-entry/...path', params),
+        body,
+        'standard',
+        options,
+      )
     },
 
     /** GET /:branch/reference-options */
-    getReferenceOptions: (params: Record<string, string>, options?: RequestOptions): Promise<ReferenceOptionsResponse> => {
-      return this.request('GET', this.buildPath('/:branch/reference-options', params), undefined, 'standard', options)
+    getReferenceOptions: (
+      params: Record<string, string>,
+      options?: RequestOptions,
+    ): Promise<ReferenceOptionsResponse> => {
+      return this.request(
+        'GET',
+        this.buildPath('/:branch/reference-options', params),
+        undefined,
+        'standard',
+        options,
+      )
     },
 
     /** POST /:branch/resolve-references */
-    resolveReferences: (params: Record<string, string>, body: ResolveReferencesBody, options?: RequestOptions): Promise<ResolveReferencesResponse> => {
-      return this.request('POST', this.buildPath('/:branch/resolve-references', params), body, 'standard', options, true)
+    resolveReferences: (
+      params: Record<string, string>,
+      body: ResolveReferencesBody,
+      options?: RequestOptions,
+    ): Promise<ResolveReferencesResponse> => {
+      return this.request(
+        'POST',
+        this.buildPath('/:branch/resolve-references', params),
+        body,
+        'standard',
+        options,
+        true,
+      )
     },
   }
 
   readonly entries = {
     /** GET /:branch/entries */
     list: (params: Record<string, string>, options?: RequestOptions): Promise<EntriesResponse> => {
-      return this.request('GET', this.buildPath('/:branch/entries', params), undefined, 'standard', options)
+      return this.request(
+        'GET',
+        this.buildPath('/:branch/entries', params),
+        undefined,
+        'standard',
+        options,
+      )
     },
 
     /** DELETE /:branch/entries/...entryPath */
-    delete: (params: Record<string, string>, options?: RequestOptions): Promise<DeleteEntryResponse> => {
-      return this.request('DELETE', this.buildPath('/:branch/entries/...entryPath', params), undefined, 'standard', options)
+    delete: (
+      params: Record<string, string>,
+      options?: RequestOptions,
+    ): Promise<DeleteEntryResponse> => {
+      return this.request(
+        'DELETE',
+        this.buildPath('/:branch/entries/...entryPath', params),
+        undefined,
+        'standard',
+        options,
+      )
     },
   }
 
@@ -202,12 +444,18 @@ export class CanopyApiClient {
     },
 
     /** POST /assets/finalize */
-    finalize: (body: FinalizeAssetBody, options?: RequestOptions): Promise<FinalizeAssetResponse> => {
+    finalize: (
+      body: FinalizeAssetBody,
+      options?: RequestOptions,
+    ): Promise<FinalizeAssetResponse> => {
       return this.request('POST', '/assets/finalize', body, 'standard', options)
     },
 
     /** POST /assets/upload: multipart upload, hand-written because the generic template only knows JSON bodies. */
-    uploadProxied: (file: File, options?: { filename?: string } & RequestOptions): Promise<FinalizeAssetResponse> => {
+    uploadProxied: (
+      file: File,
+      options?: { filename?: string } & RequestOptions,
+    ): Promise<FinalizeAssetResponse> => {
       const formData = new FormData()
       formData.append('file', file)
       if (options?.filename) {
@@ -217,7 +465,10 @@ export class CanopyApiClient {
     },
 
     /** GET /assets */
-    list: (params: Record<string, string>, options?: RequestOptions): Promise<AssetsListResponse> => {
+    list: (
+      params: Record<string, string>,
+      options?: RequestOptions,
+    ): Promise<AssetsListResponse> => {
       return this.request('GET', this.buildPath('/assets', params), undefined, 'standard', options)
     },
 
@@ -239,13 +490,25 @@ export class CanopyApiClient {
     },
 
     /** PUT /permissions */
-    update: (body: UpdatePermissionsBody, options?: RequestOptions): Promise<PermissionsResponse> => {
+    update: (
+      body: UpdatePermissionsBody,
+      options?: RequestOptions,
+    ): Promise<PermissionsResponse> => {
       return this.request('PUT', '/permissions', body, 'standard', options)
     },
 
     /** GET /users/search */
-    searchUsers: (params: Record<string, string>, options?: RequestOptions): Promise<SearchUsersResponse> => {
-      return this.request('GET', this.buildPath('/users/search', params), undefined, 'standard', options)
+    searchUsers: (
+      params: Record<string, string>,
+      options?: RequestOptions,
+    ): Promise<SearchUsersResponse> => {
+      return this.request(
+        'GET',
+        this.buildPath('/users/search', params),
+        undefined,
+        'standard',
+        options,
+      )
     },
 
     /** GET /groups */
@@ -254,12 +517,24 @@ export class CanopyApiClient {
     },
 
     /** GET /users/:userId */
-    getUserMetadata: (params: Record<string, string>, options?: RequestOptions): Promise<GetUserMetadataResponse> => {
-      return this.request('GET', this.buildPath('/users/:userId', params), undefined, 'standard', options)
+    getUserMetadata: (
+      params: Record<string, string>,
+      options?: RequestOptions,
+    ): Promise<GetUserMetadataResponse> => {
+      return this.request(
+        'GET',
+        this.buildPath('/users/:userId', params),
+        undefined,
+        'standard',
+        options,
+      )
     },
 
     /** POST /users/batch */
-    batchGetUserMetadata: (body: BatchGetUserMetadataBody, options?: RequestOptions): Promise<BatchGetUserMetadataResponse> => {
+    batchGetUserMetadata: (
+      body: BatchGetUserMetadataBody,
+      options?: RequestOptions,
+    ): Promise<BatchGetUserMetadataResponse> => {
       return this.request('POST', '/users/batch', body, 'standard', options, true)
     },
   }
@@ -271,13 +546,25 @@ export class CanopyApiClient {
     },
 
     /** PUT /groups/internal */
-    updateInternal: (body: UpdateInternalGroupsBody, options?: RequestOptions): Promise<UpdateInternalGroupsResponse> => {
+    updateInternal: (
+      body: UpdateInternalGroupsBody,
+      options?: RequestOptions,
+    ): Promise<UpdateInternalGroupsResponse> => {
       return this.request('PUT', '/groups/internal', body, 'standard', options)
     },
 
     /** GET /groups/search */
-    searchExternal: (params: Record<string, string>, options?: RequestOptions): Promise<ExternalGroupsResponse> => {
-      return this.request('GET', this.buildPath('/groups/search', params), undefined, 'standard', options)
+    searchExternal: (
+      params: Record<string, string>,
+      options?: RequestOptions,
+    ): Promise<ExternalGroupsResponse> => {
+      return this.request(
+        'GET',
+        this.buildPath('/groups/search', params),
+        undefined,
+        'standard',
+        options,
+      )
     },
   }
 
@@ -290,75 +577,206 @@ export class CanopyApiClient {
 
   readonly schema = {
     /** GET /:branch/schema */
-    get: (params: Record<string, string>, options?: RequestOptions): Promise<GetSchemaApiResponse> => {
-      return this.request('GET', this.buildPath('/:branch/schema', params), undefined, 'standard', options)
+    get: (
+      params: Record<string, string>,
+      options?: RequestOptions,
+    ): Promise<GetSchemaApiResponse> => {
+      return this.request(
+        'GET',
+        this.buildPath('/:branch/schema', params),
+        undefined,
+        'standard',
+        options,
+      )
     },
 
     /** GET /:branch/schema/collection/...collectionPath */
-    getCollection: (params: Record<string, string>, options?: RequestOptions): Promise<GetCollectionApiResponse> => {
-      return this.request('GET', this.buildPath('/:branch/schema/collection/...collectionPath', params), undefined, 'standard', options)
+    getCollection: (
+      params: Record<string, string>,
+      options?: RequestOptions,
+    ): Promise<GetCollectionApiResponse> => {
+      return this.request(
+        'GET',
+        this.buildPath('/:branch/schema/collection/...collectionPath', params),
+        undefined,
+        'standard',
+        options,
+      )
     },
 
     /** POST /:branch/schema/collections */
-    createCollection: (params: Record<string, string>, body: CreateCollectionInput, options?: RequestOptions): Promise<CreateCollectionApiResponse> => {
-      return this.request('POST', this.buildPath('/:branch/schema/collections', params), body, 'standard', options)
+    createCollection: (
+      params: Record<string, string>,
+      body: CreateCollectionInput,
+      options?: RequestOptions,
+    ): Promise<CreateCollectionApiResponse> => {
+      return this.request(
+        'POST',
+        this.buildPath('/:branch/schema/collections', params),
+        body,
+        'standard',
+        options,
+      )
     },
 
     /** PATCH /:branch/schema/collection/...collectionPath */
-    updateCollection: (params: Record<string, string>, body: UpdateCollectionInput, options?: RequestOptions): Promise<UpdateCollectionApiResponse> => {
-      return this.request('PATCH', this.buildPath('/:branch/schema/collection/...collectionPath', params), body, 'standard', options)
+    updateCollection: (
+      params: Record<string, string>,
+      body: UpdateCollectionInput,
+      options?: RequestOptions,
+    ): Promise<UpdateCollectionApiResponse> => {
+      return this.request(
+        'PATCH',
+        this.buildPath('/:branch/schema/collection/...collectionPath', params),
+        body,
+        'standard',
+        options,
+      )
     },
 
     /** DELETE /:branch/schema/collection/...collectionPath */
-    deleteCollection: (params: Record<string, string>, options?: RequestOptions): Promise<DeleteCollectionApiResponse> => {
-      return this.request('DELETE', this.buildPath('/:branch/schema/collection/...collectionPath', params), undefined, 'standard', options)
+    deleteCollection: (
+      params: Record<string, string>,
+      options?: RequestOptions,
+    ): Promise<DeleteCollectionApiResponse> => {
+      return this.request(
+        'DELETE',
+        this.buildPath('/:branch/schema/collection/...collectionPath', params),
+        undefined,
+        'standard',
+        options,
+      )
     },
 
     /** POST /:branch/schema/entry-types/...collectionPath */
-    addEntryType: (params: Record<string, string>, body: CreateEntryTypeInput, options?: RequestOptions): Promise<AddEntryTypeApiResponse> => {
-      return this.request('POST', this.buildPath('/:branch/schema/entry-types/...collectionPath', params), body, 'standard', options)
+    addEntryType: (
+      params: Record<string, string>,
+      body: CreateEntryTypeInput,
+      options?: RequestOptions,
+    ): Promise<AddEntryTypeApiResponse> => {
+      return this.request(
+        'POST',
+        this.buildPath('/:branch/schema/entry-types/...collectionPath', params),
+        body,
+        'standard',
+        options,
+      )
     },
 
     /** PATCH /:branch/schema/entry-types/:entryTypeName/...collectionPath */
-    updateEntryType: (params: Record<string, string>, body: UpdateEntryTypeInput, options?: RequestOptions): Promise<UpdateEntryTypeApiResponse> => {
-      return this.request('PATCH', this.buildPath('/:branch/schema/entry-types/:entryTypeName/...collectionPath', params), body, 'standard', options)
+    updateEntryType: (
+      params: Record<string, string>,
+      body: UpdateEntryTypeInput,
+      options?: RequestOptions,
+    ): Promise<UpdateEntryTypeApiResponse> => {
+      return this.request(
+        'PATCH',
+        this.buildPath('/:branch/schema/entry-types/:entryTypeName/...collectionPath', params),
+        body,
+        'standard',
+        options,
+      )
     },
 
     /** DELETE /:branch/schema/entry-types/:entryTypeName/...collectionPath */
-    removeEntryType: (params: Record<string, string>, options?: RequestOptions): Promise<RemoveEntryTypeApiResponse> => {
-      return this.request('DELETE', this.buildPath('/:branch/schema/entry-types/:entryTypeName/...collectionPath', params), undefined, 'standard', options)
+    removeEntryType: (
+      params: Record<string, string>,
+      options?: RequestOptions,
+    ): Promise<RemoveEntryTypeApiResponse> => {
+      return this.request(
+        'DELETE',
+        this.buildPath('/:branch/schema/entry-types/:entryTypeName/...collectionPath', params),
+        undefined,
+        'standard',
+        options,
+      )
     },
 
     /** PATCH /:branch/schema/order/...collectionPath */
-    updateOrder: (params: Record<string, string>, body: UpdateOrderBody, options?: RequestOptions): Promise<UpdateOrderApiResponse> => {
-      return this.request('PATCH', this.buildPath('/:branch/schema/order/...collectionPath', params), body, 'standard', options)
+    updateOrder: (
+      params: Record<string, string>,
+      body: UpdateOrderBody,
+      options?: RequestOptions,
+    ): Promise<UpdateOrderApiResponse> => {
+      return this.request(
+        'PATCH',
+        this.buildPath('/:branch/schema/order/...collectionPath', params),
+        body,
+        'standard',
+        options,
+      )
     },
 
     /** POST /:branch/schema/invalidate-cache */
-    invalidateSchemaCache: (params: Record<string, string>, options?: RequestOptions): Promise<InvalidateSchemaCacheApiResponse> => {
-      return this.request('POST', this.buildPath('/:branch/schema/invalidate-cache', params), undefined, 'standard', options)
+    invalidateSchemaCache: (
+      params: Record<string, string>,
+      options?: RequestOptions,
+    ): Promise<InvalidateSchemaCacheApiResponse> => {
+      return this.request(
+        'POST',
+        this.buildPath('/:branch/schema/invalidate-cache', params),
+        undefined,
+        'standard',
+        options,
+      )
     },
   }
 
   readonly admin = {
     /** GET /admin/branch-health */
-    branchHealth: (params: Record<string, string>, options?: RequestOptions): Promise<BranchHealthResponse> => {
-      return this.request('GET', this.buildPath('/admin/branch-health', params), undefined, 'long', options)
+    branchHealth: (
+      params: Record<string, string>,
+      options?: RequestOptions,
+    ): Promise<BranchHealthResponse> => {
+      return this.request(
+        'GET',
+        this.buildPath('/admin/branch-health', params),
+        undefined,
+        'long',
+        options,
+      )
     },
 
     /** POST /admin/branch-dirs/:dirName/purge */
-    purgeBranchDir: (params: Record<string, string>, options?: RequestOptions): Promise<PurgeBranchDirResponse> => {
-      return this.request('POST', this.buildPath('/admin/branch-dirs/:dirName/purge', params), undefined, 'long', options)
+    purgeBranchDir: (
+      params: Record<string, string>,
+      options?: RequestOptions,
+    ): Promise<PurgeBranchDirResponse> => {
+      return this.request(
+        'POST',
+        this.buildPath('/admin/branch-dirs/:dirName/purge', params),
+        undefined,
+        'long',
+        options,
+      )
     },
 
     /** POST /admin/branch-dirs/:dirName/repair-metadata */
-    repairBranchDir: (params: Record<string, string>, options?: RequestOptions): Promise<RepairBranchDirResponse> => {
-      return this.request('POST', this.buildPath('/admin/branch-dirs/:dirName/repair-metadata', params), undefined, 'long', options)
+    repairBranchDir: (
+      params: Record<string, string>,
+      options?: RequestOptions,
+    ): Promise<RepairBranchDirResponse> => {
+      return this.request(
+        'POST',
+        this.buildPath('/admin/branch-dirs/:dirName/repair-metadata', params),
+        undefined,
+        'long',
+        options,
+      )
     },
 
     /** POST /admin/branch-dirs/:dirName/repair-content-duplicates */
-    repairContentDuplicates: (params: Record<string, string>, options?: RequestOptions): Promise<RepairContentDuplicatesResponse> => {
-      return this.request('POST', this.buildPath('/admin/branch-dirs/:dirName/repair-content-duplicates', params), undefined, 'long', options)
+    repairContentDuplicates: (
+      params: Record<string, string>,
+      options?: RequestOptions,
+    ): Promise<RepairContentDuplicatesResponse> => {
+      return this.request(
+        'POST',
+        this.buildPath('/admin/branch-dirs/:dirName/repair-content-duplicates', params),
+        undefined,
+        'long',
+        options,
+      )
     },
 
     /** GET /admin/status */
@@ -367,18 +785,45 @@ export class CanopyApiClient {
     },
 
     /** GET /admin/tasks/:status */
-    listTasks: (params: Record<string, string>, options?: RequestOptions): Promise<AdminTasksResponse> => {
-      return this.request('GET', this.buildPath('/admin/tasks/:status', params), undefined, 'standard', options)
+    listTasks: (
+      params: Record<string, string>,
+      options?: RequestOptions,
+    ): Promise<AdminTasksResponse> => {
+      return this.request(
+        'GET',
+        this.buildPath('/admin/tasks/:status', params),
+        undefined,
+        'standard',
+        options,
+      )
     },
 
     /** POST /admin/tasks/:taskId/retry */
-    retryTask: (params: Record<string, string>, options?: RequestOptions): Promise<AdminRetryTaskResponse> => {
-      return this.request('POST', this.buildPath('/admin/tasks/:taskId/retry', params), undefined, 'standard', options)
+    retryTask: (
+      params: Record<string, string>,
+      options?: RequestOptions,
+    ): Promise<AdminRetryTaskResponse> => {
+      return this.request(
+        'POST',
+        this.buildPath('/admin/tasks/:taskId/retry', params),
+        undefined,
+        'standard',
+        options,
+      )
     },
 
     /** DELETE /admin/tasks/:status/:fileName */
-    deleteTask: (params: Record<string, string>, options?: RequestOptions): Promise<AdminDeleteTaskResponse> => {
-      return this.request('DELETE', this.buildPath('/admin/tasks/:status/:fileName', params), undefined, 'standard', options)
+    deleteTask: (
+      params: Record<string, string>,
+      options?: RequestOptions,
+    ): Promise<AdminDeleteTaskResponse> => {
+      return this.request(
+        'DELETE',
+        this.buildPath('/admin/tasks/:status/:fileName', params),
+        undefined,
+        'standard',
+        options,
+      )
     },
   }
 
@@ -404,7 +849,10 @@ export class CanopyApiClient {
         result = result.replace(pathParamPattern, encodeURIComponent(String(value)))
       } else if (result.includes(restParamPattern)) {
         // For rest parameters, encode each segment separately to preserve slashes
-        const encoded = String(value).split('/').map(segment => encodeURIComponent(segment)).join('/')
+        const encoded = String(value)
+          .split('/')
+          .map((segment) => encodeURIComponent(segment))
+          .join('/')
         result = result.replace(restParamPattern, encoded)
       } else {
         queryParams[key] = value
@@ -431,7 +879,7 @@ export class CanopyApiClient {
     body: unknown,
     timeout: RequestTimeoutClass,
     options?: RequestOptions,
-    readOnly = method === 'GET'
+    readOnly = method === 'GET',
   ): Promise<T> {
     return runWithDeadline((signal) => this.send<T>(method, path, body, signal), {
       method,
@@ -442,7 +890,12 @@ export class CanopyApiClient {
     })
   }
 
-  private async send<T>(method: string, path: string, body: unknown, signal: AbortSignal): Promise<T> {
+  private async send<T>(
+    method: string,
+    path: string,
+    body: unknown,
+    signal: AbortSignal,
+  ): Promise<T> {
     const url = `${this.baseUrl}${this.trailingSlash ? withTrailingSlash(path) : path}`
 
     const requestHeaders: Record<string, string> = {}
@@ -568,7 +1021,10 @@ export function isNonApiResponse(result: object): boolean {
 
 /** The `error` string of a JSON body, when it has one. */
 function errorFromBody(body: unknown): string | undefined {
-  return typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string'
+  return typeof body === 'object' &&
+    body !== null &&
+    'error' in body &&
+    typeof body.error === 'string'
     ? body.error
     : undefined
 }
