@@ -700,6 +700,7 @@ All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 - `settings-branch-utils.ts` — settings branch helpers
 - `github-service.ts` — GitHub API integration: `createOrUpdatePullRequest`, `createCanopyOctokit`, `isRefAlreadyGoneError`, the rate-limit retry predicates
 - `submission-attribution.ts` — sanitized editor identity, `describeEditors`: `Edited-by:` / `Co-authored-by:` commit trailers and the PR body's marker-delimited section
+- `editor-url.ts` — the editor URL PR bodies link to, and its deep links
 
 Key types: `BranchContext` (branch state plus `branchRoot` / `baseRoot`), `BranchMetadata`,
 `BranchPaths`, `SyncStatus` (`synced`, `pending-sync`, `sync-failed`).
@@ -755,7 +756,7 @@ immediately; without one they enqueue a task for the worker; a submit marks the 
 **Location**: `packages/canopycms/src/services.ts`
 
 - `commitFiles()` — commit specific files, for admin changes to permissions and groups
-- `submitBranch()` — the submit workflow: checkout, stamp new entries, status, commit all (with editor trailers), push; returns `changedPaths`, `editors` and `stamped` (`NothingToSubmitError` when empty)
+- `submitBranch()` — the submit workflow: checkout, stamp new entries, status, commit all (with editor trailers), push; returns `changedPaths`, `editors`, `entryPaths` (for the PR's editor links) and `stamped` (`NothingToSubmitError` when empty)
 - `commitToSettingsBranch()` — commit and push the settings branch (never a PR)
 - `getSettingsBranchRoot()` — resolve the settings workspace root, ensuring it exists
 

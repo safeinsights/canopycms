@@ -95,6 +95,7 @@ describe('branch status api', () => {
       makeCtx(false),
       { user: { type: 'authenticated', userId: 'u2', groups: [] } },
       { branch: 'feature/x' as BranchName },
+      undefined,
     )
     expect(res.status).toBe(403)
   })
@@ -104,6 +105,7 @@ describe('branch status api', () => {
       makeCtx(true),
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' as BranchName },
+      undefined,
     )
     expect(res.ok).toBe(true)
     expect(res.data?.branch).toMatchObject({
@@ -132,6 +134,7 @@ describe('branch status api', () => {
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' as BranchName },
+      undefined,
     )
 
     expect(res.ok).toBe(true)
@@ -155,6 +158,7 @@ describe('branch status api', () => {
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'main' as BranchName },
+      undefined,
     )
 
     expect(res.ok).toBe(false)
@@ -178,6 +182,7 @@ describe('branch status api', () => {
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'main' as BranchName },
+      undefined,
     )
 
     expect(res.ok).toBe(false)
@@ -196,6 +201,7 @@ describe('branch status api', () => {
       makeCtx(true),
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' as BranchName },
+      undefined,
     )
 
     expect(res.ok).toBe(true)
@@ -214,6 +220,7 @@ describe('branch status api', () => {
       makeCtx(true),
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' as BranchName },
+      undefined,
     )
 
     expect(res.ok).toBe(true)
@@ -231,6 +238,7 @@ describe('branch status api', () => {
       makeCtx(true),
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' as BranchName },
+      undefined,
     )
 
     expect(res.ok).toBe(true)
@@ -259,6 +267,7 @@ describe('branch status api', () => {
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' as BranchName },
+      undefined,
     )
 
     expect(res.ok).toBe(false)
@@ -296,6 +305,7 @@ describe('branch status api', () => {
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' as BranchName },
+      undefined,
     )
 
     expect(res.ok).toBe(false)
@@ -325,6 +335,7 @@ describe('branch status api', () => {
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' as BranchName },
+      undefined,
     )
 
     expect(res.ok).toBe(false)
@@ -347,6 +358,7 @@ describe('branch status api', () => {
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' as BranchName },
+      undefined,
     )
 
     expect(res.status).toBe(409)
@@ -364,6 +376,7 @@ describe('branch status api', () => {
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' as BranchName },
+      undefined,
     )
 
     expect(res.ok).toBe(false)
@@ -419,6 +432,7 @@ describe('branch status api', () => {
         ctx,
         { user: { type: 'authenticated', userId: 'u1', groups: [] } },
         { branch: 'feature/x' as BranchName },
+        undefined,
       )
 
     it.each([
@@ -504,7 +518,7 @@ describe('branch status api', () => {
         .fn()
         .mockRejectedValue(new NothingToSubmitError('feature/x', 'main'))
 
-      const res = await submitBranchForMerge(ctx, { user }, params)
+      const res = await submitBranchForMerge(ctx, { user }, params, undefined)
 
       expect(res).toMatchObject({ ok: false, status: 400 })
       expect(res.error).toBe(
@@ -518,7 +532,7 @@ describe('branch status api', () => {
       const ctx = directCtx(vi.fn().mockRejectedValue(await noCommitsBetweenError()))
       mockMetadataUpdate.mockClear()
 
-      const res = await submitBranchForMerge(ctx, { user }, params)
+      const res = await submitBranchForMerge(ctx, { user }, params, undefined)
 
       expect(res).toMatchObject({ ok: false, status: 400 })
       expect(res.error).toMatch(/^Nothing to submit yet: "feature\/x"/)
@@ -540,7 +554,7 @@ describe('branch status api', () => {
       )
       mockMetadataUpdate.mockClear()
 
-      const res = await submitBranchForMerge(ctx, { user }, params)
+      const res = await submitBranchForMerge(ctx, { user }, params, undefined)
 
       expect(res.ok).toBe(true)
       expect(mockMetadataUpdate).toHaveBeenCalledWith({
@@ -557,7 +571,7 @@ describe('branch status api', () => {
     it('stamps submittedAt and clears a stale failure reason on a successful submit', async () => {
       mockMetadataUpdate.mockClear()
 
-      const res = await submitBranchForMerge(makeCtx(true), { user }, params)
+      const res = await submitBranchForMerge(makeCtx(true), { user }, params, undefined)
 
       expect(res.ok).toBe(true)
       const saved = mockMetadataUpdate.mock.calls[0]?.[0].branch
@@ -598,6 +612,7 @@ describe('branch status api', () => {
           },
         },
         { branch: 'feature/x' as BranchName },
+        undefined,
       )
 
       expect(res.ok).toBe(true)
@@ -609,6 +624,108 @@ describe('branch status api', () => {
       expect(body).toContain('Submitted by `Jane Doe` (`u1`) via CanopyCMS.')
       expect(body).toContain('- `content/pages/home.md`')
       expect(body).not.toContain('jane@example.com')
+    })
+  })
+
+  describe('links the PR body back to the editor', () => {
+    const submitWith = async (options: {
+      configured?: string
+      claimed?: string
+      headers: Record<string, string>
+    }) => {
+      const createOrUpdatePR = vi.fn().mockResolvedValue({ number: 5, url: 'https://pr/5' })
+      const ctx = createMockApiContext({
+        branchContext: baseContext,
+        allowBranchAccess: true,
+        services: {
+          config: {
+            defaultBranchAccess: 'allow',
+            mode: 'prod',
+            defaultBaseBranch: 'main',
+            editorUrl: options.configured,
+          } as any,
+          githubService: { createOrUpdatePR } as any,
+        },
+      })
+      ctx.services.submitBranch = vi.fn().mockResolvedValue({
+        changedPaths: ['content/pages/home.a1b2c3d4e5f6.json'],
+        editors: [],
+        entryPaths: new Map([['content/pages/home.a1b2c3d4e5f6.json', 'content/pages/home']]),
+        stamped: [],
+      })
+      const rawRequest = {
+        method: 'POST',
+        url: 'https://abc.lambda-url.aws/api/canopycms/feature/x/submit',
+        header: (name: string) => options.headers[name.toLowerCase()] ?? null,
+        json: async () => undefined,
+        rawBody: async () => new Uint8Array(),
+        formData: async () => new FormData(),
+      }
+      const res = await submitBranchForMerge(
+        ctx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] }, rawRequest },
+        { branch: 'feature/x' as BranchName },
+        options.claimed === undefined ? undefined : { editorUrl: options.claimed },
+      )
+      expect(res.ok).toBe(true)
+      return createOrUpdatePR.mock.calls[0]?.[0].body as string
+    }
+
+    it('uses the reported editor URL when the request was addressed to its host', async () => {
+      const body = await submitWith({
+        claimed: 'https://cms.example.org/edit',
+        headers: { 'x-forwarded-host': 'cms.example.org', host: 'abc.lambda-url.aws' },
+      })
+      expect(body).toContain(
+        '[Open this branch in the editor](https://cms.example.org/edit?branch=feature%2Fx)',
+      )
+      expect(body).toContain(
+        '([open in editor](https://cms.example.org/edit?branch=feature%2Fx&entry=content%2Fpages%2Fhome))',
+      )
+    })
+
+    it('drops the links and warns when the reported URL is on another host', async () => {
+      const consoleSpy = mockConsole()
+      const body = await submitWith({
+        claimed: 'https://evil.example/edit',
+        headers: { 'x-forwarded-host': 'cms.example.org' },
+      })
+      expect(body).not.toContain('evil.example')
+      expect(body).not.toContain('](')
+      expect(consoleSpy).toHaveWarned(/no editor links/)
+      consoleSpy.restore()
+    })
+
+    it('still submits, without links, when the reported URL is not usable', async () => {
+      const consoleSpy = mockConsole()
+      const body = await submitWith({
+        claimed: `https://cms.example.org/${'a'.repeat(3000)}`,
+        headers: { host: 'cms.example.org' },
+      })
+      expect(body).not.toContain('](')
+      expect(consoleSpy).toHaveWarned(/no editor links/)
+      consoleSpy.restore()
+      for (const editorUrl of ['x'.repeat(3000), 42, null, { a: 1 }]) {
+        const validated = WORKFLOW_ROUTES.submit.validate({
+          params: { branch: 'feature/x' },
+          body: { editorUrl },
+        })
+        expect(validated.ok).toBe(true)
+        if (validated.ok)
+          expect(validated.body?.editorUrl).toBe(
+            editorUrl === 'x'.repeat(3000) ? editorUrl : undefined,
+          )
+      }
+    })
+
+    it('uses the configured editor URL whatever the request reports', async () => {
+      const body = await submitWith({
+        configured: 'https://editor.example.org/cms',
+        claimed: 'https://evil.example/edit',
+        headers: { host: 'evil.example' },
+      })
+      expect(body).toContain('(https://editor.example.org/cms?branch=feature%2Fx)')
+      expect(body).not.toContain('evil.example')
     })
   })
 })

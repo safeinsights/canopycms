@@ -31,6 +31,10 @@ export interface SubmissionRecord {
   /** Every recorded editor of the branch; the PR body lists those other than the submitter. */
   editors?: readonly SubmissionEditor[]
   changedPaths: readonly string[]
+  /** The entry logical path of each changed path that is an entry, for its editor link. */
+  entryPaths?: ReadonlyMap<string, string>
+  /** The editor page URL the PR body links to (editor-url.ts resolveEditorUrl). */
+  editorUrl?: string
   /** The submit's `submittedAt`, carried to the worker so its failure handling targets this submit. */
   submittedAt?: string
 }
@@ -54,6 +58,9 @@ export async function syncSubmitPr(
     submitter: submission.submitter,
     editors: submission.editors,
     changedPaths: submission.changedPaths,
+    branch: context.branch.name,
+    editorUrl: submission.editorUrl,
+    entryPaths: submission.entryPaths,
   })
   // Target the fork point recorded at branch creation when available.
   const baseBranch = context.branch.baseBranch ?? baseBranchOf(ctx.services.config)

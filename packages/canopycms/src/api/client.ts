@@ -15,7 +15,7 @@ import { EDITOR_MODE_HEADER, EDITOR_MODE_MISMATCH_STATUS } from '../operating-mo
 import type { OperatingMode } from '../operating-mode/types'
 
 import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, CreateBranchBody, UpdateBranchAccessBody } from './branch'
-import type { BranchMergeResponse, SubmitBranchResponse } from './branch-status'
+import type { BranchMergeResponse, SubmitBranchBody, SubmitBranchResponse } from './branch-status'
 import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from './comments'
 import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse, RenameEntryBody, RenameEntryResponse, ValidateReferencesBody, WriteContentBody } from './content'
 import type { ReferenceOptionsResponse } from './reference-options'
@@ -129,8 +129,8 @@ export class CanopyApiClient {
     },
 
     /** POST /:branch/submit */
-    submit: (params: Record<string, string>, options?: RequestOptions): Promise<SubmitBranchResponse> => {
-      return this.request('POST', this.buildPath('/:branch/submit', params), undefined, 'long', options)
+    submit: (params: Record<string, string>, body: SubmitBranchBody, options?: RequestOptions): Promise<SubmitBranchResponse> => {
+      return this.request('POST', this.buildPath('/:branch/submit', params), body, 'long', options)
     },
   }
 

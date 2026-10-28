@@ -1365,6 +1365,37 @@ describe('editor.previewPrefix validation', () => {
   })
 })
 
+describe('editorUrl validation', () => {
+  const withUrl = (editorUrl: string) => validateCanopyConfig({ ...gitAuthor, editorUrl })
+
+  it.each([
+    'https://cms.example.org/edit',
+    'https://cms.example.org',
+    'http://localhost:3000/edit',
+  ])('accepts %s', (value) => {
+    expect(withUrl(value).editorUrl).toBe(value)
+  })
+
+  it.each([
+    '/edit',
+    '',
+    '//cms.example.org/edit',
+    'https://user:pass@cms.example.org/edit',
+    'https://cms.example.org/edit?branch=x',
+    'https://cms.example.org/edit#top',
+    'javascript:alert(1)',
+    'ftp://cms.example.org/edit',
+    'https://cms.example.org/a b',
+  ])('rejects %s', (value) => {
+    expect(() => withUrl(value)).toThrow(/editorUrl/)
+  })
+
+  it('stays off the client config', () => {
+    const { client } = defineCanopyConfig({ ...gitAuthor, editorUrl: 'https://cms.example.org/e' })
+    expect(JSON.stringify(client())).not.toContain('cms.example.org')
+  })
+})
+
 describe('editor.previewBase validation', () => {
   it('accepts a route or false, which marks entries with no page', () => {
     const previewBase = { 'content/posts': '/blog', 'content/settings': false as const }

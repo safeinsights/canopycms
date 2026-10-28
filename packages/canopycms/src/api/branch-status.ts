@@ -17,6 +17,7 @@ import { ContentWriteLockBusyError } from '../utils/content-write-lock'
 import { submissionEditorFromUser, type SubmissionEditor } from '../submission-attribution'
 import { NothingToSubmitError } from '../services'
 import { baseBranchOf } from '../utils/base-branch'
+import { resolveEditorUrl } from '../editor-url'
 
 // Re-export for client generation
 export type { BranchMergeResponse } from './branch-merge'
@@ -45,11 +46,45 @@ const getBranchStatusHandler = async (
   }
 }
 
+const submitBranchBodySchema = z
+  .object({
+    /** The editor page's URL (`location.origin + location.pathname`), for the PR body's links. */
+    // Any value but a usable URL costs only the links (editor-url.ts), never the submit.
+    editorUrl: z.string().optional().catch(undefined),
+  })
+  .optional()
+
+/** The submit request body. */
+export type SubmitBranchBody = z.infer<typeof submitBranchBodySchema>
+
+/**
+ * The editor URL the PR body links to: `config.editorUrl`, else the URL the editor reported
+ * when the request was addressed to its host (editor-url.ts). A reported URL that fails that
+ * check is logged once per submit, since every link then goes missing.
+ */
+function submitEditorUrl(ctx: ApiContext, req: ApiRequest, claimed: string | undefined) {
+  const configured = ctx.services.config.editorUrl
+  const resolved = resolveEditorUrl({
+    configured,
+    claimed,
+    header: req.rawRequest ? (name) => req.rawRequest?.header(name) ?? null : undefined,
+  })
+  if (!resolved && !configured && claimed) {
+    console.warn(
+      'CanopyCMS: The pull request body has no editor links: the editor URL the browser reported ' +
+        'is not on the host the request was addressed to (X-Forwarded-Host, else Host). Set ' +
+        'editorUrl in the CanopyCMS config to the editor page URL.',
+    )
+  }
+  return resolved
+}
+
 const submitBranchForMergeHandler = async (
   gc: { branchContext: BranchContext },
   ctx: ApiContext,
   req: ApiRequest,
   _params: z.infer<typeof branchParamSchema>,
+  body: SubmitBranchBody,
 ): Promise<SubmitBranchResponse> => {
   const { branchContext } = gc
 
@@ -98,9 +133,10 @@ const submitBranchForMergeHandler = async (
   const { authPlugin } = ctx
   let changedPaths: string[]
   let editors: SubmissionEditor[]
+  let entryPaths: Map<string, string>
   let stamped: StampedEntry[]
   try {
-    ;({ changedPaths, editors, stamped } = await ctx.services.submitBranch({
+    ;({ changedPaths, editors, entryPaths, stamped } = await ctx.services.submitBranch({
       context: branchContext,
       submitter,
       lookupEditor: authPlugin ? (id) => authPlugin.getUserMetadata(id) : undefined,
@@ -170,6 +206,8 @@ const submitBranchForMergeHandler = async (
     submitter,
     editors,
     changedPaths,
+    entryPaths,
+    editorUrl: submitEditorUrl(ctx, req, body?.editorUrl),
     submittedAt,
   })
 
@@ -244,6 +282,8 @@ const submitBranchForMerge = defineEndpoint({
   method: 'POST',
   path: '/:branch/submit',
   params: branchParamSchema,
+  body: submitBranchBodySchema,
+  bodyType: 'SubmitBranchBody',
   responseType: 'SubmitBranchResponse',
   response: {} as SubmitBranchResponse,
   defaultMockData: {

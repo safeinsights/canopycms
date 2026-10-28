@@ -3,6 +3,7 @@ import { personName } from './auth/person-name'
 import type { CanopyUser } from './user'
 import { getErrorMessage } from './utils/error'
 import { canopyLogWarn } from './utils/logger'
+import { editorDeepLink } from './editor-url'
 
 /**
  * Who submitted (and edited) a branch, recorded in the submit commit's trailers
@@ -23,7 +24,9 @@ const MAX_NAME_LENGTH = 80
 const MAX_ID_LENGTH = 128
 const MAX_EMAIL_LENGTH = 254
 const MAX_DESCRIPTION_LENGTH = 10_000
-const MAX_LISTED_ENTRIES = 100
+/** How many changed paths the PR body lists. */
+export const MAX_LISTED_ENTRIES = 100
+const MAX_SECTION_LENGTH = 45_000
 
 /**
  * The PR body region canopycms owns. On update only the text between these
@@ -260,7 +263,27 @@ export interface PrSectionInput {
   editors?: readonly SubmissionEditor[]
   /** Repo-relative paths changed on the branch. */
   changedPaths: readonly string[]
+  /** The submitted branch and the editor page URL (editor-url.ts); together they enable links. */
+  branch?: string
+  editorUrl?: string
+  /** The entry logical path of each changed path that is an entry, for its deep link. */
+  entryPaths?: ReadonlyMap<string, string>
 }
+
+/**
+ * A URL safe as a Markdown link destination: the characters that could end the destination,
+ * open a title or escape are percent-encoded, which a server reads as the same address.
+ * Brackets are legal in a destination and are an IPv6 host's syntax, so they stay.
+ */
+function markdownHref(href: string): string {
+  return href.replace(
+    /[()<>\\\s'"`]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`,
+  )
+}
+
+const PR_COMMENTS_NOTICE =
+  'Comments on this pull request do not reach the CanopyCMS editor, so the author will not see them.'
 
 function editorLabel(editor: CleanEditor): string {
   return editor.name
@@ -268,8 +291,15 @@ function editorLabel(editor: CleanEditor): string {
     : codeSpan(editor.userId)
 }
 
-/** The canopycms-owned PR body section, including its start and end markers. */
-export function buildPrSection(input: PrSectionInput): string {
+interface SectionLayout {
+  entryLinks: boolean
+  /** How many changed paths to list. */
+  listed: number
+  /** The description as written into the body: already neutralized and cut. */
+  description: string
+}
+
+function renderPrSection(input: PrSectionInput, layout: SectionLayout): string {
   const parts: string[] = []
 
   const [submitter] = input.submitter ? cleanEditors([input.submitter]) : []
@@ -284,23 +314,76 @@ export function buildPrSection(input: PrSectionInput): string {
     parts.push(`Also edited by: ${others.map(editorLabel).join(', ')}`)
   }
 
-  const paths = [...new Set(input.changedPaths)]
-    .map(cleanPath)
-    .filter((p): p is string => p !== undefined)
+  const { branch, editorUrl } = input
+  const link = (entryPath?: string) =>
+    branch && editorUrl ? markdownHref(editorDeepLink(editorUrl, branch, entryPath)) : undefined
+  const branchLink = link()
+  if (branchLink) parts.push(`[Open this branch in the editor](${branchLink})`)
+  parts.push(
+    `> [!IMPORTANT]\n> ${PR_COMMENTS_NOTICE} ` +
+      (branchLink
+        ? `Comment in the [editor](${branchLink}) instead.`
+        : 'Comment in the editor instead.'),
+  )
+
+  const paths = changedPathsOf(input)
   if (paths.length > 0) {
-    const listed = paths.slice(0, MAX_LISTED_ENTRIES).map((p) => `- ${codeSpan(p)}`)
-    if (paths.length > MAX_LISTED_ENTRIES) {
-      listed.push(`- …and ${paths.length - MAX_LISTED_ENTRIES} more`)
-    }
+    const listed = paths.slice(0, layout.listed).map(({ raw, clean }) => {
+      const entryPath = layout.entryLinks ? input.entryPaths?.get(raw) : undefined
+      const entryLink = entryPath === undefined ? undefined : link(entryPath)
+      return entryLink
+        ? `- ${codeSpan(clean)} ([open in editor](${entryLink}))`
+        : `- ${codeSpan(clean)}`
+    })
+    if (paths.length > layout.listed) listed.push(`- …and ${paths.length - layout.listed} more`)
     parts.push(`**Changed entries (${paths.length})**\n\n${listed.join('\n')}`)
   }
 
   // Last, so an unclosed fence or `<details>` in free Markdown cannot swallow
   // the attribution above it.
-  const description = input.description?.trim()
-  if (description) parts.push(neutralizeComments(truncate(description, MAX_DESCRIPTION_LENGTH)))
+  if (layout.description) parts.push(layout.description)
 
   return `${PR_SECTION_START}\n${parts.join('\n\n')}\n${PR_SECTION_END}`
+}
+
+function changedPathsOf(input: PrSectionInput): { raw: string; clean: string }[] {
+  return [...new Set(input.changedPaths)]
+    .map((raw) => ({ raw, clean: cleanPath(raw) }))
+    .filter((p): p is { raw: string; clean: string } => p.clean !== undefined)
+}
+
+/** `text` cut to at most `max` UTF-16 units, never inside a surrogate pair. */
+function truncateUnits(text: string, max: number): string {
+  if (text.length <= max) return text
+  if (max < 1) return ''
+  const cut = text.slice(0, max - 1)
+  return `${/[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut}…`
+}
+
+/**
+ * The canopycms-owned PR body section, including its start and end markers. GitHub refuses a
+ * body over 65,536 characters and the rest of the body is a human's, so a section over
+ * MAX_SECTION_LENGTH loses its entry links, then the description's end, then entries from
+ * the end of the list. The attribution lines themselves are never cut.
+ */
+export function buildPrSection(input: PrSectionInput): string {
+  const raw = input.description?.trim()
+  const description = raw ? neutralizeComments(truncate(raw, MAX_DESCRIPTION_LENGTH)) : ''
+  const layout: SectionLayout = { entryLinks: true, listed: MAX_LISTED_ENTRIES, description }
+  const fits = (l: SectionLayout) => renderPrSection(input, l).length <= MAX_SECTION_LENGTH
+
+  if (fits(layout)) return renderPrSection(input, layout)
+  layout.entryLinks = false
+  if (fits(layout)) return renderPrSection(input, layout)
+  // The description's separator is two newlines.
+  const room =
+    MAX_SECTION_LENGTH - renderPrSection(input, { ...layout, description: '' }).length - 2
+  if (room > 0) {
+    return renderPrSection(input, { ...layout, description: truncateUnits(description, room) })
+  }
+  layout.description = ''
+  while (layout.listed > 0 && !fits(layout)) layout.listed = Math.max(0, layout.listed - 10)
+  return renderPrSection(input, layout)
 }
 
 /**
