@@ -6,7 +6,7 @@
  * settings workspace must be refused loudly rather than silently wiping
  * permissions.json/groups.json — see ensureGitWorkspace's guard comment for
  * the full trace (createOrphanSettingsBranch on a name that isn't the current
- * branch runs `checkout --orphan` + `rm -rf .`).
+ * branch runs `switch --orphan` + `git rm`).
  *
  * Uses real git in a temp dir (initTestRepo), matching the harness pattern in
  * cms-worker-rebase.test.ts / __integration__ rather than mocking simple-git.
@@ -109,7 +109,7 @@ describe('SettingsWorkspaceManager rename guard', () => {
     expect(JSON.parse(stillThere)).toEqual({ acls: ['do-not-lose-me'] })
 
     // And the workspace must still be checked out on the ORIGINAL branch — proof
-    // that no `checkout --orphan canopycms-settings-new` ever ran.
+    // that no `switch --orphan canopycms-settings-new` ever ran.
     const status = await git.status()
     expect(status.current).toBe('canopycms-settings-old')
   })

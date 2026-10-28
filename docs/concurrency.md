@@ -511,7 +511,7 @@ boot-time invariant with no locking primitive of its own: `SettingsWorkspaceMana
 (settings-workspace.ts) checks, via `GitManager.repoExistsAt()`, whether a settings
 workspace exists on disk and whether its checked-out branch matches the resolved name;
 a mismatch throws instead of letting `GitManager.initializeWorkspace` run
-`checkout --orphan` + `rm -rf .` on a populated workspace (orphan branches share no
+`switch --orphan` + `git rm` on a populated workspace (orphan branches share no
 history, so that sequence is not recoverable).
 
 **The rename refusal comes from the guard, not from a lock — and that is deliberate.**
@@ -538,8 +538,9 @@ guard and lock included.
 **Settings init takes two layer-3 locks, `build` then `lock`.** A first clone follows
 [PROV-1]: built in its own `.prov-settings-*` sibling, renamed in under `lock`, where a loser,
 or a rename an occupied root refuses, drops its copy. Concurrent cold starts wait up to 15 s
-for `build`'s holder to publish (a killed builder's marker stays live 90 s). An in-place init takes `lock` with the patient wait, because `initializeWorkspace`
-is only _sequentially_ idempotent; the heartbeat keeps a slow EFS init from being judged stale.
+for `build`'s holder to publish (a killed builder's marker stays live 90 s). An in-place
+init takes `lock` with the patient wait, because `initializeWorkspace` is only _sequentially_
+idempotent; the heartbeat keeps a slow EFS init from being judged stale.
 
 Its anchor is its own dot-directory, `{workspaceRoot}/.settings-init`;
 `settingsInitLockTarget()` (settings-workspace.ts) says why.

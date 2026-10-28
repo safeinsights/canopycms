@@ -1885,7 +1885,7 @@ export class GitManager {
     try {
       await this.createOrphanSettingsBranchInner(branchName, initialFiles)
     } finally {
-      // Both branches of Inner swap the working tree (checkout / checkout --orphan)
+      // Both branches of Inner swap the working tree (checkout / switch --orphan)
       await this.invalidateContentIndexes()
     }
   }
