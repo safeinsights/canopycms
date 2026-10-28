@@ -220,6 +220,26 @@ describe('fetchGitHubIntoRemoteGit', () => {
     expect(await trackingRefs()).toBe('')
   })
 
+  it('lets the pack outlast the inactivity bound once the header is read', async () => {
+    // The header's timer must not outlive it: index-pack bounds the pack itself.
+    const tip = await commit('tip', undefined, github)
+    await git('--git-dir', github, 'update-ref', 'refs/heads/main', tip)
+    const slow = async (file: string) => {
+      const bytes = await fs.readFile(file)
+      const end = bytes.indexOf('\n\n') + 2
+      const out = new PassThrough()
+      out.write(bytes.subarray(0, end))
+      setTimeout(() => out.write(bytes.subarray(end, end + 10)), 600)
+      setTimeout(() => out.end(bytes.subarray(end + 10)), 1200)
+      return out
+    }
+    const gateway = { ...(await gatewayFor(['main'], [], slow)), taskTimeoutMs: 1000 }
+
+    await fetchGitHubIntoRemoteGit(gateway)
+
+    expect(await trackingRefs()).toBe(`${GITHUB_TRACKING_REF_PREFIX}main`)
+  })
+
   it("takes a bundle whose header outgrows a pushed bundle's bound", async () => {
     // A fetch bundle names every branch GitHub moved; a push bundle names one.
     const tip = await commit('tip', undefined, github)
