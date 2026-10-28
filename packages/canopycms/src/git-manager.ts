@@ -1319,12 +1319,13 @@ export class GitManager {
         allowNetworkRemoteInProd: options.allowNetworkRemoteInProd,
       })
 
-      // A content clone skips its own checkout because checkoutFreshClone runs
-      // the one checkout this workspace needs.
+      // No clone checks out: the checkout step below is the one checkout each
+      // workspace needs (checkoutFreshClone for content; createOrphanSettingsBranch
+      // for settings, which writes only the settings files, never the base tree).
       await step('clone', () =>
         GitManager.cloneWorkspace(remoteUrl, options.workspacePath, baseBranch, {
           remoteName,
-          noCheckout: options.branchType === 'content',
+          noCheckout: true,
           config: identity,
         }),
       )
@@ -1934,7 +1935,8 @@ export class GitManager {
     // validation additionally rejects a leading-hyphen value here.
     await this.git.raw(['checkout', '--orphan', branchName])
 
-    // The orphan starts from the base branch's index. `--sparse` also removes entries outside a
+    // The orphan keeps whatever index the workspace has: none after a `--no-checkout` clone, the
+    // base branch's in a workspace checked out on it. `--sparse` also removes entries outside a
     // sparse cone, which a plain `rm` leaves in the index, and so in the first commit.
     await this.git.raw(['rm', '-r', '-f', '-q', '--sparse', '--ignore-unmatch', '--', '.'])
     const leftover = (await this.git.raw(['ls-files'])).trim()
