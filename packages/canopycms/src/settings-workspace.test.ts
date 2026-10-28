@@ -1125,6 +1125,45 @@ describe('SettingsWorkspaceManager first clone', () => {
     expect(await fs.readdir(halfBuilt)).toEqual(['.git'])
   }, 60_000)
 
+  it('refuses, at its publish, a workspace another deployment published while it built', async () => {
+    const { settingsRoot, options } = await setup()
+    // A dead builder's marker sends both cold starts straight to their own builds.
+    await fs.mkdir(path.join(settingsInitLockTarget(settingsRoot), 'build'), { recursive: true })
+    const ours = await loadProcess()
+    const theirs = await loadProcess()
+    const cloning = deferred()
+    const gate = deferred()
+    const clone = ours.GitManager.cloneWorkspace.bind(ours.GitManager)
+    vi.spyOn(ours.GitManager, 'cloneWorkspace').mockImplementation(async (...args) => {
+      cloning.resolve()
+      await gate.promise
+      return clone(...args)
+    })
+    // The guard's first look after the other publish is answered from a stale cache.
+    let staleLooks = 0
+    const repoExistsAt = ours.GitManager.repoExistsAt.bind(ours.GitManager)
+    vi.spyOn(ours.GitManager, 'repoExistsAt').mockImplementation(async (at) =>
+      at === settingsRoot && staleLooks++ === 1 ? false : repoExistsAt(at),
+    )
+
+    const consoleSpy = mockConsole()
+    try {
+      const pending = new ours.settings.SettingsWorkspaceManager(config, {
+        buildWaitMs: 0,
+      }).ensureGitWorkspace(options)
+      await cloning.promise
+      await new theirs.settings.SettingsWorkspaceManager(config, {
+        buildWaitMs: 0,
+      }).ensureGitWorkspace({ ...options, branchName: 'canopycms-settings-other' })
+      gate.resolve()
+
+      await expect(pending).rejects.toThrow(/refusing to initialize settings workspace/)
+    } finally {
+      consoleSpy.restore()
+    }
+    expect(staleLooks).toBeGreaterThan(1)
+  }, 60_000)
+
   it('drops its copy when the publish rename finds a workspace its stale view missed', async () => {
     const { root, settingsRoot, options } = await setup()
     const other = await loadProcess()

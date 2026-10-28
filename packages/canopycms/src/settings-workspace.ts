@@ -429,7 +429,11 @@ export class SettingsWorkspaceManager {
       published = await provisionLog.step('publish', () =>
         this.withInitLock(options, async () => {
           const state = await settingsRootState(options)
-          if (state === 'in-use') return false
+          if (state === 'in-use') {
+            // The guard above may have missed a workspace this fresher read sees.
+            await assertSettingsWorkspaceIdentity(options)
+            return false
+          }
           if (state === 'interrupted') {
             const trashName = settingsTrashDirName()
             await fs.rename(settingsRoot, path.join(workspaceRoot, trashName))
