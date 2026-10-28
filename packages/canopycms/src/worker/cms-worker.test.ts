@@ -531,7 +531,7 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     // from a prior attempt, but branch metadata never got pullRequestNumber
     // (the process died first). This task carries no known PR number either.
     const { worker, octokit } = makePrWorker()
-    await setupBranchDir('feature-x')
+    await setupBranchDir('canopycms-feature-x')
 
     octokit.pulls.list.mockResolvedValue({
       data: [
@@ -545,7 +545,7 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
 
     const id = await enqueueTask(taskDir, {
       action: 'push-and-create-or-update-pr',
-      payload: { branch: 'feature-x', title: 'Submit feature-x', body: 'desc' },
+      payload: { branch: 'canopycms-feature-x', title: 'Submit canopycms-feature-x', body: 'desc' },
     })
 
     await worker.processTaskQueue()
@@ -554,14 +554,14 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     expect(octokit.pulls.update).toHaveBeenCalledWith(expect.objectContaining({ pull_number: 77 }))
     expect(await fileExists(path.join(taskDir, 'failed', `${id}.json`))).toBe(false)
 
-    const meta = await readBranchMeta('feature-x')
+    const meta = await readBranchMeta('canopycms-feature-x')
     expect(meta.branch.pullRequestNumber).toBe(77)
     expect(meta.branch.syncStatus).toBe('synced')
   })
 
   it('keeps the human text of an existing PR body when the task carries mergeSectionIntoBody', async () => {
     const { worker, octokit } = makePrWorker()
-    await setupBranchDir('feature-x')
+    await setupBranchDir('canopycms-feature-x')
     const oldSection = `${PR_SECTION_START}\nold\n${PR_SECTION_END}`
     const newSection = `${PR_SECTION_START}\nnew\n${PR_SECTION_END}`
     octokit.pulls.list.mockResolvedValue({
@@ -578,8 +578,8 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     await enqueueTask(taskDir, {
       action: 'push-and-create-or-update-pr',
       payload: {
-        branch: 'feature-x',
-        title: 'Submit feature-x',
+        branch: 'canopycms-feature-x',
+        title: 'Submit canopycms-feature-x',
         body: newSection,
         mergeSectionIntoBody: true,
       },
@@ -593,7 +593,7 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
 
   it('replaces an existing PR body when the task does not carry mergeSectionIntoBody', async () => {
     const { worker, octokit } = makePrWorker()
-    await setupBranchDir('feature-x')
+    await setupBranchDir('canopycms-feature-x')
     octokit.pulls.list.mockResolvedValue({
       data: [
         {
@@ -607,7 +607,11 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
 
     await enqueueTask(taskDir, {
       action: 'push-and-create-or-update-pr',
-      payload: { branch: 'feature-x', title: 'Submit feature-x', body: 'settings sync' },
+      payload: {
+        branch: 'canopycms-feature-x',
+        title: 'Submit canopycms-feature-x',
+        body: 'settings sync',
+      },
     })
     await worker.processTaskQueue()
 
@@ -618,7 +622,7 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
 
   it('creates a new PR on first submit and records its number', async () => {
     const { worker, octokit } = makePrWorker()
-    await setupBranchDir('feature-new')
+    await setupBranchDir('canopycms-feature-new')
 
     octokit.pulls.list.mockResolvedValue({ data: [] })
     octokit.pulls.create.mockResolvedValue({
@@ -627,7 +631,11 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
 
     await enqueueTask(taskDir, {
       action: 'push-and-create-or-update-pr',
-      payload: { branch: 'feature-new', title: 'Submit feature-new', body: 'desc' },
+      payload: {
+        branch: 'canopycms-feature-new',
+        title: 'Submit canopycms-feature-new',
+        body: 'desc',
+      },
     })
 
     await worker.processTaskQueue()
@@ -635,7 +643,7 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     expect(octokit.pulls.update).not.toHaveBeenCalled()
     expect(octokit.pulls.create).toHaveBeenCalled()
 
-    const meta = await readBranchMeta('feature-new')
+    const meta = await readBranchMeta('canopycms-feature-new')
     expect(meta.branch.pullRequestNumber).toBe(42)
     expect(meta.branch.syncStatus).toBe('synced')
   })
@@ -644,7 +652,7 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     // Content submits (api/github-sync.ts) set markReadyIfDraft: true so a
     // pre-existing draft PR is converted to ready-for-review on submit.
     const { worker, octokit } = makePrWorker()
-    await setupBranchDir('feature-draft')
+    await setupBranchDir('canopycms-feature-draft')
 
     octokit.pulls.list.mockResolvedValue({
       data: [
@@ -661,8 +669,8 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     await enqueueTask(taskDir, {
       action: 'push-and-create-or-update-pr',
       payload: {
-        branch: 'feature-draft',
-        title: 'Submit feature-draft',
+        branch: 'canopycms-feature-draft',
+        title: 'Submit canopycms-feature-draft',
         body: 'desc',
         markReadyIfDraft: true,
       },
@@ -675,7 +683,7 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
       expect.objectContaining({ pullRequestId: 'PR_draft_88' }),
     )
 
-    const meta = await readBranchMeta('feature-draft')
+    const meta = await readBranchMeta('canopycms-feature-draft')
     expect(meta.branch.pullRequestNumber).toBe(88)
     expect(meta.branch.syncStatus).toBe('synced')
   })
@@ -683,7 +691,7 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
   it('leaves an existing draft PR alone when the payload has no markReadyIfDraft flag', async () => {
     // Only a payload that sets the flag converts a draft; the default leaves it.
     const { worker, octokit } = makePrWorker()
-    await setupBranchDir('settings-sync')
+    await setupBranchDir('canopycms-sync-settings')
 
     octokit.pulls.list.mockResolvedValue({
       data: [
@@ -699,14 +707,14 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
 
     await enqueueTask(taskDir, {
       action: 'push-and-create-or-update-pr',
-      payload: { branch: 'settings-sync', title: 'Update settings', body: 'desc' },
+      payload: { branch: 'canopycms-sync-settings', title: 'Update settings', body: 'desc' },
     })
 
     await worker.processTaskQueue()
 
     expect(octokit.graphql).not.toHaveBeenCalled()
 
-    const meta = await readBranchMeta('settings-sync')
+    const meta = await readBranchMeta('canopycms-sync-settings')
     expect(meta.branch.pullRequestNumber).toBe(89)
     expect(meta.branch.syncStatus).toBe('synced')
   })
@@ -786,7 +794,7 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
   })
 
   it('still creates a PR for a branch that merely resembles a settings branch name', async () => {
-    const { worker, octokit } = makePrWorker({ settingsBranch: 'adopter-settings' })
+    const { worker, octokit } = makePrWorker({ settingsBranch: 'canopycms-adopter-settings' })
     octokit.pulls.list.mockResolvedValue({ data: [] })
     octokit.pulls.create.mockResolvedValue({
       data: { number: 5, html_url: 'https://github.com/test-owner/test-repo/pull/5' },
@@ -794,7 +802,7 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
 
     await enqueueTask(taskDir, {
       action: 'push-and-create-or-update-pr',
-      payload: { branch: 'adopter-settings-notes', title: 'Notes', body: 'desc' },
+      payload: { branch: 'canopycms-adopter-settings-notes', title: 'Notes', body: 'desc' },
     })
 
     await worker.processTaskQueue()
@@ -804,11 +812,11 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
 
   describe('when GitHub finds no commits to open a PR for', () => {
     const seedMeta = async (branch: Record<string, unknown>) => {
-      await setupBranchDir('feature-x')
+      await setupBranchDir('canopycms-feature-x')
       await getBranchMetadataFileManager(
-        path.join(contentBranchesPath, 'feature-x'),
+        path.join(contentBranchesPath, 'canopycms-feature-x'),
         contentBranchesPath,
-      ).save({ branch: { name: 'feature-x', ...branch } })
+      ).save({ branch: { name: 'canopycms-feature-x', ...branch } })
     }
 
     const SUBMIT = '2026-03-01T00:00:00.000Z'
@@ -820,8 +828,8 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
       const id = await enqueueTask(taskDir, {
         action: 'push-and-create-or-update-pr',
         payload: {
-          branch: 'feature-x',
-          title: 'Submit feature-x',
+          branch: 'canopycms-feature-x',
+          title: 'Submit canopycms-feature-x',
           body: '',
           baseBranch: 'main',
           ...(submittedAt !== null && { submittedAt }),
@@ -834,15 +842,15 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     it('fails fast and returns a submitted branch to editing with the reason', async () => {
       await seedMeta({ status: 'submitted', syncStatus: 'pending-sync', submittedAt: SUBMIT })
 
-      const task = await runSubmitTask(await noCommitsBetweenError('main', 'feature-x'))
+      const task = await runSubmitTask(await noCommitsBetweenError('main', 'canopycms-feature-x'))
 
       expect(task?.status).toBe('failed')
       expect(task?.retryCount ?? 0).toBe(0)
-      const meta = await readBranchMeta('feature-x')
+      const meta = await readBranchMeta('canopycms-feature-x')
       expect(meta.branch.status).toBe('editing')
       expect(meta.branch.syncStatus).toBe('sync-failed')
       expect(meta.branch.syncFailureReason).toBe(
-        'Nothing was submitted: "feature-x" has no changes compared with "main", so GitHub ' +
+        'Nothing was submitted: "canopycms-feature-x" has no changes compared with "main", so GitHub ' +
           'opened no pull request. The branch is unlocked for editing; save a change, then submit again.',
       )
     })
@@ -850,12 +858,12 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     it('leaves the status alone when the branch already has a PR', async () => {
       await seedMeta({ status: 'submitted', pullRequestNumber: 12, submittedAt: SUBMIT })
 
-      await runSubmitTask(await noCommitsBetweenError('main', 'feature-x'))
+      await runSubmitTask(await noCommitsBetweenError('main', 'canopycms-feature-x'))
 
-      const meta = await readBranchMeta('feature-x')
+      const meta = await readBranchMeta('canopycms-feature-x')
       expect(meta.branch.status).toBe('submitted')
       expect(meta.branch.syncFailureReason).toBe(
-        'Nothing was submitted: "feature-x" has no changes compared with "main", so GitHub ' +
+        'Nothing was submitted: "canopycms-feature-x" has no changes compared with "main", so GitHub ' +
           'opened no pull request.',
       )
     })
@@ -863,25 +871,25 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     it('leaves a newer submit locked', async () => {
       await seedMeta({ status: 'submitted', submittedAt: '2026-03-01T00:05:00.000Z' })
 
-      await runSubmitTask(await noCommitsBetweenError('main', 'feature-x'))
+      await runSubmitTask(await noCommitsBetweenError('main', 'canopycms-feature-x'))
 
-      expect((await readBranchMeta('feature-x')).branch.status).toBe('submitted')
+      expect((await readBranchMeta('canopycms-feature-x')).branch.status).toBe('submitted')
     })
 
     it('leaves the status alone when the task carries no submit stamp', async () => {
       await seedMeta({ status: 'submitted' })
 
-      await runSubmitTask(await noCommitsBetweenError('main', 'feature-x'), null)
+      await runSubmitTask(await noCommitsBetweenError('main', 'canopycms-feature-x'), null)
 
-      expect((await readBranchMeta('feature-x')).branch.status).toBe('submitted')
+      expect((await readBranchMeta('canopycms-feature-x')).branch.status).toBe('submitted')
     })
 
     it('leaves the status alone when the branch is no longer submitted', async () => {
       await seedMeta({ status: 'approved', submittedAt: SUBMIT })
 
-      await runSubmitTask(await noCommitsBetweenError('main', 'feature-x'))
+      await runSubmitTask(await noCommitsBetweenError('main', 'canopycms-feature-x'))
 
-      expect((await readBranchMeta('feature-x')).branch.status).toBe('approved')
+      expect((await readBranchMeta('canopycms-feature-x')).branch.status).toBe('approved')
     })
 
     it('keeps a branch submitted when a different 422 fails the PR', async () => {
@@ -895,7 +903,7 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
       )
 
       expect(task?.status).toBe('failed')
-      const meta = await readBranchMeta('feature-x')
+      const meta = await readBranchMeta('canopycms-feature-x')
       expect(meta.branch.status).toBe('submitted')
       expect(meta.branch.syncFailureReason).toContain('Validation Failed')
     })
@@ -990,46 +998,48 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
   }
 
   it('pushes cleanly to GitHub when there is no collision', async () => {
-    await seedBranchInRemoteGit('feature-clean', 'hello')
+    await seedBranchInRemoteGit('canopycms-feature-clean', 'hello')
     const worker = makePushWorker()
 
-    await (worker as unknown as PushBranchInternals).pushBranchToGitHub('feature-clean')
+    await (worker as unknown as PushBranchInternals).pushBranchToGitHub('canopycms-feature-clean')
 
-    expect(await fixtureHasBranch('feature-clean')).toBe(true)
-    expect(consoleSpy).toHaveLogged('Pushed feature-clean to GitHub')
+    expect(await fixtureHasBranch('canopycms-feature-clean')).toBe(true)
+    expect(consoleSpy).toHaveLogged('Pushed canopycms-feature-clean to GitHub')
   })
 
   it('logs a push that moved the branch with its range, and one that did not at debug level', async () => {
-    await seedBranchInRemoteGit('feature-twice', 'hello')
-    const sha = await shaOf(remoteGitPath, 'refs/heads/feature-twice')
+    await seedBranchInRemoteGit('canopycms-feature-twice', 'hello')
+    const sha = await shaOf(remoteGitPath, 'refs/heads/canopycms-feature-twice')
     const worker = makePushWorker()
     const internals = worker as unknown as PushBranchInternals
     const pushedLogs = () =>
-      consoleSpy.all().log.filter((line) => line.includes('Pushed feature-twice'))
+      consoleSpy.all().log.filter((line) => line.includes('Pushed canopycms-feature-twice'))
 
-    await internals.pushBranchToGitHub('feature-twice')
+    await internals.pushBranchToGitHub('canopycms-feature-twice')
     expect(pushedLogs()).toEqual([
-      expect.stringContaining(`Pushed feature-twice to GitHub (new branch at ${sha.slice(0, 7)})`),
+      expect.stringContaining(
+        `Pushed canopycms-feature-twice to GitHub (new branch at ${sha.slice(0, 7)})`,
+      ),
     ])
 
     vi.stubEnv('CANOPYCMS_DEBUG', 'true')
     try {
-      await internals.pushBranchToGitHub('feature-twice')
+      await internals.pushBranchToGitHub('canopycms-feature-twice')
     } finally {
       vi.unstubAllEnvs()
     }
     expect(pushedLogs()).toHaveLength(1)
-    expect(consoleSpy).toHaveLogged('feature-twice already up to date on GitHub')
+    expect(consoleSpy).toHaveLogged('canopycms-feature-twice already up to date on GitHub')
   })
 
   it('records the push on branch metadata only once GitHub accepted it', async () => {
     const readPushedAt = async (branch: string) =>
       (await BranchMetadataFileManager.loadOnly(path.join(contentBranchesPath, branch)))?.branch
         .pushedToGitHubAt
-    await seedBranchInRemoteGit('feature-clean', 'hello')
-    await seedBranchInRemoteGit('feature-x', 'this deployment')
-    await seedBranchInGitHubFixture('feature-x', 'another deployment')
-    for (const branch of ['feature-clean', 'feature-x']) {
+    await seedBranchInRemoteGit('canopycms-feature-clean', 'hello')
+    await seedBranchInRemoteGit('canopycms-feature-x', 'this deployment')
+    await seedBranchInGitHubFixture('canopycms-feature-x', 'another deployment')
+    for (const branch of ['canopycms-feature-clean', 'canopycms-feature-x']) {
       await fs.mkdir(path.join(contentBranchesPath, branch), { recursive: true })
       await getBranchMetadataFileManager(
         path.join(contentBranchesPath, branch),
@@ -1038,66 +1048,74 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     }
     const worker = makePushWorker() as unknown as PushBranchInternals
 
-    await worker.pushBranchToGitHub('feature-clean')
-    await expect(worker.pushBranchToGitHub('feature-x')).rejects.toThrow(PermanentTaskError)
+    await worker.pushBranchToGitHub('canopycms-feature-clean')
+    await expect(worker.pushBranchToGitHub('canopycms-feature-x')).rejects.toThrow(
+      PermanentTaskError,
+    )
 
-    expect(await readPushedAt('feature-clean')).toEqual(expect.any(String))
-    expect(await readPushedAt('feature-x')).toBeUndefined()
+    expect(await readPushedAt('canopycms-feature-clean')).toEqual(expect.any(String))
+    expect(await readPushedAt('canopycms-feature-x')).toBeUndefined()
   })
 
   it("throws PermanentTaskError when remote.git holds an ancestor of GitHub's tip, sending no bundle", async () => {
     // GitHub already holds the commit, so the push is asked for once, without objects, and git
     // refuses it as a non-fast-forward.
-    await seedBranchInRemoteGit('feature-behind', 'ours')
-    const ours = await shaOf(remoteGitPath, 'refs/heads/feature-behind')
-    await simpleGit().raw(['--git-dir', remoteGitPath, 'push', githubFixture, 'feature-behind'])
+    await seedBranchInRemoteGit('canopycms-feature-behind', 'ours')
+    const ours = await shaOf(remoteGitPath, 'refs/heads/canopycms-feature-behind')
+    await simpleGit().raw([
+      '--git-dir',
+      remoteGitPath,
+      'push',
+      githubFixture,
+      'canopycms-feature-behind',
+    ])
     const aheadPath = path.join(tmpDir, 'ahead-work')
-    await simpleGit().clone(githubFixture, aheadPath, ['--branch', 'feature-behind'])
+    await simpleGit().clone(githubFixture, aheadPath, ['--branch', 'canopycms-feature-behind'])
     const aheadGit = await initTestRepo(aheadPath)
     await fs.writeFile(path.join(aheadPath, 'more.txt'), 'more')
     await aheadGit.add(['more.txt'])
     await aheadGit.commit('more on GitHub')
-    await aheadGit.raw(['push', 'origin', 'HEAD:feature-behind'])
-    const githubTip = await shaOf(githubFixture, 'refs/heads/feature-behind')
+    await aheadGit.raw(['push', 'origin', 'HEAD:canopycms-feature-behind'])
+    const githubTip = await shaOf(githubFixture, 'refs/heads/canopycms-feature-behind')
     const worker = makePushWorker()
     const gateway = (worker as unknown as { github(): GitHubGateway }).github()
     const push = vi.spyOn(gateway, 'push')
 
     const caught = await (worker as unknown as PushBranchInternals)
-      .pushBranchToGitHub('feature-behind')
+      .pushBranchToGitHub('canopycms-feature-behind')
       .catch((err: unknown) => err)
 
     expect(caught).toBeInstanceOf(PermanentTaskError)
     expect((caught as Error).message).toContain('has diverged and needs reconciling')
     expect(push).toHaveBeenCalledTimes(1)
     expect(push.mock.calls[0][1]).toBeUndefined()
-    expect(await shaOf(githubFixture, 'refs/heads/feature-behind')).toBe(githubTip)
+    expect(await shaOf(githubFixture, 'refs/heads/canopycms-feature-behind')).toBe(githubTip)
     expect(githubTip).not.toBe(ours)
   })
 
   it('throws PermanentTaskError naming the branch on a real non-fast-forward rejection', async () => {
-    // The two-deployments-one-repo collision: 'feature-x' exists in BOTH this
+    // The two-deployments-one-repo collision: 'canopycms-feature-x' exists in BOTH this
     // deployment's remote.git AND (with different content) directly in
     // githubFixture, as if another deployment already pushed it.
-    await seedBranchInRemoteGit('feature-x', 'this deployment')
-    await seedBranchInGitHubFixture('feature-x', 'another deployment')
+    await seedBranchInRemoteGit('canopycms-feature-x', 'this deployment')
+    await seedBranchInGitHubFixture('canopycms-feature-x', 'another deployment')
 
     const worker = makePushWorker()
     let caught: unknown
     try {
-      await (worker as unknown as PushBranchInternals).pushBranchToGitHub('feature-x')
+      await (worker as unknown as PushBranchInternals).pushBranchToGitHub('canopycms-feature-x')
     } catch (err) {
       caught = err
     }
 
     expect(caught).toBeInstanceOf(PermanentTaskError)
-    expect((caught as Error).message).toContain('feature-x')
+    expect((caught as Error).message).toContain('canopycms-feature-x')
     // States the observable fact without prescribing a rename: a branch that
     // reaches this push usually has an open PR, which a rename would orphan.
     expect((caught as Error).message).toContain('has diverged and needs reconciling')
     expect((caught as Error).message).not.toContain('Rename')
     // The rejection must not have force-overwritten the other deployment's push.
-    expect(await fixtureHasBranch('feature-x')).toBe(true)
+    expect(await fixtureHasBranch('canopycms-feature-x')).toBe(true)
   })
 
   it('rethrows a plain (non-PermanentTaskError) error for a real non-rejection push failure', async () => {
@@ -1107,13 +1125,15 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     // not invented. Must stay transient -- isPermanentTaskFailure's git
     // carve-out already retries these; pushBranchToGitHub must not reclassify
     // them as permanent.
-    await seedBranchInRemoteGit('feature-locked', 'hello')
+    await seedBranchInRemoteGit('canopycms-feature-locked', 'hello')
     await fs.chmod(githubFixture, 0o000)
 
     const worker = makePushWorker()
     let caught: unknown
     try {
-      await (worker as unknown as PushBranchInternals).pushBranchToGitHub('feature-locked')
+      await (worker as unknown as PushBranchInternals).pushBranchToGitHub(
+        'canopycms-feature-locked',
+      )
     } catch (err) {
       caught = err
     } finally {
@@ -1163,19 +1183,19 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
   it('force-pushes rewritten history over exactly the commit it replaced, then clears the marker', async () => {
     // GitHub holds the pre-rebase commit; remote.git holds the rewritten one.
     // A plain push would be rejected non-fast-forward forever.
-    await seedBranchInGitHubFixture('feature-rebased', 'pre-rebase')
-    const published = await shaOf(githubFixture, 'refs/heads/feature-rebased')
-    await seedBranchInRemoteGit('feature-rebased', 'rewritten by the rebase loop')
-    const rewrittenTip = await shaOf(remoteGitPath, 'refs/heads/feature-rebased')
-    await writeRewriteMarker('feature-rebased', published)
+    await seedBranchInGitHubFixture('canopycms-feature-rebased', 'pre-rebase')
+    const published = await shaOf(githubFixture, 'refs/heads/canopycms-feature-rebased')
+    await seedBranchInRemoteGit('canopycms-feature-rebased', 'rewritten by the rebase loop')
+    const rewrittenTip = await shaOf(remoteGitPath, 'refs/heads/canopycms-feature-rebased')
+    await writeRewriteMarker('canopycms-feature-rebased', published)
 
     const worker = makePushWorker()
-    await (worker as unknown as PushBranchInternals).pushBranchToGitHub('feature-rebased')
+    await (worker as unknown as PushBranchInternals).pushBranchToGitHub('canopycms-feature-rebased')
 
-    expect(await shaOf(githubFixture, 'refs/heads/feature-rebased')).toBe(rewrittenTip)
+    expect(await shaOf(githubFixture, 'refs/heads/canopycms-feature-rebased')).toBe(rewrittenTip)
     // GitHub now holds something other than the marker, so the lease has done
     // its job and must not be reused.
-    expect(await readMarker('feature-rebased')).toBeUndefined()
+    expect(await readMarker('canopycms-feature-rebased')).toBeUndefined()
   })
 
   it('succeeds when an earlier attempt already landed the same commit (crash-retry idempotency)', async () => {
@@ -1184,26 +1204,26 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     // GitHub already agree. git evaluates a lease only when it actually has
     // an update to apply, so this is absorbed as "Everything up-to-date"
     // rather than reaching the refusal path at all.
-    await seedBranchInRemoteGit('feature-relanded', 'rewritten')
-    const tip = await shaOf(remoteGitPath, 'refs/heads/feature-relanded')
+    await seedBranchInRemoteGit('canopycms-feature-relanded', 'rewritten')
+    const tip = await shaOf(remoteGitPath, 'refs/heads/canopycms-feature-relanded')
     // The earlier attempt: the same commit already reached GitHub.
     await simpleGit().raw([
       '--git-dir',
       remoteGitPath,
       'push',
       githubFixture,
-      'feature-relanded:feature-relanded',
+      'canopycms-feature-relanded:canopycms-feature-relanded',
     ])
     // A marker naming a commit GitHub has already moved off.
-    await writeRewriteMarker('feature-relanded', '0'.repeat(40))
+    await writeRewriteMarker('canopycms-feature-relanded', '0'.repeat(40))
 
     const worker = makePushWorker()
     await expect(
-      (worker as unknown as PushBranchInternals).pushBranchToGitHub('feature-relanded'),
+      (worker as unknown as PushBranchInternals).pushBranchToGitHub('canopycms-feature-relanded'),
     ).resolves.toBeUndefined()
 
-    expect(await shaOf(githubFixture, 'refs/heads/feature-relanded')).toBe(tip)
-    expect(await readMarker('feature-relanded')).toBeUndefined()
+    expect(await shaOf(githubFixture, 'refs/heads/canopycms-feature-relanded')).toBe(tip)
+    expect(await readMarker('canopycms-feature-relanded')).toBeUndefined()
   })
 
   it('finds the marker for a branch whose workspace directory name is sanitized', async () => {
@@ -1213,18 +1233,18 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     // one. Joining the raw name onto contentBranchesPath misses the directory
     // entirely, so the marker reads as absent, the push goes out unleased,
     // and the branch wedges exactly as it did before this fix.
-    await seedBranchInGitHubFixture('feature/slashed', 'pre-rebase')
-    const published = await shaOf(githubFixture, 'refs/heads/feature/slashed')
-    await seedBranchInRemoteGit('feature/slashed', 'rewritten by the rebase loop')
-    const rewrittenTip = await shaOf(remoteGitPath, 'refs/heads/feature/slashed')
+    await seedBranchInGitHubFixture('canopycms-feature/slashed', 'pre-rebase')
+    const published = await shaOf(githubFixture, 'refs/heads/canopycms-feature/slashed')
+    await seedBranchInRemoteGit('canopycms-feature/slashed', 'rewritten by the rebase loop')
+    const rewrittenTip = await shaOf(remoteGitPath, 'refs/heads/canopycms-feature/slashed')
     // Marker lives in the SANITIZED directory, as the rebase loop writes it.
-    await writeRewriteMarker('feature-slashed', published)
+    await writeRewriteMarker('canopycms-feature-slashed', published)
 
     const worker = makePushWorker()
-    await (worker as unknown as PushBranchInternals).pushBranchToGitHub('feature/slashed')
+    await (worker as unknown as PushBranchInternals).pushBranchToGitHub('canopycms-feature/slashed')
 
-    expect(await shaOf(githubFixture, 'refs/heads/feature/slashed')).toBe(rewrittenTip)
-    expect(await readMarker('feature-slashed')).toBeUndefined()
+    expect(await shaOf(githubFixture, 'refs/heads/canopycms-feature/slashed')).toBe(rewrittenTip)
+    expect(await readMarker('canopycms-feature-slashed')).toBeUndefined()
   })
 
   it('still fast-forwards when the marker is stale and the branch has moved on since', async () => {
@@ -1233,37 +1253,39 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     // from an earlier attempt, the editor has since submitted more work, and
     // the marker was never cleared -- pushing under it fails, and would keep
     // failing for every later submit on this branch.
-    await seedBranchInRemoteGit('feature-moved-on', 'rewritten')
+    await seedBranchInRemoteGit('canopycms-feature-moved-on', 'rewritten')
     await simpleGit().raw([
       '--git-dir',
       remoteGitPath,
       'push',
       githubFixture,
-      'feature-moved-on:feature-moved-on',
+      'canopycms-feature-moved-on:canopycms-feature-moved-on',
     ])
-    const landed = await shaOf(githubFixture, 'refs/heads/feature-moved-on')
+    const landed = await shaOf(githubFixture, 'refs/heads/canopycms-feature-moved-on')
 
     // New editor work on top, reaching remote.git only.
     const morePath = path.join(tmpDir, 'more-work')
-    await simpleGit().clone(remoteGitPath, morePath, ['--branch', 'feature-moved-on'])
+    await simpleGit().clone(remoteGitPath, morePath, ['--branch', 'canopycms-feature-moved-on'])
     const moreGit = simpleGit({ baseDir: morePath })
     await moreGit.addConfig('user.name', 'Editor')
     await moreGit.addConfig('user.email', 'editor@canopycms.test')
     await fs.writeFile(path.join(morePath, 'file.txt'), 'more editor work')
     await moreGit.add(['file.txt'])
     await moreGit.commit('more editor work')
-    await moreGit.raw(['push', 'origin', 'feature-moved-on:feature-moved-on'])
-    const newTip = await shaOf(remoteGitPath, 'refs/heads/feature-moved-on')
-    await writeRewriteMarker('feature-moved-on', '0'.repeat(40))
+    await moreGit.raw(['push', 'origin', 'canopycms-feature-moved-on:canopycms-feature-moved-on'])
+    const newTip = await shaOf(remoteGitPath, 'refs/heads/canopycms-feature-moved-on')
+    await writeRewriteMarker('canopycms-feature-moved-on', '0'.repeat(40))
 
     const worker = makePushWorker()
-    await (worker as unknown as PushBranchInternals).pushBranchToGitHub('feature-moved-on')
+    await (worker as unknown as PushBranchInternals).pushBranchToGitHub(
+      'canopycms-feature-moved-on',
+    )
 
     expect(newTip).not.toBe(landed)
-    expect(await shaOf(githubFixture, 'refs/heads/feature-moved-on')).toBe(newTip)
-    expect(await readMarker('feature-moved-on')).toBeUndefined()
+    expect(await shaOf(githubFixture, 'refs/heads/canopycms-feature-moved-on')).toBe(newTip)
+    expect(await readMarker('canopycms-feature-moved-on')).toBeUndefined()
     expect(consoleSpy).toHaveLogged(
-      `Pushed feature-moved-on to GitHub (${landed.slice(0, 7)}..${newTip.slice(0, 7)}; ` +
+      `Pushed canopycms-feature-moved-on to GitHub (${landed.slice(0, 7)}..${newTip.slice(0, 7)}; ` +
         'GitHub had already moved past the rewritten commit)',
     )
   })
@@ -1271,15 +1293,15 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
   it('refuses to force over a GitHub tip that is neither the marker nor what it is pushing', async () => {
     // Someone else moved the branch on GitHub. The lease refuses, nothing is
     // overwritten, and the task fails permanently with the honest reason.
-    await seedBranchInGitHubFixture('feature-moved', 'someone else')
-    const foreignTip = await shaOf(githubFixture, 'refs/heads/feature-moved')
-    await seedBranchInRemoteGit('feature-moved', 'ours')
-    await writeRewriteMarker('feature-moved', '0'.repeat(40))
+    await seedBranchInGitHubFixture('canopycms-feature-moved', 'someone else')
+    const foreignTip = await shaOf(githubFixture, 'refs/heads/canopycms-feature-moved')
+    await seedBranchInRemoteGit('canopycms-feature-moved', 'ours')
+    await writeRewriteMarker('canopycms-feature-moved', '0'.repeat(40))
 
     const worker = makePushWorker()
     let caught: unknown
     try {
-      await (worker as unknown as PushBranchInternals).pushBranchToGitHub('feature-moved')
+      await (worker as unknown as PushBranchInternals).pushBranchToGitHub('canopycms-feature-moved')
     } catch (err) {
       caught = err
     }
@@ -1291,21 +1313,23 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     expect((caught as Error).message).not.toContain('Rename')
     // The other party's commit survives, and the marker is kept for a
     // human-reconciled retry rather than silently dropped.
-    expect(await shaOf(githubFixture, 'refs/heads/feature-moved')).toBe(foreignTip)
-    expect(await readMarker('feature-moved')).toBe('0'.repeat(40))
+    expect(await shaOf(githubFixture, 'refs/heads/canopycms-feature-moved')).toBe(foreignTip)
+    expect(await readMarker('canopycms-feature-moved')).toBe('0'.repeat(40))
   })
 
   it('fails a push-branch task immediately (not after maxRetries) on a real rejection, and records the reason on branch metadata', async () => {
-    await seedBranchInRemoteGit('feature-collision', 'this deployment')
-    await seedBranchInGitHubFixture('feature-collision', 'another deployment')
-    await fs.mkdir(path.join(contentBranchesPath, 'feature-collision'), { recursive: true })
+    await seedBranchInRemoteGit('canopycms-feature-collision', 'this deployment')
+    await seedBranchInGitHubFixture('canopycms-feature-collision', 'another deployment')
+    await fs.mkdir(path.join(contentBranchesPath, 'canopycms-feature-collision'), {
+      recursive: true,
+    })
 
     const worker = makePushWorker()
     ;(worker as unknown as { running: boolean }).running = true
 
     const id = await enqueueTask(taskDir, {
       action: 'push-branch',
-      payload: { branch: 'feature-collision' },
+      payload: { branch: 'canopycms-feature-collision' },
     })
 
     await worker.processTaskQueue()
@@ -1316,7 +1340,7 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
       await fs.readFile(path.join(taskDir, 'failed', `${id}.json`), 'utf-8'),
     )
     expect(failed.retryCount).toBe(0)
-    expect(failed.error).toContain('feature-collision')
+    expect(failed.error).toContain('canopycms-feature-collision')
     expect(
       await fs
         .stat(path.join(taskDir, 'pending', `${id}.json`))
@@ -1326,12 +1350,17 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
 
     const meta = JSON.parse(
       await fs.readFile(
-        path.join(contentBranchesPath, 'feature-collision', '.canopy-meta', 'branch.json'),
+        path.join(
+          contentBranchesPath,
+          'canopycms-feature-collision',
+          '.canopy-meta',
+          'branch.json',
+        ),
         'utf-8',
       ),
     )
     expect(meta.branch.syncStatus).toBe('sync-failed')
-    expect(meta.branch.syncFailureReason).toContain('feature-collision')
+    expect(meta.branch.syncFailureReason).toContain('canopycms-feature-collision')
     expect(meta.branch.syncFailureReason).toContain('has diverged and needs reconciling')
   })
 
@@ -1401,15 +1430,17 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
   }
 
   it("fails a push-branch task immediately on GitHub's workflow refusal, naming the file on branch metadata", async () => {
-    await seedBranchInRemoteGit('feature-workflow', 'hello')
-    await fs.mkdir(path.join(contentBranchesPath, 'feature-workflow'), { recursive: true })
+    await seedBranchInRemoteGit('canopycms-feature-workflow', 'hello')
+    await fs.mkdir(path.join(contentBranchesPath, 'canopycms-feature-workflow'), {
+      recursive: true,
+    })
     await refuseLikeGitHubWorkflowCheck(githubFixture)
 
     const worker = makePushWorker()
     ;(worker as unknown as { running: boolean }).running = true
     const id = await enqueueTask(taskDir, {
       action: 'push-branch',
-      payload: { branch: 'feature-workflow' },
+      payload: { branch: 'canopycms-feature-workflow' },
     })
 
     await worker.processTaskQueue()
@@ -1421,67 +1452,73 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     expect(failed.error).toContain(WORKFLOW_FILE)
     const meta = JSON.parse(
       await fs.readFile(
-        path.join(contentBranchesPath, 'feature-workflow', '.canopy-meta', 'branch.json'),
+        path.join(contentBranchesPath, 'canopycms-feature-workflow', '.canopy-meta', 'branch.json'),
         'utf-8',
       ),
     )
     expect(meta.branch.syncStatus).toBe('sync-failed')
-    expect(meta.branch.syncFailureReason).toContain('"feature-workflow"')
+    expect(meta.branch.syncFailureReason).toContain('"canopycms-feature-workflow"')
     expect(meta.branch.syncFailureReason).toContain(WORKFLOW_FILE)
     expect(meta.branch.syncFailureReason).toContain('not allowed to change workflow files')
-    expect(await fixtureHasBranch('feature-workflow')).toBe(false)
+    expect(await fixtureHasBranch('canopycms-feature-workflow')).toBe(false)
     expect(consoleSpy).toHaveErrored('Permanently failed (non-retryable error)')
   })
 
   it('reports a refused leased push as the workflow refusal, and keeps the marker', async () => {
-    await seedBranchInGitHubFixture('feature-wf-rebased', 'pre-rebase')
-    const published = await shaOf(githubFixture, 'refs/heads/feature-wf-rebased')
-    await seedBranchInRemoteGit('feature-wf-rebased', 'rewritten by the rebase loop')
-    await writeRewriteMarker('feature-wf-rebased', published)
+    await seedBranchInGitHubFixture('canopycms-feature-wf-rebased', 'pre-rebase')
+    const published = await shaOf(githubFixture, 'refs/heads/canopycms-feature-wf-rebased')
+    await seedBranchInRemoteGit('canopycms-feature-wf-rebased', 'rewritten by the rebase loop')
+    await writeRewriteMarker('canopycms-feature-wf-rebased', published)
     await refuseLikeGitHubWorkflowCheck(githubFixture)
 
     const worker = makePushWorker()
-    const push = (worker as unknown as PushBranchInternals).pushBranchToGitHub('feature-wf-rebased')
+    const push = (worker as unknown as PushBranchInternals).pushBranchToGitHub(
+      'canopycms-feature-wf-rebased',
+    )
 
     await expect(push).rejects.toBeInstanceOf(PermanentTaskError)
     await expect(push).rejects.toThrow(WORKFLOW_FILE)
-    expect(await shaOf(githubFixture, 'refs/heads/feature-wf-rebased')).toBe(published)
-    expect(await readMarker('feature-wf-rebased')).toBe(published)
+    expect(await shaOf(githubFixture, 'refs/heads/canopycms-feature-wf-rebased')).toBe(published)
+    expect(await readMarker('canopycms-feature-wf-rebased')).toBe(published)
   })
 
   it('reports a workflow refusal of the plain retry that follows a stale lease', async () => {
     // GitHub already holds an earlier push, so the zero-sha lease is stale and
     // the plain fast-forward retry is the push GitHub refuses.
-    await seedBranchInRemoteGit('feature-wf-moved-on', 'rewritten')
+    await seedBranchInRemoteGit('canopycms-feature-wf-moved-on', 'rewritten')
     await simpleGit().raw([
       '--git-dir',
       remoteGitPath,
       'push',
       githubFixture,
-      'feature-wf-moved-on:feature-wf-moved-on',
+      'canopycms-feature-wf-moved-on:canopycms-feature-wf-moved-on',
     ])
-    const landed = await shaOf(githubFixture, 'refs/heads/feature-wf-moved-on')
+    const landed = await shaOf(githubFixture, 'refs/heads/canopycms-feature-wf-moved-on')
     const morePath = path.join(tmpDir, 'more-wf-work')
-    await simpleGit().clone(remoteGitPath, morePath, ['--branch', 'feature-wf-moved-on'])
+    await simpleGit().clone(remoteGitPath, morePath, ['--branch', 'canopycms-feature-wf-moved-on'])
     const moreGit = simpleGit({ baseDir: morePath })
     await moreGit.addConfig('user.name', 'Editor')
     await moreGit.addConfig('user.email', 'editor@canopycms.test')
     await fs.writeFile(path.join(morePath, 'file.txt'), 'more editor work')
     await moreGit.add(['file.txt'])
     await moreGit.commit('more editor work')
-    await moreGit.raw(['push', 'origin', 'feature-wf-moved-on:feature-wf-moved-on'])
-    await writeRewriteMarker('feature-wf-moved-on', '0'.repeat(40))
+    await moreGit.raw([
+      'push',
+      'origin',
+      'canopycms-feature-wf-moved-on:canopycms-feature-wf-moved-on',
+    ])
+    await writeRewriteMarker('canopycms-feature-wf-moved-on', '0'.repeat(40))
     await refuseLikeGitHubWorkflowCheck(githubFixture)
 
     const worker = makePushWorker()
     const push = (worker as unknown as PushBranchInternals).pushBranchToGitHub(
-      'feature-wf-moved-on',
+      'canopycms-feature-wf-moved-on',
     )
 
     await expect(push).rejects.toBeInstanceOf(PermanentTaskError)
     await expect(push).rejects.toThrow(WORKFLOW_FILE)
-    expect(await shaOf(githubFixture, 'refs/heads/feature-wf-moved-on')).toBe(landed)
-    expect(await readMarker('feature-wf-moved-on')).toBe('0'.repeat(40))
+    expect(await shaOf(githubFixture, 'refs/heads/canopycms-feature-wf-moved-on')).toBe(landed)
+    expect(await readMarker('canopycms-feature-wf-moved-on')).toBe('0'.repeat(40))
   })
 
   // -------------------------------------------------------------------------
@@ -1500,14 +1537,16 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
 
   it('pushes when the remote URL resolves a real promise rather than a bare string', async () => {
     // A resolver that returns a promise rather than a bare string.
-    await seedBranchInRemoteGit('feature-async-url', 'hello')
+    await seedBranchInRemoteGit('canopycms-feature-async-url', 'hello')
     const worker = makePushWorker()
     useLocalGitHubGateway(worker, { remoteUrl: () => Promise.resolve(githubFixture) })
 
-    await (worker as unknown as AsyncPushBranchInternals).pushBranchToGitHub('feature-async-url')
+    await (worker as unknown as AsyncPushBranchInternals).pushBranchToGitHub(
+      'canopycms-feature-async-url',
+    )
 
-    expect(await fixtureHasBranch('feature-async-url')).toBe(true)
-    expect(consoleSpy).toHaveLogged('Pushed feature-async-url to GitHub')
+    expect(await fixtureHasBranch('canopycms-feature-async-url')).toBe(true)
+    expect(consoleSpy).toHaveLogged('Pushed canopycms-feature-async-url to GitHub')
   })
 
   it('resolves the URL once for both push attempts, so a later resolution failure cannot displace the stale-lease classification', async () => {
@@ -1523,9 +1562,9 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     // implementations apart. Resolve it per attempt and this goes red: the second
     // resolution throws, `caught` is that plain Error, and the
     // PermanentTaskError assertion fails.
-    await seedBranchInGitHubFixture('feature-once', 'someone else')
-    const foreignTip = await shaOf(githubFixture, 'refs/heads/feature-once')
-    await seedBranchInRemoteGit('feature-once', 'ours')
+    await seedBranchInGitHubFixture('canopycms-feature-once', 'someone else')
+    const foreignTip = await shaOf(githubFixture, 'refs/heads/canopycms-feature-once')
+    await seedBranchInRemoteGit('canopycms-feature-once', 'ours')
     // Parked on GitHub, so the push needs no bundle and is one gateway operation: the URL is
     // resolved once per operation, and the bundle path has its own test (github-gateway.test.ts).
     await simpleGit().raw([
@@ -1533,11 +1572,11 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
       remoteGitPath,
       'push',
       githubFixture,
-      'feature-once:refs/heads/parked',
+      'canopycms-feature-once:refs/heads/parked',
     ])
     // A marker GitHub is provably not at, so the lease is refused and the
     // catch block's retry push runs -- the second resolution, if there is one.
-    await writeRewriteMarker('feature-once', '0'.repeat(40))
+    await writeRewriteMarker('canopycms-feature-once', '0'.repeat(40))
 
     const worker = makePushWorker()
     let resolutions = 0
@@ -1555,7 +1594,9 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
 
     let caught: unknown
     try {
-      await (worker as unknown as AsyncPushBranchInternals).pushBranchToGitHub('feature-once')
+      await (worker as unknown as AsyncPushBranchInternals).pushBranchToGitHub(
+        'canopycms-feature-once',
+      )
     } catch (err) {
       caught = err
     }
@@ -1572,29 +1613,29 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     // Resolved once, so both attempts provably carry the same credential.
     expect(resolutions).toBe(1)
     // Nothing was overwritten, and the marker is kept for a reconciled retry.
-    expect(await shaOf(githubFixture, 'refs/heads/feature-once')).toBe(foreignTip)
-    expect(await readMarker('feature-once')).toBe('0'.repeat(40))
+    expect(await shaOf(githubFixture, 'refs/heads/canopycms-feature-once')).toBe(foreignTip)
+    expect(await readMarker('canopycms-feature-once')).toBe('0'.repeat(40))
   })
 
   it('pushes exactly the SHA it read, so the marker decision describes the commit sent', async () => {
     // [SYNC-H1] The marker is spent only when GitHub receives a commit other than it. The push
     // sends the SHA read from remote.git, so a tip that moves while the push is in flight goes
     // out with the next push, not this one.
-    await seedBranchInRemoteGit('feature-window', 'v1')
-    const published = await shaOf(remoteGitPath, 'refs/heads/feature-window')
+    await seedBranchInRemoteGit('canopycms-feature-window', 'v1')
+    const published = await shaOf(remoteGitPath, 'refs/heads/canopycms-feature-window')
     // GitHub holds exactly the marker commit, so the lease is satisfied.
     await simpleGit().raw([
       '--git-dir',
       remoteGitPath,
       'push',
       githubFixture,
-      'feature-window:feature-window',
+      'canopycms-feature-window:canopycms-feature-window',
     ])
-    await writeRewriteMarker('feature-window', published)
+    await writeRewriteMarker('canopycms-feature-window', published)
 
     // One further commit, staged in a working clone but not yet in remote.git.
     const laterPath = path.join(tmpDir, 'later-work')
-    await simpleGit().clone(remoteGitPath, laterPath, ['--branch', 'feature-window'])
+    await simpleGit().clone(remoteGitPath, laterPath, ['--branch', 'canopycms-feature-window'])
     const laterGit = simpleGit({ baseDir: laterPath })
     await laterGit.addConfig('user.name', 'Editor')
     await laterGit.addConfig('user.email', 'editor@canopycms.test')
@@ -1609,26 +1650,30 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
       remoteUrl: async () => {
         if (!moved) {
           moved = true
-          await laterGit.raw(['push', 'origin', 'feature-window:feature-window'])
+          await laterGit.raw([
+            'push',
+            'origin',
+            'canopycms-feature-window:canopycms-feature-window',
+          ])
         }
         return githubFixture
       },
     })
     const push = () =>
-      (worker as unknown as AsyncPushBranchInternals).pushBranchToGitHub('feature-window')
+      (worker as unknown as AsyncPushBranchInternals).pushBranchToGitHub('canopycms-feature-window')
 
     await push()
 
-    const movedTip = await shaOf(remoteGitPath, 'refs/heads/feature-window')
+    const movedTip = await shaOf(remoteGitPath, 'refs/heads/canopycms-feature-window')
     expect(movedTip).not.toBe(published)
-    expect(await shaOf(githubFixture, 'refs/heads/feature-window')).toBe(published)
-    expect(await readMarker('feature-window')).toBe(published)
+    expect(await shaOf(githubFixture, 'refs/heads/canopycms-feature-window')).toBe(published)
+    expect(await readMarker('canopycms-feature-window')).toBe(published)
 
     // The editor's own queued push task.
     await push()
 
-    expect(await shaOf(githubFixture, 'refs/heads/feature-window')).toBe(movedTip)
-    expect(await readMarker('feature-window')).toBeUndefined()
+    expect(await shaOf(githubFixture, 'refs/heads/canopycms-feature-window')).toBe(movedTip)
+    expect(await readMarker('canopycms-feature-window')).toBeUndefined()
   })
 })
 
@@ -2703,7 +2748,7 @@ describe('CmsWorker delete-remote-branch', () => {
 
   const runDelete = async (
     deleteRef: ReturnType<typeof vi.fn>,
-    branch = 'feature-x',
+    branch = 'canopycms-feature-x',
     pullRequestNumber?: number,
     pushedToGitHubAt?: string,
   ) => {
@@ -2743,7 +2788,11 @@ describe('CmsWorker delete-remote-branch', () => {
     const task = await runDelete(deleteRef)
 
     expect(deleteRef).toHaveBeenCalledWith(
-      expect.objectContaining({ owner: 'test-owner', repo: 'test-repo', ref: 'heads/feature-x' }),
+      expect.objectContaining({
+        owner: 'test-owner',
+        repo: 'test-repo',
+        ref: 'heads/canopycms-feature-x',
+      }),
     )
     expect(task?.status).toBe('completed')
     expect(task?.result).toEqual({ deleted: true })
@@ -2771,7 +2820,7 @@ describe('CmsWorker delete-remote-branch', () => {
   })
 
   it('writes no metadata into a workspace left under the deleted name', async () => {
-    const reused = path.join(tmpDir, 'content-branches', 'feature-x')
+    const reused = path.join(tmpDir, 'content-branches', 'canopycms-feature-x')
     await fs.mkdir(reused, { recursive: true })
 
     await runDelete(vi.fn().mockResolvedValue({ data: {} }))
@@ -2780,13 +2829,13 @@ describe('CmsWorker delete-remote-branch', () => {
   })
 
   const seedReused = async (branch: Record<string, unknown> | string) => {
-    const reused = path.join(tmpDir, 'content-branches', 'feature-x')
+    const reused = path.join(tmpDir, 'content-branches', 'canopycms-feature-x')
     await fs.mkdir(path.join(reused, '.canopy-meta'), { recursive: true })
     if (typeof branch === 'string') {
       await fs.writeFile(path.join(reused, '.canopy-meta', 'branch.json'), branch)
     } else {
       await getBranchMetadataFileManager(reused, path.join(tmpDir, 'content-branches')).save({
-        branch: { name: 'feature-x', ...branch },
+        branch: { name: 'canopycms-feature-x', ...branch },
       })
     }
   }
@@ -2795,7 +2844,7 @@ describe('CmsWorker delete-remote-branch', () => {
     await seedReused({ pullRequestNumber: 8 })
     const deleteRef = vi.fn().mockResolvedValue({ data: {} })
 
-    const task = await runDelete(deleteRef, 'feature-x', 7)
+    const task = await runDelete(deleteRef, 'canopycms-feature-x', 7)
 
     expect(deleteRef).not.toHaveBeenCalled()
     expect(task?.status).toBe('completed')
@@ -2806,7 +2855,7 @@ describe('CmsWorker delete-remote-branch', () => {
     await seedReused({})
     const deleteRef = vi.fn().mockResolvedValue({ data: {} })
 
-    const task = await runDelete(deleteRef, 'feature-x', 7)
+    const task = await runDelete(deleteRef, 'canopycms-feature-x', 7)
 
     expect(deleteRef).toHaveBeenCalledTimes(1)
     expect(task?.result).toEqual({ deleted: true })
@@ -2816,7 +2865,7 @@ describe('CmsWorker delete-remote-branch', () => {
     await seedReused({ pullRequestNumber: 7 })
     const deleteRef = vi.fn().mockResolvedValue({ data: {} })
 
-    const task = await runDelete(deleteRef, 'feature-x', 7)
+    const task = await runDelete(deleteRef, 'canopycms-feature-x', 7)
 
     expect(deleteRef).toHaveBeenCalledTimes(1)
     expect(task?.result).toEqual({ deleted: true })
@@ -2826,7 +2875,12 @@ describe('CmsWorker delete-remote-branch', () => {
     await seedReused({ pushedToGitHubAt: '2026-02-01T00:00:00.000Z' })
     const deleteRef = vi.fn().mockResolvedValue({ data: {} })
 
-    const task = await runDelete(deleteRef, 'feature-x', undefined, '2026-01-01T00:00:00.000Z')
+    const task = await runDelete(
+      deleteRef,
+      'canopycms-feature-x',
+      undefined,
+      '2026-01-01T00:00:00.000Z',
+    )
 
     expect(deleteRef).not.toHaveBeenCalled()
     expect(task?.result).toEqual({ deleted: false, skipped: 'name-reused' })
@@ -2836,7 +2890,12 @@ describe('CmsWorker delete-remote-branch', () => {
     await seedReused({ pushedToGitHubAt: '2026-01-01T00:00:00.000Z' })
     const deleteRef = vi.fn().mockResolvedValue({ data: {} })
 
-    const task = await runDelete(deleteRef, 'feature-x', undefined, '2026-01-01T00:00:00.000Z')
+    const task = await runDelete(
+      deleteRef,
+      'canopycms-feature-x',
+      undefined,
+      '2026-01-01T00:00:00.000Z',
+    )
 
     expect(deleteRef).toHaveBeenCalledTimes(1)
     expect(task?.result).toEqual({ deleted: true })
@@ -2846,7 +2905,7 @@ describe('CmsWorker delete-remote-branch', () => {
     await seedReused('{ not json')
     const deleteRef = vi.fn().mockResolvedValue({ data: {} })
 
-    const task = await runDelete(deleteRef, 'feature-x', 7)
+    const task = await runDelete(deleteRef, 'canopycms-feature-x', 7)
 
     expect(deleteRef).not.toHaveBeenCalled()
     expect(task?.result).toEqual({ deleted: false, skipped: 'metadata-unreadable' })
@@ -2856,18 +2915,18 @@ describe('CmsWorker delete-remote-branch', () => {
     await seedReused('{"version":1}')
     const deleteRef = vi.fn().mockResolvedValue({ data: {} })
 
-    const task = await runDelete(deleteRef, 'feature-x', 7)
+    const task = await runDelete(deleteRef, 'canopycms-feature-x', 7)
 
     expect(deleteRef).not.toHaveBeenCalled()
     expect(task?.result).toEqual({ deleted: false, skipped: 'metadata-unreadable' })
   })
 
   it('retries, without calling GitHub, when the metadata under the name cannot be read', async () => {
-    const reused = path.join(tmpDir, 'content-branches', 'feature-x')
+    const reused = path.join(tmpDir, 'content-branches', 'canopycms-feature-x')
     await fs.mkdir(path.join(reused, '.canopy-meta', 'branch.json'), { recursive: true })
     const deleteRef = vi.fn().mockResolvedValue({ data: {} })
 
-    const task = await runDelete(deleteRef, 'feature-x', 7)
+    const task = await runDelete(deleteRef, 'canopycms-feature-x', 7)
 
     expect(deleteRef).not.toHaveBeenCalled()
     expect(task?.status).toBe('pending')
