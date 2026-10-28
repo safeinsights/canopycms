@@ -23,11 +23,34 @@ export interface RequestChangesBody {
 
 const NOTE_NOT_SAVED_WARNING = "Changes were requested, but your note couldn't be saved."
 
-/** A branch that left review before this request arrived: the reviewer's page was stale. */
-const staleStatusError = (status: string | undefined, whenInReview: string): string =>
+/**
+ * The 409 for a branch that left review before this request arrived, because the reviewer's page
+ * was stale. `action` finishes "so ..." for any status that has no wording of its own.
+ */
+const staleStatusError = (status: string | undefined, action: string): string =>
   status === 'editing'
     ? 'This branch is no longer in review. Its editor has it back for editing.'
-    : whenInReview
+    : status === undefined
+      ? `This branch's status can't be read, so ${action}.`
+      : `This branch is ${status}, so ${action}.`
+
+const canRequestChangesFrom = (status: string | undefined) =>
+  status === 'submitted' || status === 'approved'
+
+const requestChangesConflict = (status: string | undefined): BranchListItemResponse => ({
+  ok: false,
+  status: 409,
+  error: staleStatusError(status, "changes can't be requested"),
+})
+
+const approveConflict = (status: string | undefined): BranchListItemResponse => ({
+  ok: false,
+  status: 409,
+  error:
+    status === 'approved'
+      ? 'This branch is already approved.'
+      : staleStatusError(status, "it can't be approved"),
+})
 
 const requestChangesHandler = async (
   gc: { branchContext: BranchContext },
@@ -38,22 +61,26 @@ const requestChangesHandler = async (
 ): Promise<BranchListItemResponse> => {
   const { branchContext } = gc
 
-  const { status } = branchContext.branch
-  if (status !== 'submitted' && status !== 'approved') {
-    return {
-      ok: false,
-      status: 409,
-      error: staleStatusError(status, `This branch is ${status}, so changes can't be requested.`),
-    }
+  if (!canRequestChangesFrom(branchContext.branch.status)) {
+    return requestChangesConflict(branchContext.branch.status)
   }
 
   await syncConvertToDraft(ctx, branchContext)
 
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
 
-  const updated = await meta.save({
-    branch: { name: branchContext.branch.name, status: 'editing' },
-  })
+  // The status the guard read can be stale by now: the save checks the status on disk, in the same
+  // step that writes. A branch that left review meanwhile (withdrawn, or merged) is already a
+  // draft or past it, so the draft conversion above leaves nothing to undo.
+  let found: string | undefined
+  const updated = await meta.saveIf(
+    { branch: { name: branchContext.branch.name, status: 'editing' } },
+    (existing) => {
+      found = existing?.branch.status
+      return canRequestChangesFrom(found)
+    },
+  )
+  if (!updated) return requestChangesConflict(found)
 
   // The note is written after the status change so a failed write never blocks the branch from
   // returning to editing; the caller is warned instead.
@@ -113,17 +140,8 @@ const approveBranchHandler = async (
     return { ok: false, status: 400, error: "The base branch can't be approved." }
   }
 
-  const { status } = branchContext.branch
-  if (status !== 'submitted') {
-    return {
-      ok: false,
-      status: 409,
-      error:
-        status === 'approved'
-          ? 'This branch is already approved.'
-          : staleStatusError(status, `This branch is ${status}, so it can't be approved.`),
-    }
-  }
+  if (branchContext.branch.status !== 'submitted')
+    return approveConflict(branchContext.branch.status)
 
   if (branchContext.branch.pullRequestState === 'closed') {
     return {
@@ -136,9 +154,16 @@ const approveBranchHandler = async (
 
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
 
-  const updated = await meta.save({
-    branch: { name: branchContext.branch.name, status: 'approved' },
-  })
+  // As for request changes, the status on disk decides, in the step that writes.
+  let found: string | undefined
+  const updated = await meta.saveIf(
+    { branch: { name: branchContext.branch.name, status: 'approved' } },
+    (existing) => {
+      found = existing?.branch.status
+      return found === 'submitted'
+    },
+  )
+  if (!updated) return approveConflict(found)
 
   return {
     ok: true,

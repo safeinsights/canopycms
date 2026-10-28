@@ -16,8 +16,9 @@ export interface ReviewedBranch {
 }
 
 /**
- * Whether `user` reviews `branch` rather than owns it: a reviewer or admin, with the branch
- * submitted or approved not the protected base branch and with no closed pull request, who neither made it nor was given access by name or by group. Such a
+ * Whether `user` reviews `branch` rather than owns it. That is a reviewer or admin who neither
+ * made the branch nor was given access to it by name or by group. The branch must be submitted or
+ * approved, must not be the protected base branch, and must have no closed pull request. Such a
  * user is offered Approve and Request changes in place of Withdraw.
  */
 export function isReviewerOfOthersReview(

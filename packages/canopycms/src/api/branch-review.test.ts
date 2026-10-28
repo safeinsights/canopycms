@@ -16,14 +16,29 @@ const mockMetadataSave = vi.fn().mockResolvedValue({
   },
 })
 
+// The status on disk, which a concurrent request can change after the guard read the branch.
+const disk: { status: string | undefined } = { status: 'submitted' }
+
+// `saveIf` decides against the disk status, as the real one does inside its lock.
+const mockSaveIf = vi.fn(
+  async (update: unknown, onlyIf: (existing: { branch: { status?: string } } | null) => boolean) =>
+    onlyIf({ branch: { status: disk.status } }) ? mockMetadataSave(update) : null,
+)
+
 vi.mock('../branch-metadata', () => ({
   BranchMetadataFileManager: vi.fn().mockImplementation(() => ({
     save: mockMetadataSave,
+    saveIf: mockSaveIf,
   })),
   getBranchMetadataFileManager: vi.fn().mockImplementation(() => ({
     save: mockMetadataSave,
+    saveIf: mockSaveIf,
   })),
 }))
+
+beforeEach(() => {
+  disk.status = 'submitted'
+})
 
 import { requestChanges, approveBranch } from './branch-review'
 import { RESERVED_GROUPS } from '../authorization'
@@ -215,6 +230,7 @@ describe('branch review api - requestChanges', () => {
   })
 
   it('requests changes on an approved branch', async () => {
+    disk.status = 'approved'
     const ctx = makeCtx()
     ctx.getBranchContext = vi.fn().mockResolvedValue({
       ...baseContext,
@@ -224,6 +240,34 @@ describe('branch review api - requestChanges', () => {
     expect(res.ok).toBe(true)
     expect(mockMetadataSave).toHaveBeenLastCalledWith({
       branch: { name: 'feature/x', status: 'editing' },
+    })
+  })
+
+  describe('a status that changed after the guard read the branch', () => {
+    it.each([
+      ['editing', 'This branch is no longer in review. Its editor has it back for editing.'],
+      ['archived', "This branch is archived, so changes can't be requested."],
+      [undefined, "This branch's status can't be read, so changes can't be requested."],
+    ])('answers 409 for %s, writing nothing and leaving no note', async (status, error) => {
+      const branchRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-review-race-'))
+      try {
+        disk.status = status
+        mockMetadataSave.mockClear()
+        const ctx = makeCtx()
+        ctx.getBranchContext = vi.fn().mockResolvedValue({ ...baseContext, branchRoot })
+        const res = await requestChangesHandler(
+          ctx,
+          admin,
+          { branch: 'feature/x' as BranchName },
+          { note: 'Fix the intro.' },
+        )
+        expect(res.status).toBe(409)
+        expect(res.error).toBe(error)
+        expect(mockMetadataSave).not.toHaveBeenCalled()
+        expect(Object.keys((await new CommentStore(branchRoot).load()).threads)).toHaveLength(0)
+      } finally {
+        await fs.rm(branchRoot, { recursive: true, force: true })
+      }
     })
   })
 
@@ -421,6 +465,19 @@ describe('branch review api - approveBranch', () => {
     expect(mockMetadataSave).toHaveBeenCalledWith({
       branch: { name: 'feature/x', status: 'approved' },
     })
+  })
+
+  it.each([
+    ['editing', 'This branch is no longer in review. Its editor has it back for editing.'],
+    ['approved', 'This branch is already approved.'],
+    [undefined, "This branch's status can't be read, so it can't be approved."],
+  ])('answers 409, writing nothing, when the status on disk became %s', async (status, error) => {
+    disk.status = status
+    mockMetadataSave.mockClear()
+    const res = await approveBranchHandler(makeCtx(), admin, { branch: 'feature/x' as BranchName })
+    expect(res.status).toBe(409)
+    expect(res.error).toBe(error)
+    expect(mockMetadataSave).not.toHaveBeenCalled()
   })
 
   it('refuses the protected base branch', async () => {
