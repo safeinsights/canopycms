@@ -219,7 +219,7 @@ function task(action: TaskAction): Task {
   return {
     id: 't1',
     action,
-    payload: { branch: 'content/a', pullRequestNumber: 7, title: 'T', body: 'B' },
+    payload: { branch: 'canopycms-content/a', pullRequestNumber: 7, title: 'T', body: 'B' },
   } as unknown as Task
 }
 
@@ -245,7 +245,16 @@ async function observeEverything(): Promise<Coverage> {
   const taskOctokit = recordingOctokit(tasks, {
     'pulls.list': { data: [] },
     'pulls.create': { data: { number: 7, html_url: 'https://example.invalid/pr/7' } },
-    'pulls.get': { data: { node_id: 'PR_1', state: 'open', merged: false, draft: false } },
+    // The gateway reads a pull request's head before acting on it by number.
+    'pulls.get': {
+      data: {
+        node_id: 'PR_1',
+        state: 'open',
+        merged: false,
+        draft: false,
+        head: { ref: 'canopycms-content/a', repo: { full_name: 'an-org/a-content-site' } },
+      },
+    },
     'repos.get': { data: { default_branch: 'main' } },
   })
   for (const action of ALL_TASK_ACTIONS) {
