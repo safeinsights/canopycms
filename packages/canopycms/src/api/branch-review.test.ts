@@ -84,11 +84,14 @@ describe('branch review api - requestChanges', () => {
     expect(res.error).toContain('Reviewer access required')
   })
 
-  it('returns 400 if branch not submitted', async () => {
+  it.each([
+    ['editing', 'This branch is no longer in review. Its editor has it back for editing.'],
+    ['archived', "This branch is archived, so changes can't be requested."],
+  ])('answers 409 for a branch that is %s', async (status, error) => {
     const ctx = makeCtx()
     ctx.getBranchContext = vi.fn().mockResolvedValue({
       ...baseContext,
-      branch: { ...baseContext.branch, status: 'editing' },
+      branch: { ...baseContext.branch, status },
     })
     const res = await requestChangesHandler(
       ctx,
@@ -102,10 +105,8 @@ describe('branch review api - requestChanges', () => {
       { branch: 'feature/x' as BranchName },
       {},
     )
-    expect(res.status).toBe(400)
-    expect(res.error).toContain(
-      "Only 'submitted' or 'approved' branches can have changes requested",
-    )
+    expect(res.status).toBe(409)
+    expect(res.error).toBe(error)
   })
 
   it('requests changes when allowed (admin)', async () => {
@@ -235,7 +236,15 @@ describe('branch review api - requestChanges', () => {
         branchRoot,
         branch: { ...baseContext.branch, status: branchStatus },
       })
-      return requestChangesHandler(ctx, admin, { branch: 'feature/x' as BranchName }, body)
+      // The handler receives the body as the endpoint's schema leaves it.
+      const parsed = requestChanges.validate({ params: { branch: 'feature/x' }, body })
+      if (!parsed.ok) throw new Error(parsed.error)
+      return requestChangesHandler(
+        ctx,
+        admin,
+        { branch: 'feature/x' as BranchName },
+        parsed.body as { note?: string } | undefined,
+      )
     }
 
     beforeEach(async () => {
@@ -269,12 +278,12 @@ describe('branch review api - requestChanges', () => {
       },
     )
 
-    it('rejects a note over 2,000 characters at the endpoint boundary', () => {
+    it('rejects a note over 2,000 characters at the endpoint boundary, after trimming', () => {
       const validate = (note: string) =>
         requestChanges.validate({ params: { branch: 'feature/x' }, body: { note } })
       expect(validate('x'.repeat(2000)).ok).toBe(true)
-      const tooLong = validate('x'.repeat(2001))
-      expect(tooLong.ok).toBe(false)
+      expect(validate(`  ${'x'.repeat(2000)}  `).ok).toBe(true)
+      expect(validate('x'.repeat(2001)).ok).toBe(false)
     })
 
     it('saves the note after the status change', async () => {
@@ -298,9 +307,7 @@ describe('branch review api - requestChanges', () => {
       expect(res.ok).toBe(true)
       expect(res.status).toBe(200)
       expect(res.data?.branch).toBeDefined()
-      expect(res.data?.warning).toBe(
-        "Changes were requested, but your note couldn't be saved. Add it as a comment on the branch.",
-      )
+      expect(res.data?.warning).toBe("Changes were requested, but your note couldn't be saved.")
       expect(consoleSpy).toHaveErrored('disk full')
       consoleSpy.restore()
     })
@@ -336,11 +343,15 @@ describe('branch review api - approveBranch', () => {
     expect(res.error).toContain('Reviewer access required')
   })
 
-  it('returns 400 if branch not submitted', async () => {
+  it.each([
+    ['editing', 'This branch is no longer in review. Its editor has it back for editing.'],
+    ['approved', 'This branch is already approved.'],
+    ['archived', "This branch is archived, so it can't be approved."],
+  ])('answers 409 for a branch that is %s', async (status, error) => {
     const ctx = makeCtx()
     ctx.getBranchContext = vi.fn().mockResolvedValue({
       ...baseContext,
-      branch: { ...baseContext.branch, status: 'editing' },
+      branch: { ...baseContext.branch, status },
     })
     const res = await approveBranchHandler(
       ctx,
@@ -353,8 +364,8 @@ describe('branch review api - approveBranch', () => {
       },
       { branch: 'feature/x' as BranchName },
     )
-    expect(res.status).toBe(400)
-    expect(res.error).toContain("Only 'submitted' branches can be approved")
+    expect(res.status).toBe(409)
+    expect(res.error).toBe(error)
   })
 
   it('approves branch when allowed (admin)', async () => {

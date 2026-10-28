@@ -13,16 +13,21 @@ import { getBranchProtection } from '../authorization'
 
 /** Optional on the wire: a bodiless request means no note. */
 const requestChangesBodySchema = z
-  .object({ note: z.string().max(REQUEST_CHANGES_NOTE_MAX_LENGTH).optional() })
+  .object({ note: z.string().trim().max(REQUEST_CHANGES_NOTE_MAX_LENGTH).optional() })
   .optional()
 
 export interface RequestChangesBody {
-  /** Saved as a branch comment; trimmed, and ignored when empty. */
+  /** Saved as a branch comment; trimmed before its length is checked, and ignored when empty. */
   note?: string
 }
 
-const NOTE_NOT_SAVED_WARNING =
-  "Changes were requested, but your note couldn't be saved. Add it as a comment on the branch."
+const NOTE_NOT_SAVED_WARNING = "Changes were requested, but your note couldn't be saved."
+
+/** A branch that left review before this request arrived: the reviewer's page was stale. */
+const staleStatusError = (status: string | undefined, whenInReview: string): string =>
+  status === 'editing'
+    ? 'This branch is no longer in review. Its editor has it back for editing.'
+    : whenInReview
 
 const requestChangesHandler = async (
   gc: { branchContext: BranchContext },
@@ -37,8 +42,8 @@ const requestChangesHandler = async (
   if (status !== 'submitted' && status !== 'approved') {
     return {
       ok: false,
-      status: 400,
-      error: `Cannot request changes on branch with status '${status}'. Only 'submitted' or 'approved' branches can have changes requested.`,
+      status: 409,
+      error: staleStatusError(status, `This branch is ${status}, so changes can't be requested.`),
     }
   }
 
@@ -52,7 +57,7 @@ const requestChangesHandler = async (
 
   // The note is written after the status change so a failed write never blocks the branch from
   // returning to editing; the caller is warned instead.
-  const note = body?.note?.trim()
+  const note = body?.note
   let warning: string | undefined
   if (note) {
     try {
@@ -108,11 +113,15 @@ const approveBranchHandler = async (
     return { ok: false, status: 400, error: "The base branch can't be approved." }
   }
 
-  if (branchContext.branch.status !== 'submitted') {
+  const { status } = branchContext.branch
+  if (status !== 'submitted') {
     return {
       ok: false,
-      status: 400,
-      error: `Cannot approve branch with status '${branchContext.branch.status}'. Only 'submitted' branches can be approved.`,
+      status: 409,
+      error:
+        status === 'approved'
+          ? 'This branch is already approved.'
+          : staleStatusError(status, `This branch is ${status}, so it can't be approved.`),
     }
   }
 

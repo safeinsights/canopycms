@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSWRConfig } from 'swr'
-import { Alert, Stack, Text, Textarea } from '@mantine/core'
+import { Alert, Stack, Text } from '@mantine/core'
 import { IconAlertTriangle } from '@tabler/icons-react'
 import { openConfirm } from '../utils/confirm-modal'
 import { focusReturnProps } from '../utils/focus-return'
@@ -27,19 +27,40 @@ import type { UnsavedSummary } from './useDraftManager'
 import type { StampedEntry } from '../../stamp-on-publish'
 import { describeUnsaved } from './useBranchActions'
 import { writeEditorUrl } from './editor-history'
-import { REQUEST_CHANGES_NOTE_MAX_LENGTH } from '../../authorization/review-role'
+import {
+  approveMessage,
+  NoteNotSavedMessage,
+  RequestChangesForm,
+} from '../components/ReviewDialogs'
 
 const BRANCHES_LOAD_FAILED_TOAST_ID = 'canopy-branches-load-failed'
 const BRANCH_OUTCOME_UNKNOWN_TOAST_ID = 'canopy-branch-outcome-unknown'
 
-/** The error a refused branch action throws; a gateway's 5xx says nothing of whether it ran. */
-function actionError(result: ApiResponse, fallback: string): Error {
-  return isGatewayFailure(result) ? new UnansweredError() : new Error(result.error || fallback)
+/** The API's 409: the branch is no longer in the state the action needs, so a retry cannot pass. */
+class StaleStatusError extends Error {
+  override readonly name = 'StaleStatusError'
+}
+
+/**
+ * The error a refused branch action throws; a gateway's 5xx says nothing of whether it ran.
+ * With `staleIsConflict`, the API's 409 is a `StaleStatusError`.
+ */
+function actionError(result: ApiResponse, fallback: string, staleIsConflict = false): Error {
+  if (isGatewayFailure(result)) return new UnansweredError()
+  const message = result.error || fallback
+  return staleIsConflict && !result.ok && result.status === 409 && !isNonApiResponse(result)
+    ? new StaleStatusError(message)
+    : new Error(message)
 }
 
 /** @internal Exported for tests. */
-export const branchActionOutcomeUnknown = (action: string) =>
-  `${action} may have gone through even though the server didn't answer. Check the branch's status before trying again.`
+export const branchActionOutcomeUnknown = (
+  action: string,
+  check = "Check the branch's status before trying again.",
+) => `${action} may have gone through even though the server didn't answer. ${check}`
+
+/** Where to look after a Request changes nobody answered: the status, and the note it carried. */
+const REQUEST_CHANGES_CHECK = `Check the branch's status and its comments in "Comments".`
 
 /**
  * Wire a confirm modal's exits so exactly ONE of {confirmed, dismissed} runs,
@@ -177,13 +198,7 @@ const showApproveConfirmation = (
 ) => {
   openConfirm({
     title: EDITOR_ACTIONS.approve,
-    children: (
-      <Text size="sm">
-        {pr.pullRequestNumber
-          ? `Approve "${branchName}"? Its pull request stays open on GitHub for someone with access to merge it.`
-          : `Approve "${branchName}"? It stays locked until it is merged or withdrawn.`}
-      </Text>
-    ),
+    children: <Text size="sm">{approveMessage(branchName, !!pr.pullRequestNumber)}</Text>,
     labels: { confirm: EDITOR_ACTIONS.approve, cancel: 'Cancel' },
     confirmProps: { color: 'brand', 'data-testid': 'confirm-approve-branch' },
     ...confirmModalHandlers(onConfirm, onDismiss),
@@ -191,59 +206,30 @@ const showApproveConfirmation = (
   })
 }
 
-/** The request-changes dialog's body: what happens, and an optional note for the editor. */
-function RequestChangesForm({
-  branchName,
-  pr,
-  onNoteChange,
-}: {
-  branchName: string
-  pr: BranchPullRequest
-  onNoteChange: (note: string) => void
-}) {
-  const [note, setNote] = useState('')
-  return (
-    <Stack gap="sm">
-      <Text size="sm">
-        {`Send "${branchName}" back to its editor? It goes back to editing${pr.pullRequestNumber ? ', and its pull request becomes a draft' : ''}.`}
-      </Text>
-      <Textarea
-        label="Note to the editor"
-        description="Saved as a comment on the branch."
-        value={note}
-        onChange={(event) => {
-          setNote(event.currentTarget.value)
-          onNoteChange(event.currentTarget.value)
-        }}
-        maxLength={REQUEST_CHANGES_NOTE_MAX_LENGTH}
-        autosize
-        minRows={3}
-        maxRows={8}
-        // Mantine's focus trap focuses this rather than the first control, the dialog's close button.
-        data-autofocus
-        data-testid="request-changes-note"
-      />
-    </Stack>
-  )
-}
-
-/** `onConfirm` receives the note as typed; the dialog confirms before reading it. */
+/**
+ * `onConfirm` receives the note as typed, which the dialog starts with `initialNote` and reports
+ * through `onNoteChange` as it changes, so a draft outlives the dialog.
+ */
 const showRequestChangesConfirmation = (
   branchName: string,
   pr: BranchPullRequest,
+  initialNote: string,
+  onNoteChange: (note: string) => void,
   onConfirm: (note: string) => Promise<void>,
   onDismiss: () => void,
   returnFocusTo?: () => HTMLElement | null,
 ) => {
-  let note = ''
+  let note = initialNote
   openConfirm({
     title: EDITOR_ACTIONS.requestChanges,
     children: (
       <RequestChangesForm
         branchName={branchName}
-        pr={pr}
+        hasPullRequest={!!pr.pullRequestNumber}
+        initialNote={initialNote}
         onNoteChange={(value) => {
           note = value
+          onNoteChange(value)
         }}
       />
     ),
@@ -674,24 +660,67 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
 
   // A workflow action that got no answer may have gone through, so the list reloads to show
   // where the branch stands rather than inviting a blind retry.
-  const showOutcomeUnknown = (action: string) => {
+  const showOutcomeUnknown = (action: string, check?: string) => {
     notifications.hide(BRANCH_OUTCOME_UNKNOWN_TOAST_ID)
     notifications.show({
       id: BRANCH_OUTCOME_UNKNOWN_TOAST_ID,
-      message: branchActionOutcomeUnknown(action),
+      message: branchActionOutcomeUnknown(action, check),
       color: 'yellow',
       autoClose: false,
       withCloseButton: true,
     })
   }
-  const reportActionFailure = async (err: unknown, fallback: string, action: string) => {
+  const reportActionFailure = async (
+    err: unknown,
+    fallback: string,
+    action: string,
+    follow: {
+      /** Offered on the error, reopening the action's dialog. */
+      retry?: () => void
+      /** Where to look after an unanswered write, in place of the branch's status alone. */
+      check?: string
+      /** Runs once an unanswered write's branch list has reloaded. */
+      afterUnanswered?: () => void
+    } = {},
+  ) => {
     if (isUnanswered(err)) {
-      showOutcomeUnknown(action)
+      showOutcomeUnknown(action, follow.check)
+      await loadBranches()
+      follow.afterUnanswered?.()
+      return
+    }
+    const message = err instanceof Error ? err.message : fallback
+    if (err instanceof StaleStatusError) {
+      // Nothing is lost yet, so a warning; the list shows where the branch stands now.
+      notifications.show({ message, color: 'yellow', autoClose: false, withCloseButton: true })
       await loadBranches()
       return
     }
-    notifications.show({ message: err instanceof Error ? err.message : fallback, color: 'red' })
+    if (!follow.retry) {
+      notifications.show({ message, color: 'red' })
+      return
+    }
+    const id = `canopy-${action}-failed`
+    const retry = follow.retry
+    notifications.hide(id)
+    notifications.show({
+      id,
+      message: (
+        <RetryToastMessage
+          message={message}
+          onRetry={() => {
+            notifications.hide(id)
+            retry()
+          }}
+        />
+      ),
+      color: 'red',
+      autoClose: false,
+    })
   }
+
+  // A note typed in the Request changes dialog, by branch, until a request carries it.
+  const noteDrafts = useRef(new Map<string, string>())
 
   const handleSubmit = (requested: string, returnFocusTo?: () => HTMLElement | null) => {
     const branchNameToSubmit = listedName(requested)
@@ -816,13 +845,16 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 const result = await apiClient.workflow.approve({
                   branch: branchNameToApprove,
                 })
-                if (!result.ok) throw actionError(result, 'Failed to approve branch')
+                if (!result.ok) throw actionError(result, 'Failed to approve branch', true)
                 notifications.show({ message: 'Branch approved', color: 'green' })
                 updateCreatedBranch(branchNameToApprove, result.data?.branch)
                 await loadBranches()
                 resolve()
               } catch (err) {
-                await reportActionFailure(err, 'Failed to approve branch', EDITOR_ACTIONS.approve)
+                await reportActionFailure(err, 'Failed to approve branch', EDITOR_ACTIONS.approve, {
+                  retry: () =>
+                    void handleApprove(branchNameToApprove, returnFocusTo).catch(() => {}),
+                })
                 reject(err)
               } finally {
                 options.setBusy(false)
@@ -845,6 +877,11 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
           showRequestChangesConfirmation(
             branchNameForChanges,
             pullRequestOf(branchNameForChanges),
+            noteDrafts.current.get(branchNameForChanges) ?? '',
+            (draft) => {
+              if (draft) noteDrafts.current.set(branchNameForChanges, draft)
+              else noteDrafts.current.delete(branchNameForChanges)
+            },
             async (note) => {
               options.setBusy(true)
               try {
@@ -852,14 +889,15 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                   { branch: branchNameForChanges },
                   { note: note.trim() || undefined },
                 )
-                if (!result.ok) throw actionError(result, 'Failed to request changes')
+                if (!result.ok) throw actionError(result, 'Failed to request changes', true)
+                noteDrafts.current.delete(branchNameForChanges)
                 notifications.show({ message: 'Changes requested', color: 'blue' })
                 // The note is saved apart from the status change, so it can fail on its own;
-                // the warning stays up until read because the reviewer's words are not saved.
+                // the warning stays up, with the note to copy, because the words are not saved.
                 const warning = result.data?.warning
                 if (warning) {
                   notifications.show({
-                    message: warning,
+                    message: <NoteNotSavedMessage warning={warning} note={note.trim()} />,
                     color: 'yellow',
                     autoClose: false,
                     withCloseButton: true,
@@ -873,6 +911,15 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                   err,
                   'Failed to request changes',
                   EDITOR_ACTIONS.requestChanges,
+                  {
+                    retry: () =>
+                      void handleRequestChanges(branchNameForChanges, returnFocusTo).catch(
+                        () => {},
+                      ),
+                    check: REQUEST_CHANGES_CHECK,
+                    // The write may have landed along with its note.
+                    afterUnanswered: () => options.onChangesRequested?.(branchNameForChanges),
+                  },
                 )
               } finally {
                 options.setBusy(false)

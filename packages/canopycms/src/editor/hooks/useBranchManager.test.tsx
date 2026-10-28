@@ -2189,16 +2189,60 @@ describe('useBranchManager', () => {
      * Makes the next confirm dialog render its body, run `typing` on it, then confirm, as a user
      * does; the default mock confirms without ever showing the body.
      */
-    const confirmAfter = async (typing: (shown: ReturnType<typeof render>) => Promise<void>) => {
+    const confirmAfter = async (
+      typing: (shown: ReturnType<typeof render>) => Promise<void>,
+      exit: 'confirm' | 'cancel' = 'confirm',
+    ) => {
       const { modals } = await import('@mantine/modals')
       vi.mocked(modals.openConfirmModal).mockImplementationOnce((options) => {
         const shown = render(<MantineProvider>{options.children}</MantineProvider>)
         void typing(shown).then(() => {
-          options.onConfirm?.()
+          if (exit === 'confirm') options.onConfirm?.()
+          else options.onCancel?.()
           shown.unmount()
         })
         return 'mock-modal-id'
       })
+    }
+    const typeNote = (note: string) => async (shown: ReturnType<typeof render>) => {
+      const field = await shown.findByTestId('request-changes-note')
+      await act(async () => {
+        fireEvent.change(field, { target: { value: note } })
+      })
+    }
+    /**
+     * Runs a handler that renders its dialog. Not inside `act` from the start: the dialog's body
+     * renders while the handler waits, and an enclosing `act` would hold that render back.
+     */
+    const call = async (run: () => Promise<void>) => {
+      const pending = run()
+      await act(async () => {
+        await pending
+      })
+    }
+    /** The notification `notifications.show` was last called with, its message rendered. */
+    const lastToast = async () => {
+      const { notifications } = await import('@mantine/notifications')
+      const call = vi.mocked(notifications.show).mock.calls.at(-1)?.[0]
+      if (!call) throw new Error('no notification was shown')
+      const shown = render(<MantineProvider>{call.message}</MantineProvider>)
+      return { call, shown }
+    }
+    /** The note field's value in the dialog the next `openConfirmModal` call opens, unconfirmed. */
+    const nextDialogNote = async () => {
+      const { modals } = await import('@mantine/modals')
+      let value: string | undefined
+      vi.mocked(modals.openConfirmModal).mockImplementationOnce((options) => {
+        const shown = render(<MantineProvider>{options.children}</MantineProvider>)
+        // After the render settles, wherever the caller's `act` ends.
+        setTimeout(() => {
+          value = (shown.getByTestId('request-changes-note') as HTMLTextAreaElement).value
+          shown.unmount()
+          options.onCancel?.()
+        }, 0)
+        return 'mock-modal-id'
+      })
+      return () => value
     }
 
     it('approves through the API, toasts in green and reloads the list', async () => {
@@ -2247,7 +2291,9 @@ describe('useBranchManager', () => {
       })
 
       const { body } = await dialogBody()
-      expect(body).toContain('Approve "feature"? It stays locked until it is merged or withdrawn.')
+      expect(body).toContain(
+        'Approve "feature"? It stays locked until it is withdrawn or its pull request is merged.',
+      )
       expect(body).not.toContain('GitHub')
     })
 
@@ -2281,25 +2327,54 @@ describe('useBranchManager', () => {
       ).toHaveLength(1)
     })
 
-    it("shows the server's refusal in red, and rejects", async () => {
+    it("shows the server's refusal in red with Retry, and rejects", async () => {
       const { notifications } = await import('@mantine/notifications')
-      mockClient.workflow.approve.mockResolvedValueOnce({
-        ok: false,
-        status: 403,
-        error: "You can't approve a branch you created. Ask another reviewer to approve it.",
-      })
+      const { modals } = await import('@mantine/modals')
+      mockClient.workflow.approve
+        .mockResolvedValueOnce({ ok: false, status: 500, error: 'The disk is full.' })
+        .mockResolvedValueOnce({ ok: true, status: 200 })
       const { result } = await loaded()
 
       await act(async () => {
-        await expect(result.current.handleApprove('feature')).rejects.toThrow(
-          "You can't approve a branch you created.",
-        )
+        await expect(result.current.handleApprove('feature')).rejects.toThrow('The disk is full.')
+      })
+
+      const { call, shown } = await lastToast()
+      expect(call.color).toBe('red')
+      expect(call.autoClose).toBe(false)
+      expect(shown.getByText('The disk is full.')).toBeTruthy()
+      expect(vi.mocked(modals.openConfirmModal)).toHaveBeenCalledTimes(1)
+
+      // Retry reopens the Approve dialog (auto-confirmed here), which sends again.
+      await act(async () => {
+        fireEvent.click(shown.getByRole('button', { name: 'Retry' }))
+      })
+      await waitFor(() => expect(mockClient.workflow.approve).toHaveBeenCalledTimes(2))
+      expect(vi.mocked(modals.openConfirmModal)).toHaveBeenCalledTimes(2)
+      expect(notifications.hide).toHaveBeenCalledWith('canopy-Approve-failed')
+    })
+
+    it('shows a stale-status 409 in yellow, with no Retry, and reloads the list', async () => {
+      const { notifications } = await import('@mantine/notifications')
+      mockClient.workflow.approve.mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        error: 'This branch is already approved.',
+      })
+      const { result } = await loaded()
+      mockClient.branches.list.mockClear()
+
+      await act(async () => {
+        await result.current.handleApprove('feature').catch(() => {})
       })
 
       expect(notifications.show).toHaveBeenCalledWith({
-        message: "You can't approve a branch you created. Ask another reviewer to approve it.",
-        color: 'red',
+        message: 'This branch is already approved.',
+        color: 'yellow',
+        autoClose: false,
+        withCloseButton: true,
       })
+      expect(mockClient.branches.list).toHaveBeenCalledTimes(1)
     })
 
     it('says an approve that got no answer may have gone through, and reloads', async () => {
@@ -2430,30 +2505,137 @@ describe('useBranchManager', () => {
       expect(onChangesRequested).toHaveBeenCalledWith('feature')
     })
 
-    it('keeps a yellow notification up when the note could not be saved', async () => {
-      const { notifications } = await import('@mantine/notifications')
-      const warning =
-        "Changes were requested, but your note couldn't be saved. Add it as a comment on the branch."
+    it('keeps a yellow notification up, with the note to copy, when it could not be saved', async () => {
+      const warning = "Changes were requested, but your note couldn't be saved."
       mockClient.workflow.requestChanges.mockResolvedValueOnce({
         ok: true,
         status: 200,
         data: { branch: mockBranches[1] as BranchListItem, warning },
       })
+      await confirmAfter(typeNote('  Please fix the intro.  '))
       const { result } = await loaded()
 
+      const pending = result.current.handleRequestChanges('feature')
+      await waitFor(() => expect(mockClient.workflow.requestChanges).toHaveBeenCalled())
       await act(async () => {
-        await result.current.handleRequestChanges('feature')
+        await pending
       })
 
-      expect(notifications.show).toHaveBeenCalledWith({
-        message: 'Changes requested',
-        color: 'blue',
+      const { call, shown } = await lastToast()
+      expect(call).toEqual(
+        expect.objectContaining({ color: 'yellow', autoClose: false, withCloseButton: true }),
+      )
+      expect(shown.container.textContent).toContain(
+        `${warning} Copy it into a comment on the branch.`,
+      )
+      expect(shown.getByTestId('note-not-saved-text').textContent).toBe('Please fix the intro.')
+      expect(shown.getByRole('button', { name: 'Copy note' })).toBeTruthy()
+    })
+
+    describe('a typed note', () => {
+      it('is prefilled when the dialog is cancelled and opened again', async () => {
+        await confirmAfter(typeNote('Fix the intro.'), 'cancel')
+        const { result } = await loaded()
+        await call(() => result.current.handleRequestChanges('feature'))
+
+        const reopened = await nextDialogNote()
+        await call(() => result.current.handleRequestChanges('feature'))
+
+        expect(reopened()).toBe('Fix the intro.')
+        expect(mockClient.workflow.requestChanges).not.toHaveBeenCalled()
       })
-      expect(notifications.show).toHaveBeenCalledWith({
-        message: warning,
-        color: 'yellow',
-        autoClose: false,
-        withCloseButton: true,
+
+      it('survives a refusal, which offers Retry reopening the dialog with it', async () => {
+        mockClient.workflow.requestChanges.mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+          error: 'The disk is full.',
+        })
+        await confirmAfter(typeNote('Fix the intro.'))
+        const { result } = await loaded()
+
+        const pending = result.current.handleRequestChanges('feature')
+        await waitFor(() => expect(mockClient.workflow.requestChanges).toHaveBeenCalled())
+        await act(async () => {
+          await pending
+        })
+
+        const { call, shown } = await lastToast()
+        expect(call.color).toBe('red')
+        const reopened = await nextDialogNote()
+        fireEvent.click(shown.getByRole('button', { name: 'Retry' }))
+        await waitFor(() => expect(reopened()).toBe('Fix the intro.'))
+      })
+
+      it('survives a request nobody answered, which checks the branch and its comments', async () => {
+        const { notifications } = await import('@mantine/notifications')
+        const onChangesRequested = vi.fn()
+        mockClient.workflow.requestChanges.mockRejectedValueOnce(
+          new ApiTimeoutError('POST', '/x', 1000),
+        )
+        await confirmAfter(typeNote('Fix the intro.'))
+        const { result } = await loaded(mockBranches, { onChangesRequested })
+        mockClient.branches.list.mockClear()
+
+        const pending = result.current.handleRequestChanges('feature')
+        await waitFor(() => expect(mockClient.workflow.requestChanges).toHaveBeenCalled())
+        await act(async () => {
+          await pending
+        })
+
+        expect(notifications.show).toHaveBeenCalledWith(
+          expect.objectContaining({
+            message:
+              'Request changes may have gone through even though the server didn\'t answer. Check the branch\'s status and its comments in "Comments".',
+            color: 'yellow',
+            autoClose: false,
+          }),
+        )
+        expect(mockClient.branches.list).toHaveBeenCalled()
+        expect(onChangesRequested).toHaveBeenCalledWith('feature')
+        const reopened = await nextDialogNote()
+        await call(() => result.current.handleRequestChanges('feature'))
+        expect(reopened()).toBe('Fix the intro.')
+      })
+
+      it('is cleared once the request goes through', async () => {
+        mockClient.workflow.requestChanges.mockResolvedValueOnce({ ok: true, status: 200 })
+        await confirmAfter(typeNote('Fix the intro.'))
+        const { result } = await loaded()
+        const pending = result.current.handleRequestChanges('feature')
+        await waitFor(() => expect(mockClient.workflow.requestChanges).toHaveBeenCalled())
+        await act(async () => {
+          await pending
+        })
+
+        const reopened = await nextDialogNote()
+        await call(() => result.current.handleRequestChanges('feature'))
+        expect(reopened()).toBe('')
+      })
+
+      it('shows a count past 1,800 characters', async () => {
+        await confirmAfter(async (shown) => {
+          await typeNote('x'.repeat(1850))(shown)
+          expect(shown.getByTestId('request-changes-note-count').textContent).toBe('1,850 / 2,000')
+          expect(shown.getByTestId('request-changes-note-count').hasAttribute('aria-live')).toBe(
+            false,
+          )
+          await typeNote('x'.repeat(1950))(shown)
+          expect(shown.getByTestId('request-changes-note-count').getAttribute('aria-live')).toBe(
+            'polite',
+          )
+        }, 'cancel')
+        const { result } = await loaded()
+        await call(() => result.current.handleRequestChanges('feature'))
+      })
+
+      it('shows no count for a short note', async () => {
+        await confirmAfter(async (shown) => {
+          await typeNote('x'.repeat(1800))(shown)
+          expect(shown.queryByTestId('request-changes-note-count')).toBeNull()
+        }, 'cancel')
+        const { result } = await loaded()
+        await call(() => result.current.handleRequestChanges('feature'))
       })
     })
 
