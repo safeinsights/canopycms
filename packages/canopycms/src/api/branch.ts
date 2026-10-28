@@ -21,9 +21,7 @@ import { isNotFoundError, getErrorMessage, sanitizeErrorMessage } from '../utils
 import { filePathExists } from '../utils/fs'
 import { isNetworkRemoteUrl } from '../utils/git'
 import {
-  CMS_BRANCH_PREFIX,
-  cmsBranchName,
-  parseBranchName,
+  parseCreatedBranchName,
   sanitizeBranchName,
   RESERVED_SETTINGS_BRANCH_PREFIX,
   isSettingsBranchName,
@@ -275,8 +273,8 @@ export const createBranchHandler = async (
 ): Promise<BranchListItemResponse> => {
   return log.timed('api', 'createBranch', async () => {
     // Every branch an editor creates is in the namespace the GitHub gateway writes
-    // (worker/branch-policy.ts), whatever was typed, and checked again: the prefix lengthens it.
-    const named = parseBranchName(cmsBranchName(body.branch))
+    // (worker/branch-policy.ts), whatever was typed.
+    const named = parseCreatedBranchName(body.branch)
     if (!named.ok) return { ok: false, status: 400, error: named.error }
     const branchName = named.name
     log.debug('api', 'Create branch request', {
@@ -286,8 +284,8 @@ export const createBranchHandler = async (
 
     // Scope note: the remote-mirror check further down applies ONLY to this
     // user-facing creation path; http/handler.ts's auto-create (base/active
-    // branches) and loadOrCreateBranchContext provision known names. The two
-    // settings-branch checks below give this path a specific 400; every
+    // branches) and loadOrCreateBranchContext provision known names. The settings-branch
+    // checks here (parseCreatedBranchName's, and the one below) give this path a specific 400; every
     // provisioning path, this one included, also refuses a settings branch in
     // BranchWorkspaceManager.openOrCreateBranch.
 
@@ -314,13 +312,6 @@ export const createBranchHandler = async (
     // `canopycms-settings-*` ref specially (orphan-branch reconcile/push
     // logic), so another deployment's settings branch is a real name that
     // must not be claimable as a content branch here either.
-    if (sanitizedRequested.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX)) {
-      return {
-        ok: false,
-        status: 400,
-        error: `"${sanitizedRequested}" would be a CanopyCMS settings branch name: choose a name that does not start with "${RESERVED_SETTINGS_BRANCH_PREFIX.slice(CMS_BRANCH_PREFIX.length)}"`,
-      }
-    }
 
     // Reject the base branch name outright, even before the base branch is
     // provisioned. No recorded fork point exists yet for a not-yet-created

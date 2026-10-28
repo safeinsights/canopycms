@@ -264,7 +264,7 @@ export async function recordMainBaseline(): Promise<void> {
 
 /**
  * Ensure the main branch workspace is initialized by calling the API.
- * This creates the branch if it doesn't exist.
+ * It provisions 'main', the test app's active branch, if it is not there yet.
  * @param baseUrl - Base URL of the test app (e.g., 'http://localhost:5174')
  */
 export async function ensureMainBranch(baseUrl: string): Promise<void> {
@@ -272,10 +272,18 @@ export async function ensureMainBranch(baseUrl: string): Promise<void> {
     log.info('workspace', 'Ensuring main branch exists', { baseUrl })
 
     // 'main' is the test app's active branch (canopycms.config.ts), which the API provisions
-    // lazily when a request names it (http/handler.ts). An answer other than 200 is left to
-    // waitForWorkspace below, which says what is missing.
-    const response = await fetch(`${baseUrl}/api/canopycms/main/entries`).catch(() => null)
-    log.debug('workspace', 'Provisioning request answered', { status: response?.status })
+    // lazily when a request names it (http/handler.ts). waitForWorkspace below decides; a failed
+    // answer is logged first, so its reason is not lost to that wait's timeout.
+    const response = await fetch(`${baseUrl}/api/canopycms/main/entries`).catch((err: unknown) => {
+      log.error('workspace', 'Provisioning request failed', { error: String(err) })
+      return null
+    })
+    if (response && !response.ok) {
+      log.error('workspace', 'Provisioning request refused', {
+        status: response.status,
+        body: await response.text().catch(() => ''),
+      })
+    }
 
     // NEW: Wait for workspace to be fully initialized (whether created or already exists)
     log.debug('workspace', 'Waiting for workspace initialization')

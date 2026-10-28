@@ -470,6 +470,23 @@ describe('branch api', () => {
       )
       expect(res.ok).toBe(false)
       expect(res.status).toBe(400)
+      expect(res.error).toContain('is reserved for CanopyCMS settings')
+    })
+
+    it('rejects a typed name whose created name is a configured settings branch without the reserved prefix', async () => {
+      const ctx = createMockApiContext({
+        services: {
+          config: { mode: 'dev', settingsBranch: 'canopycms-site' } as any,
+          registry: mockRegistry as any,
+        },
+      })
+      const res = await createBranch(
+        ctx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        { branch: unsafeAsBranchName('site') },
+      )
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(400)
       expect(res.error).toBe(
         'Cannot create content branch with settings branch name (git branch name collision)',
       )
@@ -483,9 +500,7 @@ describe('branch api', () => {
       )
       expect(res.ok).toBe(false)
       expect(res.status).toBe(400)
-      expect(res.error).toBe(
-        'Cannot create content branch with settings branch name (git branch name collision)',
-      )
+      expect(res.error).toContain('is reserved for CanopyCMS settings')
     })
 
     it("rejects another deployment's settings branch name as a reserved-namespace collision", async () => {
@@ -499,7 +514,7 @@ describe('branch api', () => {
       )
       expect(res.ok).toBe(false)
       expect(res.status).toBe(400)
-      expect(res.error).toContain('would be a CanopyCMS settings branch name')
+      expect(res.error).toContain('is reserved for CanopyCMS settings')
     })
 
     it('rejects a raw name whose SANITIZED form (not its raw form) falls inside the reserved prefix', async () => {
@@ -513,7 +528,7 @@ describe('branch api', () => {
       )
       expect(res.ok).toBe(false)
       expect(res.status).toBe(400)
-      expect(res.error).toContain('would be a CanopyCMS settings branch name')
+      expect(res.error).toContain('is reserved for CanopyCMS settings')
     })
 
     it('still accepts a normal branch name', async () => {
@@ -597,7 +612,9 @@ describe('branch api', () => {
       const tooLong = await create('a'.repeat(245))
       expect(tooLong.status).toBe(400)
       expect(tooLong.ok).toBe(false)
-      expect(tooLong.error).toBe('Branch name too long (max 250 characters)')
+      expect(tooLong.error).toBe(
+        'Branch name too long: with "canopycms-" in front it is over 250 characters',
+      )
 
       const fits = await create('a'.repeat(240))
       expect(fits.status).toBe(200)
@@ -609,7 +626,7 @@ describe('branch api', () => {
       const res = await create('settings-prod')
       expect(res.status).toBe(400)
       expect(res.ok).toBe(false)
-      expect(res.error).toContain('would be a CanopyCMS settings branch name')
+      expect(res.error).toContain('is reserved for CanopyCMS settings')
       expect(res.error).toContain('"settings-"')
     })
 

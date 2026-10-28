@@ -1,5 +1,6 @@
 /** Security-focused validation for content paths, IDs, branch names and slugs. */
 
+import { CMS_BRANCH_PREFIX, RESERVED_SETTINGS_BRANCH_PREFIX, cmsBranchName } from './branch-name'
 import { normalizeFilesystemPath, hasTraversalSequence } from './normalize'
 import type { LogicalPath, PhysicalPath, ContentId, BranchName, Slug } from './types'
 
@@ -175,6 +176,9 @@ export function parseContentId(
   return { ok: true, id: id as ContentId }
 }
 
+/** The longest branch name taken, in characters: names become directory names. */
+const MAX_BRANCH_NAME_LENGTH = 250
+
 /** Validate a branch name against git's ref rules and cast it to BranchName. */
 export function parseBranchName(
   name: string,
@@ -184,8 +188,8 @@ export function parseBranchName(
   }
 
   // Length limit (branch names become directory names)
-  if (name.length > 250) {
-    return { ok: false, error: 'Branch name too long (max 250 characters)' }
+  if (name.length > MAX_BRANCH_NAME_LENGTH) {
+    return { ok: false, error: `Branch name too long (max ${MAX_BRANCH_NAME_LENGTH} characters)` }
   }
 
   if (name.includes('..')) {
@@ -232,6 +236,32 @@ export function parseBranchName(
   }
 
   return { ok: true, name: name as BranchName }
+}
+
+/**
+ * The branch an editor's typed name creates (`cmsBranchName`), or why it cannot: the rules
+ * `createBranchHandler` applies and the editor checks as the name is typed.
+ */
+export function parseCreatedBranchName(
+  typed: string,
+): { ok: true; name: BranchName } | { ok: false; error: string } {
+  const valid = parseBranchName(typed)
+  if (!valid.ok) return valid
+  const created = cmsBranchName(typed)
+  if (created.length > MAX_BRANCH_NAME_LENGTH) {
+    return {
+      ok: false,
+      error: `Branch name too long: with "${CMS_BRANCH_PREFIX}" in front it is over ${MAX_BRANCH_NAME_LENGTH} characters`,
+    }
+  }
+  if (created.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX)) {
+    const reserved = RESERVED_SETTINGS_BRANCH_PREFIX.slice(CMS_BRANCH_PREFIX.length)
+    return {
+      ok: false,
+      error: `"${created}" is reserved for CanopyCMS settings: choose a name that does not start with "${reserved}" or "${RESERVED_SETTINGS_BRANCH_PREFIX}"`,
+    }
+  }
+  return parseBranchName(created)
 }
 
 /** Validate a collection or entry slug and cast it to Slug. */

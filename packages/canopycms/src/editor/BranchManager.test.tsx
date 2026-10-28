@@ -813,7 +813,7 @@ describe('BranchManager', () => {
       )
     })
 
-    it('shows the branch a typed name creates, in the canopycms- namespace', async () => {
+    it('shows below the field the branch a typed name creates, in the canopycms- namespace', async () => {
       renderBranchManager({
         branches: baseBranches,
         onCreate: vi.fn(async () => true),
@@ -822,15 +822,39 @@ describe('BranchManager', () => {
       await userEvent.click(screen.getByRole('button', { name: 'New branch…' }))
       const input = await screen.findByLabelText(/branch name/i)
 
-      expect(input.getAttribute('aria-describedby')).toBeTruthy()
-      expect(screen.getByText('Branch names start with canopycms-')).toBeTruthy()
+      const empty = screen.getByText('CanopyCMS adds “canopycms-” to the start of the name.')
+      expect(input.getAttribute('aria-describedby')).toContain(empty.id)
+      // After the input, so a preview that wraps never moves the field being typed in.
+      expect(input.compareDocumentPosition(empty) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 
       await userEvent.type(input, 'spring/update')
-      expect(screen.getByText('Created as canopycms-spring-update')).toBeTruthy()
+      expect(screen.getByText('Will be named canopycms-spring-update')).toBeTruthy()
+      expect(screen.getByTestId('create-branch-submit').hasAttribute('disabled')).toBe(false)
 
       await userEvent.clear(input)
       await userEvent.type(input, 'canopycms-already')
-      expect(screen.getByText('Created as canopycms-already')).toBeTruthy()
+      expect(screen.getByText('Will be named canopycms-already')).toBeTruthy()
+    })
+
+    it.each([
+      ['settings-prod', /is reserved for CanopyCMS settings/],
+      ['spring update', /cannot contain spaces/],
+      ['a..b', /cannot contain "\.\."/],
+      ['a'.repeat(245), /with "canopycms-" in front it is over 250 characters/],
+    ])('says why %s cannot be created, and offers no create', async (typed, why) => {
+      const onCreate = vi.fn(async () => true)
+      renderBranchManager({ branches: baseBranches, onCreate, mode: 'prod' })
+      await userEvent.click(screen.getByRole('button', { name: 'New branch…' }))
+      const input = await screen.findByLabelText(/branch name/i)
+
+      await userEvent.click(input)
+      await userEvent.paste(typed)
+
+      expect(screen.getByText(why)).toBeTruthy()
+      expect(input.getAttribute('aria-invalid')).toBe('true')
+      expect(screen.queryByText(/^Will be named/)).toBeNull()
+      expect(screen.getByTestId('create-branch-submit').hasAttribute('disabled')).toBe(true)
+      expect(onCreate).not.toHaveBeenCalled()
     })
 
     it('keeps the form open with the entered values when the create resolves false', async () => {

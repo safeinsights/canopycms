@@ -40,6 +40,7 @@ export {
   isValidContentId,
   parseContentId,
   parseBranchName,
+  parseCreatedBranchName,
   parseSlug,
 } from './validation'
 
