@@ -1305,6 +1305,16 @@ describe('defineCanopyConfig().client()', () => {
     expect(client().basePath).toBe('/preview-123')
   })
 
+  it('names no branch, which only the server can know for its deployment', () => {
+    const { client } = defineCanopyConfig({
+      ...gitAuthor,
+      defaultBaseBranch: 'testing-main',
+      defaultActiveBranch: 'testing-main',
+    })
+    expect(Object.keys(client())).not.toContain('defaultBaseBranch')
+    expect(Object.keys(client())).not.toContain('defaultActiveBranch')
+  })
+
   it('leaves basePath undefined on the client config when unset (regression guard)', () => {
     const { client } = defineCanopyConfig({ ...gitAuthor })
     expect(client().basePath).toBeUndefined()
@@ -1352,6 +1362,37 @@ describe('editor.previewPrefix validation', () => {
     'https:cms.example.com',
   ])('rejects %s', (value) => {
     expect(() => withPrefix(value)).toThrow(/previewPrefix/)
+  })
+})
+
+describe('editorUrl validation', () => {
+  const withUrl = (editorUrl: string) => validateCanopyConfig({ ...gitAuthor, editorUrl })
+
+  it.each([
+    'https://cms.example.org/edit',
+    'https://cms.example.org',
+    'http://localhost:3000/edit',
+  ])('accepts %s', (value) => {
+    expect(withUrl(value).editorUrl).toBe(value)
+  })
+
+  it.each([
+    '/edit',
+    '',
+    '//cms.example.org/edit',
+    'https://user:pass@cms.example.org/edit',
+    'https://cms.example.org/edit?branch=x',
+    'https://cms.example.org/edit#top',
+    'javascript:alert(1)',
+    'ftp://cms.example.org/edit',
+    'https://cms.example.org/a b',
+  ])('rejects %s', (value) => {
+    expect(() => withUrl(value)).toThrow(/editorUrl/)
+  })
+
+  it('stays off the client config', () => {
+    const { client } = defineCanopyConfig({ ...gitAuthor, editorUrl: 'https://cms.example.org/e' })
+    expect(JSON.stringify(client())).not.toContain('cms.example.org')
   })
 })
 

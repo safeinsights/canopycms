@@ -85,6 +85,7 @@ const branchMetadataShape = {
   pullRequestNumber: z.number().int().optional(),
   submittedAt: z.string().optional(),
   pushedToGitHubAt: z.string().optional(),
+  editorUrl: z.string().optional(),
   syncStatus: enumOf<SyncStatus>({
     synced: 'synced',
     'pending-sync': 'pending-sync',

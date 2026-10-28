@@ -198,6 +198,27 @@ describe('prerequisite comments', () => {
     expect(lines[2]).toBe(`-${'1'.padStart(40, '0')} sss`)
   })
 
+  it('reads past comments of any length and number, and bounds the rest by its own', () => {
+    const many = header(
+      comment(BUNDLE_HEADER_TOTAL_MAX_BYTES + 1024),
+      ...Array.from({ length: 300 }, () => comment(PREREQUISITE_COMMENT_MAX_BYTES)),
+    )
+    const read = new BundleHeaderReader('skip').push(bytes(many, 'PACK'))
+
+    expect(read?.header.prerequisites).toHaveLength(301)
+    expect(read?.header.length).toBe(many.length)
+    expect(read?.bytes).toHaveLength(0)
+    expect(read?.rest.toString()).toBe('PACK')
+    // Heads past the total bound, which a reader that keeps comments also holds to.
+    const heads = Array.from({ length: 6000 }, (_, i) => `${A} refs/heads/${i}\n`)
+    expect(bytes(...heads).length).toBeGreaterThan(BUNDLE_HEADER_TOTAL_MAX_BYTES)
+    const large = bytes(many.subarray(0, many.length - 1), ...heads, '\n')
+    expect(new BundleHeaderReader('skip', 1024 * 1024).push(large)?.header.heads).toHaveLength(6001)
+    expect(() => new BundleHeaderReader('skip', 200).push(large)).toThrow(
+      'does not end within 200 bytes',
+    )
+  })
+
   it('still refuses a malformed prerequisite when shortening', () => {
     expect(() =>
       new BundleHeaderReader('shorten').push(bytes('# v2 git bundle\n', `-${B}\tx\n`)),

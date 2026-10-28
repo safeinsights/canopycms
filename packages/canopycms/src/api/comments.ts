@@ -13,6 +13,7 @@ import { parseLogicalPath } from '../paths/validation'
 import type { LogicalPath } from '../paths/types'
 import { normalizeFilesystemPath } from '../paths/normalize'
 import { defineEndpoint } from './route-builder'
+import { syncPrComments } from './pr-comment-sync'
 import { isItemKey } from '../item-keys'
 import { parseCanopyPath } from '../editor/canopy-path'
 import { branchParamSchema, branchNameSchema, logicalPathSchema } from './validators'
@@ -217,6 +218,7 @@ const addCommentHandler = async (
     if (!reply) {
       return { ok: false, status: 404, error: 'Thread not found' }
     }
+    await syncPrComments(ctx, branchContext)
     return { ok: true, status: 201, data: reply }
   }
 
@@ -232,6 +234,7 @@ const addCommentHandler = async (
     canopyPath: body.canopyPath,
     itemKeys: body.itemKeys,
   })
+  await syncPrComments(ctx, branchContext)
 
   return { ok: true, status: 201, data: result }
 }
@@ -270,6 +273,7 @@ const resolveCommentHandler = async (
   if (!resolved) {
     return { ok: false, status: 404, error: 'Thread not found' }
   }
+  await syncPrComments(ctx, branchContext)
 
   return { ok: true, status: 200, data: { resolved: true } }
 }

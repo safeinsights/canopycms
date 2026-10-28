@@ -11,7 +11,7 @@ import type { EditorSignInProps, ValidateEntryHook } from '../types'
 import { relativePathSchema } from './collection'
 import { mdxAllowlistSchema } from './field'
 import { mediaSchema } from './media'
-import { previewPrefixSchema } from './url'
+import { editorUrlSchema, previewPrefixSchema } from './url'
 
 const defaultBranchAccessSchema = z.enum(['allow', 'deny']).default('deny')
 const defaultPathAccessLevelSchema = z.enum(['allow', 'deny'])
@@ -134,6 +134,7 @@ export const CanopyConfigSchema = z
     contentRoot: contentRootSchema.default('content'),
     sourceRoot: sourceRootSchema.optional(),
     basePath: basePathSchema,
+    editorUrl: editorUrlSchema.optional(),
     unauthenticatedStatus: z.union([z.literal(401), z.literal(419)]).optional(),
     danglingReferences: z.enum(['error', 'warn']).optional(),
     editor: editorConfigSchema.optional(),

@@ -75,8 +75,9 @@ test.describe('Branch Lifecycle & Workflow', () => {
     // Wait for branch to appear for admin
     await branchPage.waitForBranchInList(branchName)
 
-    // Note: The actual approve workflow depends on the implementation
-    // For now, we verify the request changes button is visible (admin can request changes)
+    // The admin did not make this branch, so the card offers Review, with Approve and
+    // Request changes in its menu.
+    expect(await branchPage.isActionButtonVisible(branchName, 'approve')).toBe(true)
     const canRequestChanges = await branchPage.isActionButtonVisible(branchName, 'request-changes')
     expect(canRequestChanges).toBe(true)
 

@@ -6,17 +6,27 @@
  */
 
 /**
+ * The longest a gateway in front of the API holds a request before answering 504: CloudFront's
+ * default origin response timeout quota, which canopycms-cdk's `MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT`
+ * caps its origin at. The two are pinned equal by canopycms-cdk's `request-deadline-pin.test.ts`.
+ * @internal Exported for tests and `create-branch-request.ts`.
+ */
+export const GATEWAY_MAX_TIMEOUT_MS = 120_000
+
+/** @internal Exported for tests. What the browser allows past the gateway's limit before giving up. */
+export const GATEWAY_MARGIN_MS = 15_000
+
+/**
  * @internal Exported for tests.
  *
- * How long each class of request may take. `standard` is past the 60 s an API behind CloudFront
- * gets (canopycms-cdk's `assertOriginReadTimeout`), so a server still working answers, or its
- * proxy's 504 does, before the editor gives up; reads get it too, since any request may first
- * provision the base branch's workspace (`http/handler.ts`). `long` is
- * for the operations that legitimately run longer: branch create, submit, admin scans and
- * repairs, and an upload without progress.
+ * How long each class of request may take. `standard` is past {@link GATEWAY_MAX_TIMEOUT_MS}, so
+ * a server still working answers, or its proxy's 504 does, before the editor gives up; reads get
+ * it too, since any request may first provision the base branch's workspace (`http/handler.ts`).
+ * `long` is for the operations that legitimately run longer: branch create, submit, admin scans
+ * and repairs, and an upload without progress.
  */
 export const REQUEST_TIMEOUT_MS = {
-  standard: 75_000,
+  standard: GATEWAY_MAX_TIMEOUT_MS + GATEWAY_MARGIN_MS,
   long: 180_000,
 } as const
 
