@@ -40,12 +40,13 @@ describe('restyleMarkdown', () => {
       'Text [a] [b].\n\n[a]: https://a.example\n[b]: https://b.example',
     ],
     [
-      'emphasis after a `_` in a URL or math',
-      'See https://x.com/a_b, $a_b$ and *c*.',
-      'See https://x.com/a_b, $a_b$ and _c_.',
+      'emphasis after a `_` in another link',
+      'See https://x.com/a_b, [a_b](u) and *c*.',
+      'See https://x.com/a_b, [a_b](u) and _c_.',
     ],
     ['emphasis in strikethrough', 'x~~*a*~~', 'x~~_a_~~'],
     ['tilde fences in a block quote', '> ~~~\n> x\n> ~~~', '> ```\n> x\n> ```'],
+    ['a tilde fence closed with more tildes', '~~~\nx\n~~~~', '```\nx\n```'],
     ['strong', '__bold__ and **bold**', '**bold** and **bold**'],
     ['emphasis', '*a* and _b_ (*c*) *"q"*.', '_a_ and _b_ (_c_) _"q"_.'],
     ['emphasis inside emphasis', '*a _b_ c*', '_a *b* c_'],
@@ -83,6 +84,8 @@ describe('restyleMarkdown', () => {
     ['ordered lists typed as Prettier numbers them', '3. a\n1. b\n1. c\n\n- x\n\n0. d\n1. e\n1. f'],
     ['an escaped `_` in math', 'Energy $E\\_k = mv^2$ and\n\n$$\nx\\_1\n$$'],
     ['an escaped `_` in a wiki link', 'See [[My\\_Page]].'],
+    ['emphasis after a `_` between dollar signs', 'It costs $5 for my_file and $6 for *this*.'],
+    ['emphasis after a `_` in the same link', 'See [snake_case *docs*](https://x.com).'],
     ['an escaped `_` in a link or at a word edge', '[a\\_b](u) and end\\_ and \\_start'],
     [
       'link destinations, titles and alt',
@@ -95,6 +98,10 @@ describe('restyleMarkdown', () => {
     ['a table with text Prettier measures by display width', '| a |\n|-|\n| \u2B1C x |'],
   ])('leaves %s as typed', (_case, typed) => {
     expect(restyled(typed)).toBe(typed)
+  })
+
+  it('leaves emphasis after a `_` in an MDX expression as typed', () => {
+    expect(restyled('{a_b} *c*', 'mdx')).toBe('{a_b} *c*')
   })
 
   it('keeps JSX as typed and restyles the markdown inside it', () => {
@@ -136,6 +143,18 @@ describe('restyleMarkdown', () => {
       source.replace(/\*(p\d+)\*/g, (all, p: string) => (p === 'p100' ? all : `_${p}_`)),
     )
     expect(parses).toBeLessThan(20)
+  })
+
+  it('stops trying within a budget of parses when many blocks do not read back', () => {
+    const source = Array.from({ length: 200 }, (_, i) => `*p${i}*`).join('\n\n')
+    const tree = fromMarkdown(source, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] })
+    let parses = 0
+    const readsBack = (): MdNode | undefined => {
+      parses++
+      return undefined
+    }
+    expect(restyleMarkdown(source, tree, () => false, readsBack)).toBeUndefined()
+    expect(parses).toBeLessThanOrEqual(40)
   })
 
   it('restyles only the blocks it is not told to keep', () => {
