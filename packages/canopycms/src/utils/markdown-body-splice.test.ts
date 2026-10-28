@@ -21,24 +21,21 @@ vi.mock('mdast-util-from-markdown', async (importActual) => {
   }
 })
 
-// Lets one test make the restyled edit throw, or come out meaning something else.
-const restyleControl = vi.hoisted(() => ({ mode: 'actual' as 'actual' | 'throw' | 'garble' }))
-vi.mock('mdast-util-to-markdown', async (importActual) => {
-  const actual = await importActual<typeof import('mdast-util-to-markdown')>()
+// Lets one test turn the restyle off, as when no block of an edit can be restyled.
+const restyleControl = vi.hoisted(() => ({ off: false }))
+vi.mock('./markdown-restyle', async (importActual) => {
+  const actual = await importActual<typeof import('./markdown-restyle')>()
   return {
     ...actual,
-    toMarkdown: (...args: Parameters<typeof actual.toMarkdown>) => {
-      if (restyleControl.mode === 'throw') throw new Error('cannot serialise')
-      const text = actual.toMarkdown(...args)
-      return restyleControl.mode === 'garble' ? `${text}\nGarbled.\n` : text
-    },
+    restyleMarkdown: (...args: Parameters<typeof actual.restyleMarkdown>) =>
+      restyleControl.off ? undefined : actual.restyleMarkdown(...args),
   }
 })
 
 afterEach(() => {
   parseControl.corruptAfter = Infinity
   parseControl.calls = 0
-  restyleControl.mode = 'actual'
+  restyleControl.off = false
 })
 
 /** A Prettier-formatted body as gray-matter splits it: led by the blank line after `---`. */
@@ -299,7 +296,7 @@ Intro paragraph.
 
     it('restyles the whole edit when the body on disk is not valid MDX', () => {
       expect(preserveMarkdownSource('\nCosts { 5 dollars.\n', 'Costs *5* dollars.', 'mdx')).toBe(
-        'Costs _5_ dollars.\n',
+        'Costs _5_ dollars.',
       )
     })
   })
@@ -308,21 +305,22 @@ Intro paragraph.
     parseControl.corruptAfter = 2
     const updated = `${EXPORT}\n\n![Logo](/assets/logo.png)`
     expect(preserveMarkdownSource(BODY, updated, 'md')).toBe(updated)
-    // The original, the edit, the restyled edit, then one parse per splice of the edit as sent.
-    expect(parseControl.calls).toBe(5)
+    // The original and the edit (whose new block has nothing to restyle), then one parse per
+    // splice.
+    expect(parseControl.calls).toBe(4)
   })
 
   it('writes the restyled edit whole when no splice reads back as the edit', () => {
     parseControl.corruptAfter = 3
     const updated = '* a\n* b *em*\n\nNew.'
-    expect(preserveMarkdownSource('\n- a\n', updated, 'md')).toBe('- a\n- b _em_\n\nNew.\n')
+    expect(preserveMarkdownSource('\n- a\n', updated, 'md')).toBe('- a\n- b _em_\n\nNew.')
     // The original, the edit, the restyled edit, then four splices: restyled and as sent, each
     // deep and shallow.
     expect(parseControl.calls).toBe(7)
   })
 
   it('restyles the whole body of a new file', () => {
-    expect(preserveMarkdownSource(undefined, '* a *em*\n+ b', 'md')).toBe('- a _em_\n\n* b\n')
+    expect(preserveMarkdownSource(undefined, '* a *em*\n+ b', 'md')).toBe('- a _em_\n\n* b')
   })
 
   describe('an edit typed as source', () => {
@@ -363,31 +361,23 @@ Intro paragraph.
       )
     })
 
-    it.each(['throw', 'garble'] as const)(
-      'writes changed blocks as typed when restyling would %s',
-      (mode) => {
-        restyleControl.mode = mode
-        // Sent without the disk's leading blank line, which only a splice restores.
-        const typed = PAGE.slice(1).replace('Intro text.', 'Intro *text*.')
-        expect(preserveMarkdownSource(PAGE, typed, 'md')).toBe(
-          PAGE.replace('Intro text.', 'Intro *text*.'),
-        )
-      },
-    )
-
-    it('writes the edit as sent, never a restyled edit that means something else', () => {
-      restyleControl.mode = 'garble'
-      // The restyled edit reads back as written; every splice after it does not.
-      parseControl.corruptAfter = 3
-      const typed = PAGE.replace('Intro text.', 'Intro *text*.')
-      expect(preserveMarkdownSource(PAGE, typed, 'md')).toBe(typed)
+    it('writes changed blocks as typed when no block can be restyled', () => {
+      restyleControl.off = true
+      // Sent without the disk's leading blank line, which only a splice restores.
+      const typed = PAGE.slice(1).replace('Intro text.', 'Intro *text*.')
+      expect(preserveMarkdownSource(PAGE, typed, 'md')).toBe(
+        PAGE.replace('Intro text.', 'Intro *text*.'),
+      )
     })
 
     it.each([
       ['intraword emphasis with `*`', 'Many *API*s, 5*x* and un*frigging*believable.'],
       ['character references', 'A&nbsp;B, &#x202E;, &#8203; and &amp;.'],
       ['escapes and syntax only a plugin reads', 'Price \\$5, $a*b*c$, [[Page]] and \\* or \\#.'],
-      ['an escaped `_` at a word edge', 'end\\_ and \\_start'],
+      [
+        'links, images and inline code',
+        '[a](https://x.com/w?v=1&t=2 "R&D") ![Q&A b](i.png?w=1&h=2) `a\\_b` <https://y.com>',
+      ],
     ])('keeps %s as typed in an edited paragraph', async (_case, line) => {
       const typed = PAGE.replace('Intro text.', `${line} *x*`)
       const out = preserveMarkdownSource(PAGE, typed, 'md')
@@ -396,10 +386,11 @@ Intro paragraph.
       expect(prettier).toContain(`${line} _x_`)
     })
 
-    it('unescapes `_` between word characters, as Prettier does', () => {
-      const typed = PAGE.replace('Intro text.', 'a\\_b and snake\\_case\\_name *x*')
+    it('unescapes `_` between word characters, and takes `*` for emphasis after a `_`', () => {
+      // Prettier misreads `_` emphasis that follows a literal `_` in the same block.
+      const typed = PAGE.replace('Intro text.', '*a* then a\\_b, snake\\_case\\_name, end\\_ *x*')
       expect(preserveMarkdownSource(PAGE, typed, 'md')).toBe(
-        PAGE.replace('Intro text.', 'a_b and snake_case_name _x_'),
+        PAGE.replace('Intro text.', '_a_ then a_b, snake_case_name, end\\_ *x*'),
       )
     })
 
@@ -418,19 +409,19 @@ Intro paragraph.
       )
     })
 
-    it("keeps a JSX attribute's quotes when its value holds the other kind", () => {
-      const page = '\n<C c=\'he said "hi"\'>\nText.\n</C>\n'
+    it("keeps an edited JSX element's attributes and layout as typed", () => {
+      const page = '\n<C c=\'he said "hi"\' u="x&nbsp;y">\nText.\n</C>\n'
       expect(preserveMarkdownSource(page, page.replace('Text.', 'Text *x*.'), 'mdx')).toBe(
-        '\n<C c=\'he said "hi"\'>\n  Text _x_.\n</C>\n',
+        page.replace('Text.', 'Text _x_.'),
       )
     })
 
-    it('reprints an edited JSX block in mdx and keeps the untouched one as written', () => {
+    it('restyles an edited JSX block in place and keeps the untouched one as written', () => {
       const page =
         '\n<Callout type="info">\nFirst *note*.\n</Callout>\n\n<Callout>\nSecond.\n</Callout>\n'
       const typed = page.replace('Second.', 'Second, *edited*.')
       expect(preserveMarkdownSource(page, typed, 'mdx')).toBe(
-        '\n<Callout type="info">\nFirst *note*.\n</Callout>\n\n<Callout>\n  Second, _edited_.\n</Callout>\n',
+        '\n<Callout type="info">\nFirst *note*.\n</Callout>\n\n<Callout>\nSecond, _edited_.\n</Callout>\n',
       )
     })
   })

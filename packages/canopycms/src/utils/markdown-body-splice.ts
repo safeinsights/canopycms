@@ -5,9 +5,9 @@
  * back in the serialiser's style (bullet and emphasis markers, rule style, escapes, no blank line
  * after the frontmatter) whether or not the user touched it; the source editor sends whatever was
  * typed. This writes the on-disk text of every block whose MEANING the edit left alone, and the
- * edit's text only where it changed. The edit is first re-serialised in
- * `MARKDOWN_EXPORT_OPTIONS`'s style, so a changed block is written in that one style whichever
- * editor mode produced it:
+ * edit's text only where it changed. The edit's changed blocks are first restyled in place to
+ * `MARKDOWN_EXPORT_OPTIONS`'s markers (`markdown-restyle.ts`), so a changed block is written in
+ * that one style whichever editor mode produced it:
  *
  * - Top-level blocks are aligned by a position-free canonical form of their mdast, so a block
  *   matches only when it parses to the same tree. A matched block is written from disk.
@@ -19,27 +19,20 @@
  *   re-indented into the original's nesting and written in its line endings.
  *
  * The result is kept only if it parses to exactly the tree the editor's body parses to, and so is
- * the re-serialised edit. A splice that fails that check is retried without descending into
- * lists, then both again from the edit as sent; failing all four, the re-serialised edit is
- * written whole, or the edit as sent when it did not read back: the worst case is never
- * different content.
+ * the restyled edit. A splice that fails that check is retried without descending into lists,
+ * then both again from the edit as sent; failing all four, the restyled edit is written whole,
+ * or the edit as sent when it did not read back: the worst case is never different content.
  */
 
 import { fromMarkdown } from 'mdast-util-from-markdown'
-import { gfmFromMarkdown, gfmToMarkdown } from 'mdast-util-gfm'
-import { mdxFromMarkdown, mdxToMarkdown } from 'mdast-util-mdx'
-import {
-  defaultHandlers,
-  toMarkdown,
-  type AttentionInfo,
-  type Handle,
-} from 'mdast-util-to-markdown'
+import { gfmFromMarkdown } from 'mdast-util-gfm'
+import { mdxFromMarkdown } from 'mdast-util-mdx'
 import { gfm } from 'micromark-extension-gfm'
 import { mdxjs } from 'micromark-extension-mdxjs'
 
 import { createDebugLogger } from './debug'
 import { getErrorMessage } from './error'
-import { MARKDOWN_EXPORT_OPTIONS } from './markdown-export-options'
+import { restyleMarkdown, type MdNode } from './markdown-restyle'
 import { withSourceLineEndings } from './yaml-source-splice'
 
 const log = createDebugLogger({ prefix: 'MarkdownBodySplice' })
@@ -47,18 +40,6 @@ const log = createDebugLogger({ prefix: 'MarkdownBodySplice' })
 export type MarkdownBodyFormat = 'md' | 'mdx'
 
 type Root = ReturnType<typeof fromMarkdown>
-
-/** The parts of an mdast node this module reads. */
-interface MdNode {
-  readonly type: string
-  readonly children?: readonly MdNode[]
-  readonly position?: {
-    readonly start: { readonly offset?: number }
-    readonly end: { readonly offset?: number }
-  }
-  readonly ordered?: boolean | null
-  readonly checked?: boolean | null
-}
 
 /** One side's source text, and the indentation its continuation lines carry at this depth. */
 interface Side {
@@ -492,112 +473,6 @@ interface Edit {
   readonly tree: Root
 }
 
-/** A character Prettier counts as part of a word: neither whitespace nor punctuation. */
-const WORD_CHAR = /[^\s\p{P}\p{S}]/u
-
-/**
- * A text node as the edit typed it, as Prettier writes text: escapes and character references
- * stay, except an escaped `_` between two word characters, which cannot delimit emphasis there.
- * Continuation lines lose the container prefix and indentation the serialiser writes back, and
- * the trailing whitespace a soft line ending drops. Undefined when the node has no source.
- */
-function typedText(source: string, node: MdNode): string | undefined {
-  const raw = sliceOf(source, node)
-  if (raw === undefined) return undefined
-  const lines = raw.split(/\r\n?|\n/)
-  return lines
-    .map((line, i) => {
-      const content = i > 0 ? line.replace(/^[ \t>]*/, '') : line
-      return i < lines.length - 1 ? content.replace(/[ \t]+$/, '') : content
-    })
-    .join('\n')
-    .replace(/(?<=[\p{L}\p{N}])\\_(?=[\p{L}\p{N}])/gu, '_')
-}
-
-/** The text a node carries when it is a text node, else nothing. */
-function textOf(node: MdNode | undefined): string {
-  return node?.type === 'text' && 'value' in node && typeof node.value === 'string'
-    ? node.value
-    : ''
-}
-
-/**
- * The emphasis nodes under `node` that take `*` rather than the export style's `_`: those next to
- * a word character, where `_` cannot open or close, and those inside other emphasis. That is
- * Prettier's rule; without it the serialiser keeps `_` and encodes the neighbouring characters
- * as character references.
- */
-function starEmphasis(node: MdNode, inEmphasis = false, found = new Set<MdNode>()): Set<MdNode> {
-  const children = node.children ?? []
-  children.forEach((child, index) => {
-    if (
-      child.type === 'emphasis' &&
-      (inEmphasis ||
-        WORD_CHAR.test(textOf(children[index - 1]).slice(-1)) ||
-        WORD_CHAR.test(textOf(children[index + 1]).charAt(0)))
-    ) {
-      found.add(child)
-    }
-    starEmphasis(child, inEmphasis || child.type === 'emphasis', found)
-  })
-  return found
-}
-
-/** The handlers `restyle` writes `source`'s parse with; see `typedText` and `starEmphasis`. */
-function typedHandlers(source: string, edit: Root): { text: Handle; emphasis: Handle } {
-  const star = starEmphasis(edit)
-  const markerOf = (node: MdNode, state: Parameters<Handle>[2]): string =>
-    star.has(node) ? '*' : (state.options.emphasis ?? '*')
-  // The library's handler, steered through its attention hook (which `containerPhrasing` reads
-  // from the registered handler) and its peek (the marker a preceding sibling escapes against).
-  const emphasis = Object.assign(
-    (...args: Parameters<Handle>): string => defaultHandlers.emphasis(...args),
-    {
-      attention: (node: MdNode, state: Parameters<Handle>[2]): AttentionInfo => {
-        const marker = markerOf(node, state)
-        return { construct: 'emphasis', markers: [marker, marker === '*' ? '_' : '*'], sizes: [1] }
-      },
-      peek: (...[node, , state]: Parameters<Handle>): string => markerOf(node, state),
-    },
-  )
-  return {
-    text: (node, parent, state, info) =>
-      typedText(source, node) ?? defaultHandlers.text(node, parent, state, info),
-    emphasis,
-  }
-}
-
-/**
- * The edit written in `MARKDOWN_EXPORT_OPTIONS`'s style, or undefined when it cannot be written
- * or does not read back as `target`. Markers and layout are restyled; text keeps what was typed
- * (`typedHandlers`). The whole body is written at once, so a block's style can depend on its
- * neighbours as it does in the rich editor (an ordered list's numbering, the alternate bullet of
- * a list that follows another).
- */
-function restyle(
-  edit: Root,
-  source: string,
-  format: MarkdownBodyFormat,
-  target: string,
-): Edit | undefined {
-  try {
-    const text = toMarkdown(edit, {
-      ...MARKDOWN_EXPORT_OPTIONS,
-      handlers: typedHandlers(source, edit),
-      extensions:
-        format === 'mdx'
-          ? [gfmToMarkdown(), mdxToMarkdown({ quoteSmart: true })]
-          : [gfmToMarkdown()],
-    })
-    const tree = parse(text, format)
-    if (tree !== undefined && canonical(tree) === target) return { text, tree }
-    log.debug('markdown-body-splice', 'restyled edit does not read back as the edit')
-  } catch (err: unknown) {
-    log.debug('markdown-body-splice', 'edit cannot be restyled', { error: getErrorMessage(err) })
-  }
-  return undefined
-}
-
 function splice(
   original: string | undefined,
   updated: string,
@@ -607,7 +482,19 @@ function splice(
   const after = parse(updated, format)
   if (after === undefined) return undefined
   const target = canonical(after)
-  const restyled = restyle(after, updated, format, target)
+  const kept = new Set(before?.children?.map(canonical))
+  const restyled = restyleMarkdown(
+    updated,
+    after,
+    (index) => {
+      const block = after.children[index]
+      return block !== undefined && kept.has(canonical(block))
+    },
+    (text) => {
+      const tree = parse(text, format)
+      return tree !== undefined && canonical(tree) === target ? tree : undefined
+    },
+  )
   if (original === undefined || before === undefined) return restyled?.text
   const asSent: Edit = { text: updated, tree: after }
 
