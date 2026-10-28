@@ -701,16 +701,15 @@ describe.skipIf(process.platform === 'win32')(
       // `true` exits 0 having read nothing. With a real ~1.7KB key that is a race
       // `cat` wins — its one write lands in the pipe buffer before `true` closes
       // the read end — MEASURED as stored 100 times of 100 on macOS, so that case
-      // cannot be pinned deterministically. Input larger than the pipe can hold
-      // can: `cat` cannot write it all into a pipe nobody reads, so it fails
-      // however the timing falls. The pipe is not a fixed 64KB: uutils `cat`, the
-      // default on Ubuntu 26.04, raises its output pipe to 1MiB, and no
-      // unprivileged process can raise it past `fs.pipe-max-size`, so the input
-      // is twice that. Input this large also overruns the socket feeding `cat`,
-      // so which check decides (`cat`'s status on fd 3, or the write error on
-      // this side) depends on the platform's `cat` and buffers; this test pins
-      // the verdict, and the fake-child test of a `141` pins the fd-3 check.
-      const input = `${PEM}${'x'.repeat(2 * (await pipeMaxSize()))}\n`
+      // cannot be pinned deterministically. Input past everything the bridge can
+      // buffer can: the socket feeding `cat`, `cat`'s own buffer and its output
+      // pipe, which uutils `cat` (Ubuntu 26.04's) raises to 1MiB and no
+      // unprivileged process can raise past `fs.pipe-max-size`. This side's write
+      // then cannot complete, whatever status `cat` reports. MEASURED on the
+      // Ubuntu 26.04 CI runner: at twice `fs.pipe-max-size` the key was once
+      // reported stored, so `cat` reported 0 there; the fake-child test of a
+      // `141` pins the fd-3 check on its own.
+      const input = `${PEM}${'x'.repeat(8 * (await pipeMaxSize()))}\n`
       const result = await handOffKey(input, { kind: 'command', argv: ['true'] })
       expect(result.stored).toBe(false)
     })
