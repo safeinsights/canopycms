@@ -175,6 +175,8 @@ export interface EntryNavigatorProps {
   entryFilter?: EntryFilter
   /** What the branch changes against its base. Without it the control offers no Changed. */
   branchChanges?: BranchChangesView
+  /** Lists the unsaved entries, as the top bar's count does; else Unsaved is chosen here. */
+  onShowUnsaved?: () => void
   /** Entries with unsaved changes, counting drafts whose entries the tree doesn't list yet. */
   unsavedCount?: number
   /** The named unsaved entries; Unsaved offers any the tree has no row for beneath it. */
@@ -534,6 +536,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   onEntryFilterChange,
   entryFilter = 'all',
   branchChanges,
+  onShowUnsaved,
   unsavedCount: unsavedCountProp = 0,
   unsavedEntries,
   entryListFailed = false,
@@ -1607,7 +1610,8 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           <Stack gap={4} align="flex-start">
             <Text size="sm">
               {changesError.kind === 'syncing'
-                ? `This branch is being synced with ${base}. Try again in a moment.`
+                ? (changesError.message ??
+                  `This branch is being synced with ${base}. Try again in a moment.`)
                 : changesData
                   ? 'Couldn’t refresh this branch’s changes. The list may be out of date.'
                   : 'Couldn’t load this branch’s changes.'}
@@ -1622,6 +1626,16 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
             </Button>
           </Stack>
         </Alert>
+      )}
+      {changesData?.baseMissing && (
+        <Stack gap={4} py="sm" align="flex-start" data-testid="entry-nav-branch-changed-missing">
+          <Text size="sm" c="dimmed">
+            Couldn’t compare this branch with {base}: {base} no longer exists.
+          </Text>
+          <Button size="compact-sm" variant="subtle" onClick={showAll}>
+            Show all entries
+          </Button>
+        </Stack>
       )}
       {changesData?.baseUnavailable && (
         <Stack
@@ -1743,6 +1757,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   const nothingChanged =
     !!changesData &&
     !changesData.baseUnavailable &&
+    !changesData.baseMissing &&
     !changesData.hiddenChanges &&
     changesData.entries.length === 0 &&
     changesData.collections.length === 0
@@ -1778,7 +1793,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                 <Button
                   size="compact-sm"
                   variant="subtle"
-                  onClick={() => onEntryFilterChange?.('unsaved')}
+                  onClick={onShowUnsaved ?? (() => onEntryFilterChange?.('unsaved'))}
                 >
                   Show unsaved
                 </Button>

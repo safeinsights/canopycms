@@ -74,7 +74,7 @@ describe('useBranchChangesData', () => {
 
     client.changes.list.mockResolvedValue({ ok: false, status: 409, error: 'syncing' })
     await act(() => result.current.reload())
-    expect(result.current.error).toEqual({ kind: 'syncing' })
+    expect(result.current.error).toEqual({ kind: 'syncing', message: 'syncing' })
     expect(result.current.data).toEqual(answer('content/a'))
 
     client.changes.list.mockResolvedValue({ ok: false, status: 500, error: 'Disk full' })
@@ -91,7 +91,7 @@ describe('useBranchChangesData', () => {
   it('reports a failed first load', async () => {
     client.changes.list.mockResolvedValue({ ok: false, status: 409, error: 'syncing' })
     const { result } = renderChanges()
-    await waitFor(() => expect(result.current.error).toEqual({ kind: 'syncing' }))
+    await waitFor(() => expect(result.current.error).toMatchObject({ kind: 'syncing' }))
     expect(result.current.data).toBeUndefined()
   })
 })
@@ -125,5 +125,87 @@ describe('useBranchChangesData ordering', () => {
       await reloading
     })
     expect(result.current.changes.data).toEqual(answer('content/newer'))
+  })
+
+  /** The hook plus SWR's mutate, loaded with `content/a`. */
+  const renderLoaded = async () => {
+    client.changes.list.mockResolvedValue({ ok: true, status: 200, data: answer('content/a') })
+    const rendered = renderHook(
+      () => ({
+        changes: useBranchChangesData(client as never, 'feature', true),
+        swr: useSWRConfig(),
+      }),
+      { wrapper: createApiClientWrapper(client) },
+    )
+    await waitFor(() => expect(rendered.result.current.changes.data).toEqual(answer('content/a')))
+    return rendered
+  }
+  /** The next request, held until the returned function settles it. */
+  const holdNext = () => {
+    let settle: (value: BranchChangesResponse) => void = () => {}
+    client.changes.list.mockImplementationOnce(() => new Promise((resolve) => (settle = resolve)))
+    return (value: BranchChangesResponse) => settle(value)
+  }
+
+  it('drops an SWR fetch’s error, or older data, when a reload that started after it has landed', async () => {
+    const { result } = await renderLoaded()
+    for (const late of [
+      { ok: false, status: 500, error: 'Disk full' },
+      { ok: true, status: 200, data: answer('content/older') },
+    ] as BranchChangesResponse[]) {
+      const settleSwr = holdNext()
+      let revalidating: Promise<unknown> = Promise.resolve()
+      act(() => {
+        revalidating = result.current.swr.mutate('canopy:changes:feature')
+      })
+      client.changes.list.mockResolvedValue({ ok: true, status: 200, data: answer('content/r') })
+      await act(() => result.current.changes.reload())
+      expect(result.current.changes.data).toEqual(answer('content/r'))
+      await act(async () => {
+        settleSwr(late)
+        await revalidating
+      })
+      expect(result.current.changes.error).toBeUndefined()
+      expect(result.current.changes.data).toEqual(answer('content/r'))
+    }
+  })
+
+  it('shows a newer SWR fetch’s answer over a reload that settled before it', async () => {
+    const { result } = await renderLoaded()
+    const settleReload = holdNext()
+    let reloading: Promise<void> = Promise.resolve()
+    act(() => {
+      reloading = result.current.changes.reload()
+    })
+    const settleSwr = holdNext()
+    let revalidating: Promise<unknown> = Promise.resolve()
+    act(() => {
+      revalidating = result.current.swr.mutate('canopy:changes:feature')
+    })
+    await act(async () => {
+      settleReload({ ok: true, status: 200, data: answer('content/reload') })
+      await reloading
+    })
+    await act(async () => {
+      settleSwr({ ok: true, status: 200, data: answer('content/swr') })
+      await revalidating
+    })
+    expect(result.current.changes.data).toEqual(answer('content/swr'))
+    expect(result.current.changes.error).toBeUndefined()
+  })
+
+  it('keeps the server’s words for a 409', async () => {
+    client.changes.list.mockResolvedValue({
+      ok: false,
+      status: 409,
+      error: 'This branch changed while its changes were being read. Try again in a moment.',
+    })
+    const { result } = renderChanges()
+    await waitFor(() =>
+      expect(result.current.error).toEqual({
+        kind: 'syncing',
+        message: 'This branch changed while its changes were being read. Try again in a moment.',
+      }),
+    )
   })
 })

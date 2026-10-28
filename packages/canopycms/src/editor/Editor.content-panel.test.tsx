@@ -70,7 +70,10 @@ const stubApi = ({
   changedEntries = [],
   protectedBranches = [],
   branchesHeld,
+  failingBranches,
 }: {
+  /** The branches list answers 500. */
+  failingBranches?: boolean
   /** Branches the server marks as the protected base. */
   protectedBranches?: string[]
   /** Settles before the branches list answers. */
@@ -96,6 +99,7 @@ const stubApi = ({
         typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
       if (url.endsWith('/whoami')) return Promise.resolve(okJson({ userId: 'user-1', groups: [] }))
       if (url.endsWith('/api/canopycms/branches')) {
+        if (failingBranches) return Promise.resolve(new Response('{}', { status: 500 }))
         return Promise.resolve(branchesHeld).then(() =>
           okJson({
             branches: branchNames.map((name) => ({
@@ -1134,6 +1138,44 @@ describe('changed on this branch', () => {
     await waitFor(() => expect(screen.queryByRole('radio', { name: /^Changed/ })).toBeNull())
     expect(screen.getByRole('radio', { name: /^Unsaved/ })).toBeTruthy()
     expect(changesRequests).toEqual([])
+  })
+
+  it('offers no Changed once the branch list failed, or lacks the branch', async () => {
+    const consoleSpy = mockConsole()
+    onTestFinished(() => consoleSpy.restore())
+    stubWindowWidth(true)
+    storeLayout({ contentPanelOpen: true })
+    stubApi({ failingBranches: true })
+    const failed = renderEditor()
+    await loaded()
+    await waitFor(() => expect(screen.queryByRole('radio', { name: /^Changed/ })).toBeNull())
+    failed.unmount()
+
+    stubApi({ branchNames: ['elsewhere'] })
+    renderEditor()
+    await loaded()
+    await waitFor(() => expect(screen.queryByRole('radio', { name: /^Changed/ })).toBeNull())
+    expect(changesRequests).toEqual([])
+  })
+
+  it("lists the unsaved entries from an empty Changed's Show unsaved, as the bar's count does", async () => {
+    window.localStorage.setItem(
+      'canopycms:drafts:main',
+      JSON.stringify({ v: 2, drafts: { [second.contentId]: { title: 'Kept' } }, baseVersions: {} }),
+    )
+    window.history.replaceState({}, '', `/?entry=${hello.path}`)
+    stubWindowWidth(true)
+    storeLayout({ contentPanelOpen: true })
+    stubApi()
+    renderEditor()
+    await loaded()
+    fireEvent.change(screen.getByTestId('entry-nav-filter'), { target: { value: 'zzz' } })
+    fireEvent.click(changedRadio())
+    fireEvent.change(screen.getByTestId('entry-nav-filter'), { target: { value: '' } })
+    fireEvent.click(await screen.findByRole('button', { name: 'Show unsaved' }))
+    const unsavedRadio = screen.getByRole('radio', { name: /^Unsaved/ }) as HTMLInputElement
+    await waitFor(() => expect(unsavedRadio.checked).toBe(true))
+    expect(await screen.findByTestId('entry-nav-item-second')).toBeTruthy()
   })
 
   it('switches back to All on another branch', async () => {

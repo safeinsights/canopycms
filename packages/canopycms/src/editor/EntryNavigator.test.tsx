@@ -3134,6 +3134,47 @@ describe('EntryNavigator - the Changed filter', () => {
     expect(other.textContent).toContain('List shows the first 1 files.')
   })
 
+  it('says the base no longer exists, offering All and no Retry', async () => {
+    const onChange = vi.fn()
+    renderHarness({ onChange, changes: { data: loaded({ entries: [], baseMissing: true }) } })
+    const missing = screen.getByTestId('entry-nav-branch-changed-missing')
+    expect(missing.textContent).toContain(
+      'Couldn’t compare this branch with main: main no longer exists.',
+    )
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+    expect(shown('entry-nav-branch-changed-none')).toBe(false)
+    await userEvent.click(within(missing).getByRole('button', { name: 'Show all entries' }))
+    expect(onChange).toHaveBeenCalledWith('all')
+  })
+
+  it('shows the server’s words for a 409', () => {
+    renderHarness({
+      changes: {
+        error: {
+          kind: 'syncing',
+          message: 'This branch changed while its changes were being read. Try again in a moment.',
+        },
+      },
+    })
+    expect(screen.getByTestId('entry-nav-branch-changed-syncing').textContent).toContain(
+      'This branch changed while its changes were being read. Try again in a moment.',
+    )
+  })
+
+  it('hands Show unsaved to its owner when given one', async () => {
+    const onShowUnsaved = vi.fn()
+    const onChange = vi.fn()
+    renderHarness({
+      unsavedCount: 1,
+      onShowUnsaved,
+      onChange,
+      changes: { data: loaded({ entries: [] }) },
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'Show unsaved' }))
+    expect(onShowUnsaved).toHaveBeenCalledTimes(1)
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
   it('announces the count once a load is shown, and again only for a new answer', () => {
     const { rerender } = renderHarness({ changes: { data: undefined } })
     const status = screen.getByTestId('entry-nav-branch-changed-status')
