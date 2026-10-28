@@ -142,12 +142,13 @@ describe('the sync-failing alarm', () => {
     })
   })
 
-  it('alarms on 6 periods in a row with a cycle start and no completion, notifying both ways', () => {
+  it('alarms on 2 half-hour periods in a row with a start and no completion, notifying both ways', () => {
     const template = synth(true)
     const alarm = resourceById(template, 'AWS::CloudWatch::Alarm', 'WorkerSyncFailingAlarm') as {
       Metrics: Array<{
         Id: string
         Expression?: string
+        Period?: number
         ReturnData?: boolean
         MetricStat?: { Metric: { MetricName: string }; Period: number; Stat: string }
       }>
@@ -155,15 +156,16 @@ describe('the sync-failing alarm', () => {
     expect(alarm).toMatchObject({
       Threshold: 1,
       ComparisonOperator: 'GreaterThanOrEqualToThreshold',
-      EvaluationPeriods: 6,
-      DatapointsToAlarm: 6,
-      TreatMissingData: 'notBreaching',
+      EvaluationPeriods: 2,
+      DatapointsToAlarm: 2,
+      // A period with no start has no data point; it must keep the state, not read as recovery.
+      TreatMissingData: 'ignore',
       AlarmActions: [{ Ref: expect.stringMatching(/Alerts/) }],
       OKActions: [{ Ref: expect.stringMatching(/Alerts/) }],
     })
     const byId = new Map(alarm.Metrics.map((m) => [m.Id, m]))
     const expression = alarm.Metrics.find((m) => m.Expression !== undefined)
-    expect(expression?.Expression).toBe('IF(started > 0 AND completed == 0, 1, 0)')
+    expect(expression?.Expression).toBe('IF(started, completed == 0)')
     expect(expression?.ReturnData).not.toBe(false)
 
     const metricName = (filterId: string) =>
@@ -180,7 +182,7 @@ describe('the sync-failing alarm', () => {
         ReturnData: false,
         MetricStat: {
           Metric: { Namespace: 'CanopyCMS', MetricName: metricName(filterId) },
-          Period: 600,
+          Period: 1800,
           Stat: 'Sum',
         },
       })

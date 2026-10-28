@@ -1108,7 +1108,7 @@ export interface CanopyCmsServiceProps {
    * replacement does not trip it. See `workerDownAlarm`.
    *
    * It is also notified when a live worker's git-sync cycles have all failed
-   * for 60 minutes, and on recovery. See `workerSyncFailingAlarm`. And it is
+   * for an hour, and on recovery. See `workerSyncFailingAlarm`. And it is
    * notified when a worker boot could not upgrade its packages and started on
    * the AMI's. See `workerUnpatchedAlarm`.
    */
@@ -1279,8 +1279,8 @@ export class CanopyCmsService extends Construct {
   public readonly workerDownAlarm?: cloudwatch.Alarm
 
   /**
-   * Alarms when the worker's git-sync cycles start but none completes for 60 minutes. Set only
-   * with `alarmTopic`.
+   * Alarms when the worker's git-sync cycles start but none completes for an hour. Set only with
+   * `alarmTopic`.
    */
   public readonly workerSyncFailingAlarm?: cloudwatch.Alarm
 
@@ -1848,29 +1848,32 @@ export class CanopyCmsService extends Construct {
         defaultValue: 0,
       })
 
-      // A period is failing when it holds a cycle start and no completion. Six in a row means a
-      // live worker whose syncs have all failed for an hour. A worker that is down logs no start,
-      // so the expression is 0 or missing (missing counts as OK): the down alarm owns that case
-      // and one outage does not page twice. An hour rather than the down alarm's 30 minutes
-      // keeps a short GitHub incident from paging. The schema gate's hold completes its cycle,
-      // and a drain is minutes long.
+      // A period with a cycle start is 1 when no cycle completed in it and 0 when one did; a
+      // period with no start has no data point at all (IF drops it), and missing data keeps the
+      // alarm's state. So a worker that is down neither pages here (the down alarm owns that
+      // case, and one outage pages once) nor sends a false recovery while this is in alarm.
+      // Thirty-minute periods hold a start whenever cycles start less than 30 minutes apart,
+      // which is where the down alarm takes over: cycles start the sync interval after the last
+      // one ends, so a slow failing cycle or a longer interval cannot leave a gap between the
+      // two. Two in a row, an hour or more, keeps a short GitHub incident from paging. The
+      // schema gate's hold completes its cycle, and a drain is minutes long.
       this.workerSyncFailingAlarm = new cloudwatch.Alarm(this, 'WorkerSyncFailingAlarm', {
         metric: new cloudwatch.MathExpression({
-          expression: 'IF(started > 0 AND completed == 0, 1, 0)',
+          expression: 'IF(started, completed == 0)',
           usingMetrics: {
-            started: syncCycles.metric({ statistic: 'Sum', period: Duration.minutes(10) }),
-            completed: syncCompletions.metric({ statistic: 'Sum', period: Duration.minutes(10) }),
+            started: syncCycles.metric({ statistic: 'Sum', period: Duration.minutes(30) }),
+            completed: syncCompletions.metric({ statistic: 'Sum', period: Duration.minutes(30) }),
           },
-          period: Duration.minutes(10),
+          period: Duration.minutes(30),
           label: 'Periods with git-sync cycles and no completed one',
         }),
         threshold: 1,
         comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
-        evaluationPeriods: 6,
-        datapointsToAlarm: 6,
-        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+        evaluationPeriods: 2,
+        datapointsToAlarm: 2,
+        treatMissingData: cloudwatch.TreatMissingData.IGNORE,
         alarmDescription:
-          `The CMS worker is running, but none of its git syncs has completed for 60 minutes, so ` +
+          `The CMS worker is running, but none of its git syncs has completed for an hour, so ` +
           `publishing and branch syncing are stalled. Check GitHub's status first: an outage ` +
           `fails every sync, and this clears on its own when syncs succeed again. Otherwise read ` +
           `the last git sync error in System health in the editor's admin panel, and the worker ` +
