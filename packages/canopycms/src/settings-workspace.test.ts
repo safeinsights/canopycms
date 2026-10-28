@@ -12,7 +12,6 @@
  * cms-worker-rebase.test.ts / __integration__ rather than mocking simple-git.
  */
 
-import { readdirSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -22,7 +21,6 @@ import { simpleGit } from 'simple-git'
 import { initTestRepo, mockConsole, openBareRepo } from './test-utils'
 import { SettingsWorkspaceManager, settingsInitLockTarget } from './settings-workspace'
 import { acquireProvisioningLock } from './utils/provisioning-lock'
-import { setProvisionLogSink } from './utils/provision-log'
 import { GitManager, GitRemoteRefMissingError } from './git-manager'
 import type { CanopyConfig } from './config'
 
@@ -917,7 +915,7 @@ describe('SettingsWorkspaceManager first clone', () => {
 
   afterEach(async () => {
     vi.restoreAllMocks()
-    setProvisionLogSink(() => {})
+    vi.unstubAllEnvs()
     if (tmpRoot) {
       await fs.rm(tmpRoot, { recursive: true, force: true })
       tmpRoot = undefined
@@ -964,21 +962,52 @@ describe('SettingsWorkspaceManager first clone', () => {
     return waiting.promise
   }
 
-  it('never writes the base branch’s files: the clone holds only .git when the settings checkout starts', async () => {
+  /**
+   * Records how many working-tree entries besides `.git` each checkout leaves, through a
+   * `post-checkout` hook set in a HOME of its own (gitChildEnv passes HOME through).
+   */
+  async function recordCheckouts(root: string): Promise<() => Promise<number[]>> {
+    const home = path.join(root, 'home')
+    const log = path.join(home, 'checkouts.log')
+    await fs.mkdir(path.join(home, 'hooks'), { recursive: true })
+    await fs.writeFile(path.join(home, '.gitconfig'), `[core]\n\thooksPath = ${home}/hooks\n`)
+    await fs.writeFile(
+      path.join(home, 'hooks', 'post-checkout'),
+      `#!/bin/sh\nls -A | grep -vx .git | wc -l | tr -d ' ' >> '${log}'\n`,
+      { mode: 0o755 },
+    )
+    vi.stubEnv('HOME', home)
+    return async () =>
+      (await fs.readFile(log, 'utf8').catch(() => '')).split('\n').filter(Boolean).map(Number)
+  }
+
+  it('creates the orphan settings branch without writing any of the base branch’s files', async () => {
     const { root, settingsRoot, options } = await setup()
-    const seen: string[][] = []
-    setProvisionLogSink((line) => {
-      if (!line.includes('step=checkout start')) return
-      for (const name of readdirSync(root)) {
-        if (name.startsWith('.prov-settings-')) seen.push(readdirSync(path.join(root, name)))
-      }
-    })
+    const checkouts = await recordCheckouts(root)
 
     await new SettingsWorkspaceManager(config).ensureGitWorkspace(options)
 
-    expect(seen).toEqual([['.git']])
+    expect(await checkouts()).toEqual([0])
     expect((await simpleGit({ baseDir: settingsRoot }).status()).current).toBe(BRANCH)
     expect(await fs.readdir(settingsRoot)).toEqual(['.git'])
+  }, 60_000)
+
+  it('checks out the remote settings branch without writing any of the base branch’s files', async () => {
+    const { root, settingsRoot, options } = await setup()
+    await new SettingsWorkspaceManager(config).ensureGitWorkspace(options)
+    await fs.writeFile(path.join(settingsRoot, 'groups.json'), '[]\n')
+    const git = simpleGit({ baseDir: settingsRoot })
+    await git.add('groups.json')
+    await git.commit('save groups')
+    await git.raw(['push', 'origin', `refs/heads/${BRANCH}:refs/heads/${BRANCH}`])
+    await fs.rename(settingsRoot, path.join(root, 'moved-aside'))
+    const fresh = await loadProcess()
+    const checkouts = await recordCheckouts(root)
+
+    await new fresh.settings.SettingsWorkspaceManager(config).ensureGitWorkspace(options)
+
+    expect(await checkouts()).toEqual([1])
+    expect(await fs.readdir(settingsRoot)).toEqual(['.git', 'groups.json'].sort())
   }, 60_000)
 
   it('makes a cold start that arrives mid-build wait for that build instead of cloning its own', async () => {

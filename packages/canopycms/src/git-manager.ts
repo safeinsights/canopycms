@@ -1933,10 +1933,12 @@ export class GitManager {
     // branchName is consumed as --orphan's literal argument value (like -b/-B
     // above), so it can't be reinterpreted as a flag; git's own ref-name
     // validation additionally rejects a leading-hyphen value here.
-    await this.git.raw(['checkout', '--orphan', branchName])
+    // `switch`, not `checkout`: `checkout --orphan` keeps HEAD's tree, and on a `--no-checkout`
+    // clone (no index) writes every base file into the working tree; `switch --orphan` starts
+    // from the empty tree either way.
+    await this.git.raw(['switch', '--orphan', branchName])
 
-    // The orphan keeps whatever index the workspace has: none after a `--no-checkout` clone, the
-    // base branch's in a workspace checked out on it. `--sparse` also removes entries outside a
+    // A backstop for an index `switch` left behind. `--sparse` also removes entries outside a
     // sparse cone, which a plain `rm` leaves in the index, and so in the first commit.
     await this.git.raw(['rm', '-r', '-f', '-q', '--sparse', '--ignore-unmatch', '--', '.'])
     const leftover = (await this.git.raw(['ls-files'])).trim()
