@@ -29,6 +29,8 @@ import { canopyLogWarn } from './utils/logger'
 import { type LogicalPath, type PhysicalPath, type Slug, type ContentId } from './paths'
 import { entryLogicalPath, normalizeFilesystemPath } from './paths/normalize'
 import { parseTypedFilename } from './utils/typed-filename'
+import { getFormatExtension } from './utils/format'
+import type { ContentFormat } from './config'
 
 /** Logical path representing entries stored at the branch root (no parent collection). Rare in practice. */
 const EMPTY_LOGICAL_PATH = '' as LogicalPath
@@ -45,14 +47,19 @@ function toLogicalCollectionPath(physicalPath: string): LogicalPath {
     .join('/') as LogicalPath
 }
 
-/** The extensions an entry file can have (ContentFormat). */
-const ENTRY_EXTENSIONS = new Set(['md', 'mdx', 'json'])
+/** The extension of every ContentFormat, dot included; keyed so a new format fails to compile. */
+const ENTRY_EXTENSIONS = new Set(
+  Object.keys({ md: true, mdx: true, json: true, yaml: true } satisfies Record<
+    ContentFormat,
+    true
+  >).map((format) => getFormatExtension(format as ContentFormat)),
+)
 
 /**
  * The path the editor lists the entry a file stores under (`EditorEntry.path`, which its
  * `entry` param matches), or null for a file that cannot be a listed entry: outside
  * `contentRoot`, under a dot-prefixed or `_ids_` segment, or not named
- * `{type}.{slug}.{id}.{md|mdx|json}` (parseTypedFilename). The content root is kept as
+ * `{type}.{slug}.{id}.{ext}` with a content format's extension (parseTypedFilename). The content root is kept as
  * spelled, as the schema spells it; the directories below lose their IDs. No I/O, and no
  * check that the directory is a collection or the type one of its entry types.
  */
@@ -66,7 +73,7 @@ export function entryLogicalPathOfFile(
   const below = file.slice(root.length + 1).split('/')
   if (below.some((s) => s.startsWith('.') || s === '_ids_')) return null
   const name = below[below.length - 1]
-  if (!ENTRY_EXTENSIONS.has(name.slice(name.lastIndexOf('.') + 1))) return null
+  if (!ENTRY_EXTENSIONS.has(name.slice(name.lastIndexOf('.')))) return null
   const parsed = parseTypedFilename(name)
   if (!parsed) return null
   const dirs = below.slice(0, -1)

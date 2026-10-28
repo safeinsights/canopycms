@@ -272,8 +272,8 @@ export interface PrSectionInput {
 
 /**
  * A URL safe as a Markdown link destination: the characters that could end the destination,
- * open a title or escape are percent-encoded, which leaves the address unchanged. Brackets are
- * legal in a destination and are an IPv6 host's syntax, so they stay.
+ * open a title or escape are percent-encoded, which a server reads as the same address.
+ * Brackets are legal in a destination and are an IPv6 host's syntax, so they stay.
  */
 function markdownHref(href: string): string {
   return href.replace(
@@ -361,9 +361,10 @@ function truncateUnits(text: string, max: number): string {
 }
 
 /**
- * The canopycms-owned PR body section, including its start and end markers, within
- * MAX_SECTION_LENGTH: GitHub refuses a body over 65,536 characters, and the rest of the body
- * is a human's. Over it, the entry links go first, then the description's end, then entries.
+ * The canopycms-owned PR body section, including its start and end markers. GitHub refuses a
+ * body over 65,536 characters and the rest of the body is a human's, so a section over
+ * MAX_SECTION_LENGTH loses its entry links, then the description's end, then entries from
+ * the end of the list. The attribution lines themselves are never cut.
  */
 export function buildPrSection(input: PrSectionInput): string {
   const raw = input.description?.trim()

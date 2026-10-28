@@ -732,6 +732,7 @@ describe('entryLogicalPathOfFile', () => {
     // The content root is kept as the schema spells it; only the directories below lose IDs.
     ['Content/Posts.a1b2c3d4e5f6/post.a.b2c3d4e5f6a1.md', 'Content', 'Content/posts/a'],
     ['site.v2/post.a.b2c3d4e5f6a1.md', 'site.v2', 'site.v2/a'],
+    ['content/data/item.one.b2c3d4e5f6a1.yaml', 'content', 'content/data/one'],
   ])('maps %s under %s to %s', (file, root, expected) => {
     expect(entryLogicalPathOfFile(file, root)).toBe(expected)
   })
