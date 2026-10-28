@@ -25,6 +25,7 @@ const MOCK_CLIENT_FILE = path.join(API_DIR, '__test__/mock-client.ts')
 // These imports execute the defineEndpoint() calls
 import '../src/api/branch.js'
 import '../src/api/branch-changes.js'
+import '../src/api/branch-entry-changes.js'
 import '../src/api/branch-status.js'
 import '../src/api/comments.js'
 import '../src/api/content.js'
@@ -183,6 +184,7 @@ function typeNameToModule(typeName: string): string | null {
     ResolveReferencesResponse: 'resolve-references',
     ResolveReferencesBody: 'resolve-references',
     ReferenceOptionsResponse: 'reference-options',
+    BranchEntryChangeResponse: 'branch-entry-changes',
     // Schema types come from the schema-store-types module (client-safe)
     CreateCollectionInput: '../schema/schema-store-types',
     UpdateCollectionInput: '../schema/schema-store-types',

@@ -16,6 +16,7 @@ import type { OperatingMode } from '../operating-mode/types'
 
 import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, CreateBranchBody, UpdateBranchAccessBody } from './branch'
 import type { BranchChangesResponse } from './branch-changes'
+import type { BranchEntryChangeResponse } from './branch-entry-changes'
 import type { BranchMergeResponse, SubmitBranchResponse } from './branch-status'
 import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from './comments'
 import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse, RenameEntryBody, RenameEntryResponse, ValidateReferencesBody, WriteContentBody } from './content'
@@ -107,6 +108,11 @@ export class CanopyApiClient {
     /** GET /:branch/changes */
     list: (params: Record<string, string>, options?: RequestOptions): Promise<BranchChangesResponse> => {
       return this.request('GET', this.buildPath('/:branch/changes', params), undefined, 'standard', options)
+    },
+
+    /** GET /:branch/changes/...entryPath */
+    entry: (params: Record<string, string>, options?: RequestOptions): Promise<BranchEntryChangeResponse> => {
+      return this.request('GET', this.buildPath('/:branch/changes/...entryPath', params), undefined, 'standard', options)
     },
   }
 
