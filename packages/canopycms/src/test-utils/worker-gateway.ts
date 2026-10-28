@@ -45,6 +45,7 @@ export function gatewayUnderTest(local: GitHubGateway): GitHubGateway {
   // Served at the first call, not now: a server prepares its gateway as it starts, and a gateway a
   // test installs and then replaces unused must do nothing, as the in-process one does.
   let client: Promise<GitHubGateway> | null = null
+  trackFetches(local)
   const connect = () =>
     (client ??= (async () => {
       // Short: macOS caps a socket path at 104 bytes.
@@ -134,9 +135,31 @@ export async function closeServedGateways(): Promise<void> {
 }
 
 /**
- * Wait out the work an in-process gateway runs detached: its GitHub fetch, the boot fetch its
- * server's `prepare()` started included, so it writes nothing under a directory the test then
- * removes; and the credential re-read a failure arms, which logs when it fails, so its line lands
+ * Every GitHub fetch a served gateway started, settled or not. A push or a deletion drops the
+ * gateway's own reference to a fetch still running, the boot fetch included, so its record alone
+ * would let a teardown remove the directory that fetch is still measuring.
+ */
+const startedFetches = new WeakMap<GitHubGateway, Set<Promise<unknown>>>()
+
+function trackFetches(local: GitHubGateway): void {
+  const internals = local as unknown as {
+    startGitHubFetch?: (...args: unknown[]) => { done: Promise<unknown> }
+  }
+  const start = internals.startGitHubFetch
+  if (typeof start !== 'function') return
+  const started = new Set<Promise<unknown>>()
+  startedFetches.set(local, started)
+  internals.startGitHubFetch = (...args) => {
+    const job = start.apply(local, args)
+    started.add(job.done.catch(() => undefined))
+    return job
+  }
+}
+
+/**
+ * Wait out the work an in-process gateway runs detached: every GitHub fetch it started, the boot
+ * fetch its server's `prepare()` started included, so it writes nothing under a directory the test
+ * then removes; and the credential re-read a failure arms, which logs when it fails, so its line lands
  * while the suite's console spy is still installed. A re-read is bounded only by the gateway's
  * `timeoutMs`, so a test that arms one against a provider that never settles sets a `timeoutMs`
  * below vitest's hook timeout, or this wait outlasts the hook.
@@ -149,17 +172,21 @@ async function backgroundWorkSettled(local: GitHubGateway): Promise<void> {
   }
   // The boot fetch starts once prepare() has; a fetch a push replaced still runs in a session.
   await local.prepare().catch(() => undefined)
+  const started = startedFetches.get(local) ?? new Set<Promise<unknown>>()
   for (;;) {
     const job = internals.githubFetch
     const tail = internals.mirror?.tail
     const refreshing = internals.refreshing
+    const fetches = started.size
     await job?.done.catch(() => undefined)
+    await Promise.all(started)
     await tail
     await refreshing
     if (
       internals.githubFetch === job &&
       internals.mirror?.tail === tail &&
-      internals.refreshing === refreshing
+      internals.refreshing === refreshing &&
+      started.size === fetches
     ) {
       return
     }

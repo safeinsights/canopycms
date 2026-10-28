@@ -364,11 +364,11 @@ describe('the namespace', () => {
     const request = { head: 'developer-branch', base: 'main', title: 'T', body: 'B' }
 
     for (const refused of [
-      github.deleteBranch('developer-branch'),
-      github.createPullRequest(request),
-      github.createOrUpdatePullRequest(request),
+      () => github.deleteBranch('developer-branch'),
+      () => github.createPullRequest(request),
+      () => github.createOrUpdatePullRequest(request),
     ]) {
-      await expect(refused).rejects.toMatchObject({ reason: 'outside-namespace' })
+      await expect(refused()).rejects.toMatchObject({ reason: 'outside-namespace' })
     }
     expect(octokit.git.deleteRef).not.toHaveBeenCalled()
     expect(octokit.pulls.create).not.toHaveBeenCalled()
