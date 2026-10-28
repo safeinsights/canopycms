@@ -368,6 +368,10 @@ Named A/B/C/E for continuity with the original analysis
   name until its 5-minute TTL lapses. `CachingAuthPlugin` bypasses it, answering from the
   worker-written file cache; canopycms-next wraps every plugin with `verifyTokenOnly` in
   one (`packages/canopycms-next/src/context-wrapper.ts:324`).
+- **PR body comment summary** (`api/pr-comment-sync.ts`): GitHub's PR update takes no
+  expected version. Worker tasks run serially and the direct path holds a per-branch
+  in-process lock; two containers, or a human editing the body meanwhile, can lose one
+  write until the next comment change or submit.
 
 All are bounded by per-request store lifetimes, throttled backstops, a TTL, and the next
 mutation's bump. None of them cause a write to land in the wrong _file_ — that is

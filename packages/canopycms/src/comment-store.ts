@@ -3,6 +3,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 
 import { withLock } from './utils/async-mutex'
+import { isNotFoundError } from './utils/error'
 import {
   writeOccJsonFile,
   withOccRetry,
@@ -100,6 +101,29 @@ export class CommentStore {
     // to the same in-process lock key (see withLock).
     this.filePath = path.join(path.resolve(branchRoot), '.canopy-meta', 'comments.json')
     this.settleMs = options?.settleMs
+  }
+
+  /**
+   * Every thread, for a summary that must not mistake a failed read for no comments: only a
+   * missing file reads as none, and an unreadable or malformed one throws, unlike load().
+   */
+  async listThreadsStrict(): Promise<CommentThread[]> {
+    let content: string
+    try {
+      content = await fs.readFile(this.filePath, 'utf-8')
+    } catch (err) {
+      if (isNotFoundError(err)) return []
+      throw err
+    }
+    const parsed: unknown = JSON.parse(content)
+    const threads =
+      typeof parsed === 'object' && parsed !== null
+        ? (parsed as Partial<CommentsFile>).threads
+        : undefined
+    if (typeof threads !== 'object' || threads === null) {
+      throw new Error('comments.json has no threads object')
+    }
+    return Object.values(threads)
   }
 
   /** Read-only load. */

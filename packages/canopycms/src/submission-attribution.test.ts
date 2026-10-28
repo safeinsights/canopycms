@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  PR_COMMENTS_END,
+  PR_COMMENTS_START,
   PR_SECTION_END,
   PR_SECTION_START,
+  buildCommentsBlock,
+  mergeCommentsBlock,
   appendTrailers,
   buildEditorTrailers,
   buildPrSection,
@@ -15,6 +19,7 @@ import {
 } from './submission-attribution'
 import { ANONYMOUS_USER } from './user'
 import { mockConsole } from './test-utils/console-spy'
+import type { CommentThread } from './comment-store'
 
 const jane = { userId: 'user_2abc', name: 'Jane Doe', email: 'jane@example.com' }
 const defaults = { editedBy: true, coAuthoredBy: false }
@@ -291,6 +296,10 @@ describe('buildPrSection', () => {
         '- `content/pages/home.md`',
         '- `content/pages/about.md`',
         '',
+        PR_COMMENTS_START,
+        'No editor comments.',
+        PR_COMMENTS_END,
+        '',
         'Fixes the typo on the home page.',
         PR_SECTION_END,
       ].join('\n'),
@@ -469,11 +478,11 @@ describe('buildPrSection length', () => {
   })
 
   it('cuts the end of the description next, keeping every listed entry', () => {
-    const paths = Array.from({ length: 100 }, (_, i) => `content/${'d'.repeat(280)}/p${i}.json`)
+    const paths = Array.from({ length: 80 }, (_, i) => `content/${'d'.repeat(280)}/p${i}.json`)
     // Neutralizing doubles `-->`, so 10,000 characters of it write 20,000.
     const section = buildPrSection({ changedPaths: paths, description: '-->'.repeat(3333) })
     expect(section.length).toBeLessThanOrEqual(45_000)
-    expect(section).toContain(`- \`${paths[99]}\`\n`)
+    expect(section).toContain(`- \`${paths[79]}\`\n`)
     expect(section).toMatch(/…\n<!-- canopycms:submission:end -->$/)
     expect(section).toContain('--&gt;--&gt;')
   })
@@ -483,7 +492,7 @@ describe('buildPrSection length', () => {
     const section = buildPrSection({ changedPaths: paths, description: 'Desc' })
     expect(section.length).toBeLessThanOrEqual(45_000)
     expect(section).toContain('**Changed entries (100)**')
-    expect(section).toMatch(/- …and \d+ more\n<!-- canopycms:submission:end -->$/)
+    expect(section).toMatch(/- …and \d+ more\n\n<!-- canopycms:comments:start -->/)
     expect(section).not.toContain('Desc')
   })
 })
@@ -554,5 +563,172 @@ describe('mergePrSection', () => {
     const section = buildPrSection({ submitter: jane, changedPaths: ['a.md'] })
     const once = mergePrSection('Human text', section)
     expect(mergePrSection(once, section)).toBe(once)
+  })
+})
+
+describe('buildCommentsBlock', () => {
+  const editorUrl = 'https://cms.example.org/edit'
+  let n = 0
+  const thread = (overrides: Partial<CommentThread> & { text?: string } = {}): CommentThread => {
+    n++
+    const { text = `Comment ${n}`, ...rest } = overrides
+    return {
+      id: `t${n}`,
+      comments: [{ id: `c${n}`, threadId: `t${n}`, userId: 'u1', timestamp: '', text }],
+      resolved: false,
+      createdAt: `2026-10-0${n % 9}T00:00:00Z`,
+      type: 'entry',
+      authorId: 'u1',
+      entryPath: 'content/pages/home',
+      ...rest,
+    }
+  }
+  const lines = (block: string) => block.split('\n')
+
+  it('lists each unresolved thread with its place, first line and editor link', () => {
+    const block = buildCommentsBlock(
+      [
+        thread({ text: 'Fix the intro\nand more detail below' }),
+        thread({ type: 'field', canopyPath: 'blocks[0].title', text: 'Too long' }),
+        thread({ type: 'branch', entryPath: undefined, text: 'Ready?' }),
+        thread({ resolved: true, text: 'Done already' }),
+      ],
+      'feature/x',
+      editorUrl,
+    )
+    const link = 'https://cms.example.org/edit?branch=feature%2Fx'
+    const entry = `${link}&entry=content%2Fpages%2Fhome`
+    expect(lines(block)).toEqual([
+      PR_COMMENTS_START,
+      '**3 unresolved editor comment threads**',
+      '',
+      `- \`content/pages/home\` — \`Fix the intro\` ([open in editor](${entry}))`,
+      `- \`content/pages/home\` › \`blocks[0].title\` — \`Too long\` ([open in editor](${entry}))`,
+      `- Branch — \`Ready?\` ([open in editor](${link}))`,
+      PR_COMMENTS_END,
+    ])
+  })
+
+  it('says one thread in the singular, and links nothing without an editor URL', () => {
+    const block = buildCommentsBlock([thread({ text: 'Hi' })], 'feature/x')
+    expect(block).toContain('**1 unresolved editor comment thread**')
+    expect(block).toContain('- `content/pages/home` — `Hi`\n')
+    expect(block).not.toContain('](')
+  })
+
+  it('says when every thread is resolved, when there are none, and when they could not be read', () => {
+    expect(buildCommentsBlock([thread({ resolved: true })])).toBe(
+      `${PR_COMMENTS_START}\nAll editor comments resolved.\n${PR_COMMENTS_END}`,
+    )
+    expect(buildCommentsBlock([])).toBe(
+      `${PR_COMMENTS_START}\nNo editor comments.\n${PR_COMMENTS_END}`,
+    )
+    expect(buildCommentsBlock(null)).toContain('could not be read')
+  })
+
+  it('renders hostile comment text inert in a code span of 80 characters at most', () => {
+    const text = `@org/team Closes #12 see https://evil.example <img src=x> \`x\` ${PR_COMMENTS_END} ${PR_SECTION_END} \u202e[a](b) ${'y'.repeat(200)}`
+    const block = buildCommentsBlock([thread({ text })])
+    const line = lines(block).find((l) => l.startsWith('- '))!
+    const excerpt = line.match(/ — `([^`]*)`$/)?.[1]
+    expect(excerpt).toBeDefined()
+    expect(Array.from(excerpt!).length).toBeLessThanOrEqual(80)
+    expect(excerpt).not.toMatch(/[<>`\u202e]/)
+    expect(block.split(PR_COMMENTS_END)).toHaveLength(2)
+    expect(block).not.toContain(PR_SECTION_END)
+  })
+
+  it('caps the list at 50 threads and says how many more there are', () => {
+    const block = buildCommentsBlock(Array.from({ length: 53 }, () => thread()))
+    expect(block).toContain('**53 unresolved editor comment threads**')
+    expect(lines(block).filter((l) => l.startsWith('- `'))).toHaveLength(50)
+    expect(block).toContain('- …and 3 more')
+  })
+
+  it('drops the links, then lines, rather than outgrow its share of the PR body', () => {
+    const longPath = `content/${'d'.repeat(280)}`
+    const many = Array.from({ length: 50 }, () =>
+      thread({ entryPath: longPath, text: 'z'.repeat(80) }),
+    )
+    const longUrl = `https://cms.example.org/${'e'.repeat(1500)}`
+    const block = buildCommentsBlock(many, 'feature/x', longUrl)
+    expect(block.length).toBeLessThan(16_000)
+    expect(block).not.toContain('open in editor')
+    expect(block).toContain('**50 unresolved editor comment threads**')
+    expect(block).toMatch(/- …and \d+ more\n/)
+    expect(buildCommentsBlock(many.slice(0, 2), 'feature/x', longUrl)).toContain('open in editor')
+  })
+
+  it('leaves the section its full budget whatever the block holds, and both stay bounded', () => {
+    const paths = Array.from({ length: 60 }, (_, i) => `content/${'d'.repeat(280)}/p${i}.json`)
+    const threads = Array.from({ length: 50 }, () =>
+      thread({ entryPath: `content/${'d'.repeat(280)}`, text: 'z'.repeat(80) }),
+    )
+    const input = { changedPaths: paths, description: 'x'.repeat(5_000), branch: 'f' }
+    const bare = buildPrSection(input)
+    const withBlock = buildPrSection({ ...input, threads })
+    // The description is not cut to make room for the block.
+    expect(withBlock).toContain('x'.repeat(5_000))
+    expect(withBlock.length).toBeLessThan(45_500)
+    expect(bare.length).toBeLessThan(31_000)
+    // At its largest the section's own text keeps to 30,000, leaving the block its 15,000.
+    const largest = buildPrSection({
+      changedPaths: Array.from({ length: 100 }, (_, i) => `content/${'d'.repeat(280)}/q${i}.json`),
+      description: 'y'.repeat(10_000),
+      threads,
+      branch: 'f',
+    })
+    expect(largest.length).toBeLessThan(45_500)
+  })
+
+  it('survives malformed threads from the unvalidated comments.json', () => {
+    const malformed = [
+      null,
+      'a string',
+      { resolved: false },
+      thread({ entryPath: '../../etc', text: 'x' }),
+      thread({ entryPath: 'content/a\nb', comments: 'nope' as unknown as [] }),
+    ] as unknown as CommentThread[]
+    const block = buildCommentsBlock(malformed, 'f', editorUrl)
+    expect(block).toContain('**3 unresolved editor comment threads**')
+    expect(block).toContain('- An entry\n')
+    expect(block).toContain('- An entry — `x`\n')
+    expect(block).not.toContain('entry=')
+  })
+})
+
+describe('mergeCommentsBlock', () => {
+  const section = buildPrSection({ changedPaths: ['a.md'], description: 'Desc' })
+  const block = `${PR_COMMENTS_START}\nAll editor comments resolved.\n${PR_COMMENTS_END}`
+
+  it('replaces only the block inside the section, keeping the human text around it', () => {
+    const body = `Reviewer notes\n\n${section}\n\nMore notes`
+    const merged = mergeCommentsBlock(body, block)
+    expect(merged).toBe(
+      body.replace(`${PR_COMMENTS_START}\nNo editor comments.\n${PR_COMMENTS_END}`, block),
+    )
+    expect(merged).toContain('Reviewer notes')
+    expect(merged).toContain('Desc')
+    expect(mergeCommentsBlock(merged, block)).toBe(merged)
+  })
+
+  it('ignores comment markers a human quoted outside the section', () => {
+    const body = `quoted ${PR_COMMENTS_START} x ${PR_COMMENTS_END}\n\n${section}`
+    const merged = mergeCommentsBlock(body, block)!
+    expect(merged.startsWith(`quoted ${PR_COMMENTS_START} x ${PR_COMMENTS_END}`)).toBe(true)
+    expect(merged).toContain('All editor comments resolved.')
+  })
+
+  it('is undefined without a section, or a section without the block', () => {
+    expect(mergeCommentsBlock('just text', block)).toBeUndefined()
+    expect(mergeCommentsBlock(null, block)).toBeUndefined()
+    const legacy = `${PR_SECTION_START}\nSubmitted via CanopyCMS.\n${PR_SECTION_END}`
+    expect(mergeCommentsBlock(legacy, block)).toBeUndefined()
+    // A block after the section is not inside it.
+    expect(mergeCommentsBlock(`${legacy}\n${block}`, block)).toBeUndefined()
+  })
+
+  it('puts the block before the free-Markdown description in a built section', () => {
+    expect(section.indexOf(PR_COMMENTS_END)).toBeLessThan(section.indexOf('Desc'))
   })
 })

@@ -383,6 +383,7 @@ export class GitHubService {
   async updatePullRequest(
     prNumber: number,
     options: Partial<Pick<PullRequestOptions, 'title' | 'body'>>,
+    signal?: AbortSignal,
   ): Promise<void> {
     await this.octokit.pulls.update({
       owner: this.owner,
@@ -390,6 +391,7 @@ export class GitHubService {
       pull_number: prNumber,
       title: options.title,
       body: options.body,
+      ...(signal ? { request: { signal } } : {}),
     })
   }
 
@@ -421,11 +423,12 @@ export class GitHubService {
     return { number: result.number, url: result.url }
   }
 
-  async getPullRequest(prNumber: number): Promise<PullRequestDetails> {
+  async getPullRequest(prNumber: number, signal?: AbortSignal): Promise<PullRequestDetails> {
     const response = await this.octokit.pulls.get({
       owner: this.owner,
       repo: this.repo,
       pull_number: prNumber,
+      ...(signal ? { request: { signal } } : {}),
     })
 
     return {
