@@ -286,9 +286,10 @@ test.describe('Admin Branch Health', () => {
     page,
   }) => {
     const branchName = `merge-approved-${Date.now()}`
-    await createBranchViaAPI(BASE_URL, branchName, 'admin')
-    await saveHomeChangeViaAPI(BASE_URL, branchName, 'admin')
-    const submitRes = await submitBranchViaAPI(BASE_URL, branchName, 'admin')
+    // The editor makes the branch: its creator cannot approve it.
+    await createBranchViaAPI(BASE_URL, branchName, 'editor')
+    await saveHomeChangeViaAPI(BASE_URL, branchName, 'editor')
+    const submitRes = await submitBranchViaAPI(BASE_URL, branchName, 'editor')
     expect(submitRes.ok).toBe(true)
     const approveRes = await approveBranchViaAPI(BASE_URL, branchName, 'admin')
     expect(approveRes.ok).toBe(true)

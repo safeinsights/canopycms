@@ -49,7 +49,7 @@ export async function findProtectedBranch(
 }
 
 /** A workflow or admin action on a branch card; each lives on the card or in its "…" menu. */
-export type BranchAction = 'submit' | 'withdraw' | 'request-changes' | 'delete'
+export type BranchAction = 'submit' | 'withdraw' | 'approve' | 'request-changes' | 'delete'
 
 /** What a user sees of an action: usable, shown but not usable, or not offered at all. */
 export type BranchActionState = 'enabled' | 'disabled' | 'absent'
