@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BranchListItem } from '../../api/branch'
 import { IDEMPOTENT_CREATE_WINDOW_MS } from '../../api/branch-create-window'
 import { CanopyApiClient } from '../../api/client'
+import { GATEWAY_MAX_TIMEOUT_MS, REQUEST_TIMEOUT_MS } from '../../api/request-deadline'
 import {
   CREATE_BRANCH_DEADLINE_MS,
   CREATE_TIMED_OUT_MESSAGE,
@@ -14,6 +15,14 @@ interface FakeResponse {
   /** A JSON body; omitted for an HTML error page from in front of the API. */
   body?: unknown
 }
+
+describe('CREATE_BRANCH_DEADLINE_MS', () => {
+  it('is past the gateway limit, so its 504 lands first, and under the long class', () => {
+    expect(CREATE_BRANCH_DEADLINE_MS).toBe(150_000)
+    expect(CREATE_BRANCH_DEADLINE_MS).toBeGreaterThan(GATEWAY_MAX_TIMEOUT_MS)
+    expect(CREATE_BRANCH_DEADLINE_MS).toBeLessThan(REQUEST_TIMEOUT_MS.long)
+  })
+})
 
 /** The user making the create. */
 const me = 'u1'

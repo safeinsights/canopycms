@@ -27,6 +27,10 @@ import { isValidId } from './id'
 import { isNotFoundError } from './utils/error'
 import { canopyLogWarn } from './utils/logger'
 import { type LogicalPath, type PhysicalPath, type Slug, type ContentId } from './paths'
+import { entryLogicalPath, normalizeFilesystemPath } from './paths/normalize'
+import { parseTypedFilename } from './utils/typed-filename'
+import { getFormatExtension } from './utils/format'
+import type { ContentFormat } from './config'
 
 /** Logical path representing entries stored at the branch root (no parent collection). Rare in practice. */
 const EMPTY_LOGICAL_PATH = '' as LogicalPath
@@ -41,6 +45,40 @@ function toLogicalCollectionPath(physicalPath: string): LogicalPath {
     .split('/')
     .map((seg) => extractSlugFromFilename(seg))
     .join('/') as LogicalPath
+}
+
+/** The extension of every ContentFormat, dot included; keyed so a new format fails to compile. */
+const ENTRY_EXTENSIONS = new Set(
+  Object.keys({ md: true, mdx: true, json: true, yaml: true } satisfies Record<
+    ContentFormat,
+    true
+  >).map((format) => getFormatExtension(format as ContentFormat)),
+)
+
+/**
+ * The path the editor lists the entry a file stores under (`EditorEntry.path`, which its
+ * `entry` param matches), or null for a file that cannot be a listed entry: outside
+ * `contentRoot`, under a dot-prefixed or `_ids_` segment, or not named
+ * `{type}.{slug}.{id}.{ext}` with a content format's extension (parseTypedFilename). The content root is kept as
+ * spelled, as the schema spells it; the directories below lose their IDs. No I/O, and no
+ * check that the directory is a collection or the type one of its entry types.
+ */
+export function entryLogicalPathOfFile(
+  relativePath: string,
+  contentRoot: string,
+): LogicalPath | null {
+  const root = normalizeFilesystemPath(contentRoot)
+  const file = normalizeFilesystemPath(relativePath)
+  if (!file.startsWith(`${root}/`)) return null
+  const below = file.slice(root.length + 1).split('/')
+  if (below.some((s) => s.startsWith('.') || s === '_ids_')) return null
+  const name = below[below.length - 1]
+  if (!ENTRY_EXTENSIONS.has(name.slice(name.lastIndexOf('.')))) return null
+  const parsed = parseTypedFilename(name)
+  if (!parsed) return null
+  const dirs = below.slice(0, -1)
+  const collection = dirs.length > 0 ? `${root}/${toLogicalCollectionPath(dirs.join('/'))}` : root
+  return entryLogicalPath(collection, parsed.slug)
 }
 
 export interface IdLocation {

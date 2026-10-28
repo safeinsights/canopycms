@@ -84,6 +84,7 @@ function fakeGateway(): FakeGateway {
       merged_at: null,
       state: 'open' as const,
       node_id: 'PR_1',
+      body: 'B',
     })),
     createOrUpdatePullRequest: vi.fn(async () => ({
       number: 1,
@@ -797,6 +798,7 @@ describe('operations across the socket', () => {
       merged_at: null,
       state: 'open',
       node_id: 'PR_1',
+      body: 'B',
     })
     expect(
       await client.createOrUpdatePullRequest({
@@ -831,7 +833,8 @@ describe('operations across the socket', () => {
       merged_at: '2026-01-01T00:00:00Z',
       state: 'closed' as const,
       node_id: 'PR_2',
-      body: 'a body the worker never reads',
+      body: null,
+      title: 'a title the worker never reads',
     }
     gateway.getPullRequest.mockResolvedValue(full)
     await serve(gateway)
@@ -841,6 +844,7 @@ describe('operations across the socket', () => {
       merged_at: '2026-01-01T00:00:00Z',
       state: 'closed',
       node_id: 'PR_2',
+      body: null,
     })
   })
 

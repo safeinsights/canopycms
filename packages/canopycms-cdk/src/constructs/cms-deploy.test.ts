@@ -24,6 +24,7 @@ import {
 } from './cms-service'
 import type { CanopyCmsServiceProps } from './cms-service'
 import { CanopyCmsDistribution } from './cms-distribution'
+import { MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT } from './editor-routing'
 import {
   AssetSupport,
   ASSETS_PATH_PATTERN,
@@ -312,9 +313,10 @@ describe('CanopyCmsDistribution: origin read timeout matches the Lambda timeout'
     expect(originReadTimeouts(Template.fromStack(stack))).toContain(45)
   })
 
-  it('fails at synth rather than deploying a timeout CloudFront would reject', () => {
+  /** A Distribution wired to a service whose Lambda timeout is `seconds`. */
+  function distributionWithLambdaTimeout(seconds: number) {
     const app = newTestApp()
-    const stack = new Stack(app, 'TooLongStack', {
+    const stack = new Stack(app, `Timeout${seconds}Stack`, {
       env: { account: '123456789012', region: 'us-east-1' },
     })
     const service = new CanopyCmsService(stack, 'Cms', {
@@ -323,26 +325,39 @@ describe('CanopyCmsDistribution: origin read timeout matches the Lambda timeout'
       ),
       githubOwner: 'acme',
       githubRepo: 'site',
-      timeout: Duration.seconds(120),
+      timeout: Duration.seconds(seconds),
     })
-    expect(
-      () =>
-        new CanopyCmsDistribution(stack, 'Dist', {
-          functionUrl: service.functionUrl,
-          domainName: 'cms.example.org',
-          hostedZoneDomain: 'example.org',
-          originReadTimeout: service.timeout,
-          hostedZone: route53.HostedZone.fromHostedZoneAttributes(stack, 'Zone', {
-            hostedZoneId: 'Z123456789',
-            zoneName: 'example.org',
-          }),
-          certificate: acm.Certificate.fromCertificateArn(
-            stack,
-            'Cert',
-            'arn:aws:acm:us-east-1:123456789012:certificate/abc',
-          ),
+    const create = () =>
+      new CanopyCmsDistribution(stack, 'Dist', {
+        functionUrl: service.functionUrl,
+        domainName: 'cms.example.org',
+        hostedZoneDomain: 'example.org',
+        originReadTimeout: service.timeout,
+        hostedZone: route53.HostedZone.fromHostedZoneAttributes(stack, 'Zone', {
+          hostedZoneId: 'Z123456789',
+          zoneName: 'example.org',
         }),
-    ).toThrow(/service-quota increase/)
+        certificate: acm.Certificate.fromCertificateArn(
+          stack,
+          'Cert',
+          'arn:aws:acm:us-east-1:123456789012:certificate/abc',
+        ),
+      })
+    return { stack, create }
+  }
+
+  it('accepts the 120s CloudFront default quota and emits it on the origin', () => {
+    expect(MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT.toSeconds()).toBe(120)
+    const { stack, create } = distributionWithLambdaTimeout(120)
+    create()
+    expect(originReadTimeouts(Template.fromStack(stack))).toContain(120)
+  })
+
+  it('fails at synth, naming the quota, past what the editor deadline covers', () => {
+    const { create } = distributionWithLambdaTimeout(121)
+    expect(create).toThrow(
+      /originReadTimeout is 121s.*at most 120s.*Service Quotas.*does not lift this limit/s,
+    )
   })
 })
 

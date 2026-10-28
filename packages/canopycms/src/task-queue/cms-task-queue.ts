@@ -16,6 +16,7 @@ export type TaskAction =
   | 'close-pr'
   | 'delete-remote-branch'
   | 'push-branch'
+  | 'sync-pr-comments'
 
 /** A task with a CMS-specific action. */
 export type WorkerTask = Task & { action: TaskAction }

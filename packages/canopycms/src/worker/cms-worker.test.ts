@@ -25,7 +25,8 @@ import {
 } from '../test-utils'
 import type { WorkerStatusReport } from '../types'
 import { CANOPYCMS_VERSION } from '../version'
-import { PR_SECTION_END, PR_SECTION_START } from '../submission-attribution'
+import { PR_SECTION_END, PR_SECTION_START, buildPrSection } from '../submission-attribution'
+import { CommentStore } from '../comment-store'
 
 const makeWorker = () =>
   new CmsWorker({
@@ -525,6 +526,39 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     fs
       .readFile(path.join(contentBranchesPath, branch, '.canopy-meta', 'branch.json'), 'utf-8')
       .then(JSON.parse)
+
+  it("re-renders a queued submit's comment block from comments.json when it runs", async () => {
+    const { worker, octokit } = makePrWorker()
+    await setupBranchDir('canopycms-feature-x')
+    await new CommentStore(path.join(contentBranchesPath, 'canopycms-feature-x')).addComment({
+      userId: 'u1',
+      text: 'Added after the submit was queued',
+      type: 'branch',
+    })
+    octokit.pulls.list.mockResolvedValue({ data: [] })
+    octokit.pulls.create.mockResolvedValue({
+      data: { number: 9, html_url: 'https://github.com/test-owner/test-repo/pull/9' },
+    })
+
+    await enqueueTask(taskDir, {
+      action: 'push-and-create-or-update-pr',
+      payload: {
+        branch: 'canopycms-feature-x',
+        title: 'Submit canopycms-feature-x',
+        body: buildPrSection({ changedPaths: ['a.md'], branch: 'canopycms-feature-x' }),
+        mergeSectionIntoBody: true,
+        editorUrl: 'https://cms.example.org/edit',
+      },
+    })
+    await worker.processTaskQueue()
+
+    const body: string = octokit.pulls.create.mock.calls[0]![0].body
+    expect(body).toContain('**1 unresolved editor comment thread**')
+    expect(body).toContain(
+      '- Branch — `Added after the submit was queued` ([open in editor](https://cms.example.org/edit?branch=canopycms-feature-x))',
+    )
+    expect(body).not.toContain('No editor comments.')
+  })
 
   it('recovers an orphaned PR instead of creating a duplicate, and records its number', async () => {
     // Simulates the GIT-H1 crash scenario: PR #77 already exists on GitHub
@@ -2956,4 +2990,146 @@ describe('CmsWorker delete-remote-branch', () => {
       expect(task?.error).toContain('Refusing to delete')
     },
   )
+})
+
+describe('CmsWorker sync-pr-comments', () => {
+  let tmpDir: string
+  let taskDir: string
+  let branchPath: string
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-worker-pr-comments-test-'))
+    taskDir = path.join(tmpDir, '.tasks')
+    branchPath = path.join(tmpDir, 'content-branches', 'canopycms-feature-x')
+    await fs.mkdir(branchPath, { recursive: true })
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  const submittedBody = `Notes\n\n${buildPrSection({ changedPaths: ['a.md'] })}`
+
+  const seedBranch = (branch: Record<string, unknown>) =>
+    getBranchMetadataFileManager(branchPath, path.join(tmpDir, 'content-branches')).save({
+      branch: { name: 'canopycms-feature-x', status: 'submitted', ...branch },
+    })
+
+  const run = async (pr: { state?: string; body?: string | null; headRef?: string } = {}) => {
+    const get = vi.fn().mockResolvedValue({
+      data: {
+        number: 7,
+        state: pr.state ?? 'open',
+        body: pr.body === undefined ? submittedBody : pr.body,
+        merged: false,
+        merged_at: null,
+        node_id: 'PR_7',
+        // The gateway reads the head before it updates a pull request by number.
+        head: { ref: pr.headRef ?? 'canopycms-feature-x', repo: { id: 1 } },
+        base: { ref: 'main', repo: { id: 1 } },
+      },
+    })
+    const update = vi.fn().mockResolvedValue({ data: {} })
+    const worker = new CmsWorker({
+      workspacePath: tmpDir,
+      githubOwner: 'test-owner',
+      githubRepo: 'test-repo',
+      baseBranch: 'main',
+      githubToken: 'fake-token',
+      taskTimeoutMs: 2000,
+    })
+    ;(worker as unknown as { running: boolean }).running = true
+    useLocalGitHubGateway(worker, {
+      octokit: {
+        pulls: { get, update },
+        repos: { get: vi.fn().mockResolvedValue({ data: { default_branch: 'main' } }) },
+      },
+    })
+    const id = await enqueueTask(taskDir, {
+      action: 'sync-pr-comments',
+      payload: {
+        branch: 'canopycms-feature-x',
+        pullRequestNumber: 7,
+        editorUrl: 'https://cms.example.org/edit',
+      },
+    })
+    const consoleSpy = mockConsole()
+    await worker.processTaskQueue()
+    consoleSpy.restore()
+    return { task: await getTask(taskDir, id), get, update }
+  }
+
+  it('updates nothing for a pull request whose head is outside the namespace', async () => {
+    await seedBranch({ pullRequestNumber: 7 })
+    await new CommentStore(branchPath).addComment({ userId: 'u1', text: 'A note', type: 'branch' })
+
+    const { task, update } = await run({ headRef: 'developer-branch' })
+
+    expect(task?.status).toBe('failed')
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it("re-renders the PR's comment block from comments.json and leaves sync status alone", async () => {
+    await seedBranch({ pullRequestNumber: 7, syncStatus: 'sync-failed', syncFailureReason: 'old' })
+    await new CommentStore(branchPath).addComment({
+      userId: 'u1',
+      text: 'Fix the intro',
+      type: 'entry',
+      entryPath: 'content/pages/home',
+    })
+
+    const { task, update } = await run()
+
+    expect(task?.status).toBe('completed')
+    expect(task?.result).toEqual({ updated: true })
+    expect(update).toHaveBeenCalledTimes(1)
+    const body: string = update.mock.calls[0]![0].body
+    expect(body.startsWith('Notes\n\n')).toBe(true)
+    expect(body).toContain('**1 unresolved editor comment thread**')
+    expect(body).toContain('&entry=content%2Fpages%2Fhome')
+    const saved = await BranchMetadataFileManager.loadOnly(branchPath)
+    expect(saved?.branch.syncStatus).toBe('sync-failed')
+    expect(saved?.branch.syncFailureReason).toBe('old')
+  })
+
+  it('writes nothing when the summary is unchanged or the PR body has no block', async () => {
+    await seedBranch({ pullRequestNumber: 7 })
+    for (const body of [submittedBody, 'rewritten by a human', null]) {
+      const { task, update } = await run({ body })
+      expect(task?.status).toBe('completed')
+      expect(update).not.toHaveBeenCalled()
+    }
+  })
+
+  it('fails at once, with no retries, on a comments.json that does not parse', async () => {
+    await seedBranch({ pullRequestNumber: 7 })
+    await fs.mkdir(path.join(branchPath, '.canopy-meta'), { recursive: true })
+    await fs.writeFile(path.join(branchPath, '.canopy-meta', 'comments.json'), '{not json')
+
+    const { task, update } = await run()
+
+    expect(task?.status).toBe('failed')
+    expect(task?.retryCount ?? 0).toBe(0)
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it('leaves a closed PR alone', async () => {
+    await seedBranch({ pullRequestNumber: 7 })
+    const { task, update } = await run({ state: 'closed' })
+    expect(task?.result).toEqual({ updated: false, skipped: 'not-open' })
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it('leaves GitHub alone when the branch under the name no longer has this PR', async () => {
+    for (const branch of [{ pullRequestNumber: 8 }, {}]) {
+      await seedBranch(branch)
+      const { task, get } = await run()
+      expect(task?.result).toEqual({ updated: false, skipped: 'not-this-pr' })
+      expect(get).not.toHaveBeenCalled()
+    }
+    await fs.rm(branchPath, { recursive: true, force: true })
+    const { task, get } = await run()
+    expect(task?.result).toEqual({ updated: false, skipped: 'not-this-pr' })
+    expect(get).not.toHaveBeenCalled()
+  })
 })

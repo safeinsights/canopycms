@@ -43,10 +43,13 @@ vi.mock('./PreviewFrame', () => ({
 
 const AUTHOR = 'perAAAAAAAAA'
 const SPEAKER = 'perBBBBBBBBB'
+const PANELIST_1 = 'perCCCCCCCCC'
+const PANELIST_2 = 'perDDDDDDDDD'
 
 const schema: EntrySchema = [
   { name: 'title', type: 'string', label: 'Title' },
   { name: 'settings', type: 'code', label: 'Settings' },
+  { name: 'panel', type: 'reference', label: 'Panel', list: true, collections: ['people'] },
   {
     name: 'byline',
     type: 'object',
@@ -173,6 +176,8 @@ const stubApi = (groups: string[] = []) => {
           title: 'Loaded title',
           settings: '{}',
           byline: { person: AUTHOR },
+          // The entry's read resolves references, so a list arrives as targets, not ids.
+          panel: [person(PANELIST_1, 'Edsger'), person(PANELIST_2, 'Barbara')],
           blocks: [{ template: 'quote', value: { speaker: SPEAKER } }],
           version: 1,
         }),
@@ -254,10 +259,12 @@ describe('Editor preview references', () => {
     }
     expect(referencesOf(withEntry[0])).toEqual([null, null])
     expect(withEntry[0].isLoading).toEqual({
+      panel: [false, false],
       byline: { person: true },
       blocks: [{ value: { speaker: true } }],
     })
     expect(frames[frames.length - 1].isLoading).toEqual({
+      panel: [false, false],
       byline: { person: false },
       blocks: [{ value: { speaker: false } }],
     })
@@ -266,6 +273,33 @@ describe('Editor preview references', () => {
       String(input).endsWith('/resolve-references'),
     )
     expect(resolveCalls).toHaveLength(1)
+  })
+
+  it('hands the frame a list reference loaded as targets on load, without asking for them', async () => {
+    const fetchMock = stubApi()
+    renderEditor()
+
+    await waitFor(
+      () =>
+        expect(referencesOf(frames[frames.length - 1])).toEqual([
+          person(AUTHOR, 'Ada'),
+          person(SPEAKER, 'Grace'),
+        ]),
+      { timeout: 10_000 },
+    )
+
+    const panels = frames
+      .map((frame) => (frame.data as { panel?: unknown } | undefined)?.panel)
+      .filter((panel) => panel !== undefined)
+    expect(panels.length).toBeGreaterThan(0)
+    for (const panel of panels) {
+      expect(panel).toEqual([person(PANELIST_1, 'Edsger'), person(PANELIST_2, 'Barbara')])
+    }
+    const askedFor = fetchMock.mock.calls
+      .filter(([input]) => String(input).endsWith('/resolve-references'))
+      .flatMap(([, init]) => (JSON.parse(String(init?.body)) as { ids: string[] }).ids)
+    expect(askedFor).not.toContain(PANELIST_1)
+    expect(askedFor).not.toContain(PANELIST_2)
   })
 
   it('still resolves every reference while another field has crashed', async () => {

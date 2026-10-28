@@ -1,5 +1,6 @@
 import type { BranchStatus } from '../types'
 import { branchStatusPresentation } from './branch-status'
+import { CLOSED_PULL_REQUEST_REASON } from './copy'
 
 export interface BranchLockInput {
   branchStatus: BranchStatus | undefined
@@ -10,6 +11,13 @@ export interface BranchLockInput {
   branchPending?: boolean
   /** The branch list answered without this branch: no access to it, or it no longer exists. */
   branchMissing?: boolean
+  /** The user reviews this branch (`isReviewerOfOthersReview`), so Approve and Request changes lead, not Withdraw. */
+  reviewing?: boolean
+  /**
+   * The user would review this branch but its pull request was closed (`reviewRoleOf`), so the
+   * way forward is Withdraw and the reason says why Approve is not offered.
+   */
+  pullRequestClosed?: boolean
 }
 
 /**
@@ -43,10 +51,15 @@ export function describeBranchLock(lock: BranchLockInput): string | undefined {
         ? `You don't have access to this branch, or it no longer exists. Use "Switch branch…" to open another.`
         : 'Branch details could not be loaded. Use "Refresh branch" to try again.'
   if (!statusLocked) return undefined
+  if (lock.pullRequestClosed) return CLOSED_PULL_REQUEST_REASON
   if (lock.branchStatus === 'submitted')
-    return 'This branch is in review. Withdraw it to make changes.'
+    return lock.reviewing
+      ? 'This branch is in review. Approve it, or request changes to send it back to its editor.'
+      : 'This branch is in review. Withdraw it to make changes.'
   if (lock.branchStatus === 'approved')
-    return 'This branch is approved. Withdraw it to make changes.'
+    return lock.reviewing
+      ? 'This branch is approved. Request changes to send it back to its editor.'
+      : 'This branch is approved. Withdraw it to make changes.'
   return `This branch is ${lock.branchStatus}. Its content is read-only.`
 }
 

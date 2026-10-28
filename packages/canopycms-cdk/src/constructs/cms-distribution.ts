@@ -206,7 +206,7 @@ export interface CanopyCmsDistributionProps {
    * First-touch branch provisioning does a full `git clone` onto EFS inside the
    * request, so this is a real path.
    *
-   * Capped at 60s: CloudFront rejects more without a service-quota increase.
+   * Capped at 120s (`MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT`), CloudFront's default quota.
    */
   originReadTimeout?: Duration
 

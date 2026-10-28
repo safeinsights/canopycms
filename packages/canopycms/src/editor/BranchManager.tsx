@@ -34,7 +34,8 @@ import { DestructiveMenuItem } from './components/DestructiveMenuItem'
 import { ReasonedMenuItem } from './components/ReasonedMenuItem'
 import { RelativeTime } from './components/RelativeTime'
 import { branchStatusPresentation } from './branch-status'
-import { EDITOR_ACTIONS } from './copy'
+import { CLOSED_PULL_REQUEST_REASON, EDITOR_ACTIONS } from './copy'
+import { isReviewerOfOthersReview } from '../authorization/review-role'
 import { SYSTEM_USER_ID } from '../system-users'
 
 /** @internal Exported for tests. */
@@ -98,6 +99,8 @@ export const getBranchPermissions = (
   canSubmit: boolean
   canWithdraw: boolean
   canDelete: boolean
+  /** Approve is open to this user now: a reviewer other than the creator, on a submitted branch with a live PR. */
+  canApprove: boolean
   canRequestChanges: boolean
 } => {
   if (!user) {
@@ -106,6 +109,7 @@ export const getBranchPermissions = (
       canSubmit: false,
       canWithdraw: false,
       canDelete: false,
+      canApprove: false,
       canRequestChanges: false,
     }
   }
@@ -141,8 +145,8 @@ export const getBranchPermissions = (
   const canSubmit = canPerformWorkflowActions && !(branch.submitBlocked ?? true)
 
   // Withdraw: can perform workflow actions AND branch is submitted or
-  // approved -- 'approved' is included because withdraw is that status's only
-  // non-destructive exit, and getBranchPermissions must grant canWithdraw for
+  // approved -- 'approved' is included because withdraw is the author's way back from it (an
+  // author is offered no Request changes), and getBranchPermissions must grant canWithdraw for
   // it to be reachable. Allowed even when the PR was closed without merging:
   // that's the deliberate recovery path for a closed-unmerged PR (server-side
   // skip in api/branch-withdraw.ts). Not additionally gated on
@@ -160,18 +164,22 @@ export const getBranchPermissions = (
     branch.status !== 'approved' &&
     !branch.isProtected
 
-  // Request changes: Only Reviewers or Admins can request changes on submitted
-  // branches. Same closed-PR restriction as withdraw applies (converts PR to draft).
+  // Approve and Request changes: a Reviewer or Admin other than the creator, who for an author
+  // would only do what Withdraw does. Neither applies to the protected base branch, whose way
+  // out of review is Withdraw. A closed PR refuses both (Request changes converts the PR to
+  // a draft); Approve also needs the branch submitted, Request changes accepts approved too.
+  const reviewsOthers = (userIsAdmin || userIsReviewer) && !userIsCreator && !branch.isProtected
+  const prLive = branch.pullRequestState !== 'closed'
+  const canApprove = reviewsOthers && branch.status === 'submitted' && prLive
   const canRequestChanges =
-    (userIsAdmin || userIsReviewer) &&
-    branch.status === 'submitted' &&
-    branch.pullRequestState !== 'closed'
+    reviewsOthers && (branch.status === 'submitted' || branch.status === 'approved') && prLive
 
   return {
     hasWorkflowAccess: canPerformWorkflowActions,
     canSubmit,
     canWithdraw,
     canDelete,
+    canApprove,
     canRequestChanges,
   }
 }
@@ -202,6 +210,7 @@ export interface BranchManagerProps {
   onDelete?: (name: string) => void
   onSubmit?: (name: string) => void
   onWithdraw?: (name: string) => void
+  onApprove?: (name: string) => void
   onRequestChanges?: (name: string) => void
   onClose?: () => void
   comments?: CommentThread[]
@@ -228,9 +237,6 @@ export interface BranchManagerProps {
 /** The lookup when a card has none: an owner reads "Name unavailable" and access users are counted, not named. */
 const noUserLookup = async (): Promise<UserSearchResult | null> => null
 
-const CLOSED_PULL_REQUEST_REASON =
-  'The pull request was closed on GitHub. Withdraw the branch from review, then submit it again to open a new one.'
-
 interface BranchWorkflowAction {
   label: string
   color: string
@@ -238,12 +244,14 @@ interface BranchWorkflowAction {
   run: () => void
   /** Why it cannot act now; undefined when it can. */
   blockedReason?: string
+  /** In a menu, the test id of the item above that prints the same reason, so this one need not. */
+  reasonShownBy?: string
 }
 
 /**
  * The workflow action a branch's status calls for, or undefined when none applies: Submit for
- * an unprotected branch in editing, Withdraw once it is in review. 'approved' withdraws too, as
- * its only non-destructive exit. A user without workflow access is offered neither, since it
+ * an unprotected branch in editing, Withdraw once it is in review, 'approved' included: it is the
+ * author's way back. A user without workflow access is offered neither, since it
  * would never apply to them; a reason is given only for a block that depends on the branch's state.
  */
 const workflowAction = (
@@ -273,14 +281,19 @@ const workflowAction = (
   return undefined
 }
 
-/** Whether `user` reviews `b` rather than owns it: a reviewer or admin who neither made it nor was given access. */
-const isReviewerOfOthersSubmission = (b: BranchSummary, user: UserContext | undefined): boolean =>
-  !!user &&
-  isReviewer(user.groups) &&
-  b.status === 'submitted' &&
-  b.createdBy !== user.userId &&
-  !b.access?.users?.includes(user.userId) &&
-  !user.groups?.some((g) => b.access?.groups?.includes(g))
+/** Whether `user` reviews `b` rather than owns it; see `isReviewerOfOthersReview`. */
+const reviewsOthersBranch = (b: BranchSummary, user: UserContext | undefined): boolean =>
+  isReviewerOfOthersReview(
+    {
+      status: b.status,
+      createdBy: b.createdBy,
+      users: b.access?.users,
+      groups: b.access?.groups,
+      isProtected: b.isProtected,
+      pullRequestState: b.pullRequestState,
+    },
+    user,
+  )
 
 interface BranchCardProps {
   branch: BranchSummary
@@ -290,6 +303,7 @@ interface BranchCardProps {
   onSelect?: (name: string) => void
   onSubmit?: (name: string) => void
   onWithdraw?: (name: string) => void
+  onApprove?: (name: string) => void
   onRequestChanges?: (name: string) => void
   onDelete?: (name: string) => void
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
@@ -298,8 +312,10 @@ interface BranchCardProps {
 
 /**
  * One branch: its state, and one primary action, with the rest in a "…" menu. The current branch
- * shows its workflow action, or Request changes to a reviewer looking at someone else's
- * submission; the others show Open, which the current one never needs. No action is shown twice.
+ * shows its workflow action; to a reviewer of someone else's submission it shows Approve, with
+ * Request changes beside it (Request changes alone once approved). Another such branch shows that
+ * reviewer Review, which opens it; the other cards show Open, which the current one never needs.
+ * No action is shown twice.
  */
 const BranchCard: React.FC<BranchCardProps> = ({
   branch: b,
@@ -309,6 +325,7 @@ const BranchCard: React.FC<BranchCardProps> = ({
   onSelect,
   onSubmit,
   onWithdraw,
+  onApprove,
   onRequestChanges,
   onDelete,
   onGetUserMetadata,
@@ -321,23 +338,50 @@ const BranchCard: React.FC<BranchCardProps> = ({
     action && workflowBlockedReason ? { ...action, blockedReason: workflowBlockedReason } : action
   const userIsAdmin = isAdmin(user?.groups)
 
-  const requestChanges: BranchWorkflowAction | undefined =
-    isReviewer(user?.groups) && b.status === 'submitted'
+  // The open branch holds back its review actions as it does its workflow action; the reason is
+  // given only for the open branch.
+  const heldBack = (a: BranchWorkflowAction | undefined) =>
+    a && workflowBlockedReason ? { ...a, blockedReason: workflowBlockedReason } : a
+  // Shown to a reviewer other than the creator; a closed PR or a held-back open branch blocks it.
+  const reviewsOthers =
+    isReviewer(user?.groups) && !!user && b.createdBy !== user.userId && !b.isProtected
+  const approve: BranchWorkflowAction | undefined = heldBack(
+    reviewsOthers && b.status === 'submitted'
+      ? {
+          label: EDITOR_ACTIONS.approve,
+          color: 'brand',
+          testId: `approve-branch-button-${b.name}`,
+          run: () => onApprove?.(b.name),
+          blockedReason: perms.canApprove ? undefined : CLOSED_PULL_REQUEST_REASON,
+        }
+      : undefined,
+  )
+  const requestChanges: BranchWorkflowAction | undefined = heldBack(
+    reviewsOthers && (b.status === 'submitted' || b.status === 'approved')
       ? {
           label: EDITOR_ACTIONS.requestChanges,
           color: 'orange',
           testId: `request-changes-branch-button-${b.name}`,
           run: () => onRequestChanges?.(b.name),
-          blockedReason: b.pullRequestState === 'closed' ? CLOSED_PULL_REQUEST_REASON : undefined,
+          blockedReason: perms.canRequestChanges ? undefined : CLOSED_PULL_REQUEST_REASON,
+          // With Approve above it, blocked by the same closed pull request, the reason prints once.
+          reasonShownBy:
+            approve && !perms.canApprove && b.pullRequestState === 'closed'
+              ? approve.testId
+              : undefined,
         }
-      : undefined
-  const primary = !isCurrent
-    ? undefined
-    : isReviewerOfOthersSubmission(b, user)
-      ? requestChanges
-      : workflow
-  const menuActions = [workflow, requestChanges].filter(
-    (a): a is BranchWorkflowAction => !!a && a !== primary,
+      : undefined,
+  )
+  const reviewing = reviewsOthersBranch(b, user)
+  // Reviewing the open branch: Approve leads with Request changes beside it, or Request changes
+  // alone once approved. Reviewing another one, Review opens it and the actions wait in the menu.
+  const primary = !isCurrent ? undefined : reviewing ? (approve ?? requestChanges) : workflow
+  const secondary = isCurrent && reviewing && approve ? requestChanges : undefined
+  // Two visible actions, or the long "Withdraw from review", would crowd the title at the drawer's
+  // width, so they take a row below it. Open and Review stay beside the title.
+  const actionRow = !!secondary || primary?.label === EDITOR_ACTIONS.withdrawFromReview
+  const menuActions = [approve, requestChanges, workflow].filter(
+    (a): a is BranchWorkflowAction => !!a && a !== primary && a !== secondary,
   )
   const showViewPullRequest = !!b.pullRequestUrl
   const showDelete = !b.isProtected && (userIsAdmin || (!!user && b.createdBy === user.userId))
@@ -480,32 +524,14 @@ const BranchCard: React.FC<BranchCardProps> = ({
             <Button
               variant="light"
               onClick={() => onSelect?.(b.name)}
-              data-testid={`switch-to-branch-button-${b.name}`}
+              data-testid={
+                reviewing ? `review-branch-button-${b.name}` : `switch-to-branch-button-${b.name}`
+              }
             >
-              Open
+              {reviewing ? EDITOR_ACTIONS.review : 'Open'}
             </Button>
           )}
-          {primary && (
-            <Tooltip
-              label={primary.blockedReason}
-              disabled={!primary.blockedReason}
-              multiline
-              maw={280}
-            >
-              <Button
-                variant="light"
-                color={primary.color}
-                onClick={() => {
-                  if (!primary.blockedReason) primary.run()
-                }}
-                data-disabled={primary.blockedReason ? true : undefined}
-                aria-disabled={primary.blockedReason ? true : undefined}
-                data-testid={primary.testId}
-              >
-                {primary.label}
-              </Button>
-            </Tooltip>
-          )}
+          {!actionRow && primary && <CardActionButton action={primary} />}
           {hasMenu && (
             <Menu withinPortal shadow="sm" position="bottom-end" width={280} onChange={setMenuOpen}>
               <Tooltip label={menuLabel} disabled={menuOpen}>
@@ -525,6 +551,11 @@ const BranchCard: React.FC<BranchCardProps> = ({
                   <ReasonedMenuItem
                     key={action.testId}
                     blockedReason={action.blockedReason}
+                    showReason={!action.reasonShownBy}
+                    reasonId={`${action.testId}-reason`}
+                    reasonDescribedBy={
+                      action.reasonShownBy ? `${action.reasonShownBy}-reason` : undefined
+                    }
                     onClick={action.run}
                     data-testid={action.testId}
                   >
@@ -566,9 +597,38 @@ const BranchCard: React.FC<BranchCardProps> = ({
           )}
         </Group>
       </Group>
+      {actionRow && (
+        <Group
+          justify="flex-end"
+          gap={8}
+          wrap="nowrap"
+          mt="sm"
+          data-testid={`branch-action-row-${b.name}`}
+        >
+          {secondary && <CardActionButton action={secondary} />}
+          {primary && <CardActionButton action={primary} />}
+        </Group>
+      )}
     </Paper>
   )
 }
+
+const CardActionButton: React.FC<{ action: BranchWorkflowAction }> = ({ action }) => (
+  <Tooltip label={action.blockedReason} disabled={!action.blockedReason} multiline maw={280}>
+    <Button
+      variant="light"
+      color={action.color}
+      onClick={() => {
+        if (!action.blockedReason) action.run()
+      }}
+      data-disabled={action.blockedReason ? true : undefined}
+      aria-disabled={action.blockedReason ? true : undefined}
+      data-testid={action.testId}
+    >
+      {action.label}
+    </Button>
+  </Tooltip>
+)
 
 export const BranchManager: React.FC<BranchManagerProps> = ({
   branches,
@@ -583,6 +643,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   onDelete,
   onSubmit,
   onWithdraw,
+  onApprove,
   onRequestChanges,
   onClose: _,
   comments = [],
@@ -749,6 +810,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                 onSelect={onSelect}
                 onSubmit={onSubmit}
                 onWithdraw={onWithdraw}
+                onApprove={onApprove}
                 onRequestChanges={onRequestChanges}
                 onDelete={onDelete}
                 onGetUserMetadata={onGetUserMetadata}
