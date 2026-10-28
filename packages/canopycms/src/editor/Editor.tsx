@@ -1638,14 +1638,14 @@ const EditorContent: React.FC<EditorProps> = ({
     setEntryFilter('unsaved')
     revealInContentPanel({ kind: 'unsaved' })
   }
-  // What the branch changes against its base, read while the panel shows so Changed has its count.
+  // What the branch changes against its base, read while the panel shows so Changed has its count,
+  // and while an entry is open so its header knows to offer "Show changes".
   // The protected base has nothing to compare. Changed keeps its place while the branch list loads,
   // so the control doesn't re-flow then, and reads once the branch is known not to be the base. A
   // list that failed, or lacks the branch, offers none, so a branch just created can lack Changed
   // until the list catches up.
   const changesOffered = branchPending || currentBranch?.isProtected === false
   const changesAvailable = !!currentBranch && currentBranch.isProtected === false
-  // Read too while an entry is open, so its header knows to offer "Show changes".
   const branchChanges = useBranchChangesData(
     apiClient,
     branchNameState,
