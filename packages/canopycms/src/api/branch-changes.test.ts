@@ -13,6 +13,7 @@ import { flattenSchema, type PathPermission, type RootCollectionConfig } from '.
 import { createCheckBranchAccess } from '../authorization'
 import { createTestContentAccess, unsafeAsPermissionPath } from '../authorization/test-utils'
 import { GitManager } from '../git-manager'
+import { generateId } from '../id'
 import {
   createMockApiContext,
   createMockBranchContext,
@@ -95,9 +96,13 @@ const createCtx = (
     rules?: PathPermission[]
     branchAccess?: 'allow' | 'deny'
     branchName?: string
+    /** The schema now, for a branch that changed it. */
+    currentSchema?: RootCollectionConfig
+    git?: (repoPath: string) => GitManager
   } = {},
 ): ApiContext => {
   const config = defineCanopyTestConfig({ defaultBranchAccess: 'allow', schema })
+  const current = options.currentSchema ?? schema
   const checkBranchAccess = createCheckBranchAccess(options.branchAccess ?? 'allow')
   const access = createTestContentAccess({
     checkBranchAccess,
@@ -119,9 +124,10 @@ const createCtx = (
       checkBranchAccess,
       ...access,
       createGitManagerFor: (repoPath, opts) =>
+        options.git?.(repoPath) ??
         new GitManager({ repoPath, baseBranch: opts?.baseBranch ?? 'main', remote: 'origin' }),
     },
-    branchContext: { ...branchContext, flatSchema: flattenSchema(schema, config.contentRoot) },
+    branchContext: { ...branchContext, flatSchema: flattenSchema(current, config.contentRoot) },
   })
 }
 
@@ -319,4 +325,180 @@ describe('GET /:branch/changes', () => {
     )
     expect(res).toMatchObject({ ok: false, status: 403 })
   })
+})
+
+describe('GET /:branch/changes: entries the schema no longer places', () => {
+  const withoutBlog: RootCollectionConfig = {
+    ...schema,
+    collections: schema.collections?.filter((c) => c.name !== 'blog'),
+  }
+
+  it('reads a renamed collection’s entries as moved', async () => {
+    const renamed: RootCollectionConfig = {
+      ...schema,
+      collections: schema.collections?.map((c) =>
+        c.name === 'blog' ? { ...c, name: 'journal', path: 'journal' } : c,
+      ),
+    }
+    await fs.rename(
+      path.join(branchRoot, 'content', BLOG),
+      path.join(branchRoot, 'content', BLOG.replace('blog', 'journal')),
+    )
+    const data = await changes(createCtx({ currentSchema: renamed }))
+    expect(data.entries.map((e) => [e.status, e.logicalPath, e.previousLogicalPath])).toEqual([
+      ['moved', 'content/journal/hello', 'content/blog/hello'],
+      ['moved', 'content/journal/old-news', 'content/blog/old-news'],
+    ])
+    expect(data.hiddenChanges).toBe(false)
+  })
+
+  it('reads a deleted collection’s entries as deleted, with their titles', async () => {
+    await fs.rm(path.join(branchRoot, 'content', BLOG), { recursive: true })
+    const data = await changes(createCtx({ currentSchema: withoutBlog }))
+    expect(data.entries.map((e) => [e.status, e.logicalPath, e.title])).toEqual([
+      ['deleted', 'content/blog/hello', 'Title of hello'],
+      ['deleted', 'content/blog/old-news', 'Title of old'],
+    ])
+  })
+
+  it('reads an entry of a removed entry type, once deleted, as deleted', async () => {
+    const noPosts: RootCollectionConfig = {
+      ...schema,
+      collections: schema.collections?.map((c) =>
+        c.name === 'blog'
+          ? { ...c, entries: [{ name: 'article', format: 'json' as const, schema: fields }] }
+          : c,
+      ),
+    }
+    await fs.rm(path.join(branchRoot, files.old))
+    const data = await changes(createCtx({ currentSchema: noPosts }))
+    expect(data.entries).toEqual([
+      expect.objectContaining({
+        status: 'deleted',
+        logicalPath: 'content/blog/old-news',
+        entryType: 'post',
+        title: 'Title of old',
+      }),
+    ])
+  })
+
+  it('applies path rules to the path a deleted collection’s entries had', async () => {
+    await fs.rm(path.join(branchRoot, 'content', PRIVATE), { recursive: true })
+    const noPrivate: RootCollectionConfig = {
+      ...schema,
+      collections: schema.collections?.filter((c) => c.name !== 'private'),
+    }
+    const data = await changes(createCtx({ currentSchema: noPrivate, rules: insidersOnly }))
+    expect(data.entries).toEqual([])
+    expect(data.hiddenChanges).toBe(true)
+  })
+
+  it('tells a non-admin a content file it can’t place exists, and lists it to an admin', async () => {
+    await write('content/notes.txt', 'loose file')
+    const editor = await changes(createCtx())
+    expect(editor.entries).toEqual([])
+    expect(editor.hiddenChanges).toBe(true)
+    expect(editor.otherFiles).toBeUndefined()
+    const admin = await changes(createCtx(), ['Admins'])
+    expect(admin.otherFiles).toEqual(['content/notes.txt'])
+    expect(admin.hiddenChanges).toBe(false)
+  })
+})
+
+describe('GET /:branch/changes: reads that race or fail', () => {
+  /** A GitManager that runs `during` once the diff has been read. */
+  const gitThat = (during: () => Promise<void>) => (repoPath: string) =>
+    new (class extends GitManager {
+      async diffNameStatusAgainst(rev: string) {
+        const result = await super.diffNameStatusAgainst(rev)
+        await during()
+        return result
+      }
+    })({ repoPath, baseBranch: 'main', remote: 'origin' })
+
+  const syncing = {
+    ok: false,
+    status: 409,
+    error: 'This branch is being synced with main. Try again in a moment.',
+  }
+
+  it('refuses with 409 when HEAD moves during the read', async () => {
+    await write(files.hello, entryJson('Edited'))
+    const ctx = createCtx({
+      git: gitThat(() =>
+        clone.raw(['commit', '-q', '--allow-empty', '-m', 'rebased']).then(() => {}),
+      ),
+    })
+    const res = await listBranchChanges.handler(
+      ctx,
+      { user: user() },
+      { branch: unsafeAsBranchName('feature') },
+    )
+    expect(res).toEqual(syncing)
+  })
+
+  it('refuses with 409 when a rebase starts during the read', async () => {
+    const ctx = createCtx({
+      git: gitThat(() => fs.mkdir(path.join(branchRoot, '.git', 'rebase-merge'))),
+    })
+    const res = await listBranchChanges.handler(
+      ctx,
+      { user: user() },
+      { branch: unsafeAsBranchName('feature') },
+    )
+    expect(res).toEqual(syncing)
+  })
+
+  it('answers 503, not an empty list, when git fails', async () => {
+    await fs.rm(path.join(tmpDir, 'remote.git'), { recursive: true, force: true })
+    const res = await listBranchChanges.handler(
+      createCtx(),
+      { user: user() },
+      { branch: unsafeAsBranchName('feature') },
+    )
+    expect(res).toEqual({
+      ok: false,
+      status: 503,
+      error: "Couldn't read this branch's changes right now. Try again in a moment.",
+    })
+  })
+
+  it('lists files sharing a content id as they are, never as one move', async () => {
+    const copy = `content/${BLOG}/post.copy.${ID.hello}.json`
+    const again = `content/${BLOG}/post.hello-again.${ID.hello}.json`
+    await fs.copyFile(path.join(branchRoot, files.hello), path.join(branchRoot, copy))
+    await fs.rename(path.join(branchRoot, files.hello), path.join(branchRoot, again))
+    const data = await changes(createCtx())
+    expect(data.entries.map((e) => [e.status, e.logicalPath, e.previousLogicalPath])).toEqual([
+      ['added', 'content/blog/copy', undefined],
+      ['deleted', 'content/blog/hello', undefined],
+      ['added', 'content/blog/hello-again', undefined],
+    ])
+  })
+})
+
+describe('GET /:branch/changes: caps', () => {
+  it('reads at most 200 deleted titles and lists at most 200 other files, saying so', async () => {
+    for (let i = 0; i < 201; i++) {
+      const id = generateId()
+      await write(
+        `content/${BLOG}/post.cap-${String(i).padStart(3, '0')}.${id}.json`,
+        entryJson(`Cap ${i}`),
+      )
+    }
+    await clone.raw(['add', '--', 'content'])
+    await clone.raw(['commit', '-qm', 'caps'])
+    await clone.raw(['push', '-q', 'origin', 'HEAD:main'])
+    await fs.rm(path.join(branchRoot, 'content', BLOG), { recursive: true })
+    await fs.mkdir(path.join(branchRoot, 'content', BLOG))
+    for (let i = 0; i < 201; i++) await write(`other/f${String(i).padStart(3, '0')}.txt`, 'x')
+
+    const data = await changes(createCtx(), ['Admins'])
+    const deleted = data.entries.filter((e) => e.status === 'deleted')
+    expect(deleted).toHaveLength(203)
+    expect(deleted.filter((e) => e.title !== undefined)).toHaveLength(200)
+    expect(data.otherFiles).toHaveLength(200)
+    expect(data.otherFilesTruncated).toBe(true)
+    expect((await changes(createCtx())).otherFilesTruncated).toBeUndefined()
+  }, 60_000)
 })

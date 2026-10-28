@@ -3,7 +3,14 @@ import type { z } from 'zod'
 import type { BranchContextWithSchema } from '../types'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { CollectionSchemaItem } from '../content-listing'
-import { entryRefFromRepoPath, parseEntryData, type RepoPathRef } from '../content-listing'
+import {
+  entryRefFromRepoPath,
+  entryRefFromRepoPathShape,
+  parseEntryData,
+  type RepoPathRef,
+} from '../content-listing'
+import { getFormatExtension } from '../utils/format'
+import type { ContentFormat } from '../config'
 import { defineEndpoint } from './route-builder'
 import { branchParamSchema } from './validators'
 import { getBranchProtection } from '../authorization/protected-branch'
@@ -36,19 +43,27 @@ export interface BranchChangesData {
   collections: Array<{ status: 'added' | 'modified' | 'deleted'; logicalPath: string }>
   /** Something changed that this user may not read. Never a count, which would leak its size. */
   hiddenChanges: boolean
-  /** The branch shares no history with its base, so nothing could be compared. */
+  /** The branch and its base share no commit, so there is no fork point to compare against. */
   baseUnavailable?: boolean
   /** Changed files that are neither entries nor collection settings. Admins only. */
   otherFiles?: string[]
+  /** `otherFiles` holds only the first {@link MAX_OTHER_FILES}. Admins only. */
+  otherFilesTruncated?: boolean
 }
 
 export type BranchChangesResponse = ApiResponse<BranchChangesData>
 
 /** Deleted entries whose titles are read from the base, one `git show` each. */
 const MAX_DELETED_TITLES = 200
+/** Other files listed to an admin; the rest are counted only as `otherFilesTruncated`. */
 const MAX_OTHER_FILES = 200
 
+const SYNCING_ERROR = (base: string) =>
+  `This branch is being synced with ${base}. Try again in a moment.`
+const READ_FAILED_ERROR = "Couldn't read this branch's changes right now. Try again in a moment."
+
 type FileStatus = 'A' | 'M' | 'D'
+const FORMATS: readonly ContentFormat[] = ['mdx', 'md', 'json', 'yaml']
 type EntryRef = Extract<RepoPathRef, { kind: 'entry' }>
 const COLLECTION_STATUS = { A: 'added', M: 'modified', D: 'deleted' } as const
 
@@ -57,7 +72,7 @@ const COLLECTION_STATUS = { A: 'added', M: 'modified', D: 'deleted' } as const
  * added. A path both deleted from the index and present untracked is a modified file.
  */
 const changedFiles = async (
-  git: ReturnType<ApiContext['services']['createGitManagerFor']>,
+  git: BranchGit,
   mergeBase: string,
 ): Promise<Map<string, FileStatus>> => {
   const [tracked, untracked] = await Promise.all([
@@ -90,56 +105,83 @@ const branchChangesHandler = async (
   }
   // A half-rebased tree would report the base's own changes as this branch's.
   if (await isRebaseInProgress(branchContext.branchRoot)) {
-    return {
-      ok: false,
-      status: 409,
-      error: `This branch is being synced with ${base}. Try again in a moment.`,
-    }
+    return { ok: false, status: 409, error: SYNCING_ERROR(base) }
   }
 
   const git = ctx.services.createGitManagerFor(branchContext.branchRoot, {
     baseBranch: branchContext.branch.baseBranch,
   })
-  let mergeBase: string | undefined
+  let changes: Omit<BranchChangesData, 'base'> | 'moved'
   try {
-    mergeBase = await git.mergeBaseWithBase()
+    const head = await git.headSha()
+    const mergeBase = await git.mergeBaseWithBase()
+    if (!mergeBase) return { ok: true, status: 200, data: { ...empty, baseUnavailable: true } }
+    changes = await readChanges(ctx, req, branchContext, git, mergeBase)
+    // A rebase that started, or ran, during the read leaves a mix of the two trees.
+    if ((await git.headSha()) !== head || (await isRebaseInProgress(branchContext.branchRoot))) {
+      changes = 'moved'
+    }
   } catch (err) {
     canopyLogWarn(
-      `CanopyCMS: could not find where ${branchContext.branch.name} forked from ${base}:`,
+      `CanopyCMS: could not read what ${branchContext.branch.name} changes against ${base}:`,
       redactCredentials(getErrorMessage(err)),
     )
+    return { ok: false, status: 503, error: READ_FAILED_ERROR }
   }
-  if (!mergeBase) return { ok: true, status: 200, data: { ...empty, baseUnavailable: true } }
+  if (changes === 'moved') return { ok: false, status: 409, error: SYNCING_ERROR(base) }
+  return { ok: true, status: 200, data: { base, ...changes } }
+}
 
+type BranchGit = ReturnType<ApiContext['services']['createGitManagerFor']>
+
+/** The branch's changes against `mergeBase`, filtered to what `req.user` may read. */
+const readChanges = async (
+  ctx: ApiContext,
+  req: ApiRequest,
+  branchContext: BranchContextWithSchema,
+  git: BranchGit,
+  mergeBase: string,
+): Promise<Omit<BranchChangesData, 'base'>> => {
   const files = await changedFiles(git, mergeBase)
   const flatSchema = branchContext.flatSchema
-  const contentRoot = config.contentRoot || 'content'
+  const contentRoot = ctx.services.config.contentRoot || 'content'
   const checkAccess = await ctx.services.createContentAccessChecker(
     branchContext,
     branchContext.branchRoot,
     req.user,
   )
   const readable = (logicalPath: LogicalPath) => checkAccess(logicalPath, 'read').allowed
+  const admin = isAdmin(req.user.groups)
+  const underContentRoot = (path: string) => path.startsWith(`${contentRoot}/`)
 
   let hiddenChanges = false
   const entries: BranchChangeEntry[] = []
   const collections: BranchChangesData['collections'] = []
   const otherFiles: string[] = []
-  const added = new Map<string, EntryRef>()
-  const deleted = new Map<string, EntryRef>()
+  const added = new Map<string, EntryRef[]>()
+  const deleted = new Map<string, EntryRef[]>()
   const modified: EntryRef[] = []
+  const push = (map: Map<string, EntryRef[]>, ref: EntryRef) =>
+    map.set(ref.contentId, [...(map.get(ref.contentId) ?? []), ref])
 
   for (const [path, status] of files) {
-    const ref = entryRefFromRepoPath(path, flatSchema, contentRoot)
+    let ref: RepoPathRef = entryRefFromRepoPath(path, flatSchema, contentRoot)
+    // A deleted file the schema no longer places, as under a renamed or deleted collection, is
+    // read from its path's shape, so it still reads as deleted or as the old side of a move.
+    if (ref.kind === 'other' && status === 'D') {
+      ref = entryRefFromRepoPathShape(path, contentRoot) ?? ref
+    }
     if (ref.kind === 'other') {
       otherFiles.push(ref.physicalPath)
+      // Under the content root it may be content this user can't see placed; never nothing.
+      if (!admin && underContentRoot(path)) hiddenChanges = true
     } else if (ref.kind === 'collection-meta') {
       // `/*`, as entries.ts probes a collection: a rule for its contents decides too.
       if (readable(ref.collectionPath) && readable(`${ref.collectionPath}/*` as LogicalPath)) {
         collections.push({ status: COLLECTION_STATUS[status], logicalPath: ref.collectionPath })
       } else hiddenChanges = true
-    } else if (status === 'A') added.set(ref.contentId, ref)
-    else if (status === 'D') deleted.set(ref.contentId, ref)
+    } else if (status === 'A') push(added, ref)
+    else if (status === 'D') push(deleted, ref)
     else modified.push(ref)
   }
 
@@ -155,35 +197,50 @@ const branchChangesHandler = async (
     collectionPath: ref.collectionPath,
     entryType: ref.entryType,
   })
+  const addedShown: EntryRef[] = []
   const deletedShown: EntryRef[] = []
+  const showAdded = (ref: EntryRef) => {
+    if (readable(ref.logicalPath)) addedShown.push(ref)
+    else hiddenChanges = true
+  }
+  const showDeleted = (ref: EntryRef) => {
+    if (readable(ref.logicalPath)) deletedShown.push(ref)
+    else hiddenChanges = true
+  }
 
   for (const ref of modified) {
     if (readable(ref.logicalPath)) entries.push(toEntry(ref, 'modified'))
     else hiddenChanges = true
   }
-  for (const [contentId, ref] of added) {
-    const from = deleted.get(contentId)
-    if (from) deleted.delete(contentId)
+  for (const [contentId, adds] of added) {
+    const dels = deleted.get(contentId) ?? []
+    deleted.delete(contentId)
+    // A content id on more than one file on either side is a duplicate, not one entry moving,
+    // so its files are listed as they are.
+    if (adds.length !== 1 || dels.length !== 1) {
+      adds.forEach(showAdded)
+      dels.forEach(showDeleted)
+      continue
+    }
+    const [ref] = adds
+    const [from] = dels
     const toReadable = readable(ref.logicalPath)
-    const fromReadable = from ? readable(from.logicalPath) : false
-    if (from && from.logicalPath === ref.logicalPath) {
+    const fromReadable = readable(from.logicalPath)
+    if (from.logicalPath === ref.logicalPath) {
       // The same entry under another entry type.
       if (toReadable) entries.push(toEntry(ref, 'modified'))
       else hiddenChanges = true
-    } else if (from && toReadable && fromReadable) {
+    } else if (toReadable && fromReadable) {
       entries.push(toEntry(ref, 'moved', from))
     } else {
       // A move with a side this user can't read shows only the side they can, so the other
       // side's path never reaches them.
-      if (toReadable) entries.push(toEntry(ref, 'added'))
-      if (from && fromReadable) deletedShown.push(from)
-      if (!toReadable || (from && !fromReadable)) hiddenChanges = true
+      showAdded(ref)
+      showDeleted(from)
     }
   }
-  for (const ref of deleted.values()) {
-    if (readable(ref.logicalPath)) deletedShown.push(ref)
-    else hiddenChanges = true
-  }
+  for (const dels of deleted.values()) dels.forEach(showDeleted)
+  for (const ref of addedShown) entries.push(toEntry(ref, 'added'))
 
   const titles = await Promise.all(
     deletedShown.map((ref, i) =>
@@ -197,25 +254,22 @@ const branchChangesHandler = async (
 
   entries.sort((a, b) => a.logicalPath.localeCompare(b.logicalPath))
   collections.sort((a, b) => a.logicalPath.localeCompare(b.logicalPath))
+  otherFiles.sort()
   return {
-    ok: true,
-    status: 200,
-    data: {
-      base,
-      mergeBaseSha: mergeBase,
-      entries,
-      collections,
-      hiddenChanges,
-      ...(isAdmin(req.user.groups) && {
-        otherFiles: otherFiles.sort().slice(0, MAX_OTHER_FILES),
-      }),
-    },
+    mergeBaseSha: mergeBase,
+    entries,
+    collections,
+    hiddenChanges,
+    ...(admin && {
+      otherFiles: otherFiles.slice(0, MAX_OTHER_FILES),
+      otherFilesTruncated: otherFiles.length > MAX_OTHER_FILES,
+    }),
   }
 }
 
 /** A deleted entry's title as the listing would have shown it, from its file at `rev`. */
 const deletedTitle = async (
-  git: ReturnType<ApiContext['services']['createGitManagerFor']>,
+  git: BranchGit,
   rev: string,
   ref: EntryRef,
   flatSchema: BranchContextWithSchema['flatSchema'],
@@ -225,13 +279,16 @@ const deletedTitle = async (
       item.type === 'collection' && item.logicalPath === ref.collectionPath,
   )
   const entryType = collection?.entries?.find((e) => e.name === ref.entryType)
-  if (!entryType) return undefined
+  // An entry the schema no longer places is parsed by its extension, with no field list.
+  const format =
+    entryType?.format ?? FORMATS.find((f) => ref.physicalPath.endsWith(getFormatExtension(f)))
+  if (!format) return undefined
   try {
     const raw = await git.showFile(rev, ref.physicalPath)
     if (raw === undefined) return undefined
-    return resolveEntryTitle(parseEntryData(raw, entryType.format), {
-      schema: entryType.schema,
-      entryTypeLabel: entryType.label,
+    return resolveEntryTitle(parseEntryData(raw, format), {
+      schema: entryType?.schema,
+      entryTypeLabel: entryType?.label,
       slug: ref.logicalPath.slice(ref.logicalPath.lastIndexOf('/') + 1),
     })
   } catch {

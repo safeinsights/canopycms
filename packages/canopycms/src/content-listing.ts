@@ -13,7 +13,7 @@ import type { ContentFormat, FlatSchemaItem, EntryTypeConfig, EntrySchema } from
 import { findBodyFieldName } from './utils/body-field'
 import { computeEntryUrl } from './utils/entry-url'
 import { asRecord, getFormatExtension } from './utils/format'
-import { resolveCollectionPath } from './content-id-index'
+import { resolveCollectionPath, toLogicalCollectionPath } from './content-id-index'
 import { entryLogicalPath, validateAndNormalizePath } from './paths'
 import { resolveLogicalPath } from './paths/resolve'
 import { isNotFoundError, getErrorMessage } from './utils/error'
@@ -180,6 +180,48 @@ export function entryRefFromRepoPath(
     contentId: parsed.id,
     entryType: parsed.type,
     collectionPath: collection.logicalPath,
+    physicalPath,
+  }
+}
+
+const CONTENT_EXTENSIONS = ['.md', '.mdx', '.json', '.yaml']
+
+/**
+ * An entry or collection-settings ref read from `repoPath`'s shape alone, with no schema, for a
+ * file the current schema can't place: one deleted with its collection, under a collection's old
+ * name, or of an entry type since removed. The collection path strips the ids from the
+ * directory names, as the ContentId index does, and `entryType` is the filename's. Undefined
+ * for a path outside `contentRoot` or a filename of neither shape.
+ */
+export function entryRefFromRepoPathShape(
+  repoPath: string,
+  contentRoot: string,
+): Exclude<RepoPathRef, { kind: 'other' }> | undefined {
+  const physicalPath = repoPath.replace(/^(?:\.\/)+/, '').replace(/\/+$/, '')
+  const segments = physicalPath.split('/')
+  const rootSegments = contentRoot.split('/').filter(Boolean)
+  if (
+    segments.length <= rootSegments.length ||
+    rootSegments.some((segment, i) => segments[i] !== segment) ||
+    segments.some((segment) => segment === '' || segment === '.' || segment === '..')
+  ) {
+    return undefined
+  }
+  const filename = segments[segments.length - 1]
+  const collectionPath = [
+    ...rootSegments,
+    ...segments.slice(rootSegments.length, -1).map((segment) => toLogicalCollectionPath(segment)),
+  ].join('/') as LogicalPath
+  if (filename === '.collection.json')
+    return { kind: 'collection-meta', collectionPath, physicalPath }
+  const parsed = parseTypedFilename(filename)
+  if (!parsed || !CONTENT_EXTENSIONS.some((ext) => filename.endsWith(ext))) return undefined
+  return {
+    kind: 'entry',
+    logicalPath: entryLogicalPath(collectionPath, parsed.slug),
+    contentId: parsed.id,
+    entryType: parsed.type,
+    collectionPath,
     physicalPath,
   }
 }

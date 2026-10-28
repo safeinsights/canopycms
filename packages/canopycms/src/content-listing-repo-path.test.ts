@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { flattenSchema, type RootCollectionConfig } from './config'
-import { entryRefFromRepoPath } from './content-listing'
+import { entryRefFromRepoPath, entryRefFromRepoPathShape } from './content-listing'
 
 const ID = 'aB3cD4eF5gH6'
 const ID2 = 'zY9xW8vU7tS6'
@@ -155,5 +155,40 @@ describe('entryRefFromRepoPath', () => {
       kind: 'entry',
       logicalPath: 'blog/hello',
     })
+  })
+})
+
+describe('entryRefFromRepoPathShape', () => {
+  it('reads an entry under a collection the schema lacks, stripping ids from its directories', () => {
+    expect(
+      entryRefFromRepoPathShape(
+        `content/news.${COL}/old.${NESTED}/post.Hi.There.${ID}.md`,
+        'content',
+      ),
+    ).toEqual({
+      kind: 'entry',
+      logicalPath: 'content/news/old/hi.there',
+      contentId: ID,
+      entryType: 'post',
+      collectionPath: 'content/news/old',
+      physicalPath: `content/news.${COL}/old.${NESTED}/post.Hi.There.${ID}.md`,
+    })
+  })
+
+  it('reads a .collection.json as its collection’s settings', () => {
+    expect(entryRefFromRepoPathShape(`content/news.${COL}/.collection.json`, 'content')).toEqual({
+      kind: 'collection-meta',
+      collectionPath: 'content/news',
+      physicalPath: `content/news.${COL}/.collection.json`,
+    })
+  })
+
+  it.each([
+    ['outside the content root', `site/news/post.hi.${ID}.md`],
+    ['an untyped filename', 'content/news/hello.md'],
+    ['a non-content extension', `content/news/post.hi.${ID}.txt`],
+    ['a parent segment', `content/../news/post.hi.${ID}.md`],
+  ])('reads nothing from %s', (_name, repoPath) => {
+    expect(entryRefFromRepoPathShape(repoPath, 'content')).toBeUndefined()
   })
 })
