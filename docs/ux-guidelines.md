@@ -5,7 +5,7 @@ The standard for every change to the CanopyCMS editor (`packages/canopycms/src/e
 
 ## Vocabulary
 
-One word per idea, everywhere. New UI's verbs come from `EDITOR_ACTIONS` in
+One word per idea, everywhere. New UI takes the verbs from `EDITOR_ACTIONS` in
 `packages/canopycms/src/editor/copy.ts`.
 
 | Say                       | For                                                            | Not                                         |
@@ -23,7 +23,7 @@ One word per idea, everywhere. New UI's verbs come from `EDITOR_ACTIONS` in
 | **Delete**                | Destroying a stored entry, collection, branch or group         | Remove                                      |
 | **Discard changes**       | Throwing away unsaved edits                                    | Discard drafts, Revert                      |
 | **Unsaved**               | Not yet saved                                                  | Changed, Dirty                              |
-| **Changed**               | Unlike the base branch                                         | Modified, Diff                              |
+| **Changed**               | Different from the base branch                                 | Modified, Diff                              |
 | **entry**, **collection** | A content item, and the folder that holds entries              | file, page, item; folder                    |
 | **file**                  | An item in the media library                                   | asset, media item                           |
 | **Content**               | The panel of collections and entries                           | All entries                                 |
@@ -35,7 +35,7 @@ from `packages/canopycms/src/editor/branch-lock.ts`.
 ## Copy
 
 - **Sentence case** for every label, title, menu item, tab, badge, toast and placeholder:
-  "Delete branch".
+  "Delete branch", "Open in GitHub".
 - **Buttons start with a verb** and name the result. A confirm repeats the action's verb
   ("Delete entry"), never "OK" or "Yes"; a form's confirm may add its noun ("Create branch").
 - **`…`, the single character,** marks an in-progress state ("Saving…") or a command that
