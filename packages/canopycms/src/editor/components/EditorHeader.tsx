@@ -544,14 +544,19 @@ function ReviewButtons({
   narrow,
   ...rest
 }: WorkflowControlProps & { narrow: boolean }) {
-  // The bar's hand-off slot goes to the first control: Approve in the split, else Request changes,
-  // which is then the one control left when Approve goes, so `returnFocusTo` finds it.
-  const splitApprove = narrow && action.offersApprove
+  // The bar's hand-off slot goes to Approve while there is one, in either layout, so focus on it
+  // moves on when it goes; then Request changes, the one control left, takes the slot.
   const approveEl = useRef<HTMLButtonElement>(null)
-  const approveRef = useMergedRef(approveEl, splitApprove ? controlRef : undefined)
-  const requestChangesRef = useMergedRef(splitApprove ? undefined : controlRef)
-  // Approve returns focus to its own button while that is mounted, else to the control left.
+  const requestChangesEl = useRef<HTMLButtonElement>(null)
+  const approveRef = useMergedRef(approveEl, action.offersApprove ? controlRef : undefined)
+  const requestChangesRef = useMergedRef(
+    requestChangesEl,
+    action.offersApprove ? undefined : controlRef,
+  )
+  // Each returns focus to its own button while that is mounted, else to the control left.
   const approveReturn = () => (approveEl.current?.isConnected ? approveEl.current : returnFocusTo())
+  const requestChangesReturn = () =>
+    requestChangesEl.current?.isConnected ? requestChangesEl.current : returnFocusTo()
   const approve = (
     <ReviewButton
       buttonRef={approveRef}
@@ -569,7 +574,7 @@ function ReviewButtons({
       color="orange"
       testId="request-changes-button"
       label={EDITOR_ACTIONS.requestChanges}
-      onClick={() => onRequestChanges(returnFocusTo)}
+      onClick={() => onRequestChanges(requestChangesReturn)}
     />
   )
   if (!action.offersApprove) return requestChanges

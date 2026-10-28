@@ -1957,10 +1957,29 @@ describe('EditorHeader - review actions', () => {
     expect(screen.queryByTestId('branch-actions-button')).toBeNull()
   })
 
-  it('moves focus to Request changes when an approve leaves it as the only control', () => {
+  it('moves focus to Request changes when an approve that resolves late takes Approve away', async () => {
+    const onApprove = vi.fn()
+    const props: HeadersProps = { ...defaultProps, ...inReview, userContext: reviewer, onApprove }
+    const { rerender } = render(<Headers {...props} />, { wrapper: Wrapper })
+    await userEvent.click(screen.getByTestId('approve-button'))
+    // The dialog has closed and returned focus to Approve; the API has not answered yet.
+    const returnFocusTo = onApprove.mock.calls[0][0] as () => HTMLElement | null
+    act(() => returnFocusTo()?.focus())
+    expect(document.activeElement).toBe(screen.getByTestId('approve-button'))
+
+    // The answer arrives: the branch is approved and Approve unmounts with focus on it.
+    rerender(<Headers {...props} branchStatus="approved" />)
+
+    expect(screen.queryByTestId('approve-button')).toBeNull()
+    expect(document.activeElement).not.toBe(document.body)
+    expect(document.activeElement).toBe(screen.getByTestId('request-changes-button'))
+  })
+
+  it('below md, moves focus from Approve to Request changes when an approve takes Approve away', () => {
+    stubNarrowWindow()
     const props: HeadersProps = { ...defaultProps, ...inReview, userContext: reviewer }
     const { rerender } = render(<Headers {...props} />, { wrapper: Wrapper })
-    act(() => screen.getByTestId('request-changes-button').focus())
+    act(() => screen.getByTestId('approve-button').focus())
     rerender(<Headers {...props} branchStatus="approved" />)
     expect(document.activeElement).toBe(screen.getByTestId('request-changes-button'))
   })
