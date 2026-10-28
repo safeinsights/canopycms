@@ -5,8 +5,8 @@ import { pipeline } from 'node:stream/promises'
 import { getErrorMessage } from '../utils/error'
 
 /**
- * git with its stdin or stdout as a stream, which simple-git cannot do: a bundle's way into
- * `bundle unbundle -` and `fetch`, out of `bundle create -`, and `update-ref --stdin`'s
+ * git with its stdin or stdout as a stream, which simple-git cannot do: a bundle's pack into
+ * `index-pack --stdin`, a bundle into `fetch`, out of `bundle create -`, and `update-ref --stdin`'s
  * transactions. The caller supplies the whole environment, config and working directory, so the
  * pins of the repository it runs in apply here exactly as they do through simple-git
  * (worker/shared-repo-git.ts, worker/github-mirror.ts).
