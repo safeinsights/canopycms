@@ -69,9 +69,10 @@ const requestChangesHandler = async (
 
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
 
-  // The status the guard read can be stale by now: the save checks the status on disk, in the same
-  // step that writes. A branch that left review meanwhile (withdrawn, or merged) is already a
-  // draft or past it, so the draft conversion above leaves nothing to undo.
+  // The status the guard read can be stale by now, so the save checks the status on disk, in the
+  // same step that writes. A branch that left review meanwhile is refused, and the draft
+  // conversion above is left as it is: withdraw converts the pull request to a draft too, and a
+  // merged one cannot be converted.
   let found: string | undefined
   const updated = await meta.saveIf(
     { branch: { name: branchContext.branch.name, status: 'editing' } },

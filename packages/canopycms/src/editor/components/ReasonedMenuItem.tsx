@@ -14,6 +14,8 @@ export interface ReasonedMenuItemProps extends MenuItemProps {
   reasonDescribedBy?: string
   onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void
   'data-testid'?: string
+  /** The caller's own description, kept unless a shared reason points elsewhere. */
+  'aria-describedby'?: string
   children: React.ReactNode
 }
 
@@ -38,7 +40,7 @@ export const ReasonedMenuItem: React.FC<ReasonedMenuItemProps> = ({
     color={blockedReason ? undefined : color}
     c={blockedReason ? 'dimmed' : rest.c}
     aria-disabled={blockedReason ? true : undefined}
-    aria-describedby={blockedReason ? reasonDescribedBy : undefined}
+    aria-describedby={(blockedReason && reasonDescribedBy) || rest['aria-describedby']}
     closeMenuOnClick={blockedReason ? false : undefined}
     style={blockedReason ? { ...style, cursor: 'not-allowed' } : style}
     onClick={(event) => {
