@@ -33,7 +33,7 @@ const baseConfig = {
   contentRoot: 'content',
   gitBotAuthorName: 'Bot',
   gitBotAuthorEmail: 'bot@example.com',
-  // A server-only field, as a stale client config might still carry it.
+  // A server config field, which pins no branch even if a config object carries it.
   defaultBaseBranch: 'main',
 } as const
 

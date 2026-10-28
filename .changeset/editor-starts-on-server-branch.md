@@ -16,7 +16,8 @@ it opened on the branch the config evaluated in the browser named. In the browse
 from an environment variable falls back to its literal, so a deployment whose base differs from
 that literal opened on the wrong branch. `config.client()` and `CanopyClientConfig` no longer
 carry `defaultBaseBranch` or `defaultActiveBranch`, and `CanopyEditor` without a `branchName`
-starts branchless and adopts the server's default, as `CanopyEditorPage` does.
+starts branchless and adopts the server's default, as `CanopyEditorPage` does. If the branch
+list fails to load, both panes say so and the form offers Retry.
 
 **To adopt.** Nothing, unless your code reads `config.client().defaultBaseBranch` or
 `.defaultActiveBranch`. Read the branch from the server config instead (`config.server`, on the

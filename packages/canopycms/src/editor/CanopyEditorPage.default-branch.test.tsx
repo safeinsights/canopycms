@@ -1,6 +1,6 @@
 import React from 'react'
 
-import { render, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SWRConfig } from 'swr'
@@ -45,11 +45,22 @@ const listedEntry = (slug: string, contentId: string) => ({
   exists: true,
 })
 
+/** While `false`, the branch list answers 500. */
+let branchesUp = true
+
 const stubApi = () => {
   const fetchMock = vi.fn((input: RequestInfo | URL) => {
     const url =
       typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
     if (url.endsWith('/whoami')) return Promise.resolve(okJson({ userId: 'user-1', groups: [] }))
+    if (url.endsWith('/api/canopycms/branches') && !branchesUp) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: false, status: 500, error: 'Provisioning failed' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+    }
     if (url.endsWith('/api/canopycms/branches')) {
       return Promise.resolve(
         okJson({
@@ -137,6 +148,7 @@ describe('CanopyEditorPage starting branch', () => {
 
   beforeEach(() => {
     consoleSpy = mockConsole()
+    branchesUp = true
   })
 
   afterEach(() => {
@@ -166,6 +178,28 @@ describe('CanopyEditorPage starting branch', () => {
         `/api/canopycms/${SERVER_DEFAULT}/content/content/posts/other`,
       ),
     )
+    expect(new Set(requestedBranches(fetchMock))).toEqual(new Set([SERVER_DEFAULT]))
+  })
+
+  it('says the branch list failed, and opens the server default once Retry loads it', async () => {
+    branchesUp = false
+    const fetchMock = stubApi()
+    renderPage()
+
+    const notice = await screen.findByTestId('form-branches-load-failed')
+    expect(notice.textContent).toContain("Couldn't load the branch list")
+    expect(screen.getByTestId('preview-branches-load-failed')).toBeTruthy()
+    expect(screen.queryByText('Select an item to start editing.')).toBeNull()
+    expect(requestedBranches(fetchMock)).toEqual([])
+
+    branchesUp = true
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map(([input]) => String(input))).toContain(
+        `/api/canopycms/${SERVER_DEFAULT}/entries?limit=200`,
+      ),
+    )
+    expect(screen.queryByTestId('form-branches-load-failed')).toBeNull()
     expect(new Set(requestedBranches(fetchMock))).toEqual(new Set([SERVER_DEFAULT]))
   })
 
