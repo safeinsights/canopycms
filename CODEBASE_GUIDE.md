@@ -528,6 +528,7 @@ Top-level components and helpers:
 - `branch-status.ts` — status labels and colours
 - `branch-lock.ts` — `branchBarStatus`, the bar's lock-state table; `describeBranchLock`
 - `copy.ts` — fixed action verbs
+- `review-role.ts` — `isReviewerOfOthersReview`
 - `platform.ts` — `modKeyLabel()`, ⌘ or Ctrl
 - `slug.ts` — `slugFromTitle`; `validateEntrySlug`, the one slug validator
 - `utils/env.ts` — `getNotificationDuration`, longer under test
