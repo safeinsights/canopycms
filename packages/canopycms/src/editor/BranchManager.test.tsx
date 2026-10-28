@@ -271,6 +271,32 @@ describe('getBranchPermissions', () => {
     expect(perms.canRequestChanges).toBe(false)
   })
 
+  it('offers neither Approve nor Request changes on the protected base branch', () => {
+    const branch: BranchSummary = {
+      name: 'main',
+      status: 'submitted',
+      createdBy: 'other',
+      isProtected: true,
+    }
+    const perms = getBranchPermissions(branch, {
+      userId: 'reviewer',
+      groups: [RESERVED_GROUPS.REVIEWERS],
+    })
+    expect(perms.canApprove).toBe(false)
+    expect(perms.canRequestChanges).toBe(false)
+    expect(perms.canWithdraw).toBe(true)
+  })
+
+  it('lets a reviewer other than the creator approve a submitted branch, not their own', () => {
+    const branch: BranchSummary = { name: 'x', status: 'submitted', createdBy: 'other' }
+    const reviewer = { userId: 'reviewer', groups: [RESERVED_GROUPS.REVIEWERS] }
+    expect(getBranchPermissions(branch, reviewer).canApprove).toBe(true)
+    expect(getBranchPermissions({ ...branch, createdBy: 'reviewer' }, reviewer).canApprove).toBe(
+      false,
+    )
+    expect(getBranchPermissions({ ...branch, status: 'approved' }, reviewer).canApprove).toBe(false)
+  })
+
   it('allows withdraw when pullRequestState is undefined (never polled)', () => {
     const branch: BranchSummary = {
       name: 'main',

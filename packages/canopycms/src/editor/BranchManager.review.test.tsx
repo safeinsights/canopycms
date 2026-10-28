@@ -197,6 +197,23 @@ const rows: Row[] = [
     visible: ['switch-to'],
     menu: ['approve', 'request-changes', 'withdraw'],
   },
+  // The protected base branch is left to Withdraw, whoever reviews.
+  {
+    who: 'reviewer, protected base open, submitted',
+    user: reviewer,
+    branch: branch({ isProtected: true }),
+    open: true,
+    visible: ['withdraw'],
+    menu: [],
+  },
+  {
+    who: 'reviewer, protected base not open, submitted',
+    user: reviewer,
+    branch: branch({ isProtected: true }),
+    open: false,
+    visible: ['switch-to'],
+    menu: ['withdraw'],
+  },
   // Someone who does not review.
   {
     who: 'editor with access, open, submitted',

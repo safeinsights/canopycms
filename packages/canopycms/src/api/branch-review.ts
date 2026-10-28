@@ -9,6 +9,7 @@ import { syncConvertToDraft } from './github-sync'
 import { CommentStore } from '../comment-store'
 import { getErrorMessage } from '../utils/error'
 import { REQUEST_CHANGES_NOTE_MAX_LENGTH } from '../authorization/review-role'
+import { getBranchProtection } from '../authorization'
 
 /** Optional on the wire: a bodiless request means no note. */
 const requestChangesBodySchema = z
@@ -95,6 +96,16 @@ const approveBranchHandler = async (
       status: 403,
       error: "You can't approve a branch you created. Ask another reviewer to approve it.",
     }
+  }
+
+  // Request changes stays open on the base branch, as Withdraw does, to recover one stuck in review.
+  const { isProtected } = getBranchProtection(
+    ctx.services.config,
+    branchContext.branch.name,
+    branchContext.branch.baseBranch,
+  )
+  if (isProtected) {
+    return { ok: false, status: 400, error: "The base branch can't be approved." }
   }
 
   if (branchContext.branch.status !== 'submitted') {

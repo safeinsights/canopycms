@@ -412,6 +412,19 @@ describe('branch review api - approveBranch', () => {
     })
   })
 
+  it('refuses the protected base branch', async () => {
+    mockMetadataSave.mockClear()
+    const ctx = makeCtx()
+    ctx.getBranchContext = vi.fn().mockResolvedValue({
+      ...baseContext,
+      branch: { ...baseContext.branch, name: 'main' },
+    })
+    const res = await approveBranchHandler(ctx, admin, { branch: 'main' as BranchName })
+    expect(res.status).toBe(400)
+    expect(res.error).toBe("The base branch can't be approved.")
+    expect(mockMetadataSave).not.toHaveBeenCalled()
+  })
+
   it('refuses when the pull request was closed', async () => {
     mockMetadataSave.mockClear()
     const ctx = makeCtx()

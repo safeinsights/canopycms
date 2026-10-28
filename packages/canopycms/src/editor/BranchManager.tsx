@@ -163,9 +163,10 @@ export const getBranchPermissions = (
     !branch.isProtected
 
   // Approve and Request changes: a Reviewer or Admin other than the creator, who for an author
-  // would only do what Withdraw does. A closed PR refuses both (Request changes converts the PR to
+  // would only do what Withdraw does. Neither applies to the protected base branch, whose way
+  // out of review is Withdraw. A closed PR refuses both (Request changes converts the PR to
   // a draft); Approve also needs the branch submitted, Request changes accepts approved too.
-  const reviewsOthers = (userIsAdmin || userIsReviewer) && !userIsCreator
+  const reviewsOthers = (userIsAdmin || userIsReviewer) && !userIsCreator && !branch.isProtected
   const prLive = branch.pullRequestState !== 'closed'
   const canApprove = reviewsOthers && branch.status === 'submitted' && prLive
   const canRequestChanges =
@@ -284,6 +285,7 @@ const reviewsOthersBranch = (b: BranchSummary, user: UserContext | undefined): b
       createdBy: b.createdBy,
       users: b.access?.users,
       groups: b.access?.groups,
+      isProtected: b.isProtected,
     },
     user,
   )
@@ -332,7 +334,8 @@ const BranchCard: React.FC<BranchCardProps> = ({
   const userIsAdmin = isAdmin(user?.groups)
 
   // Shown to a reviewer other than the creator; the closed PR is the only thing that then blocks it.
-  const reviewsOthers = isReviewer(user?.groups) && !!user && b.createdBy !== user.userId
+  const reviewsOthers =
+    isReviewer(user?.groups) && !!user && b.createdBy !== user.userId && !b.isProtected
   const approve: BranchWorkflowAction | undefined =
     reviewsOthers && b.status === 'submitted'
       ? {

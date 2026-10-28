@@ -425,15 +425,14 @@ function workflowAction({
   // wrongly stuck in 'submitted'.
   if (branchIsProtected && !isWithdrawable) return null
 
-  // Not on the protected base branch: a stuck 'submitted' one is recovered by withdrawing it.
   if (
-    !branchIsProtected &&
     isReviewerOfOthersReview(
       {
         status: branchStatus,
         createdBy: branchCreatedBy,
         users: branchAccess?.allowedUsers,
         groups: branchAccess?.allowedGroups,
+        isProtected: branchIsProtected,
       },
       userContext,
     )

@@ -8,11 +8,13 @@ export interface ReviewedBranch {
   users?: readonly string[]
   /** Groups on the branch's access list. */
   groups?: readonly string[]
+  /** The protected base branch, which is never approved: Withdraw recovers one stuck in review. */
+  isProtected?: boolean
 }
 
 /**
  * Whether `user` reviews `branch` rather than owns it: a reviewer or admin, with the branch
- * submitted or approved, who neither made it nor was given access by name or by group. Such a
+ * submitted or approved and not the protected base branch, who neither made it nor was given access by name or by group. Such a
  * user is offered Approve and Request changes in place of Withdraw.
  */
 export function isReviewerOfOthersReview(
@@ -22,6 +24,7 @@ export function isReviewerOfOthersReview(
   return (
     !!user &&
     isReviewer(user.groups) &&
+    !branch.isProtected &&
     (branch.status === 'submitted' || branch.status === 'approved') &&
     branch.createdBy !== user.userId &&
     !branch.users?.includes(user.userId) &&
