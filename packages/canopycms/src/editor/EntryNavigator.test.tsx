@@ -3,7 +3,13 @@ import React, { useState } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { EntryNavigator, type EntryNavCollection, type EntryNavItem } from './EntryNavigator'
+import {
+  EntryNavigator,
+  type BranchChangesView,
+  type EntryFilter,
+  type EntryNavCollection,
+  type EntryNavItem,
+} from './EntryNavigator'
 import { CanopyCMSProvider } from './theme'
 import { UnsavedMark } from './components/UnsavedMark'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../paths/test-utils'
@@ -2349,7 +2355,7 @@ describe('EntryNavigator - revealing a collection', () => {
   })
 })
 
-describe('EntryNavigator - the Changed filter', () => {
+describe('EntryNavigator - the Unsaved filter', () => {
   const lp = unsafeAsLogicalPath
   const collections = (): EntryNavCollection[] => [
     {
@@ -2387,12 +2393,12 @@ describe('EntryNavigator - the Changed filter', () => {
   const dirty = new Set(['content/guides/privacy', 'content/reference/api/auth'])
 
   type Props = Partial<React.ComponentProps<typeof EntryNavigator>> & {
-    initialChanged?: boolean
-    onChange?: (changedOnly: boolean) => void
+    initialFilter?: EntryFilter
+    onChange?: (filter: EntryFilter) => void
   }
-  /** The navigator with its Changed state held as the editor holds it. */
-  function Harness({ initialChanged = false, onChange, ...props }: Props) {
-    const [changedOnly, setChangedOnly] = useState(initialChanged)
+  /** The navigator with its filter held as the editor holds it. */
+  function Harness({ initialFilter = 'all', onChange, ...props }: Props) {
+    const [entryFilter, setEntryFilter] = useState<EntryFilter>(initialFilter)
     return (
       <EntryNavigator
         onSelect={() => {}}
@@ -2400,10 +2406,10 @@ describe('EntryNavigator - the Changed filter', () => {
         dirtyPaths={dirty}
         unsavedCount={dirty.size}
         {...props}
-        changedOnly={changedOnly}
-        onChangedOnlyChange={(next) => {
+        entryFilter={entryFilter}
+        onEntryFilterChange={(next) => {
           onChange?.(next)
-          setChangedOnly(next)
+          setEntryFilter(next)
         }}
       />
     )
@@ -2415,29 +2421,29 @@ describe('EntryNavigator - the Changed filter', () => {
       </CanopyCMSProvider>,
     )
   const shown = (testId: string) => screen.queryByTestId(testId) !== null
-  const changed = () => screen.getByRole('radio', { name: /^Changed/ })
+  const unsaved = () => screen.getByRole('radio', { name: /^Unsaved/ })
   const filterInput = () => screen.getByTestId('entry-nav-filter') as HTMLInputElement
 
   it('shows no control without a handler for it', () => {
     renderEntryNavigator({ collections: collections(), dirtyPaths: dirty, unsavedCount: 2 })
-    expect(screen.queryByTestId('entry-nav-changed-filter')).toBeNull()
+    expect(screen.queryByTestId('entry-nav-shown')).toBeNull()
   })
 
-  it('offers All and Changed with the unsaved count, All first', () => {
+  it('offers All and Unsaved with the unsaved count, All first, and no Changed without the branch changes', () => {
     renderHarness()
     const group = screen.getByRole('radiogroup', { name: 'Entries shown' })
     expect(
       within(group)
         .getAllByRole('radio')
         .map((radio) => radio.getAttribute('value')),
-    ).toEqual(['all', 'changed'])
-    expect(changed().closest('div')?.textContent).toBe('Changed 2')
+    ).toEqual(['all', 'unsaved'])
+    expect(unsaved().closest('div')?.textContent).toBe('Unsaved 2')
     expect(shown('entry-nav-item-news')).toBe(true)
   })
 
   it('lists only the changed entries, under only the collections that hold them', async () => {
     renderHarness()
-    await userEvent.click(changed())
+    await userEvent.click(unsaved())
 
     expect(shown('entry-nav-item-privacy')).toBe(true)
     expect(shown('entry-nav-item-authentication')).toBe(true)
@@ -2449,7 +2455,7 @@ describe('EntryNavigator - the Changed filter', () => {
   })
 
   it("keeps only a matching collection's changed entries when a query is on too", async () => {
-    renderHarness({ initialChanged: true })
+    renderHarness({ initialFilter: 'unsaved' })
     await userEvent.type(filterInput(), 'guides')
 
     // "Guides" matches by its own title, yet its unchanged entry stays hidden.
@@ -2462,26 +2468,26 @@ describe('EntryNavigator - the Changed filter', () => {
 
   it('opens the first changed entry on Enter with an empty query', async () => {
     const onSelect = vi.fn()
-    renderHarness({ initialChanged: true, onSelect })
+    renderHarness({ initialFilter: 'unsaved', onSelect })
     filterInput().focus()
     await userEvent.keyboard('{Enter}')
     expect(onSelect).toHaveBeenCalledWith('content/guides/privacy')
   })
 
-  it('keeps Changed on when Escape clears the query', async () => {
+  it('keeps Unsaved on when Escape clears the query', async () => {
     const onChange = vi.fn()
-    renderHarness({ initialChanged: true, onChange })
+    renderHarness({ initialFilter: 'unsaved', onChange })
     await userEvent.type(filterInput(), 'auth{Escape}')
     expect(filterInput().value).toBe('')
     await userEvent.keyboard('{Escape}')
     expect(onChange).not.toHaveBeenCalled()
-    expect(changed()).toHaveProperty('checked', true)
+    expect(unsaved()).toHaveProperty('checked', true)
   })
 
   it('puts back the folders that were closed once All is chosen again', async () => {
     renderHarness()
     expect(shown('entry-nav-item-authentication')).toBe(false)
-    await userEvent.click(changed())
+    await userEvent.click(unsaved())
     expect(shown('entry-nav-item-authentication')).toBe(true)
     await userEvent.click(screen.getByRole('radio', { name: 'All' }))
     await waitFor(() => expect(shown('entry-nav-item-authentication')).toBe(false))
@@ -2489,21 +2495,21 @@ describe('EntryNavigator - the Changed filter', () => {
 
   it('says nothing is unsaved, with a way back to All', async () => {
     const onChange = vi.fn()
-    renderHarness({ initialChanged: true, dirtyPaths: new Set(), unsavedCount: 0, onChange })
-    const empty = screen.getByTestId('entry-nav-changed-none')
+    renderHarness({ initialFilter: 'unsaved', dirtyPaths: new Set(), unsavedCount: 0, onChange })
+    const empty = screen.getByTestId('entry-nav-unsaved-none')
     expect(empty.textContent).toContain('No unsaved changes on this branch.')
-    expect(changed().closest('div')?.textContent).toBe('Changed')
+    expect(unsaved().closest('div')?.textContent).toBe('Unsaved')
     await userEvent.click(within(empty).getByRole('button', { name: 'Show all entries' }))
-    expect(onChange).toHaveBeenCalledWith(false)
+    expect(onChange).toHaveBeenCalledWith('all')
     expect(document.activeElement).toBe(filterInput())
-    expect(shown('entry-nav-changed-none')).toBe(false)
+    expect(shown('entry-nav-unsaved-none')).toBe(false)
     expect(shown('entry-nav-item-news')).toBe(true)
   })
 
-  it('keeps a folder closed under Changed while the unsaved set only changes identity', async () => {
+  it('keeps a folder closed under Unsaved while the unsaved set only changes identity', async () => {
     const { rerender } = render(
       <CanopyCMSProvider>
-        <Harness initialChanged dirtyPaths={new Set(dirty)} />
+        <Harness initialFilter="unsaved" dirtyPaths={new Set(dirty)} />
       </CanopyCMSProvider>,
     )
     expect(shown('entry-nav-item-privacy')).toBe(true)
@@ -2512,7 +2518,7 @@ describe('EntryNavigator - the Changed filter', () => {
 
     rerender(
       <CanopyCMSProvider>
-        <Harness initialChanged dirtyPaths={new Set(dirty)} />
+        <Harness initialFilter="unsaved" dirtyPaths={new Set(dirty)} />
       </CanopyCMSProvider>,
     )
     await new Promise((resolve) => setTimeout(resolve, 30))
@@ -2532,16 +2538,16 @@ describe('EntryNavigator - the Changed filter', () => {
   })
 
   it('says the list failed under a query too, when the tree still shows its collections', async () => {
-    renderHarness({ initialChanged: true, dirtyPaths: new Set(), entryListFailed: true })
+    renderHarness({ initialFilter: 'unsaved', dirtyPaths: new Set(), entryListFailed: true })
     await userEvent.type(filterInput(), 'zzz')
-    expect(shown('entry-nav-changed-failed')).toBe(true)
-    expect(shown('entry-nav-changed-no-match')).toBe(false)
+    expect(shown('entry-nav-unsaved-failed')).toBe(true)
+    expect(shown('entry-nav-unsaved-no-match')).toBe(false)
   })
 
   it('offers an unsaved entry with no row that matches the query, and opens it on Enter', async () => {
     const onSelect = vi.fn()
     renderHarness({
-      initialChanged: true,
+      initialFilter: 'unsaved',
       onSelect,
       unsavedCount: 4,
       unsavedEntries: [
@@ -2551,27 +2557,27 @@ describe('EntryNavigator - the Changed filter', () => {
     })
     await userEvent.type(filterInput(), 'orphan')
 
-    const outside = screen.getByTestId('entry-nav-changed-outside')
+    const outside = screen.getByTestId('entry-nav-unsaved-outside')
     expect(
       within(outside)
         .getAllByRole('button')
         .map((button) => button.textContent),
     ).toEqual(['Orphan page'])
-    expect(shown('entry-nav-changed-no-match')).toBe(false)
+    expect(shown('entry-nav-unsaved-no-match')).toBe(false)
     await userEvent.keyboard('{Enter}')
     expect(onSelect).toHaveBeenCalledWith('content/elsewhere/orphan')
   })
 
   it('says no unsaved entry matches a query, and offers to search them all', async () => {
     const onChange = vi.fn()
-    renderHarness({ initialChanged: true, onChange })
+    renderHarness({ initialFilter: 'unsaved', onChange })
     await userEvent.type(filterInput(), 'launch')
 
-    const empty = screen.getByTestId('entry-nav-changed-no-match')
+    const empty = screen.getByTestId('entry-nav-unsaved-no-match')
     expect(empty.textContent).toContain('No unsaved entries match “launch”.')
     expect(shown('entry-nav-filter-empty')).toBe(false)
     await userEvent.click(within(empty).getByRole('button', { name: 'Search all entries' }))
-    expect(onChange).toHaveBeenCalledWith(false)
+    expect(onChange).toHaveBeenCalledWith('all')
     expect(filterInput().value).toBe('launch')
     expect(document.activeElement).toBe(filterInput())
     expect(shown('entry-nav-item-launch-day')).toBe(true)
@@ -2580,46 +2586,46 @@ describe('EntryNavigator - the Changed filter', () => {
   it('offers an unsaved entry the tree has no row for, which opens it', async () => {
     const onSelect = vi.fn()
     renderHarness({
-      initialChanged: true,
+      initialFilter: 'unsaved',
       onSelect,
       unsavedCount: 3,
       unsavedEntries: [{ path: 'content/elsewhere/orphan', label: 'Orphan page' }],
     })
-    const outside = screen.getByTestId('entry-nav-changed-outside')
-    expect(shown('entry-nav-changed-unlisted')).toBe(false)
+    const outside = screen.getByTestId('entry-nav-unsaved-outside')
+    expect(shown('entry-nav-unsaved-unlisted')).toBe(false)
     await userEvent.click(within(outside).getByRole('button', { name: 'Orphan page' }))
     expect(onSelect).toHaveBeenCalledWith('content/elsewhere/orphan')
   })
 
   it('says the list failed, never that nothing changed, when it could not load', () => {
     renderHarness({
-      initialChanged: true,
+      initialFilter: 'unsaved',
       collections: [],
       dirtyPaths: new Set(),
       unsavedCount: 2,
       entryListFailed: true,
     })
-    expect(screen.getByTestId('entry-nav-changed-filter')).toBeTruthy()
-    expect(screen.getByTestId('entry-nav-changed-failed').textContent).toContain(
+    expect(screen.getByTestId('entry-nav-shown')).toBeTruthy()
+    expect(screen.getByTestId('entry-nav-unsaved-failed').textContent).toContain(
       "The list of entries couldn't be loaded",
     )
-    expect(shown('entry-nav-changed-none')).toBe(false)
+    expect(shown('entry-nav-unsaved-none')).toBe(false)
     expect(screen.queryByText('No content')).toBeNull()
   })
 
   it('names the unsaved entries the tree does not list yet after the ones it does', () => {
-    renderHarness({ initialChanged: true, unsavedCount: 4 })
-    const notice = screen.getByTestId('entry-nav-changed-unlisted')
+    renderHarness({ initialFilter: 'unsaved', unsavedCount: 4 })
+    const notice = screen.getByTestId('entry-nav-unsaved-unlisted')
     expect(notice.textContent).toBe('2 more: loading their names…')
     expect(shown('entry-nav-item-privacy')).toBe(true)
   })
 
   it('says how many are unsaved while none of them is listed yet', () => {
-    renderHarness({ initialChanged: true, dirtyPaths: new Set(), unsavedCount: 1 })
-    expect(screen.getByTestId('entry-nav-changed-unlisted').textContent).toBe(
+    renderHarness({ initialFilter: 'unsaved', dirtyPaths: new Set(), unsavedCount: 1 })
+    expect(screen.getByTestId('entry-nav-unsaved-unlisted').textContent).toBe(
       '1 unsaved entry: loading its name…',
     )
-    expect(shown('entry-nav-changed-none')).toBe(false)
+    expect(shown('entry-nav-unsaved-none')).toBe(false)
   })
 })
 
@@ -2648,36 +2654,36 @@ describe('EntryNavigator - revealing an entry', () => {
     },
   ]
 
-  it('switches Changed to All, clears the query, opens its folders and focuses its row', async () => {
+  it('switches Unsaved to All, clears the query, opens its folders and focuses its row', async () => {
     const onRevealed = vi.fn()
-    const onChangedOnlyChange = vi.fn()
+    const onEntryFilterChange = vi.fn()
     const props = {
       onSelect: vi.fn(),
       collections: tree,
       dirtyPaths: new Set(['content/news/launch']),
       unsavedCount: 1,
-      onChangedOnlyChange,
+      onEntryFilterChange,
       onRevealed,
     }
     const { rerender } = render(
       <CanopyCMSProvider>
-        <EntryNavigator {...props} changedOnly />
+        <EntryNavigator {...props} entryFilter="unsaved" />
       </CanopyCMSProvider>,
     )
     fireEvent.change(screen.getByTestId('entry-nav-filter'), { target: { value: 'launch' } })
     const reveal = { kind: 'entry' as const, path: 'content/docs/guides/setup', seq: 1 }
     rerender(
       <CanopyCMSProvider>
-        <EntryNavigator {...props} changedOnly reveal={reveal} />
+        <EntryNavigator {...props} entryFilter="unsaved" reveal={reveal} />
       </CanopyCMSProvider>,
     )
-    await waitFor(() => expect(onChangedOnlyChange).toHaveBeenCalledWith(false))
+    await waitFor(() => expect(onEntryFilterChange).toHaveBeenCalledWith('all'))
     expect((screen.getByTestId('entry-nav-filter') as HTMLInputElement).value).toBe('')
     expect(onRevealed).not.toHaveBeenCalled()
 
     rerender(
       <CanopyCMSProvider>
-        <EntryNavigator {...props} changedOnly={false} reveal={reveal} />
+        <EntryNavigator {...props} entryFilter="all" reveal={reveal} />
       </CanopyCMSProvider>,
     )
     await waitFor(() => expect(onRevealed).toHaveBeenCalledTimes(1))
@@ -2719,10 +2725,10 @@ describe('EntryNavigator - revealing an entry', () => {
     expect((document.activeElement as HTMLElement).dataset.value).toBe('content/news/launch')
   })
 
-  it('clears the query for the unsaved entries, leaving Changed to its owner', async () => {
+  it('clears the query for the unsaved entries, leaving Unsaved to its owner', async () => {
     const onRevealed = vi.fn()
-    const onChangedOnlyChange = vi.fn()
-    const props = { onSelect: vi.fn(), collections: tree, onChangedOnlyChange, onRevealed }
+    const onEntryFilterChange = vi.fn()
+    const props = { onSelect: vi.fn(), collections: tree, onEntryFilterChange, onRevealed }
     const { rerender } = render(
       <CanopyCMSProvider>
         <EntryNavigator {...props} />
@@ -2731,12 +2737,12 @@ describe('EntryNavigator - revealing an entry', () => {
     fireEvent.change(screen.getByTestId('entry-nav-filter'), { target: { value: 'intro' } })
     rerender(
       <CanopyCMSProvider>
-        <EntryNavigator {...props} changedOnly reveal={{ kind: 'changed', seq: 1 }} />
+        <EntryNavigator {...props} entryFilter="unsaved" reveal={{ kind: 'unsaved', seq: 1 }} />
       </CanopyCMSProvider>,
     )
     await waitFor(() => expect(onRevealed).toHaveBeenCalledTimes(1))
     expect((screen.getByTestId('entry-nav-filter') as HTMLInputElement).value).toBe('')
-    expect(onChangedOnlyChange).not.toHaveBeenCalled()
+    expect(onEntryFilterChange).not.toHaveBeenCalled()
   })
 
   it('reports an entry the tree does not show as done, moving no focus', async () => {
@@ -2748,5 +2754,305 @@ describe('EntryNavigator - revealing an entry', () => {
     })
     await waitFor(() => expect(onRevealed).toHaveBeenCalledTimes(1))
     expect(document.activeElement).toBe(document.body)
+  })
+})
+
+describe('EntryNavigator - the Changed filter', () => {
+  const lp = unsafeAsLogicalPath
+  const tree: EntryNavCollection[] = [
+    {
+      path: lp('content'),
+      label: 'Content',
+      type: 'collection',
+      entries: [{ path: lp('content/home'), label: 'Home' }],
+      children: [
+        {
+          path: lp('content/guides'),
+          label: 'Guides',
+          type: 'collection',
+          entries: [
+            { path: lp('content/guides/privacy'), label: 'Privacy' },
+            { path: lp('content/guides/setup'), label: 'Setup' },
+          ],
+        },
+        {
+          path: lp('content/news'),
+          label: 'News',
+          type: 'collection',
+          entries: [{ path: lp('content/news/launch'), label: 'Launch day' }],
+        },
+      ],
+    },
+  ]
+  const entry = (
+    status: 'added' | 'modified' | 'deleted' | 'moved',
+    logicalPath: string,
+    extra: { title?: string; previousLogicalPath?: string } = {},
+  ) => ({
+    status,
+    logicalPath,
+    contentId: 'aB3cD4eF5gH6',
+    collectionPath: logicalPath.slice(0, logicalPath.lastIndexOf('/')),
+    entryType: 'page',
+    ...extra,
+  })
+  const loaded = (
+    data: Partial<NonNullable<BranchChangesView['data']>> = {},
+  ): NonNullable<BranchChangesView['data']> => ({
+    base: 'main',
+    entries: [
+      entry('modified', 'content/guides/privacy'),
+      entry('added', 'content/news/launch'),
+      entry('deleted', 'content/guides/old-faq', { title: 'Old FAQ' }),
+      entry('deleted', 'content/guides/untitled-one'),
+    ],
+    collections: [],
+    hiddenChanges: false,
+    ...data,
+  })
+
+  type Props = Partial<React.ComponentProps<typeof EntryNavigator>> & {
+    initialFilter?: EntryFilter
+    onChange?: (filter: EntryFilter) => void
+    changes?: Partial<BranchChangesView>
+  }
+  function Harness({ initialFilter = 'changed', onChange, changes, ...props }: Props) {
+    const [entryFilter, setEntryFilter] = useState<EntryFilter>(initialFilter)
+    return (
+      <EntryNavigator
+        onSelect={() => {}}
+        collections={tree}
+        hiddenRootPath="content"
+        branchChanges={{ base: 'main', data: loaded(), onRetry: () => {}, ...changes }}
+        {...props}
+        entryFilter={entryFilter}
+        onEntryFilterChange={(next) => {
+          onChange?.(next)
+          setEntryFilter(next)
+        }}
+      />
+    )
+  }
+  const renderHarness = (props: Props = {}) =>
+    render(
+      <CanopyCMSProvider>
+        <Harness {...props} />
+      </CanopyCMSProvider>,
+    )
+  const shown = (testId: string) => screen.queryByTestId(testId) !== null
+  const changedRadio = () => screen.getByRole('radio', { name: /^Changed/ })
+  const filterInput = () => screen.getByTestId('entry-nav-filter') as HTMLInputElement
+
+  it('offers All, Unsaved and Changed, counting the changes once loaded', () => {
+    const { rerender } = renderHarness({ initialFilter: 'all', changes: { data: undefined } })
+    const group = screen.getByRole('radiogroup', { name: 'Entries shown' })
+    expect(
+      within(group)
+        .getAllByRole('radio')
+        .map((radio) => radio.getAttribute('value')),
+    ).toEqual(['all', 'unsaved', 'changed'])
+    expect(changedRadio().closest('div')?.textContent).toBe('Changed')
+    rerender(
+      <CanopyCMSProvider>
+        <Harness initialFilter="all" />
+      </CanopyCMSProvider>,
+    )
+    expect(changedRadio().closest('div')?.textContent).toBe('Changed 4')
+  })
+
+  it('lists only the changed rows, each with a marker in its accessible name, keeping the unsaved dot', () => {
+    renderHarness({ dirtyPaths: new Set(['content/guides/privacy']) })
+    expect(shown('entry-nav-item-privacy')).toBe(true)
+    expect(shown('entry-nav-item-launch-day')).toBe(true)
+    expect(shown('entry-nav-item-setup')).toBe(false)
+    expect(shown('entry-nav-item-home')).toBe(false)
+
+    const privacy = screen.getByTestId('entry-nav-item-privacy')
+    expect(within(privacy).getByTestId('change-marker-modified').textContent).toBe(
+      'Edited on this branch',
+    )
+    expect(within(privacy).getByTestId('unsaved-dot')).toBeTruthy()
+    // The treeitem's name is its text, the marker's hidden words included.
+    const launch = screen
+      .getAllByRole('treeitem', { name: /Launch day.*New on this branch/ })
+      .find((item) => item.dataset.value === 'content/news/launch')
+    expect(launch).toBeTruthy()
+  })
+
+  it('shows no markers under All', () => {
+    renderHarness({ initialFilter: 'all' })
+    fireEvent.change(filterInput(), { target: { value: 'privacy' } })
+    expect(shown('entry-nav-item-privacy')).toBe(true)
+    expect(screen.queryByTestId('change-marker-modified')).toBeNull()
+  })
+
+  it('marks a moved entry Moved', () => {
+    renderHarness({
+      changes: {
+        data: loaded({
+          entries: [
+            entry('moved', 'content/guides/setup', { previousLogicalPath: 'content/setup' }),
+          ],
+        }),
+      },
+    })
+    expect(
+      within(screen.getByTestId('entry-nav-item-setup')).getByTestId('change-marker-moved'),
+    ).toBeTruthy()
+  })
+
+  it("shows a collection whose settings changed with a Settings marker, and the hidden root's beneath", () => {
+    renderHarness({
+      changes: {
+        data: loaded({
+          entries: [],
+          collections: [
+            { status: 'modified', logicalPath: 'content/news' },
+            { status: 'modified', logicalPath: 'content' },
+          ],
+        }),
+      },
+    })
+    const news = screen.getByTestId('entry-nav-item-news')
+    expect(within(news).getByTestId('change-marker-settings').textContent).toBe(
+      'Settings on this branch',
+    )
+    expect(shown('entry-nav-item-launch-day')).toBe(false)
+    const outside = screen.getByTestId('entry-nav-branch-changed-outside')
+    expect(outside.textContent).toContain('Content')
+    expect(within(outside).getByTestId('change-marker-settings')).toBeTruthy()
+  })
+
+  it('lists deleted entries beneath the tree by title, else slug, as plain text', () => {
+    renderHarness()
+    const deleted = screen.getByTestId('entry-nav-branch-changed-deleted')
+    expect(deleted.textContent).toContain('Deleted on this branch')
+    expect(deleted.textContent).toContain('Old FAQ')
+    expect(deleted.textContent).toContain('untitled-one')
+    expect(within(deleted).getAllByTestId('change-marker-deleted')).toHaveLength(2)
+    expect(within(deleted).queryByRole('button')).toBeNull()
+  })
+
+  it('offers an added entry the tree has no row for, which opens it', async () => {
+    const onSelect = vi.fn()
+    renderHarness({
+      onSelect,
+      changes: { data: loaded({ entries: [entry('added', 'content/news/brand-new')] }) },
+    })
+    const outside = screen.getByTestId('entry-nav-branch-changed-outside')
+    await userEvent.click(within(outside).getByRole('button', { name: /brand-new/ }))
+    expect(onSelect).toHaveBeenCalledWith('content/news/brand-new')
+  })
+
+  it('shows skeleton rows while the changes load', () => {
+    renderHarness({ changes: { data: undefined } })
+    expect(shown('entry-nav-branch-changed-loading')).toBe(true)
+    expect(shown('entry-nav-item-privacy')).toBe(false)
+    expect(shown('entry-nav-branch-changed-none')).toBe(false)
+  })
+
+  it('says nothing differs from the base once loaded, with a way back to All', async () => {
+    const onChange = vi.fn()
+    renderHarness({ onChange, changes: { data: loaded({ entries: [] }) } })
+    const empty = screen.getByTestId('entry-nav-branch-changed-none')
+    expect(empty.textContent).toContain('Nothing on this branch differs from main yet.')
+    await userEvent.click(within(empty).getByRole('button', { name: 'Show all entries' }))
+    expect(onChange).toHaveBeenCalledWith('all')
+    expect(shown('entry-nav-item-guides')).toBe(true)
+  })
+
+  it('shows a failed load above the list with Retry, keeping what loaded before', async () => {
+    const onRetry = vi.fn()
+    renderHarness({ changes: { error: { kind: 'failed', message: 'HTTP 500' }, onRetry } })
+    const alert = screen.getByTestId('entry-nav-branch-changed-failed')
+    expect(alert.textContent).toContain('Couldn’t load this branch’s changes.')
+    await userEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
+    expect(onRetry).toHaveBeenCalledTimes(1)
+    expect(shown('entry-nav-item-privacy')).toBe(true)
+  })
+
+  it('shows a failed first load with Retry and no skeleton', () => {
+    renderHarness({ changes: { data: undefined, error: { kind: 'failed', message: 'x' } } })
+    expect(shown('entry-nav-branch-changed-failed')).toBe(true)
+    expect(shown('entry-nav-branch-changed-loading')).toBe(false)
+  })
+
+  it('says, in yellow, that the branch is syncing', () => {
+    renderHarness({ changes: { data: undefined, error: { kind: 'syncing' } } })
+    const alert = screen.getByTestId('entry-nav-branch-changed-syncing')
+    expect(alert.textContent).toContain(
+      'This branch is being synced with main. Try again in a moment.',
+    )
+    expect(within(alert).getByRole('button', { name: 'Retry' })).toBeTruthy()
+  })
+
+  it('says some changes are hidden, without a count, and not that nothing changed', () => {
+    renderHarness({ changes: { data: loaded({ entries: [], hiddenChanges: true }) } })
+    expect(screen.getByTestId('entry-nav-branch-changed-hidden').textContent).toBe(
+      'Some changes are in entries you can’t view.',
+    )
+    expect(shown('entry-nav-branch-changed-none')).toBe(false)
+  })
+
+  it('says the base could not be compared', () => {
+    renderHarness({ changes: { data: loaded({ entries: [], baseUnavailable: true }) } })
+    expect(screen.getByTestId('entry-nav-branch-changed-unavailable').textContent).toBe(
+      'Couldn’t compare this branch with main.',
+    )
+    expect(shown('entry-nav-branch-changed-none')).toBe(false)
+  })
+
+  it('lists other files behind Details only when the answer has them', async () => {
+    const { unmount } = renderHarness()
+    expect(shown('entry-nav-branch-changed-other')).toBe(false)
+    unmount()
+    renderHarness({ changes: { data: loaded({ otherFiles: ['README.md', 'site/x.ts'] }) } })
+    const other = screen.getByTestId('entry-nav-branch-changed-other')
+    expect(other.textContent).toContain('Other files changed')
+    expect(other.textContent).not.toContain('README.md')
+    const details = within(other).getByRole('button', { name: 'Details' })
+    await userEvent.click(details)
+    expect(details.getAttribute('aria-expanded')).toBe('true')
+    expect(other.querySelector('pre, code')?.textContent).toBe('README.md\nsite/x.ts')
+  })
+
+  it('searches within the changes, and says when none matches', async () => {
+    renderHarness()
+    await userEvent.type(filterInput(), 'launch')
+    expect(shown('entry-nav-item-launch-day')).toBe(true)
+    expect(shown('entry-nav-item-privacy')).toBe(false)
+    expect(shown('entry-nav-branch-changed-deleted')).toBe(false)
+
+    await userEvent.clear(filterInput())
+    await userEvent.type(filterInput(), 'setup')
+    const empty = screen.getByTestId('entry-nav-branch-changed-no-match')
+    expect(empty.textContent).toContain('No changed entries match “setup”.')
+    expect(shown('entry-nav-filter-empty')).toBe(false)
+  })
+
+  it('announces the count once a load is shown, and again only for a new answer', () => {
+    const { rerender } = renderHarness({ changes: { data: undefined } })
+    const status = screen.getByTestId('entry-nav-branch-changed-status')
+    expect(status.getAttribute('role')).toBe('status')
+    expect(status.textContent).toBe('')
+    const data = loaded()
+    rerender(
+      <CanopyCMSProvider>
+        <Harness changes={{ data }} />
+      </CanopyCMSProvider>,
+    )
+    expect(status.textContent).toBe('4 changed entries')
+    rerender(
+      <CanopyCMSProvider>
+        <Harness changes={{ data: loaded({ entries: [entry('added', 'content/news/launch')] }) }} />
+      </CanopyCMSProvider>,
+    )
+    expect(status.textContent).toBe('1 changed entry')
+    rerender(
+      <CanopyCMSProvider>
+        <Harness changes={{ data: loaded({ entries: [] }) }} />
+      </CanopyCMSProvider>,
+    )
+    expect(status.textContent).toBe('No changed entries')
   })
 })

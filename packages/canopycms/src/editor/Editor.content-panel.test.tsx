@@ -26,6 +26,7 @@ Object.defineProperty(Element.prototype, 'scrollIntoView', { value: () => {}, co
 const originalMatchMedia = window.matchMedia
 
 afterEach(() => {
+  changesRequests = []
   cleanup()
   vi.unstubAllGlobals()
   window.matchMedia = originalMatchMedia
@@ -55,6 +56,9 @@ const okJson = (data: unknown) =>
     headers: { 'Content-Type': 'application/json' },
   })
 
+/** The URL of every GET /:branch/changes the editor sends. */
+let changesRequests: string[] = []
+
 const stubApi = ({
   failingSlug,
   failingEntries,
@@ -63,7 +67,10 @@ const stubApi = ({
   missingSlugs = [],
   loadedTitle = 'Loaded title',
   branchNames = ['main'],
+  changedEntries = [],
 }: {
+  /** What GET /:branch/changes answers with. */
+  changedEntries?: unknown[]
   /** The branches listed, each editable. */
   branchNames?: string[]
   failingSlug?: string
@@ -126,6 +133,12 @@ const stubApi = ({
             ],
             entrySchemas: { postSchema: schema },
           }),
+        )
+      }
+      if (url.endsWith('/changes')) {
+        changesRequests.push(url)
+        return Promise.resolve(
+          okJson({ base: 'main', entries: changedEntries, collections: [], hiddenChanges: false }),
         )
       }
       if (url.includes('/entries')) {
@@ -897,7 +910,7 @@ describe('unsaved entries', () => {
       }),
     )
   const unsaved = () => screen.findByTestId('branch-unsaved-count', {}, { timeout: 3000 })
-  const changedRadio = () => screen.getByRole('radio', { name: /^Changed/ }) as HTMLInputElement
+  const unsavedRadio = () => screen.getByRole('radio', { name: /^Unsaved/ }) as HTMLInputElement
   const allRadio = () => screen.getByRole('radio', { name: 'All' }) as HTMLInputElement
   const shown = (slug: string) => screen.queryByTestId(`entry-nav-item-${slug}`) !== null
   const openedOn = async (wide: boolean, layout: Record<string, unknown> = {}) => {
@@ -911,28 +924,28 @@ describe('unsaved entries', () => {
     )
   }
 
-  it("lists them in a closed docked panel, filtered to Changed, from the bar's count", async () => {
+  it("lists them in a closed docked panel, filtered to Unsaved, from the bar's count", async () => {
     keepDraft(second)
     await openedOn(true, { contentPanelOpen: false })
     expect(panel()).toBeNull()
 
     fireEvent.click(await unsaved())
 
-    await waitFor(() => expect(changedRadio().checked).toBe(true))
+    await waitFor(() => expect(unsavedRadio().checked).toBe(true))
     expect(panel()?.getAttribute('data-panel-mode')).toBe('docked')
     expect(storedLayout().contentPanelOpen).toBe(true)
     await waitFor(() => expect(shown('second')).toBe(true))
     expect(shown('hello')).toBe(false)
   })
 
-  it('opens the narrow overlay with Changed already set', async () => {
+  it('opens the narrow overlay with Unsaved already set', async () => {
     keepDraft(second)
     await openedOn(false)
 
     fireEvent.click(await unsaved())
 
     await waitFor(() => expect(panel()?.getAttribute('data-panel-mode')).toBe('overlay'))
-    expect(changedRadio().checked).toBe(true)
+    expect(unsavedRadio().checked).toBe(true)
     await waitFor(() => expect(shown('second')).toBe(true))
     expect(shown('hello')).toBe(false)
   })
@@ -948,10 +961,10 @@ describe('unsaved entries', () => {
 
     fireEvent.click(await unsaved())
 
-    expect((await screen.findByTestId('entry-nav-changed-failed')).textContent).toContain(
+    expect((await screen.findByTestId('entry-nav-unsaved-failed')).textContent).toContain(
       "The list of entries couldn't be loaded",
     )
-    expect(screen.queryByTestId('entry-nav-changed-none')).toBeNull()
+    expect(screen.queryByTestId('entry-nav-unsaved-none')).toBeNull()
     expect(consoleSpy).toHaveErrored(/500/)
   })
 
@@ -980,7 +993,7 @@ describe('unsaved entries', () => {
     fireEvent.click(await unsaved())
 
     await waitFor(() => expect(screen.getByTestId('entry-nav-filter')).toHaveProperty('value', ''))
-    expect(changedRadio().checked).toBe(true)
+    expect(unsavedRadio().checked).toBe(true)
     await waitFor(() => expect(shown('second')).toBe(true))
   })
 
@@ -988,7 +1001,7 @@ describe('unsaved entries', () => {
     keepDraft(second)
     await openedOn(true)
     fireEvent.click(await unsaved())
-    await waitFor(() => expect(changedRadio().checked).toBe(true))
+    await waitFor(() => expect(unsavedRadio().checked).toBe(true))
 
     fireEvent.keyDown(document.body, { key: 'p', ctrlKey: true })
 
@@ -996,15 +1009,15 @@ describe('unsaved entries', () => {
   })
 
   it('switches back to All on another branch, whose unsaved entries are its own', async () => {
-    // Nothing unsaved, so the switch asks no confirm (`useBranchActions`); Changed is chosen in the panel.
+    // Nothing unsaved, so the switch asks no confirm (`useBranchActions`); Unsaved is chosen in the panel.
     window.history.replaceState({}, '', `/?branch=main&entry=${hello.path}`)
     stubWindowWidth(true)
     storeLayout({ contentPanelOpen: true })
     stubApi({ branchNames: ['main', 'feature'] })
     renderEditor()
     await loaded()
-    fireEvent.click(changedRadio())
-    await waitFor(() => expect(changedRadio().checked).toBe(true))
+    fireEvent.click(unsavedRadio())
+    await waitFor(() => expect(unsavedRadio().checked).toBe(true))
 
     window.history.replaceState(null, '', `/?branch=feature&entry=${hello.path}`)
     act(() => {
@@ -1037,6 +1050,81 @@ describe('unsaved entries', () => {
     act(() => title.focus())
     await act(() => new Promise((resolve) => setTimeout(resolve, 30)))
     expect(panel()).not.toBeNull()
+  })
+})
+
+describe('changed on this branch', () => {
+  const changedRadio = () => screen.getByRole('radio', { name: /^Changed/ }) as HTMLInputElement
+  const allRadio = () => screen.getByRole('radio', { name: 'All' }) as HTMLInputElement
+  const helloChanged = {
+    status: 'modified',
+    logicalPath: hello.path,
+    contentId: hello.contentId,
+    collectionPath: 'content/posts',
+    entryType: 'post',
+  }
+
+  it('lists what differs from the base, counted in the control', async () => {
+    window.history.replaceState({}, '', `/?entry=${second.path}`)
+    stubWindowWidth(true)
+    storeLayout({ contentPanelOpen: true })
+    stubApi({ changedEntries: [helloChanged] })
+    renderEditor()
+    await loaded()
+    await waitFor(() => expect(changedRadio().closest('div')?.textContent).toBe('Changed 1'))
+    fireEvent.click(changedRadio())
+    expect(await screen.findByTestId('entry-nav-item-hello')).toBeTruthy()
+    expect(screen.queryByTestId('entry-nav-item-second')).toBeNull()
+    expect(changesRequests[0]).toMatch(/\/main\/changes$/)
+  })
+
+  it('reads nothing while the panel is closed', async () => {
+    window.history.replaceState({}, '', `/?entry=${hello.path}`)
+    stubWindowWidth(true)
+    storeLayout({ contentPanelOpen: false })
+    stubApi()
+    renderEditor()
+    await waitFor(() =>
+      expect(screen.getByTestId('file-dropdown-button').textContent).toContain('hello'),
+    )
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
+    expect(changesRequests).toEqual([])
+  })
+
+  it('reloads after a save', async () => {
+    window.history.replaceState({}, '', `/?entry=${hello.path}`)
+    stubWindowWidth(true)
+    storeLayout({ contentPanelOpen: true })
+    stubApi()
+    renderEditor()
+    await loaded()
+    await waitFor(() => expect(changesRequests).toHaveLength(1))
+    fireEvent.change(await screen.findByRole('textbox', { name: /^Title/ }), {
+      target: { value: 'Saved title' },
+    })
+    fireEvent.click(screen.getByTestId('save-button'))
+    await waitFor(() => expect(changesRequests).toHaveLength(2))
+  })
+
+  it('switches back to All on another branch', async () => {
+    window.history.replaceState({}, '', `/?branch=main&entry=${hello.path}`)
+    stubWindowWidth(true)
+    storeLayout({ contentPanelOpen: true })
+    stubApi({ branchNames: ['main', 'feature'] })
+    renderEditor()
+    await loaded()
+    fireEvent.click(changedRadio())
+    await waitFor(() => expect(changedRadio().checked).toBe(true))
+
+    window.history.replaceState(null, '', `/?branch=feature&entry=${hello.path}`)
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('branch-dropdown-button').textContent).toContain('feature'),
+    )
+    await waitFor(() => expect(allRadio().checked).toBe(true))
   })
 })
 

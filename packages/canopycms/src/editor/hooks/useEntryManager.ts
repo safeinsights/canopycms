@@ -82,6 +82,11 @@ export interface UseEntryManagerOptions {
   switchBranch?: (branch: string) => Promise<void>
   /** Called when a Back or Forward has opened another entry. */
   onHistoryRestore?: () => void
+  /**
+   * Called as each explicit refresh starts: every save, create, rename, delete and schema change
+   * refreshes the entries, so what reads the same branch state reloads here.
+   */
+  onContentRefresh?: (branch: string) => void
 }
 
 export interface UseEntryManagerReturn {
@@ -604,6 +609,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     branch: string = options.branchName,
   ): Promise<{ entries: EditorEntry[]; collections: EditorCollection[] }> => {
     if (!branch) return { entries: [], collections: [] }
+    options.onContentRefresh?.(branch)
     const seq = claimRefreshSeq(branch)
     const fetched = await fetchEntriesAndSchema(apiClient, branch, {
       resolvePreviewSrc: options.resolvePreviewSrc,

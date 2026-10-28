@@ -1,18 +1,22 @@
 'use client'
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { ContentId, LogicalPath } from '../paths/types'
 
 import {
   ActionIcon,
+  Alert,
+  Anchor,
   Badge,
   Box,
   Button,
   CloseButton,
+  Code,
   Group,
   Highlight,
   Loader,
   Menu,
+  Skeleton,
   ScrollArea,
   SegmentedControl,
   Stack,
@@ -20,6 +24,7 @@ import {
   TextInput,
   Tooltip,
   Tree,
+  VisuallyHidden,
   useTree,
   type RenderTreeNodePayload,
   type TreeNodeData,
@@ -28,16 +33,22 @@ import {
 import { useMergedRef } from '@mantine/hooks'
 import {
   IconArrowDown,
+  IconAlertCircle,
   IconAlertTriangle,
+  IconArrowRight,
   IconArrowUp,
   IconDots,
   IconEdit,
   IconFolderPlus,
   IconLock,
+  IconPencil,
   IconPlus,
   IconSearch,
+  IconSettings,
   IconTrash,
 } from '@tabler/icons-react'
+import type { BranchChangesData, BranchChangeEntry } from '../api/branch-changes'
+import type { BranchChangesError } from './hooks/useBranchChangesData'
 
 import { calculatePathToEntry } from './editor-utils'
 import { entryDetailLine, matchesEntryQuery } from './entry-search'
@@ -150,18 +161,23 @@ export interface EntryNavigatorProps {
   readOnlyReason?: string
   /** Entry paths with unsaved changes; each shows a dot, and so does every collection holding one. */
   dirtyPaths?: ReadonlySet<string>
-  /** A row to bring into view, or (`changed`) the unsaved entries; `onRevealed` once done. */
+  /** A row to bring into view, or (`unsaved`) the unsaved entries; `onRevealed` once done. */
   reveal?: ContentPanelReveal
   /** The reveal is done, or its row is not in the tree. */
   onRevealed?: () => void
-  /** The All / Changed control shows only with this; Changed lists the entries in `dirtyPaths`. */
-  onChangedOnlyChange?: (changedOnly: boolean) => void
-  changedOnly?: boolean
+  /**
+   * The All / Unsaved / Changed control shows only with this. Unsaved lists the entries in
+   * `dirtyPaths`; Changed, those in `branchChanges`.
+   */
+  onEntryFilterChange?: (filter: EntryFilter) => void
+  entryFilter?: EntryFilter
+  /** What the branch changes against its base. Without it the control offers no Changed. */
+  branchChanges?: BranchChangesView
   /** Entries with unsaved changes, counting drafts whose entries the tree doesn't list yet. */
   unsavedCount?: number
-  /** The named unsaved entries; Changed offers any the tree has no row for beneath it. */
+  /** The named unsaved entries; Unsaved offers any the tree has no row for beneath it. */
   unsavedEntries?: ReadonlyArray<{ path: string; label: string }>
-  /** The branch's entry list failed to load, so Changed can't name what is unsaved. */
+  /** The branch's entry list failed to load, so Unsaved can't name what is unsaved. */
   entryListFailed?: boolean
   /** The bar's "Not available" row: an empty tree says so, with `onSwitchBranch`, not "No content". */
   branchNotAvailable?: boolean
@@ -177,13 +193,53 @@ export interface EntryNavigatorProps {
 }
 
 /**
- * A collection or entry reveal clears the query, switches Changed back to All, expands the row's
- * ancestors (and a collection itself) and focuses the row. A `changed` reveal clears the query
- * only, for Changed set alongside it. `seq` makes a repeat ask a new one.
+ * A collection or entry reveal clears the query, switches the filter back to All, expands the
+ * row's ancestors (and a collection itself) and focuses the row. An `unsaved` reveal clears the
+ * query only, for Unsaved set alongside it. `seq` makes a repeat ask a new one.
  */
 export type ContentPanelReveal =
   | { kind: 'collection' | 'entry'; path: string; seq: number }
-  | { kind: 'changed'; seq: number }
+  | { kind: 'unsaved'; seq: number }
+
+/** Which entries the Content panel lists: all, those with unsaved edits, or those differing from the base. */
+export type EntryFilter = 'all' | 'unsaved' | 'changed'
+
+/** The branch's changes against its base, as the Changed filter shows them. */
+export interface BranchChangesView {
+  /** The base branch's name, for the copy. */
+  base: string
+  /** The last answer, kept while a reload or its error shows. */
+  data?: BranchChangesData
+  error?: BranchChangesError
+  onRetry: () => void
+}
+
+type ChangeMarkerKind = BranchChangeEntry['status'] | 'settings'
+
+const CHANGE_MARKERS: Record<ChangeMarkerKind, { label: string; icon: React.ReactNode }> = {
+  added: { label: 'New', icon: <IconPlus size={10} aria-hidden /> },
+  modified: { label: 'Edited', icon: <IconPencil size={10} aria-hidden /> },
+  moved: { label: 'Moved', icon: <IconArrowRight size={10} aria-hidden /> },
+  deleted: { label: 'Deleted', icon: <IconTrash size={10} aria-hidden /> },
+  settings: { label: 'Settings', icon: <IconSettings size={10} aria-hidden /> },
+}
+
+/** A row's change against the base: a word and an icon, never colour alone. */
+const ChangeMarker: React.FC<{ kind: ChangeMarkerKind }> = ({ kind }) => (
+  <Badge
+    size="xs"
+    variant="light"
+    color="gray"
+    leftSection={CHANGE_MARKERS[kind].icon}
+    data-testid={`change-marker-${kind}`}
+    style={{ flexShrink: 0 }}
+  >
+    {CHANGE_MARKERS[kind].label}
+    <VisuallyHidden component="span"> on this branch</VisuallyHidden>
+  </Badge>
+)
+
+const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
 
 const lastSegment = (path: string): string => path.split('/').filter(Boolean).pop() ?? path
 
@@ -213,8 +269,9 @@ const expandedStateFor = (nodes: TreeNodeData[], acc: Record<string, boolean> = 
 /**
  * The nodes of `nodes` that match `query` and, given `changed`, are in it. An entry matches on
  * label, title or slug; a collection whose label matches keeps its whole subtree, or under `changed` its
- * changed entries, and any other collection survives only with its matching descendants. Nodes keep
- * the position data (`childIndex`, `totalChildrenCount`) of the full tree.
+ * changed entries, and any other collection survives only with its matching descendants or, when
+ * `changed` holds the collection itself, a matching label. Nodes keep the position data
+ * (`childIndex`, `totalChildrenCount`) of the full tree.
  */
 const filterTree = (
   nodes: TreeNodeData[],
@@ -241,7 +298,9 @@ const filterTree = (
       continue
     }
     const children = filterTree(node.children ?? [], labelMatches ? '' : query, changed)
-    if (children.length > 0) kept.push({ ...node, children })
+    if (children.length > 0 || (labelMatches && changed?.has(node.value))) {
+      kept.push({ ...node, children })
+    }
   }
   return kept
 }
@@ -449,8 +508,9 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   dirtyPaths,
   reveal,
   onRevealed,
-  onChangedOnlyChange,
-  changedOnly: changedOnlyProp = false,
+  onEntryFilterChange,
+  entryFilter = 'all',
+  branchChanges,
   unsavedCount: unsavedCountProp = 0,
   unsavedEntries,
   entryListFailed = false,
@@ -478,13 +538,32 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   const [query, setQuery] = useState('')
   const filterInputRef = useRef<HTMLInputElement>(null)
   const mergedFilterRef = useMergedRef(filterInputRef, filterRef)
-  const changedOnly = changedOnlyProp && !!onChangedOnlyChange
-  const filtering = query.trim() !== '' || changedOnly
+  const unsavedOnly = entryFilter === 'unsaved' && !!onEntryFilterChange
+  const changedMode = entryFilter === 'changed' && !!onEntryFilterChange && !!branchChanges
+  const filtering = query.trim() !== '' || unsavedOnly || changedMode
   // Read from the tree's expand/collapse callbacks, which fire from state updaters.
   const filteringRef = useRef(false)
   useEffect(() => {
     filteringRef.current = filtering
   }, [filtering])
+  const [otherFilesOpen, setOtherFilesOpen] = useState(false)
+  const otherFilesId = useId()
+  // Announced once per answer shown under Changed (SWR keeps an unchanged answer's identity).
+  const [changesAnnouncement, setChangesAnnouncement] = useState('')
+  const announcedChanges = changedMode ? branchChanges?.data : undefined
+  useEffect(() => {
+    if (!announcedChanges) return
+    const entries = announcedChanges.entries.length
+    const collections = announcedChanges.collections.length
+    setChangesAnnouncement(
+      entries + collections === 0
+        ? 'No changed entries'
+        : plural(entries, 'changed entry', 'changed entries') +
+            (collections
+              ? ` and ${plural(collections, 'changed collection', 'changed collections')}`
+              : ''),
+    )
+  }, [announcedChanges])
 
   const treeData = useMemo<TreeNodeData[]>(() => {
     const entryNode = (
@@ -659,12 +738,35 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
 
   // Filtered from the finished tree, so each node keeps its position in the whole collection and
   // Move up / Move down stay correct while a filter is on.
+  const changes = changedMode ? branchChanges?.data : undefined
+  // Rows Changed keeps: entries with a row (not deleted ones) and collections whose settings changed.
+  const { changedValues, entryChange, settingsChanged } = useMemo(() => {
+    const values = new Set<string>()
+    const byPath = new Map<string, BranchChangeEntry['status']>()
+    const settings = new Set<string>()
+    for (const entry of changes?.entries ?? []) {
+      if (entry.status === 'deleted') continue
+      values.add(entry.logicalPath)
+      byPath.set(entry.logicalPath, entry.status)
+    }
+    for (const collection of changes?.collections ?? []) {
+      if (collection.status === 'deleted') continue
+      values.add(`collection:${collection.logicalPath}`)
+      settings.add(`collection:${collection.logicalPath}`)
+    }
+    return { changedValues: values, entryChange: byPath, settingsChanged: settings }
+  }, [changes])
+
   const filteredTree = useMemo(
     () =>
       filtering
-        ? filterTree(treeData, query, changedOnly ? (dirtyPaths ?? new Set()) : undefined)
+        ? filterTree(
+            treeData,
+            query,
+            unsavedOnly ? (dirtyPaths ?? new Set()) : changedMode ? changedValues : undefined,
+          )
         : treeData,
-    [filtering, treeData, query, changedOnly, dirtyPaths],
+    [filtering, treeData, query, unsavedOnly, changedMode, dirtyPaths, changedValues],
   )
 
   // A caller may pass a new but equal `dirtyPaths` as drafts change: that alone never reopens a
@@ -700,9 +802,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     return { dirtyCollections: dirty, listedUnsaved: listed }
   }, [treeData, dirtyPaths])
 
-  // Unsaved entries the tree has no row for, which Changed offers beneath it.
-  const unlistedNamed = useMemo(() => {
-    if (!changedOnly || !unsavedEntries?.length) return []
+  const treeRows = useMemo(() => {
     const rows = new Set<string>()
     const walk = (nodes: TreeNodeData[]) =>
       nodes.forEach((node) => {
@@ -710,12 +810,38 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
         walk(node.children ?? [])
       })
     walk(treeData)
-    return unsavedEntries.filter((entry) => !rows.has(entry.path))
-  }, [changedOnly, unsavedEntries, treeData])
+    return rows
+  }, [treeData])
+  // Unsaved entries the tree has no row for, which Unsaved offers beneath it.
+  const unlistedNamed = useMemo(
+    () => (unsavedOnly ? (unsavedEntries ?? []).filter((entry) => !treeRows.has(entry.path)) : []),
+    [unsavedOnly, unsavedEntries, treeRows],
+  )
   const unlistedMatches = useMemo(
     () => unlistedNamed.filter((entry) => matchesEntryQuery({ label: entry.label }, query)),
     [unlistedNamed, query],
   )
+  // Under Changed: entries with no row, the deleted ones and any the entry list doesn't hold yet,
+  // and collections whose settings row is not drawn, such as the hidden root's.
+  const changedBeneath = useMemo(() => {
+    const matches = (label: string) => matchesEntryQuery({ label }, query)
+    const unlisted = (changes?.entries ?? [])
+      .filter((e) => e.status !== 'deleted' && !treeRows.has(e.logicalPath))
+      .map((e) => ({ path: e.logicalPath, label: lastSegment(e.logicalPath), status: e.status }))
+      .filter((e) => matches(e.label))
+    const deleted = (changes?.entries ?? [])
+      .filter((e) => e.status === 'deleted')
+      .map((e) => ({ path: e.logicalPath, label: e.title || lastSegment(e.logicalPath) }))
+      .filter((e) => matches(e.label))
+    const settings = (changes?.collections ?? [])
+      .filter((c) => c.status === 'deleted' || !treeRows.has(`collection:${c.logicalPath}`))
+      .map((c) => ({
+        path: c.logicalPath,
+        label: c.logicalPath === hiddenRootPath ? 'Content' : lastSegment(c.logicalPath),
+      }))
+      .filter((c) => matches(c.label))
+    return { unlisted, deleted, settings }
+  }, [changes, treeRows, query, hiddenRootPath])
 
   // The hidden root's own row never renders, so its message is shown once above the tree.
   const hiddenRootAddRefused =
@@ -841,7 +967,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       servedRevealRef.current = reveal.seq
       onRevealed?.()
     }
-    if (reveal.kind === 'changed') {
+    if (reveal.kind === 'unsaved') {
       setQuery('')
       served()
       return
@@ -874,7 +1000,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
         ...wanted,
       }
       setQuery('')
-      if (changedOnly) onChangedOnlyChange?.(false)
+      if (entryFilter !== 'all') onEntryFilterChange?.('all')
       return
     }
     if (Object.keys(wanted).some((key) => !tree.expandedState[key])) {
@@ -911,7 +1037,10 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       if (query) setQuery('')
       else onFilterEscape?.()
     } else if (event.key === 'Enter' && filtering) {
-      const path = firstEntryPath(filteredTree, query) ?? unlistedMatches[0]?.path
+      const path =
+        firstEntryPath(filteredTree, query) ??
+        unlistedMatches[0]?.path ??
+        (changedMode ? changedBeneath.unlisted[0]?.path : undefined)
       if (path) {
         event.preventDefault()
         ;(onFilterEnter ?? onSelect)(path)
@@ -1024,6 +1153,11 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       !!(onDeleteEntryProp || onRenameEntryProp || onReorderEntryProp)
     const showsLockSlot = readOnly && (wouldHaveCollectionMenu || wouldHaveEntryMenu)
 
+    const changeMarker: ChangeMarkerKind | undefined = isEntry
+      ? entryChange.get(node.value)
+      : settingsChanged.has(node.value)
+        ? 'settings'
+        : undefined
     const showEntryDirtyDot = isEntry && !!entryPath && !!dirtyPaths?.has(entryPath)
     const showCollectionDirtyDot = !isEntry && dirtyCollections.has(node.value)
 
@@ -1080,6 +1214,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                     highlight={filtering ? query.trim() : ''}
                     fw={selected ? 600 : 500}
                   />
+                  {changeMarker && <ChangeMarker kind={changeMarker} />}
                   {showEntryDirtyDot && <UnsavedDot label="Unsaved changes" />}
                   {showCollectionDirtyDot && <UnsavedDot label="Contains unsaved changes" />}
                   {conflictNotice && (
@@ -1325,16 +1460,16 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     )
   }
 
-  // Changed can't list every entry it counts: those with no row are offered beneath the tree, and
+  // Unsaved can't list every entry it counts: those with no row are offered beneath the tree, and
   // drafts whose entries aren't named yet are counted there.
   const unsavedCount = Math.max(unsavedCountProp, listedUnsaved + unlistedNamed.length)
   const unnamedUnsaved = unsavedCount - listedUnsaved - unlistedNamed.length
   const showAll = () => {
-    onChangedOnlyChange?.(false)
+    onEntryFilterChange?.('all')
     filterInputRef.current?.focus()
   }
   const outsideRows = unlistedMatches.length > 0 && (
-    <Stack gap={2} py={4} align="flex-start" data-testid="entry-nav-changed-outside">
+    <Stack gap={2} py={4} align="flex-start" data-testid="entry-nav-unsaved-outside">
       <Text size="xs" c="dimmed">
         Not in the content tree
       </Text>
@@ -1352,15 +1487,15 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       ))}
     </Stack>
   )
-  const changedNotice = !changedOnly ? null : entryListFailed ? (
-    <Text size="sm" c="dimmed" py="sm" data-testid="entry-nav-changed-failed">
+  const unsavedNotice = !unsavedOnly ? null : entryListFailed ? (
+    <Text size="sm" c="dimmed" py="sm" data-testid="entry-nav-unsaved-failed">
       The list of entries couldn&apos;t be loaded, so unsaved entries can&apos;t be shown. Choose
       &quot;Refresh branch&quot; in the branch menu to try again.
     </Text>
   ) : query.trim() ? (
     <>
       {filteredTree.length === 0 && !outsideRows && (
-        <Stack gap={4} py="sm" align="flex-start" data-testid="entry-nav-changed-no-match">
+        <Stack gap={4} py="sm" align="flex-start" data-testid="entry-nav-unsaved-no-match">
           <Text size="sm" c="dimmed">
             No unsaved entries match “{query}”.
           </Text>
@@ -1373,7 +1508,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     </>
   ) : unsavedCount === 0 ? (
     treeData.length > 0 && (
-      <Stack gap={4} py="sm" align="flex-start" data-testid="entry-nav-changed-none">
+      <Stack gap={4} py="sm" align="flex-start" data-testid="entry-nav-unsaved-none">
         <Text size="sm" c="dimmed">
           No unsaved changes on this branch.
         </Text>
@@ -1386,7 +1521,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     <>
       {outsideRows}
       {unnamedUnsaved > 0 && (
-        <Text size="sm" c="dimmed" py={4} data-testid="entry-nav-changed-unlisted">
+        <Text size="sm" c="dimmed" py={4} data-testid="entry-nav-unsaved-unlisted">
           {listedUnsaved + unlistedNamed.length > 0
             ? `${unnamedUnsaved} more: `
             : `${unnamedUnsaved} unsaved ${unnamedUnsaved === 1 ? 'entry' : 'entries'}: `}
@@ -1394,6 +1529,170 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
         </Text>
       )}
     </>
+  )
+
+  // Changed: what the branch differs from its base in.
+  const changesData = branchChanges?.data
+  const changedCount = changesData && changesData.entries.length + changesData.collections.length
+  const changesError = changedMode ? branchChanges?.error : undefined
+  const changesLoading = changedMode && !changesData && !changesError
+  const base = branchChanges?.base ?? ''
+  const changedHeader = changedMode && (
+    <>
+      {changesError && (
+        <Alert
+          my={4}
+          p="xs"
+          variant="light"
+          color={changesError.kind === 'syncing' ? 'yellow' : 'red'}
+          icon={
+            changesError.kind === 'syncing' ? (
+              <IconAlertTriangle size={16} />
+            ) : (
+              <IconAlertCircle size={16} />
+            )
+          }
+          data-testid={`entry-nav-branch-changed-${changesError.kind}`}
+        >
+          <Group justify="space-between" gap="xs" wrap="nowrap">
+            <Text size="sm">
+              {changesError.kind === 'syncing'
+                ? `This branch is being synced with ${base}. Try again in a moment.`
+                : 'Couldn’t load this branch’s changes.'}
+            </Text>
+            <Button size="compact-sm" variant="subtle" onClick={branchChanges?.onRetry}>
+              Retry
+            </Button>
+          </Group>
+        </Alert>
+      )}
+      {changesData?.baseUnavailable && (
+        <Text size="sm" c="dimmed" py={4} data-testid="entry-nav-branch-changed-unavailable">
+          Couldn’t compare this branch with {base}.
+        </Text>
+      )}
+      {changesData?.hiddenChanges && (
+        <Text size="sm" c="dimmed" py={4} data-testid="entry-nav-branch-changed-hidden">
+          Some changes are in entries you can’t view.
+        </Text>
+      )}
+    </>
+  )
+  const { unlisted: changedUnlisted, deleted: changedDeleted, settings } = changedBeneath
+  const changedRows = (changedUnlisted.length > 0 ||
+    changedDeleted.length > 0 ||
+    settings.length > 0) && (
+    <>
+      {(changedUnlisted.length > 0 || settings.length > 0) && (
+        <Stack gap={2} py={4} align="flex-start" data-testid="entry-nav-branch-changed-outside">
+          <Text size="xs" c="dimmed">
+            Not in the content tree
+          </Text>
+          {changedUnlisted.map((entry) => (
+            <Button
+              key={entry.path}
+              size="compact-sm"
+              variant="subtle"
+              color="gray"
+              rightSection={<ChangeMarker kind={entry.status} />}
+              onClick={() => onSelect(entry.path)}
+            >
+              {entry.label}
+            </Button>
+          ))}
+          {settings.map((collection) => (
+            <Group key={collection.path} gap={6} px={10} wrap="nowrap">
+              <Text size="sm">{collection.label}</Text>
+              <ChangeMarker kind="settings" />
+            </Group>
+          ))}
+        </Stack>
+      )}
+      {changedDeleted.length > 0 && (
+        <Stack gap={2} py={4} align="flex-start" data-testid="entry-nav-branch-changed-deleted">
+          <Text size="xs" c="dimmed">
+            Deleted on this branch
+          </Text>
+          {changedDeleted.map((entry) => (
+            <Group key={entry.path} gap={6} px={10} wrap="nowrap" style={{ minWidth: 0 }}>
+              <Text size="sm" truncate="end" style={{ minWidth: 0 }}>
+                {entry.label}
+              </Text>
+              <ChangeMarker kind="deleted" />
+            </Group>
+          ))}
+        </Stack>
+      )}
+    </>
+  )
+  const otherFiles = changedMode ? (changesData?.otherFiles ?? []) : []
+  const otherFilesDetails = otherFiles.length > 0 && (
+    <Stack gap={2} py={4} align="flex-start" data-testid="entry-nav-branch-changed-other">
+      <Text size="xs" c="dimmed">
+        Other files changed
+      </Text>
+      <Anchor
+        component="button"
+        type="button"
+        size="xs"
+        px={10}
+        aria-expanded={otherFilesOpen}
+        aria-controls={otherFilesOpen ? otherFilesId : undefined}
+        onClick={() => setOtherFilesOpen((open) => !open)}
+      >
+        Details
+      </Anchor>
+      {otherFilesOpen && (
+        <Code id={otherFilesId} block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+          {otherFiles.join('\n')}
+        </Code>
+      )}
+    </Stack>
+  )
+  const nothingChanged =
+    !!changesData &&
+    !changesData.baseUnavailable &&
+    !changesData.hiddenChanges &&
+    changesData.entries.length === 0 &&
+    changesData.collections.length === 0
+  const branchChangedNotice =
+    !changedMode || !changesData ? null : query.trim() &&
+      filteredTree.length === 0 &&
+      !changedRows ? (
+      <Stack gap={4} py="sm" align="flex-start" data-testid="entry-nav-branch-changed-no-match">
+        <Text size="sm" c="dimmed">
+          No changed entries match “{query}”.
+        </Text>
+        <Button size="compact-sm" variant="subtle" onClick={showAll}>
+          Search all entries
+        </Button>
+      </Stack>
+    ) : (
+      <>
+        {nothingChanged && (
+          <Stack gap={4} py="sm" align="flex-start" data-testid="entry-nav-branch-changed-none">
+            <Text size="sm" c="dimmed">
+              Nothing on this branch differs from {base} yet.
+            </Text>
+            <Button size="compact-sm" variant="subtle" onClick={showAll}>
+              Show all entries
+            </Button>
+          </Stack>
+        )}
+        {changedRows}
+        {otherFilesDetails}
+      </>
+    )
+  const modeNotice = unsavedOnly ? unsavedNotice : branchChangedNotice
+  const changesSkeleton = (
+    <Stack gap={10} py="sm" px={10} aria-hidden data-testid="entry-nav-branch-changed-loading">
+      {[70, 55, 80, 45].map((width, i) => (
+        <Group key={i} gap={6} wrap="nowrap" pl={i % 2 ? 18 : 0}>
+          <Skeleton h={12} w={`${width}%`} />
+          <Skeleton h={12} w={40} />
+        </Group>
+      ))}
+    </Stack>
   )
 
   return (
@@ -1442,22 +1741,31 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           data-testid="entry-nav-filter"
         />
       )}
-      {onChangedOnlyChange && (treeData.length > 0 || unsavedCount > 0) && (
+      {onEntryFilterChange && (treeData.length > 0 || unsavedCount > 0 || !!branchChanges) && (
         <SegmentedControl
           size="xs"
           fullWidth
           mb={4}
           aria-label="Entries shown"
-          value={changedOnly ? 'changed' : 'all'}
-          onChange={(value) => onChangedOnlyChange(value === 'changed')}
+          value={unsavedOnly ? 'unsaved' : changedMode ? 'changed' : 'all'}
+          onChange={(value) => onEntryFilterChange(value as EntryFilter)}
           data={[
             { value: 'all', label: 'All' },
-            { value: 'changed', label: unsavedCount > 0 ? `Changed ${unsavedCount}` : 'Changed' },
+            { value: 'unsaved', label: unsavedCount > 0 ? `Unsaved ${unsavedCount}` : 'Unsaved' },
+            ...(branchChanges
+              ? [{ value: 'changed', label: changedCount ? `Changed ${changedCount}` : 'Changed' }]
+              : []),
           ]}
-          data-testid="entry-nav-changed-filter"
+          data-testid="entry-nav-shown"
         />
       )}
+      {branchChanges && (
+        <VisuallyHidden role="status" data-testid="entry-nav-branch-changed-status">
+          {changesAnnouncement}
+        </VisuallyHidden>
+      )}
       <ScrollArea type="auto" scrollbars="y" offsetScrollbars style={{ flex: 1 }}>
+        {changedHeader}
         {hiddenRootUnavailableRefs && hiddenRootUnavailableRefs.length > 0 && (
           <Box pt="sm">
             <UnavailableTypeRow schemaRefs={hiddenRootUnavailableRefs} />
@@ -1481,15 +1789,20 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                 Loading content…
               </Text>
             </Group>
-          ) : changedNotice ? (
-            changedNotice
+          ) : changesLoading ? (
+            changesSkeleton
+          ) : modeNotice ? (
+            modeNotice
           ) : (
             <Text size="xs" c="dimmed" py="sm">
               No content
             </Text>
           )
-        ) : filteredTree.length === 0 && changedOnly ? (
-          changedNotice
+        ) : changesLoading ? (
+          changesSkeleton
+        ) : changedMode && !changesData ? null : filteredTree.length === 0 &&
+          (unsavedOnly || changedMode) ? (
+          modeNotice
         ) : filteredTree.length === 0 ? (
           <Stack gap={4} py="sm" align="flex-start" data-testid="entry-nav-filter-empty">
             <Text size="sm" c="dimmed">
@@ -1508,7 +1821,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
               selectOnClick={false}
               levelOffset="sm"
             />
-            {changedNotice}
+            {modeNotice}
           </Box>
         )}
       </ScrollArea>
