@@ -205,7 +205,13 @@ const HEALTHY: GitHubGatewayHealth = {
   fatalError: null,
   preflight: 'not-an-app',
   clerkConfigured: false,
-  protectedBranches: { configured: [], githubDefault: 'main' },
+  branchPolicy: {
+    configured: [],
+    githubDefault: 'main',
+    namespace: 'canopycms-',
+    legacy: [],
+    settingsBranch: null,
+  },
 }
 
 const SNAPSHOT: AuthCacheSnapshot = {
@@ -571,6 +577,12 @@ describe('runWorker: a healthy start', () => {
     expect(absent.createWorker.mock.calls[0][0].protectedBranches).toEqual([])
   })
 
+  it('passes CANOPYCMS_LEGACY_BRANCHES as a list to the single-process worker', async () => {
+    const h = harness({ env: { ...baseEnv(), CANOPYCMS_LEGACY_BRANCHES: 'spring, fix/typos' } })
+    await runWorker(h.deps)
+    expect(h.createWorker.mock.calls[0][0].legacyBranches).toEqual(['spring', 'fix/typos'])
+  })
+
   it.each([
     [undefined, true],
     ['', true],
@@ -847,14 +859,17 @@ describe('runWorker: split mode', () => {
     expect(h.exit).not.toHaveBeenCalled()
   })
 
-  it("refuses CANOPYCMS_PROTECTED_BRANCHES on the worker's unit, which only the gateway enforces", async () => {
-    const h = harness({ env: { ...splitEnv(), CANOPYCMS_PROTECTED_BRANCHES: 'release/*' } })
+  it.each([
+    ['CANOPYCMS_PROTECTED_BRANCHES', 'release/*'],
+    ['CANOPYCMS_LEGACY_BRANCHES', 'spring'],
+  ])("refuses %s on the worker's unit, which only the gateway enforces", async (name, value) => {
+    const h = harness({ env: { ...splitEnv(), [name]: value } })
 
     await runWorker(h.deps)
 
     expect(h.record).toHaveBeenCalledTimes(1)
     const { error } = h.record.mock.calls[0][0] as { error: Error }
-    expect(error.message).toMatch(/CANOPYCMS_PROTECTED_BRANCHES is set on the worker unit/)
+    expect(error.message).toMatch(new RegExp(`${name} is set on the worker unit`))
     expect(h.connectGateway).not.toHaveBeenCalled()
     expect(h.createWorker).not.toHaveBeenCalled()
     expect(h.exitCodes()).toEqual([1])

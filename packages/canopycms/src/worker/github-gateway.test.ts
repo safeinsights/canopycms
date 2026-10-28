@@ -391,10 +391,12 @@ describe('push', () => {
 })
 
 describe('health', () => {
-  it('reports a prepared gateway ready, with its preflight, Clerk and protected set', async () => {
+  it('reports a prepared gateway ready, with its preflight, Clerk and branch policy', async () => {
     const github = gateway({
       baseBranch: 'production',
       protectedBranches: ['release/*'],
+      settingsBranch: 'canopycms-settings-prod',
+      legacyBranches: ['spring'],
       authSnapshot: async () => ({ users: [], groups: [], memberships: {} }),
       prefetch: false,
     })
@@ -405,7 +407,13 @@ describe('health', () => {
       fatalError: null,
       preflight: 'not-an-app',
       clerkConfigured: true,
-      protectedBranches: { configured: ['production', 'release/*'], githubDefault: null },
+      branchPolicy: {
+        configured: ['production', 'release/*'],
+        githubDefault: null,
+        namespace: 'canopycms-',
+        legacy: ['spring'],
+        settingsBranch: 'canopycms-settings-prod',
+      },
     })
   })
 

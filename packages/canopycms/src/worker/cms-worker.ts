@@ -96,6 +96,8 @@ export {
   type GitHubGatewayServerOptions,
 } from './github-gateway-http'
 export { GitHubGatewayUnreachableError } from './github-gateway-wire'
+// A gateway that failed to boot still describes the namespace it would have enforced.
+export { CMS_BRANCH_PREFIX } from '../paths/branch-name'
 // A gateway that failed to boot still serves the instance operations.
 export { GatewayInstance, type GatewayInstanceOptions } from './gateway-instance'
 // The gateway process's scrubbed log lines, and the exact scrubs for the secrets it holds that
@@ -147,8 +149,8 @@ export interface CmsWorkerConfig extends GitHubAuthConfig {
   /**
    * A GitHub gateway to use instead of building the in-process one: a client of a gateway another
    * process serves (`connectGitHubGateway`), which holds the credential, the protected set and the
-   * mirror. Exclusive with `githubToken`, `githubAppAuth`, `refreshGitHubToken` and
-   * `protectedBranches`, which configure the in-process one.
+   * mirror. Exclusive with `githubToken`, `githubAppAuth`, `refreshGitHubToken`,
+   * `protectedBranches` and `legacyBranches`, which configure the in-process one.
    */
   githubGateway?: GitHubGateway
   /** GitHub owner (e.g., 'acme') */
@@ -171,6 +173,11 @@ export interface CmsWorkerConfig extends GitHubAuthConfig {
    * characters (`release/*`), which never match a settings branch. See worker/branch-policy.ts.
    */
   protectedBranches?: readonly string[]
+  /**
+   * Branches outside the `canopycms-` namespace the in-process gateway may still write: exact
+   * names of branches from before the namespace. See worker/branch-policy.ts.
+   */
+  legacyBranches?: readonly string[]
   /**
    * Names THIS worker's own settings branch
    * (`canopycms-settings-{deploymentName}`, default 'prod' — ProdStrategy's
@@ -264,6 +271,22 @@ function sameRefs(a: Map<string, string>, b: Map<string, string>): boolean {
  * The default `taskTimeoutMs`. Exported because a split worker's gateway client passes it as its
  * `fetchInactivityMs` and the gateway uses it as its `timeoutMs`, as the in-process gateway does.
  */
+/**
+ * The settings branch a worker owns: `settingsBranch` when set, else
+ * `canopycms-settings-{deploymentName}` by `resolveDeploymentName`, which reads
+ * `CANOPYCMS_DEPLOYMENT_NAME` first. The split gateway resolves its own the same way, from its own
+ * environment, so the one branch it pushes is the one its worker owns.
+ */
+export function resolveWorkerSettingsBranch(config: {
+  settingsBranch?: string
+  deploymentName?: string
+}): string {
+  return (
+    config.settingsBranch ??
+    `${RESERVED_SETTINGS_BRANCH_PREFIX}${resolveDeploymentName({ deploymentName: config.deploymentName }, 'prod')}`
+  )
+}
+
 export const DEFAULT_TASK_TIMEOUT = 60_000
 const DEFAULT_MAX_RETRIES = 3
 const DEFAULT_LOCK_STALE_MS = 60_000
@@ -550,9 +573,7 @@ export class CmsWorker {
    */
   private ensureSettingsBranch(): string {
     if (this.settingsBranchResolved === undefined) {
-      this.settingsBranchResolved =
-        this.config.settingsBranch ??
-        `${RESERVED_SETTINGS_BRANCH_PREFIX}${resolveDeploymentName({ deploymentName: this.config.deploymentName }, 'prod')}`
+      this.settingsBranchResolved = resolveWorkerSettingsBranch(this.config)
     }
     return this.settingsBranchResolved
   }
@@ -1515,10 +1536,11 @@ export class CmsWorker {
     if (this.config.githubAppAuth !== undefined) conflicting.push('githubAppAuth')
     if (this.config.refreshGitHubToken !== undefined) conflicting.push('refreshGitHubToken')
     if ((this.config.protectedBranches?.length ?? 0) > 0) conflicting.push('protectedBranches')
+    if ((this.config.legacyBranches?.length ?? 0) > 0) conflicting.push('legacyBranches')
     if (conflicting.length > 0) {
       throw new Error(
         `CmsWorker: githubGateway is exclusive with ${conflicting.join(', ')}, which configure the ` +
-          'in-process gateway; the gateway it is given holds the credential and the protected set',
+          'in-process gateway; the gateway it is given holds the credential and the branch policy',
       )
     }
     this.gateway = githubGateway
@@ -1546,6 +1568,8 @@ export class CmsWorker {
       timeoutMs: this.taskTimeoutMs,
       baseBranch: this.config.baseBranch,
       protectedBranches: this.config.protectedBranches,
+      settingsBranch: this.ensureSettingsBranch(),
+      legacyBranches: this.config.legacyBranches,
     }
   }
 

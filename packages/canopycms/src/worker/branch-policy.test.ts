@@ -5,12 +5,15 @@ import {
   DEFAULT_BRANCH_TTL_MS,
   GatewayRefusalError,
   MAX_BRANCH_NAME_LENGTH,
+  MAX_LEGACY_BRANCHES,
   MAX_PROTECTED_BRANCHES,
   MAX_PULL_REQUEST_BODY_LENGTH,
   MAX_PULL_REQUEST_TITLE_LENGTH,
   branchNameProblem,
+  legacyBranchProblem,
   matchesBranchPattern,
   protectedPatternProblem,
+  pushRefusalMessage,
 } from './branch-policy'
 
 const defaultIs = (name: string | null) => vi.fn(async () => name)
@@ -260,14 +263,14 @@ describe('BranchPolicy: refusals', () => {
   })
 
   it('takes a plain push to a settings branch, and refuses a leased one', async () => {
-    const policy = new BranchPolicy()
+    const policy = new BranchPolicy({ settingsBranch: 'canopycms-settings-prod' })
     const read = defaultIs('main')
 
     await policy.assertPushAllowed('canopycms-settings-prod', undefined, read, refusePush)
     await expect(
       policy.assertPushAllowed('canopycms-settings-prod', 'a'.repeat(40), read, refusePush),
     ).rejects.toThrow('push refused: settings')
-    await policy.assertPushAllowed('feature', 'a'.repeat(40), read, refusePush)
+    await policy.assertPushAllowed('canopycms-feature', 'a'.repeat(40), read, refusePush)
   })
 
   it("refuses to delete GitHub's default branch, the base, a listed branch or a settings branch", async () => {
@@ -284,7 +287,7 @@ describe('BranchPolicy: refusals', () => {
       expect(caught).toBeInstanceOf(GatewayRefusalError)
       expect(caught).toMatchObject({ operation: 'delete', branch, reason })
     }
-    await policy.assertDeleteAllowed('feature', read)
+    await policy.assertDeleteAllowed('canopycms-feature', read)
   })
 
   it('refuses a pull request from a protected or settings head, never for its base', async () => {
@@ -297,7 +300,10 @@ describe('BranchPolicy: refusals', () => {
       )
     }
     // The base is whatever the branch was created from, protected or not.
-    await policy.assertPullRequestAllowed({ head: 'feature', title: 'T', body: 'B' }, read)
+    await policy.assertPullRequestAllowed(
+      { head: 'canopycms-feature', title: 'T', body: 'B' },
+      read,
+    )
   })
 
   it('refuses pull request text over its caps, and takes it at them', async () => {
@@ -306,7 +312,7 @@ describe('BranchPolicy: refusals', () => {
 
     await policy.assertPullRequestAllowed(
       {
-        head: 'feature',
+        head: 'canopycms-feature',
         title: 't'.repeat(MAX_PULL_REQUEST_TITLE_LENGTH),
         body: 'b'.repeat(MAX_PULL_REQUEST_BODY_LENGTH),
       },
@@ -317,8 +323,181 @@ describe('BranchPolicy: refusals', () => {
       { body: 'b'.repeat(MAX_PULL_REQUEST_BODY_LENGTH + 1) },
     ]) {
       await expect(
-        policy.assertPullRequestAllowed({ head: 'feature', ...text }, read),
+        policy.assertPullRequestAllowed({ head: 'canopycms-feature', ...text }, read),
       ).rejects.toMatchObject({ reason: 'too-long' })
+    }
+  })
+})
+
+describe('BranchPolicy: the namespace', () => {
+  const refusePush = (reason: string) => new Error(`push refused: ${reason}`)
+  const lease = 'a'.repeat(40)
+
+  /** What the policy answers for each operation on `branch`: 'ok' or the refusal's reason. */
+  async function verdicts(policy: BranchPolicy, branch: string) {
+    const read = defaultIs('main')
+    const reasonOf = (err: unknown) =>
+      err instanceof GatewayRefusalError
+        ? err.reason
+        : err instanceof Error
+          ? err.message.replace('push refused: ', '')
+          : String(err)
+    const settle = (work: Promise<void>) => work.then(() => 'ok', reasonOf)
+    return {
+      push: await settle(policy.assertPushAllowed(branch, undefined, read, refusePush)),
+      lease: await settle(policy.assertPushAllowed(branch, lease, read, refusePush)),
+      delete: await settle(policy.assertDeleteAllowed(branch, read)),
+      pullRequest: await settle(policy.assertPullRequestAllowed({ head: branch }, read)),
+    }
+  }
+  const all = (verdict: string) => ({
+    push: verdict,
+    lease: verdict,
+    delete: verdict,
+    pullRequest: verdict,
+  })
+
+  it('writes a branch in the namespace, and nothing outside it', async () => {
+    const policy = new BranchPolicy({ settingsBranch: 'canopycms-settings-prod' })
+
+    expect(await verdicts(policy, 'canopycms-spring-update')).toEqual(all('ok'))
+    for (const outside of ['feature', 'release/1', 'deploy-staging', 'cms-x']) {
+      expect(await verdicts(policy, outside)).toEqual(all('outside-namespace'))
+    }
+  })
+
+  it('compares the prefix exactly, as GitHub compares refs', async () => {
+    const policy = new BranchPolicy()
+
+    for (const lookalike of [
+      'CanopyCMS-x',
+      'Canopycms-x',
+      'canopycms',
+      'canopycms_x',
+      'xcanopycms-x',
+    ]) {
+      expect(await verdicts(policy, lookalike)).toEqual(all('outside-namespace'))
+    }
+  })
+
+  it('writes a legacy branch by its exact name only, never a name that sanitizes to it', async () => {
+    const policy = new BranchPolicy({ legacyBranches: ['feature/x', 'spring'] })
+
+    expect(await verdicts(policy, 'feature/x')).toEqual(all('ok'))
+    expect(await verdicts(policy, 'spring')).toEqual(all('ok'))
+    for (const near of ['feature-x', 'feature/x/y', 'Spring', 'spring-2']) {
+      expect(await verdicts(policy, near)).toEqual(all('outside-namespace'))
+    }
+  })
+
+  it('still refuses a protected branch inside the namespace or on the legacy list', async () => {
+    const policy = new BranchPolicy({
+      baseBranch: 'canopycms-main',
+      protectedBranches: ['canopycms-keep-*', 'old'],
+      legacyBranches: ['old'],
+    })
+
+    for (const branch of ['canopycms-main', 'canopycms-keep-me', 'old']) {
+      expect(await verdicts(policy, branch)).toEqual(all('protected'))
+    }
+  })
+
+  it("pushes this deployment's settings branch plainly, and no other deployment's", async () => {
+    const policy = new BranchPolicy({ settingsBranch: 'canopycms-settings-prod' })
+
+    expect(await verdicts(policy, 'canopycms-settings-prod')).toEqual({
+      push: 'ok',
+      lease: 'settings',
+      delete: 'settings',
+      pullRequest: 'settings',
+    })
+    expect(await verdicts(policy, 'canopycms-settings-staging')).toEqual({
+      push: 'other-settings',
+      lease: 'settings',
+      delete: 'settings',
+      pullRequest: 'settings',
+    })
+  })
+
+  it('pushes no settings branch at all when it is given none', async () => {
+    const policy = new BranchPolicy()
+
+    expect((await verdicts(policy, 'canopycms-settings-prod')).push).toBe('other-settings')
+  })
+
+  it('treats a configured settings branch outside the prefix as a settings branch', async () => {
+    const policy = new BranchPolicy({ settingsBranch: 'site-settings' })
+
+    expect(await verdicts(policy, 'site-settings')).toEqual({
+      push: 'ok',
+      lease: 'settings',
+      delete: 'settings',
+      pullRequest: 'settings',
+    })
+  })
+
+  it('describes the namespace, the legacy list and the settings branch', () => {
+    const policy = new BranchPolicy({
+      baseBranch: 'main',
+      settingsBranch: 'canopycms-settings-prod',
+      legacyBranches: ['spring'],
+    })
+
+    expect(policy.describe()).toEqual({
+      configured: ['main'],
+      githubDefault: null,
+      namespace: 'canopycms-',
+      legacy: ['spring'],
+      settingsBranch: 'canopycms-settings-prod',
+    })
+  })
+
+  it('names the way out in an outside-namespace refusal', () => {
+    expect(pushRefusalMessage('spring', 'outside-namespace')).toMatch(
+      /^Refusing to push "spring" to GitHub: it is outside the CanopyCMS branch namespace \(names starting canopycms-\).*legacyBranches/,
+    )
+  })
+})
+
+describe('legacyBranchProblem', () => {
+  it.each(['spring', 'feature/x', 'v1.0', 'Release-2'])('takes %s', (entry) => {
+    expect(legacyBranchProblem(entry)).toBeNull()
+  })
+
+  it.each([
+    ['a wildcard', '*', /exact branch name/],
+    ['a glob', 'release/*', /exact branch name/],
+    ['a name already in the namespace', 'canopycms-spring', /already in the namespace/],
+    ['a settings branch', 'canopycms-settings-prod', /settings branch/],
+    ['a leading dash', '-x', /starts with '-'/],
+    ['an empty name', '', /1 to/],
+    ['a name git refuses', 'a..b', /'\.\.'/],
+  ])('refuses %s', (_, entry, why) => {
+    expect(legacyBranchProblem(entry)).toMatch(why)
+  })
+})
+
+describe('BranchPolicy: building the namespace', () => {
+  it('takes up to MAX_LEGACY_BRANCHES entries and refuses one more', () => {
+    const entries = (count: number) => Array.from({ length: count }, (_, i) => `old-${i}`)
+
+    expect(
+      new BranchPolicy({ legacyBranches: entries(MAX_LEGACY_BRANCHES) }).describe().legacy,
+    ).toHaveLength(MAX_LEGACY_BRANCHES)
+    expect(() => new BranchPolicy({ legacyBranches: entries(MAX_LEGACY_BRANCHES + 1) })).toThrow(
+      `legacyBranches has ${MAX_LEGACY_BRANCHES + 1} entries; the most it takes is ${MAX_LEGACY_BRANCHES}`,
+    )
+  })
+
+  it('refuses an invalid or repeated legacy entry, and an invalid settings branch', () => {
+    expect(() => new BranchPolicy({ legacyBranches: ['*'] })).toThrow(
+      'Invalid legacyBranches entry "*"',
+    )
+    expect(() => new BranchPolicy({ legacyBranches: ['spring', 'spring'] })).toThrow(
+      'legacyBranches lists a branch more than once',
+    )
+    for (const name of ['', '-x', 'refs/heads/x']) {
+      expect(() => new BranchPolicy({ settingsBranch: name })).toThrow('Invalid settings branch')
     }
   })
 })

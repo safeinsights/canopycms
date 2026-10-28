@@ -774,23 +774,24 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     expect(await fileExists(path.join(taskDir, 'completed', `${id}.json`))).toBe(true)
   })
 
-  // A configured settings name without the prefix may be a content branch's name when
-  // the worker and API configs drift, and that branch's submit must still open its PR.
-  it('creates a PR for a branch matching an unprefixed configured settings name', async () => {
+  // The gateway takes the configured settings name, prefixed or not, as this deployment's
+  // settings branch, whatever the Lambda's config calls it: such a branch never gets a PR.
+  it('fails, opening no PR, a submit from the unprefixed configured settings branch', async () => {
     const { worker, octokit } = makePrWorker({ settingsBranch: 'site-settings' })
     octokit.pulls.list.mockResolvedValue({ data: [] })
-    octokit.pulls.create.mockResolvedValue({
-      data: { number: 6, html_url: 'https://github.com/test-owner/test-repo/pull/6' },
-    })
 
-    await enqueueTask(taskDir, {
+    const id = await enqueueTask(taskDir, {
       action: 'push-and-create-or-update-pr',
       payload: { branch: 'site-settings', title: 'Site settings copy', body: 'desc' },
     })
 
     await worker.processTaskQueue()
 
-    expect(octokit.pulls.create).toHaveBeenCalled()
+    expect(octokit.pulls.list).not.toHaveBeenCalled()
+    expect(octokit.pulls.create).not.toHaveBeenCalled()
+    const failed = await fs.readFile(path.join(taskDir, 'failed', `${id}.json`), 'utf-8')
+    expect(failed).toContain('it is a settings branch, which never gets one')
+    expect(consoleSpy).toHaveErrored('Permanently failed')
   })
 
   it('still creates a PR for a branch that merely resembles a settings branch name', async () => {
@@ -2639,8 +2640,16 @@ describe('CmsWorker.pushSettingsBranches() [deployment-namespaced settings branc
     const consoleSpy = mockConsole()
     try {
       // 1. Construction must NOT throw -- this is the regression guard. If it
-      //    does, everything below is unreachable in production too.
-      const worker = makeSettingsWorker('from-config')
+      //    does, everything below is unreachable in production too. No test gateway: one built
+      //    here would resolve the settings branch now, where production builds it inside start().
+      const worker = new CmsWorker({
+        workspacePath,
+        githubOwner: 'test-owner',
+        githubRepo: 'test-repo',
+        baseBranch: 'main',
+        githubToken: 'fake-token',
+        deploymentName: 'from-config',
+      })
 
       // 2. start() surfaces it: throws for systemd, AND records it where the
       //    admin panel reads.
