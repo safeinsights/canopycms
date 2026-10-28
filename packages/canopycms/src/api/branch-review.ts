@@ -6,20 +6,40 @@ import { toBranchListItem, type BranchListItemResponse } from './branch'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { defineEndpoint } from './route-builder'
 import { syncConvertToDraft } from './github-sync'
+import { CommentStore } from '../comment-store'
+import { getErrorMessage } from '../utils/error'
+
+/** Longest note a reviewer can attach to a request for changes. */
+export const REQUEST_CHANGES_NOTE_MAX_LENGTH = 2000
+
+/** Optional on the wire: a bodiless request means no note. */
+const requestChangesBodySchema = z
+  .object({ note: z.string().max(REQUEST_CHANGES_NOTE_MAX_LENGTH).optional() })
+  .optional()
+
+export interface RequestChangesBody {
+  /** Saved as a branch comment; trimmed, and ignored when empty. */
+  note?: string
+}
+
+const NOTE_NOT_SAVED_WARNING =
+  "Changes were requested, but your note couldn't be saved. Add it as a comment on the branch."
 
 const requestChangesHandler = async (
   gc: { branchContext: BranchContext },
   ctx: ApiContext,
   req: ApiRequest,
   _params: z.infer<typeof branchParamSchema>,
+  body: z.infer<typeof requestChangesBodySchema>,
 ): Promise<BranchListItemResponse> => {
   const { branchContext } = gc
 
-  if (branchContext.branch.status !== 'submitted') {
+  const { status } = branchContext.branch
+  if (status !== 'submitted' && status !== 'approved') {
     return {
       ok: false,
       status: 400,
-      error: `Cannot request changes on branch with status '${branchContext.branch.status}'. Only 'submitted' branches can have changes requested.`,
+      error: `Cannot request changes on branch with status '${status}'. Only 'submitted' or 'approved' branches can have changes requested.`,
     }
   }
 
@@ -31,12 +51,33 @@ const requestChangesHandler = async (
     branch: { name: branchContext.branch.name, status: 'editing' },
   })
 
-  // TODO: Optionally record comment in .canopy-meta/comments.json when comment system is implemented
+  // The note is written after the status change so a failed write never blocks the branch from
+  // returning to editing; the caller is warned instead.
+  const note = body?.note?.trim()
+  let warning: string | undefined
+  if (note) {
+    try {
+      await new CommentStore(branchContext.branchRoot).addComment({
+        userId: req.user.userId,
+        text: `Changes requested: ${note}`,
+        type: 'branch',
+      })
+    } catch (err) {
+      console.error(
+        `CanopyCMS: Failed to save the request-changes note for ${branchContext.branch.name}:`,
+        getErrorMessage(err),
+      )
+      warning = NOTE_NOT_SAVED_WARNING
+    }
+  }
 
   return {
     ok: true,
     status: 200,
-    data: { branch: toBranchListItem(ctx.services.config, updated.branch, req.user) },
+    data: {
+      branch: toBranchListItem(ctx.services.config, updated.branch, req.user),
+      ...(warning && { warning }),
+    },
   }
 }
 
@@ -48,6 +89,16 @@ const approveBranchHandler = async (
 ): Promise<BranchListItemResponse> => {
   const { branchContext } = gc
 
+  // Approve is a CanopyCMS status only. The CMS authors its pull requests and GitHub refuses
+  // an author's approval review, so nothing is sent to GitHub.
+  if (branchContext.branch.createdBy === req.user.userId) {
+    return {
+      ok: false,
+      status: 403,
+      error: "You can't approve a branch you created. Ask another reviewer to approve it.",
+    }
+  }
+
   if (branchContext.branch.status !== 'submitted') {
     return {
       ok: false,
@@ -56,13 +107,20 @@ const approveBranchHandler = async (
     }
   }
 
+  if (branchContext.branch.pullRequestState === 'closed') {
+    return {
+      ok: false,
+      status: 400,
+      error:
+        'The pull request was closed on GitHub, so this branch cannot be approved. Withdraw it from review, then submit it again to open a new one.',
+    }
+  }
+
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
 
   const updated = await meta.save({
     branch: { name: branchContext.branch.name, status: 'approved' },
   })
-
-  // TODO: Optionally call githubService.approvePullRequest() when GitHub integration is needed
 
   return {
     ok: true,
@@ -77,8 +135,8 @@ export const requestChanges = defineEndpoint({
   method: 'POST',
   path: '/:branch/request-changes',
   params: branchParamSchema,
-  // body/bodyType removed: comment field was declared but never stored.
-  // Re-add when comment storage is implemented (see TODO in handler).
+  body: requestChangesBodySchema,
+  bodyType: 'RequestChangesBody',
   responseType: 'BranchListItemResponse',
   response: {} as BranchListItemResponse,
   defaultMockData: {
