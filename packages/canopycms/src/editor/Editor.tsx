@@ -1632,7 +1632,9 @@ const EditorContent: React.FC<EditorProps> = ({
     revealInContentPanel({ kind: 'unsaved' })
   }
   // What the branch changes against its base, read while the panel shows so Changed has its count.
-  // The protected base has nothing to compare, so it offers no Changed.
+  // The protected base has nothing to compare. Changed keeps its place until the branch is known to
+  // be it, so the control never re-flows as the branch loads, and reads once it is known not to be.
+  const changesOffered = currentBranch?.isProtected !== true
   const changesAvailable = !!currentBranch && currentBranch.isProtected === false
   const branchChanges = useBranchChangesData(
     apiClient,
@@ -2104,15 +2106,16 @@ const EditorContent: React.FC<EditorProps> = ({
           dirtyPaths={dirtyPaths}
           reveal={contentReveal}
           onRevealed={() => setContentReveal(undefined)}
-          entryFilter={entryFilter === 'changed' && !changesAvailable ? 'all' : entryFilter}
+          entryFilter={entryFilter === 'changed' && !changesOffered ? 'all' : entryFilter}
           onEntryFilterChange={setEntryFilter}
           branchChanges={
-            changesAvailable
+            changesOffered
               ? {
                   base: branchChanges.data?.base ?? currentBranch?.baseBranch ?? 'the base branch',
                   data: branchChanges.data,
                   error: branchChanges.error,
                   onRetry: () => void branchChanges.reload(),
+                  retrying: branchChanges.isValidating,
                 }
               : undefined
           }

@@ -36,6 +36,7 @@ import {
   IconAlertCircle,
   IconAlertTriangle,
   IconArrowRight,
+  IconChevronRight,
   IconArrowUp,
   IconDots,
   IconEdit,
@@ -53,6 +54,7 @@ import type { BranchChangesError } from './hooks/useBranchChangesData'
 import { calculatePathToEntry } from './editor-utils'
 import { entryDetailLine, matchesEntryQuery } from './entry-search'
 import { EDITOR_ACTIONS } from './copy'
+import { humanizeName } from './schema-label'
 import { DestructiveMenuItem } from './components/DestructiveMenuItem'
 import { UnsavedMark } from './components/UnsavedMark'
 import { BranchRowLock } from './components/BranchRowLock'
@@ -212,6 +214,8 @@ export interface BranchChangesView {
   data?: BranchChangesData
   error?: BranchChangesError
   onRetry: () => void
+  /** A reload is in flight, so Retry shows it is working. */
+  retrying?: boolean
 }
 
 type ChangeMarkerKind = BranchChangeEntry['status'] | 'settings'
@@ -221,11 +225,18 @@ const CHANGE_MARKERS: Record<ChangeMarkerKind, { label: string; icon: React.Reac
   modified: { label: 'Edited', icon: <IconPencil size={10} aria-hidden /> },
   moved: { label: 'Moved', icon: <IconArrowRight size={10} aria-hidden /> },
   deleted: { label: 'Deleted', icon: <IconTrash size={10} aria-hidden /> },
-  settings: { label: 'Settings', icon: <IconSettings size={10} aria-hidden /> },
+  settings: { label: 'Settings edited', icon: <IconSettings size={10} aria-hidden /> },
 }
 
-/** A row's change against the base: a word and an icon, never colour alone. */
-const ChangeMarker: React.FC<{ kind: ChangeMarkerKind }> = ({ kind }) => (
+/**
+ * A row's change against the base: a word and an icon, never colour alone. Its visually hidden
+ * words join the row's accessible name: " on this branch", " from <where>" for a move, none
+ * where a heading already says it (`context: null`).
+ */
+const ChangeMarker: React.FC<{ kind: ChangeMarkerKind; context?: string | null }> = ({
+  kind,
+  context = ' on this branch',
+}) => (
   <Badge
     size="xs"
     variant="light"
@@ -234,10 +245,22 @@ const ChangeMarker: React.FC<{ kind: ChangeMarkerKind }> = ({ kind }) => (
     data-testid={`change-marker-${kind}`}
     style={{ flexShrink: 0 }}
   >
-    {CHANGE_MARKERS[kind].label}
-    <VisuallyHidden component="span"> on this branch</VisuallyHidden>
+    {kind === 'settings' ? (
+      <>
+        <span aria-hidden>{CHANGE_MARKERS.settings.label}</span>
+        <VisuallyHidden component="span">Settings changed on this branch</VisuallyHidden>
+      </>
+    ) : (
+      <>
+        {CHANGE_MARKERS[kind].label}
+        {context && <VisuallyHidden component="span">{context}</VisuallyHidden>}
+      </>
+    )}
   </Badge>
 )
+
+/** A segment's count, capped so the control keeps its width. */
+const segmentCount = (count: number) => (count > 99 ? '99+' : String(count))
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
 
@@ -742,12 +765,12 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   // Rows Changed keeps: entries with a row (not deleted ones) and collections whose settings changed.
   const { changedValues, entryChange, settingsChanged } = useMemo(() => {
     const values = new Set<string>()
-    const byPath = new Map<string, BranchChangeEntry['status']>()
+    const byPath = new Map<string, BranchChangeEntry>()
     const settings = new Set<string>()
     for (const entry of changes?.entries ?? []) {
       if (entry.status === 'deleted') continue
       values.add(entry.logicalPath)
-      byPath.set(entry.logicalPath, entry.status)
+      byPath.set(entry.logicalPath, entry)
     }
     for (const collection of changes?.collections ?? []) {
       if (collection.status === 'deleted') continue
@@ -821,27 +844,48 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     () => unlistedNamed.filter((entry) => matchesEntryQuery({ label: entry.label }, query)),
     [unlistedNamed, query],
   )
+  // A collection's label from the tree, else its last segment humanised, as for one deleted.
+  const collectionLabel = useMemo(() => {
+    const labels = new Map<string, string>()
+    const walk = (list: readonly EntryNavCollection[]) =>
+      list.forEach((col) => {
+        labels.set(col.path, col.label)
+        walk(col.children ?? [])
+      })
+    walk(collections ?? [])
+    return (path: string) => labels.get(path) ?? humanizeName(lastSegment(path))
+  }, [collections])
+  const slugLabel = (path: string) => humanizeName(lastSegment(path))
+  const movedFrom = (entry: BranchChangeEntry): string | undefined => {
+    const previous = entry.previousLogicalPath
+    if (!previous) return undefined
+    const parent = previous.slice(0, previous.lastIndexOf('/'))
+    return parent === entry.collectionPath
+      ? ` from ${slugLabel(previous)}`
+      : ` from ${collectionLabel(parent)} › ${slugLabel(previous)}`
+  }
   // Under Changed: entries with no row, the deleted ones and any the entry list doesn't hold yet,
   // and collections whose settings row is not drawn, such as the hidden root's.
   const changedBeneath = useMemo(() => {
     const matches = (label: string) => matchesEntryQuery({ label }, query)
     const unlisted = (changes?.entries ?? [])
       .filter((e) => e.status !== 'deleted' && !treeRows.has(e.logicalPath))
-      .map((e) => ({ path: e.logicalPath, label: lastSegment(e.logicalPath), status: e.status }))
+      .map((e) => ({ entry: e, path: e.logicalPath, label: e.title || slugLabel(e.logicalPath) }))
       .filter((e) => matches(e.label))
     const deleted = (changes?.entries ?? [])
       .filter((e) => e.status === 'deleted')
-      .map((e) => ({ path: e.logicalPath, label: e.title || lastSegment(e.logicalPath) }))
+      .map((e) => ({
+        path: e.logicalPath,
+        label: e.title || slugLabel(e.logicalPath),
+        collection: collectionLabel(e.collectionPath),
+      }))
       .filter((e) => matches(e.label))
     const settings = (changes?.collections ?? [])
       .filter((c) => c.status === 'deleted' || !treeRows.has(`collection:${c.logicalPath}`))
-      .map((c) => ({
-        path: c.logicalPath,
-        label: c.logicalPath === hiddenRootPath ? 'Content' : lastSegment(c.logicalPath),
-      }))
+      .map((c) => ({ path: c.logicalPath, label: collectionLabel(c.logicalPath) }))
       .filter((c) => matches(c.label))
     return { unlisted, deleted, settings }
-  }, [changes, treeRows, query, hiddenRootPath])
+  }, [changes, treeRows, query, collectionLabel])
 
   // The hidden root's own row never renders, so its message is shown once above the tree.
   const hiddenRootAddRefused =
@@ -1153,9 +1197,10 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       !!(onDeleteEntryProp || onRenameEntryProp || onReorderEntryProp)
     const showsLockSlot = readOnly && (wouldHaveCollectionMenu || wouldHaveEntryMenu)
 
-    const changeMarker: ChangeMarkerKind | undefined = isEntry
-      ? entryChange.get(node.value)
-      : settingsChanged.has(node.value)
+    const rowChange = isEntry ? entryChange.get(node.value) : undefined
+    const changeMarker: ChangeMarkerKind | undefined = rowChange
+      ? rowChange.status
+      : !isEntry && settingsChanged.has(node.value)
         ? 'settings'
         : undefined
     const showEntryDirtyDot = isEntry && !!entryPath && !!dirtyPaths?.has(entryPath)
@@ -1214,7 +1259,12 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                     highlight={filtering ? query.trim() : ''}
                     fw={selected ? 600 : 500}
                   />
-                  {changeMarker && <ChangeMarker kind={changeMarker} />}
+                  {changeMarker && (
+                    <ChangeMarker
+                      kind={changeMarker}
+                      context={(rowChange && movedFrom(rowChange)) ?? undefined}
+                    />
+                  )}
                   {showEntryDirtyDot && <UnsavedDot label="Unsaved changes" />}
                   {showCollectionDirtyDot && <UnsavedDot label="Contains unsaved changes" />}
                   {conflictNotice && (
@@ -1554,22 +1604,39 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           }
           data-testid={`entry-nav-branch-changed-${changesError.kind}`}
         >
-          <Group justify="space-between" gap="xs" wrap="nowrap">
+          <Stack gap={4} align="flex-start">
             <Text size="sm">
               {changesError.kind === 'syncing'
                 ? `This branch is being synced with ${base}. Try again in a moment.`
-                : 'Couldn’t load this branch’s changes.'}
+                : changesData
+                  ? 'Couldn’t refresh this branch’s changes. The list may be out of date.'
+                  : 'Couldn’t load this branch’s changes.'}
             </Text>
-            <Button size="compact-sm" variant="subtle" onClick={branchChanges?.onRetry}>
+            <Button
+              size="compact-sm"
+              variant="subtle"
+              loading={branchChanges?.retrying}
+              onClick={branchChanges?.onRetry}
+            >
               Retry
             </Button>
-          </Group>
+          </Stack>
         </Alert>
       )}
       {changesData?.baseUnavailable && (
-        <Text size="sm" c="dimmed" py={4} data-testid="entry-nav-branch-changed-unavailable">
-          Couldn’t compare this branch with {base}.
-        </Text>
+        <Stack
+          gap={4}
+          py="sm"
+          align="flex-start"
+          data-testid="entry-nav-branch-changed-unavailable"
+        >
+          <Text size="sm" c="dimmed">
+            Couldn’t compare this branch with {base}: they share no history.
+          </Text>
+          <Button size="compact-sm" variant="subtle" onClick={showAll}>
+            Show all entries
+          </Button>
+        </Stack>
       )}
       {changesData?.hiddenChanges && (
         <Text size="sm" c="dimmed" py={4} data-testid="entry-nav-branch-changed-hidden">
@@ -1594,7 +1661,12 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
               size="compact-sm"
               variant="subtle"
               color="gray"
-              rightSection={<ChangeMarker kind={entry.status} />}
+              rightSection={
+                <ChangeMarker
+                  kind={entry.entry.status}
+                  context={movedFrom(entry.entry) ?? undefined}
+                />
+              }
               onClick={() => onSelect(entry.path)}
             >
               {entry.label}
@@ -1616,9 +1688,12 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           {changedDeleted.map((entry) => (
             <Group key={entry.path} gap={6} px={10} wrap="nowrap" style={{ minWidth: 0 }}>
               <Text size="sm" truncate="end" style={{ minWidth: 0 }}>
-                {entry.label}
+                {entry.label}{' '}
+                <Text component="span" size="xs" c="dimmed">
+                  {entry.collection}
+                </Text>
               </Text>
-              <ChangeMarker kind="deleted" />
+              <ChangeMarker kind="deleted" context={null} />
             </Group>
           ))}
         </Stack>
@@ -1639,13 +1714,29 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
         aria-expanded={otherFilesOpen}
         aria-controls={otherFilesOpen ? otherFilesId : undefined}
         onClick={() => setOtherFilesOpen((open) => !open)}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}
       >
+        <IconChevronRight
+          size={12}
+          aria-hidden
+          style={{
+            transform: otherFilesOpen ? 'rotate(90deg)' : undefined,
+            transition: 'transform 120ms ease',
+          }}
+        />
         Details
       </Anchor>
       {otherFilesOpen && (
-        <Code id={otherFilesId} block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-          {otherFiles.join('\n')}
-        </Code>
+        <Stack id={otherFilesId} gap={2} w="100%">
+          <Code block style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+            {otherFiles.join('\n')}
+          </Code>
+          {changesData?.otherFilesTruncated && (
+            <Text size="xs" c="dimmed">
+              List shows the first {otherFiles.length} files.
+            </Text>
+          )}
+        </Stack>
       )}
     </Stack>
   )
@@ -1677,6 +1768,22 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
             <Button size="compact-sm" variant="subtle" onClick={showAll}>
               Show all entries
             </Button>
+            {unsavedCount > 0 && (
+              <>
+                <Text size="sm" c="dimmed" data-testid="entry-nav-branch-changed-unsaved">
+                  {unsavedCount === 1
+                    ? '1 unsaved entry isn’t included until it’s saved.'
+                    : `${unsavedCount} unsaved entries aren’t included until they’re saved.`}
+                </Text>
+                <Button
+                  size="compact-sm"
+                  variant="subtle"
+                  onClick={() => onEntryFilterChange?.('unsaved')}
+                >
+                  Show unsaved
+                </Button>
+              </>
+            )}
           </Stack>
         )}
         {changedRows}
@@ -1751,9 +1858,17 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           onChange={(value) => onEntryFilterChange(value as EntryFilter)}
           data={[
             { value: 'all', label: 'All' },
-            { value: 'unsaved', label: unsavedCount > 0 ? `Unsaved ${unsavedCount}` : 'Unsaved' },
+            {
+              value: 'unsaved',
+              label: unsavedCount > 0 ? `Unsaved ${segmentCount(unsavedCount)}` : 'Unsaved',
+            },
             ...(branchChanges
-              ? [{ value: 'changed', label: changedCount ? `Changed ${changedCount}` : 'Changed' }]
+              ? [
+                  {
+                    value: 'changed',
+                    label: changedCount ? `Changed ${segmentCount(changedCount)}` : 'Changed',
+                  },
+                ]
               : []),
           ]}
           data-testid="entry-nav-shown"

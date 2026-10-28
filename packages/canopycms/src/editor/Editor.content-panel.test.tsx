@@ -68,7 +68,13 @@ const stubApi = ({
   loadedTitle = 'Loaded title',
   branchNames = ['main'],
   changedEntries = [],
+  protectedBranches = [],
+  branchesHeld,
 }: {
+  /** Branches the server marks as the protected base. */
+  protectedBranches?: string[]
+  /** Settles before the branches list answers. */
+  branchesHeld?: Promise<void>
   /** What GET /:branch/changes answers with. */
   changedEntries?: unknown[]
   /** The branches listed, each editable. */
@@ -90,7 +96,7 @@ const stubApi = ({
         typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
       if (url.endsWith('/whoami')) return Promise.resolve(okJson({ userId: 'user-1', groups: [] }))
       if (url.endsWith('/api/canopycms/branches')) {
-        return Promise.resolve(
+        return Promise.resolve(branchesHeld).then(() =>
           okJson({
             branches: branchNames.map((name) => ({
               name,
@@ -99,7 +105,7 @@ const stubApi = ({
               createdBy: 'user-1',
               createdAt: '2024-01-01',
               updatedAt: '2024-01-01',
-              isProtected: false,
+              isProtected: protectedBranches.includes(name),
               readOnly: false,
               writeBlocked: false,
               submitBlocked: false,
@@ -1104,6 +1110,30 @@ describe('changed on this branch', () => {
     })
     fireEvent.click(screen.getByTestId('save-button'))
     await waitFor(() => expect(changesRequests).toHaveLength(2))
+  })
+
+  it('keeps Changed in the control while the branch loads, reading nothing yet', async () => {
+    let answerBranches = () => {}
+    stubWindowWidth(true)
+    storeLayout({ contentPanelOpen: true })
+    stubApi({ branchesHeld: new Promise((resolve) => (answerBranches = () => resolve())) })
+    renderEditor()
+    await loaded()
+    expect(changedRadio().closest('div')?.textContent).toBe('Changed')
+    expect(changesRequests).toEqual([])
+    act(() => answerBranches())
+    await waitFor(() => expect(changesRequests).toHaveLength(1))
+  })
+
+  it('offers no Changed on the protected base branch', async () => {
+    stubWindowWidth(true)
+    storeLayout({ contentPanelOpen: true })
+    stubApi({ protectedBranches: ['main'] })
+    renderEditor()
+    await loaded()
+    await waitFor(() => expect(screen.queryByRole('radio', { name: /^Changed/ })).toBeNull())
+    expect(screen.getByRole('radio', { name: /^Unsaved/ })).toBeTruthy()
+    expect(changesRequests).toEqual([])
   })
 
   it('switches back to All on another branch', async () => {

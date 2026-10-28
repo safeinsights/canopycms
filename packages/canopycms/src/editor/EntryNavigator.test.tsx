@@ -2914,9 +2914,12 @@ describe('EntryNavigator - the Changed filter', () => {
       },
     })
     const news = screen.getByTestId('entry-nav-item-news')
-    expect(within(news).getByTestId('change-marker-settings').textContent).toBe(
-      'Settings on this branch',
-    )
+    const marker = within(news).getByTestId('change-marker-settings')
+    expect(marker.textContent).toBe('Settings editedSettings changed on this branch')
+    // The visible words are hidden from assistive tech, which reads the sentence instead.
+    expect(
+      Array.from(marker.querySelectorAll('[aria-hidden]')).map((node) => node.textContent),
+    ).toContain('Settings edited')
     expect(shown('entry-nav-item-launch-day')).toBe(false)
     const outside = screen.getByTestId('entry-nav-branch-changed-outside')
     expect(outside.textContent).toContain('Content')
@@ -2927,9 +2930,10 @@ describe('EntryNavigator - the Changed filter', () => {
     renderHarness()
     const deleted = screen.getByTestId('entry-nav-branch-changed-deleted')
     expect(deleted.textContent).toContain('Deleted on this branch')
-    expect(deleted.textContent).toContain('Old FAQ')
-    expect(deleted.textContent).toContain('untitled-one')
-    expect(within(deleted).getAllByTestId('change-marker-deleted')).toHaveLength(2)
+    expect(deleted.textContent).toContain('Old FAQ Guides')
+    expect(deleted.textContent).toContain('Untitled one Guides')
+    const markers = within(deleted).getAllByTestId('change-marker-deleted')
+    expect(markers.map((m) => m.textContent)).toEqual(['Deleted', 'Deleted'])
     expect(within(deleted).queryByRole('button')).toBeNull()
   })
 
@@ -2940,7 +2944,7 @@ describe('EntryNavigator - the Changed filter', () => {
       changes: { data: loaded({ entries: [entry('added', 'content/news/brand-new')] }) },
     })
     const outside = screen.getByTestId('entry-nav-branch-changed-outside')
-    await userEvent.click(within(outside).getByRole('button', { name: /brand-new/ }))
+    await userEvent.click(within(outside).getByRole('button', { name: /^Brand new/ }))
     expect(onSelect).toHaveBeenCalledWith('content/news/brand-new')
   })
 
@@ -2965,7 +2969,9 @@ describe('EntryNavigator - the Changed filter', () => {
     const onRetry = vi.fn()
     renderHarness({ changes: { error: { kind: 'failed', message: 'HTTP 500' }, onRetry } })
     const alert = screen.getByTestId('entry-nav-branch-changed-failed')
-    expect(alert.textContent).toContain('Couldn’t load this branch’s changes.')
+    expect(alert.textContent).toContain(
+      'Couldn’t refresh this branch’s changes. The list may be out of date.',
+    )
     await userEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
     expect(onRetry).toHaveBeenCalledTimes(1)
     expect(shown('entry-nav-item-privacy')).toBe(true)
@@ -2973,7 +2979,9 @@ describe('EntryNavigator - the Changed filter', () => {
 
   it('shows a failed first load with Retry and no skeleton', () => {
     renderHarness({ changes: { data: undefined, error: { kind: 'failed', message: 'x' } } })
-    expect(shown('entry-nav-branch-changed-failed')).toBe(true)
+    expect(screen.getByTestId('entry-nav-branch-changed-failed').textContent).toContain(
+      'Couldn’t load this branch’s changes.',
+    )
     expect(shown('entry-nav-branch-changed-loading')).toBe(false)
   })
 
@@ -2996,9 +3004,11 @@ describe('EntryNavigator - the Changed filter', () => {
 
   it('says the base could not be compared', () => {
     renderHarness({ changes: { data: loaded({ entries: [], baseUnavailable: true }) } })
-    expect(screen.getByTestId('entry-nav-branch-changed-unavailable').textContent).toBe(
-      'Couldn’t compare this branch with main.',
+    const unavailable = screen.getByTestId('entry-nav-branch-changed-unavailable')
+    expect(unavailable.textContent).toContain(
+      'Couldn’t compare this branch with main: they share no history.',
     )
+    expect(within(unavailable).getByRole('button', { name: 'Show all entries' })).toBeTruthy()
     expect(shown('entry-nav-branch-changed-none')).toBe(false)
   })
 
@@ -3028,6 +3038,100 @@ describe('EntryNavigator - the Changed filter', () => {
     const empty = screen.getByTestId('entry-nav-branch-changed-no-match')
     expect(empty.textContent).toContain('No changed entries match “setup”.')
     expect(shown('entry-nav-filter-empty')).toBe(false)
+  })
+
+  it('shows Retry working while a reload runs', () => {
+    renderHarness({ changes: { error: { kind: 'syncing' }, retrying: true } })
+    const retry = within(screen.getByTestId('entry-nav-branch-changed-syncing')).getByRole(
+      'button',
+      { name: 'Retry' },
+    )
+    expect(retry.hasAttribute('data-loading')).toBe(true)
+  })
+
+  it('says unsaved entries aren’t included in an empty Changed, and offers Unsaved', async () => {
+    const onChange = vi.fn()
+    const { unmount } = renderHarness({
+      unsavedCount: 1,
+      onChange,
+      changes: { data: loaded({ entries: [] }) },
+    })
+    const note = screen.getByTestId('entry-nav-branch-changed-unsaved')
+    expect(note.textContent).toBe('1 unsaved entry isn’t included until it’s saved.')
+    await userEvent.click(screen.getByRole('button', { name: 'Show unsaved' }))
+    expect(onChange).toHaveBeenCalledWith('unsaved')
+    unmount()
+    renderHarness({ unsavedCount: 3, changes: { data: loaded({ entries: [] }) } })
+    expect(screen.getByTestId('entry-nav-branch-changed-unsaved').textContent).toBe(
+      '3 unsaved entries aren’t included until they’re saved.',
+    )
+  })
+
+  it('caps both counts at 99+', () => {
+    const many = Array.from({ length: 120 }, (_, i) => entry('modified', `content/news/e${i}`))
+    renderHarness({
+      initialFilter: 'all',
+      unsavedCount: 100,
+      changes: { data: loaded({ entries: many }) },
+    })
+    expect(screen.getByRole('radio', { name: /^Unsaved/ }).closest('div')?.textContent).toBe(
+      'Unsaved 99+',
+    )
+    expect(changedRadio().closest('div')?.textContent).toBe('Changed 99+')
+  })
+
+  it('says where a moved row came from, by labels', () => {
+    renderHarness({
+      changes: {
+        data: loaded({
+          entries: [
+            entry('moved', 'content/guides/setup', {
+              previousLogicalPath: 'content/news/old-setup',
+            }),
+            entry('moved', 'content/guides/privacy', {
+              previousLogicalPath: 'content/guides/privacy-policy',
+            }),
+          ],
+        }),
+      },
+    })
+    expect(
+      within(screen.getByTestId('entry-nav-item-setup')).getByTestId('change-marker-moved')
+        .textContent,
+    ).toBe('Moved from News › Old setup')
+    expect(
+      within(screen.getByTestId('entry-nav-item-privacy')).getByTestId('change-marker-moved')
+        .textContent,
+    ).toBe('Moved from Privacy policy')
+  })
+
+  it('labels rows beneath the tree by title or humanised slug, and settings by collection label', () => {
+    renderHarness({
+      changes: {
+        data: loaded({
+          entries: [entry('added', 'content/news/brand-new')],
+          collections: [{ status: 'deleted', logicalPath: 'content/news' }],
+        }),
+      },
+    })
+    const outside = screen.getByTestId('entry-nav-branch-changed-outside')
+    expect(
+      within(outside).getByRole('button', { name: /^Brand new New on this branch/ }),
+    ).toBeTruthy()
+    expect(outside.textContent).toContain('News')
+  })
+
+  it('turns the Details chevron and says when the server cut the list', async () => {
+    renderHarness({
+      changes: { data: loaded({ otherFiles: ['README.md'], otherFilesTruncated: true }) },
+    })
+    const other = screen.getByTestId('entry-nav-branch-changed-other')
+    const details = within(other).getByRole('button', { name: 'Details' })
+    const chevron = details.querySelector('svg') as SVGElement
+    expect(chevron.style.transform).toBe('')
+    await userEvent.click(details)
+    expect(chevron.style.transform).toBe('rotate(90deg)')
+    expect(other.textContent).toContain('List shows the first 1 files.')
   })
 
   it('announces the count once a load is shown, and again only for a new answer', () => {

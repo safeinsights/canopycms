@@ -348,10 +348,19 @@ const changes: BranchChangesData = {
 }
 
 /** The Content panel under Changed, given what the branch changes against its base. */
-const ChangedStory = ({ view }: { view: Omit<BranchChangesView, 'base' | 'onRetry'> }) => {
-  const [entryFilter, setEntryFilter] = useState<EntryFilter>('changed')
+const ChangedStory = ({
+  view,
+  width = 328,
+  initialFilter = 'changed',
+}: {
+  /** Without it, the branch is the protected base, which offers no Changed. */
+  view?: Omit<BranchChangesView, 'base' | 'onRetry'>
+  width?: number
+  initialFilter?: EntryFilter
+}) => {
+  const [entryFilter, setEntryFilter] = useState<EntryFilter>(initialFilter)
   return (
-    <div style={{ width: 328, height: 420 }}>
+    <div style={{ width, height: 420 }}>
       <EntryNavigator
         onSelect={noop}
         collections={changeTree}
@@ -360,7 +369,7 @@ const ChangedStory = ({ view }: { view: Omit<BranchChangesView, 'base' | 'onRetr
         unsavedCount={1}
         entryFilter={entryFilter}
         onEntryFilterChange={setEntryFilter}
-        branchChanges={{ base: 'main', onRetry: noop, ...view }}
+        branchChanges={view && { base: 'main', onRetry: noop, ...view }}
       />
     </div>
   )
@@ -411,5 +420,44 @@ export const ChangedBaseUnavailable: Story = {
 export const ChangedOtherFiles: Story = {
   render: () => (
     <ChangedStory view={{ data: { ...changes, otherFiles: ['README.md', 'src/site.ts'] } }} />
+  ),
+}
+
+/** The protected base branch: All and Unsaved only, nothing to compare. */
+export const ProtectedBase: Story = {
+  render: () => <ChangedStory initialFilter="all" />,
+}
+
+/** Changed with rows the tree can't draw: an entry the list doesn't hold yet, the hidden root's settings. */
+export const ChangedNotInTree: Story = {
+  render: () => (
+    <ChangedStory
+      view={{
+        data: {
+          ...changes,
+          entries: [...changes.entries, change('added', 'content/posts/brand-new-post')],
+          collections: [{ status: 'modified', logicalPath: 'content' }],
+        },
+      }}
+    />
+  ),
+}
+
+/** Changed in a 240px panel: counts, markers and the deleted section at their narrowest. */
+export const ChangedNarrow: Story = {
+  render: () => <ChangedStory width={240} view={{ data: changes }} />,
+}
+
+/** Changed with nothing differing yet, while an entry is unsaved. */
+export const ChangedEmptyWithUnsaved: Story = {
+  render: () => <ChangedStory view={{ data: { ...changes, entries: [], collections: [] } }} />,
+}
+
+/** Retry working after a failed reload. */
+export const ChangedRetrying: Story = {
+  render: () => (
+    <ChangedStory
+      view={{ data: changes, error: { kind: 'failed', message: 'HTTP 503' }, retrying: true }}
+    />
   ),
 }
