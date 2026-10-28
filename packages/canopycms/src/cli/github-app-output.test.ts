@@ -94,3 +94,59 @@ describe('when escape codes are written', () => {
     expect(await freshMessage({ FORCE_COLOR: '1' })).toContain('\n  GITHUB_APP_ID=42\n')
   })
 })
+
+describe('when only one stream is a TTY', () => {
+  const streams = { stdout: process.stdout, stderr: process.stderr }
+  const saved = {
+    stdout: Object.getOwnPropertyDescriptor(process.stdout, 'isTTY'),
+    stderr: Object.getOwnPropertyDescriptor(process.stderr, 'isTTY'),
+  }
+
+  afterEach(() => {
+    for (const name of ['stdout', 'stderr'] as const) {
+      const descriptor = saved[name]
+      if (descriptor) Object.defineProperty(streams[name], 'isTTY', descriptor)
+      else delete (streams[name] as { isTTY?: boolean }).isTTY
+    }
+    vi.unstubAllEnvs()
+    vi.resetModules()
+  })
+
+  async function freshModules(tty: 'stdout' | 'stderr', term = 'xterm-256color') {
+    vi.resetModules()
+    for (const name of ['NO_COLOR', 'FORCE_COLOR', 'CI']) vi.stubEnv(name, '')
+    vi.stubEnv('TERM', term)
+    for (const name of ['stdout', 'stderr'] as const) {
+      Object.defineProperty(streams[name], 'isTTY', { value: name === tty, configurable: true })
+    }
+    return {
+      output: await import('./github-app-output'),
+      command: await import('./init-github-app'),
+    }
+  }
+
+  const userTarget = { owner: 'a-user', repo: 'a-site', isOrganization: false }
+
+  it('styles stdout lines and leaves stderr lines plain when only stdout is a terminal', async () => {
+    const { output, command } = await freshModules('stdout')
+    expect(output.tick('x')).toContain('\x1b')
+    expect(output.cross('y')).not.toContain('\x1b')
+    expect(command.keyNotStoredMessage(userTarget, { id: 42, slug: 'a-site-cms' })).not.toContain(
+      '\x1b',
+    )
+  })
+
+  it('styles stderr lines and leaves stdout lines plain when only stderr is a terminal', async () => {
+    const { output, command } = await freshModules('stderr')
+    expect(output.tick('x')).not.toContain('\x1b')
+    expect(output.cross('y')).toContain('\x1b')
+    expect(command.installStepMessage(userTarget, 'a-site-cms')).not.toContain('\x1b')
+    const stderrLines = command.keyNotStoredMessage(userTarget, { id: 42, slug: 'a-site-cms' })
+    expect(stderrLines.split('App settings: ')[1]).toContain('\x1b')
+  })
+
+  it('writes none to a terminal whose TERM is dumb', async () => {
+    const { output } = await freshModules('stdout', 'dumb')
+    expect(output.tick('x')).not.toContain('\x1b')
+  })
+})
