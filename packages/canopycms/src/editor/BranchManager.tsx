@@ -242,8 +242,8 @@ interface BranchWorkflowAction {
   run: () => void
   /** Why it cannot act now; undefined when it can. */
   blockedReason?: string
-  /** In a menu, the reason is printed by the item above, which blocks for the same one. */
-  reasonShownAbove?: boolean
+  /** In a menu, the test id of the item above that prints the same reason, so this one need not. */
+  reasonShownBy?: string
 }
 
 /**
@@ -363,8 +363,10 @@ const BranchCard: React.FC<BranchCardProps> = ({
           run: () => onRequestChanges?.(b.name),
           blockedReason: perms.canRequestChanges ? undefined : CLOSED_PULL_REQUEST_REASON,
           // With Approve above it, blocked by the same closed pull request, the reason prints once.
-          reasonShownAbove:
-            !!approve && !perms.canApprove && b.pullRequestState === 'closed' ? true : undefined,
+          reasonShownBy:
+            approve && !perms.canApprove && b.pullRequestState === 'closed'
+              ? approve.testId
+              : undefined,
         }
       : undefined,
   )
@@ -547,7 +549,11 @@ const BranchCard: React.FC<BranchCardProps> = ({
                   <ReasonedMenuItem
                     key={action.testId}
                     blockedReason={action.blockedReason}
-                    showReason={!action.reasonShownAbove}
+                    showReason={!action.reasonShownBy}
+                    reasonId={`${action.testId}-reason`}
+                    reasonDescribedBy={
+                      action.reasonShownBy ? `${action.reasonShownBy}-reason` : undefined
+                    }
                     onClick={action.run}
                     data-testid={action.testId}
                   >

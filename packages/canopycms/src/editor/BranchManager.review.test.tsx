@@ -305,6 +305,24 @@ describe('BranchCard review actions', () => {
       ).toBeTruthy()
     })
 
+    it('points the second blocked item at the reason printed under the first', async () => {
+      renderCard(closed, reviewer, false)
+      await userEvent.click(screen.getByTestId(`branch-actions-menu-${NAME}`))
+      const menu = await screen.findByRole('menu')
+      const approve = within(menu).getByTestId(`approve-branch-button-${NAME}`)
+      const requestChanges = within(menu).getByTestId(`request-changes-branch-button-${NAME}`)
+
+      const reason = within(approve).getByText(CLOSED_REASON)
+      expect(reason.id).not.toBe('')
+      expect(requestChanges.getAttribute('aria-describedby')).toBe(reason.id)
+      // The first item carries its reason in its own text, so it needs no pointer.
+      expect(approve.getAttribute('aria-describedby')).toBeNull()
+      // The accessible description resolves to that one sentence.
+      expect(document.getElementById(requestChanges.getAttribute('aria-describedby') ?? '')).toBe(
+        reason,
+      )
+    })
+
     it('shows the reason on Request changes alone once approved, as nothing sits above it', async () => {
       renderCard(branch({ status: 'approved', pullRequestState: 'closed' }), reviewer, false)
       await userEvent.click(screen.getByTestId(`branch-actions-menu-${NAME}`))

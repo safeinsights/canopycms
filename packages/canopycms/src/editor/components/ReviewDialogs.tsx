@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { Button, CopyButton, Stack, Text, Textarea } from '@mantine/core'
+import { useRef, useState } from 'react'
+import { Button, CopyButton, Stack, Text, Textarea, VisuallyHidden } from '@mantine/core'
 import { REQUEST_CHANGES_NOTE_MAX_LENGTH } from '../../authorization/review-role'
 
 /** The note counter appears once a note is this long, and is announced in the last 100. */
@@ -29,6 +29,9 @@ export function RequestChangesForm({
   onNoteChange: (note: string) => void
 }) {
   const [note, setNote] = useState(initialNote)
+  // The first focus, which the dialog's focus trap gives, puts the caret after a prefilled note so
+  // typing carries on from it; later focus keeps wherever the caret was left.
+  const caretPlaced = useRef(false)
   return (
     <Stack gap="sm">
       <Text size="sm">
@@ -47,6 +50,12 @@ export function RequestChangesForm({
           autosize
           minRows={3}
           maxRows={8}
+          onFocus={(event) => {
+            if (caretPlaced.current) return
+            caretPlaced.current = true
+            const end = event.currentTarget.value.length
+            event.currentTarget.setSelectionRange(end, end)
+          }}
           // Mantine's focus trap focuses this rather than the first control, the dialog's close button.
           data-autofocus
           data-testid="request-changes-note"
@@ -99,15 +108,21 @@ export function NoteNotSavedMessage({
       </Text>
       <CopyButton value={note}>
         {({ copied, copy }) => (
-          <Button
-            size="compact-sm"
-            variant="light"
-            style={{ alignSelf: 'flex-start' }}
-            onClick={copy}
-            data-testid="copy-note-button"
-          >
-            {copied ? 'Copied' : 'Copy note'}
-          </Button>
+          <>
+            <Button
+              size="compact-sm"
+              variant="light"
+              style={{ alignSelf: 'flex-start' }}
+              onClick={copy}
+              data-testid="copy-note-button"
+            >
+              {copied ? 'Copied' : 'Copy note'}
+            </Button>
+            {/* Mounted before it speaks, so the change is announced. */}
+            <VisuallyHidden role="status" aria-live="polite">
+              {copied ? 'Note copied' : ''}
+            </VisuallyHidden>
+          </>
         )}
       </CopyButton>
     </Stack>

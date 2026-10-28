@@ -946,7 +946,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               } catch (err) {
                 await reportReviewFailure(err, 'approve', branchNameToApprove, {
                   fallback: 'Failed to approve branch',
-                  label: EDITOR_ACTIONS.approve,
+                  label: `${EDITOR_ACTIONS.approve} "${branchNameToApprove}"`,
                   retry: () =>
                     void handleApprove(branchNameToApprove, returnFocusTo).catch(() => {}),
                 })
@@ -1007,7 +1007,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               } catch (err) {
                 await reportReviewFailure(err, 'request-changes', branchNameForChanges, {
                   fallback: 'Failed to request changes',
-                  label: EDITOR_ACTIONS.requestChanges,
+                  label: `${EDITOR_ACTIONS.requestChanges} on "${branchNameForChanges}"`,
                   note: note.trim() || undefined,
                   retry: () =>
                     void handleRequestChanges(branchNameForChanges, returnFocusTo).catch(() => {}),

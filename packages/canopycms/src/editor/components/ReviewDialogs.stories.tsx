@@ -1,6 +1,6 @@
 import { useEffect, type ReactNode } from 'react'
 import type { Meta, StoryObj } from '@storybook/react'
-import { Text } from '@mantine/core'
+import { Notification, Text } from '@mantine/core'
 import { modals } from '@mantine/modals'
 
 import { openConfirm } from '../utils/confirm-modal'
@@ -43,7 +43,8 @@ const meta: Meta = {
 export default meta
 type Story = StoryObj
 
-const longNote = `${'The headline claims more than the page backs up. '.repeat(37)}Please tighten it.`
+// 49 characters a sentence: 40 of them is 1,960, past the point the count is announced.
+const longNote = 'The headline claims more than the page backs up. '.repeat(40)
 
 const requestChanges = (props: { hasPullRequest: boolean; initialNote?: string }) => (
   <InConfirm
@@ -62,7 +63,7 @@ export const RequestChangesEmpty: Story = {
 
 /** A note near the 2,000-character cap: the count appears and is announced in the last 100. */
 export const RequestChangesLongNote: Story = {
-  render: () => requestChanges({ hasPullRequest: true, initialNote: longNote.slice(0, 1950) }),
+  render: () => requestChanges({ hasPullRequest: true, initialNote: longNote }),
 }
 
 /** A note a failed request left behind, prefilled. */
@@ -88,14 +89,16 @@ export const ApproveWithPullRequest: Story = { render: () => approve(true) }
 /** No pull request yet, as in dev without GitHub, or while a sync is pending. */
 export const ApproveNoPullRequest: Story = { render: () => approve(false) }
 
-/** The notification body when changes were requested but the note could not be saved. */
+/** The notification when changes were requested but the note could not be saved: yellow, with the note to copy. */
 export const NoteNotSaved: Story = {
   render: () => (
-    <div style={{ maxWidth: 380, padding: 16 }}>
-      <NoteNotSavedMessage
-        message="Changes were requested, but your note couldn't be saved."
-        note="Please tighten the headline, and say where the 40% figure comes from."
-      />
+    <div style={{ maxWidth: 400, padding: 16 }}>
+      <Notification color="yellow" withCloseButton onClose={noop}>
+        <NoteNotSavedMessage
+          message="Changes were requested, but your note couldn't be saved."
+          note="Please tighten the headline, and say where the 40% figure comes from."
+        />
+      </Notification>
     </div>
   ),
 }

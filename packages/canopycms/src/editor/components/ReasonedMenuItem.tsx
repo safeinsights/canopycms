@@ -8,6 +8,10 @@ export interface ReasonedMenuItemProps extends MenuItemProps {
   blockedReason?: string
   /** False when a neighbouring item already says why, so the reason is not printed twice. */
   showReason?: boolean
+  /** The reason's element id, which another blocked item that shows no reason can point to. */
+  reasonId?: string
+  /** The id of the element that gives this item's reason, when it is not printed beneath it. */
+  reasonDescribedBy?: string
   onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void
   'data-testid'?: string
   children: React.ReactNode
@@ -21,6 +25,8 @@ export interface ReasonedMenuItemProps extends MenuItemProps {
 export const ReasonedMenuItem: React.FC<ReasonedMenuItemProps> = ({
   blockedReason,
   showReason = true,
+  reasonId,
+  reasonDescribedBy,
   onClick,
   children,
   color,
@@ -32,6 +38,7 @@ export const ReasonedMenuItem: React.FC<ReasonedMenuItemProps> = ({
     color={blockedReason ? undefined : color}
     c={blockedReason ? 'dimmed' : rest.c}
     aria-disabled={blockedReason ? true : undefined}
+    aria-describedby={blockedReason ? reasonDescribedBy : undefined}
     closeMenuOnClick={blockedReason ? false : undefined}
     style={blockedReason ? { ...style, cursor: 'not-allowed' } : style}
     onClick={(event) => {
@@ -44,7 +51,14 @@ export const ReasonedMenuItem: React.FC<ReasonedMenuItemProps> = ({
   >
     {children}
     {blockedReason && showReason && (
-      <Text size="xs" c="dimmed" component="span" display="block" style={{ whiteSpace: 'normal' }}>
+      <Text
+        id={reasonId}
+        size="xs"
+        c="dimmed"
+        component="span"
+        display="block"
+        style={{ whiteSpace: 'normal' }}
+      >
         {blockedReason}
       </Text>
     )}

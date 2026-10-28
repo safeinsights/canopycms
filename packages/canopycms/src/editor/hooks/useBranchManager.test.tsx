@@ -2485,7 +2485,7 @@ describe('useBranchManager', () => {
 
       expect(notifications.show).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: branchActionOutcomeUnknown('Approve'),
+          message: branchActionOutcomeUnknown('Approve "feature"'),
           color: 'yellow',
           autoClose: false,
         }),
@@ -2682,7 +2682,7 @@ describe('useBranchManager', () => {
         expect(notifications.show).toHaveBeenCalledWith(
           expect.objectContaining({
             message:
-              'Request changes may have gone through even though the server didn\'t answer. Check the branch\'s status and its comments in "Comments".',
+              'Request changes on "feature" may have gone through even though the server didn\'t answer. Check the branch\'s status and its comments in "Comments".',
             color: 'yellow',
             autoClose: false,
           }),
