@@ -78,11 +78,13 @@ function apply(source: string, edits: readonly Edit[], from = 0, to = source.len
 }
 
 /**
- * Where each text or MDX expression under `node` that holds a literal `_` starts, outside links:
- * Prettier reads `[a_b](u) _x_` and `https://x/a_b _x_` correctly, but not `_` in the same text.
+ * Where each text or MDX expression under `node` that holds a literal `_` starts, outside
+ * bracketed links: Prettier reads `[a_b](u) _x_` and `<https://x/a_b> _x_` correctly, but a
+ * bare URL only when its host has a dot, so bare URLs count.
  */
 function underscoreStarts(node: MdNode): number[] {
-  if (node.type === 'link' || node.type === 'linkReference') return []
+  const bare = startOf(node) === startOf(node.children?.[0])
+  if ((node.type === 'link' && !bare) || node.type === 'linkReference') return []
   if (node.type === 'text' || node.type === 'mdxTextExpression') {
     const start = startOf(node)
     return start !== undefined && (node.value ?? '').includes('_') ? [start] : []
@@ -494,11 +496,12 @@ export function restyleMarkdown<T extends MdNode>(
   if (changed.length === 0) return undefined
 
   // The whole restyle first, then halves of it, until each block that does not read back stands
-  // alone: a parse per try, so a few such blocks cost a few parses each. Each parse reads the
-  // whole body under the write lock, so past a budget the restyle keeps what it has.
+  // alone: about two parses per such block per halving, so the budget covers about four of them
+  // anywhere in the body. Each parse reads the whole body under the write lock, so past the
+  // budget the restyle keeps what has read back.
   let kept: Edit[] = []
   let best: { text: string; tree: T } | undefined
-  let budget = 4 * Math.ceil(Math.log2(changed.length + 1)) + 8
+  let budget = 8 * Math.ceil(Math.log2(changed.length + 1)) + 8
   const attempt = (tried: readonly Edit[][]): void => {
     if (budget-- <= 0) return
     const trial = [...kept, ...tried.flat()]

@@ -41,8 +41,8 @@ describe('restyleMarkdown', () => {
     ],
     [
       'emphasis after a `_` in another link',
-      'See https://x.com/a_b, [a_b](u) and *c*.',
-      'See https://x.com/a_b, [a_b](u) and _c_.',
+      'See <https://x.com/a_b>, [a_b](u) and *c*.',
+      'See <https://x.com/a_b>, [a_b](u) and _c_.',
     ],
     ['emphasis in strikethrough', 'x~~*a*~~', 'x~~_a_~~'],
     ['tilde fences in a block quote', '> ~~~\n> x\n> ~~~', '> ```\n> x\n> ```'],
@@ -86,6 +86,7 @@ describe('restyleMarkdown', () => {
     ['an escaped `_` in a wiki link', 'See [[My\\_Page]].'],
     ['emphasis after a `_` between dollar signs', 'It costs $5 for my_file and $6 for *this*.'],
     ['emphasis after a `_` in the same link', 'See [snake_case *docs*](https://x.com).'],
+    ['emphasis after a `_` in a bare URL', 'See http://localhost:3000/my_page *x*'],
     ['an escaped `_` in a link or at a word edge', '[a\\_b](u) and end\\_ and \\_start'],
     [
       'link destinations, titles and alt',
@@ -154,7 +155,19 @@ describe('restyleMarkdown', () => {
       return undefined
     }
     expect(restyleMarkdown(source, tree, () => false, readsBack)).toBeUndefined()
-    expect(parses).toBeLessThanOrEqual(40)
+    expect(parses).toBeLessThanOrEqual(72)
+  })
+
+  it('restyles every other block when a few blocks spread through the body do not read back', () => {
+    const source = Array.from({ length: 200 }, (_, i) => `*p${i}*`).join('\n\n')
+    const tree = fromMarkdown(source, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] })
+    const failing = ['p10', 'p55', 'p99', 'p140', 'p190']
+    const readsBack = (text: string): MdNode | undefined =>
+      failing.some((p) => text.includes(`_${p}_`)) ? undefined : fromMarkdown(text)
+    const out = restyleMarkdown(source, tree, () => false, readsBack)?.text
+    expect(out).toBe(
+      source.replace(/\*(p\d+)\*/g, (all, p: string) => (failing.includes(p) ? all : `_${p}_`)),
+    )
   })
 
   it('restyles only the blocks it is not told to keep', () => {
