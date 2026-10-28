@@ -237,11 +237,9 @@ Enforcement is layered:
 
 **Withdraw is deliberately not blocked** on protected branches: it is the self-serve recovery path for a base branch wrongly stuck in `submitted`, and the workflow-authorization rule above already restricts it to privileged users there.
 
-### Reserved Branch Names
+### Branch Names
 
-The API serves branch-specific routes (`/:branch/...`) and a handful of static top-level routes (admin, assets, branches, groups, permissions, users, whoami) from one route table, and a static segment always beats the dynamic `:branch` parameter. A branch named e.g. `admin` would therefore be half-alive rather than cleanly rejected: its bare top-level route still resolves while every nested route 404s or 403s unpredictably.
-
-Branch creation rejects any name colliding with a static top-level namespace, checked against both the requested name and its sanitized git-ref-safe form, matching exactly and case-sensitively so `Admin` and `admin-docs` stay creatable. It is enforced **only on the creation path**, deliberately not as general name validation: a blanket rule would also reject an already-existing colliding branch on every one of its own routes, including its delete route, making it permanently un-removable. This reservation protects the route table; the settings-branch namespace is a separate one, protecting a deployment's settings from collision.
+An editor's branch is created as `canopycms-<name>` (`parseCreatedBranchName`, `packages/canopycms/src/paths/validation.ts`), the namespace the GitHub gateway writes. That also keeps it clear of the API's static top-level routes (admin, assets, …), which outrank `/:branch/...` in the route table and would leave a branch named like one half-reachable: no static top-level route starts with `canopycms-`, which `http/router.test.ts` holds. A name under `canopycms-settings-` is refused, since that part of the namespace holds settings branches, where a content branch would corrupt a deployment's permissions and groups.
 
 ## Operating Modes
 

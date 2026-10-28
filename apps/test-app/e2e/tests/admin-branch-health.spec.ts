@@ -60,14 +60,11 @@ async function refreshBranchesTab(adminPage: AdminPage): Promise<void> {
 /**
  * The dirName the server currently considers `isBaseBranch`.
  *
- * NOT necessarily `'main'`: dev mode's effective base branch is
- * `config.defaultBaseBranch ?? 'main'`, and `defaultBaseBranch` is left unset
- * in the test app, so on a checkout whose git HEAD branch isn't literally
- * named `main` (true for this very worktree, e.g. `test/e2e-coverage-sweep`)
- * the server auto-provisions a SEPARATE sanitized-git-branch-named directory
- * and flags THAT one `isBaseBranch`, while the fixtures' own `main` content
- * branch (created explicitly by `ensureMainBranch`) stays a perfectly healthy
- * but non-base branch. Asserting the "base" badge must therefore look up
+ * NOT necessarily `'main'`: dev mode's base branch is the checkout's git HEAD branch when
+ * `defaultBaseBranch` is unset, as in the test app, so on a checkout whose HEAD branch isn't
+ * `main` the server provisions a separate directory for it and flags THAT one `isBaseBranch`,
+ * while `main`, the test app's active branch (provisioned by `ensureMainBranch`), stays a
+ * healthy but non-base branch. Asserting the "base" badge must therefore look up
  * whichever entry the scan actually flagged, not assume the literal name.
  */
 async function getBaseBranchDirName(page: Page): Promise<string> {

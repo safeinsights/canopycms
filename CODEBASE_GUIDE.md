@@ -779,9 +779,9 @@ prefer the branch's recorded `context.branch.baseBranch` over the config value. 
 
 **Client-bundle boundary**: import `sanitizeBranchName` from `branch-name.ts`, never the barrel or
 `branch.ts`; `pnpm lint:bundle` enforces it — see
-[DEVELOPING.md](DEVELOPING.md#client-bundle-boundary-check). Which branch names are reserved, and
-why the list is hand-maintained rather than derived, is in
-[ARCHITECTURE.md](ARCHITECTURE.md#reserved-branch-names).
+[DEVELOPING.md](DEVELOPING.md#client-bundle-boundary-check). How editors' branch names form,
+and what keeps them clear of routes and settings branches, is in
+[ARCHITECTURE.md](ARCHITECTURE.md#branch-names).
 
 The branded types: `LogicalPath` (content-relative, no embedded IDs, used for every collection
 path), `PhysicalPath` (filesystem paths that may carry embedded IDs), `BranchName`,

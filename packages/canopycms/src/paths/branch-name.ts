@@ -26,9 +26,9 @@ export function sanitizeBranchName(branchName: string): SanitizedBranchName {
  * Exported from this dependency-free module -- not rebuilt ad hoc at each call
  * site -- so every consumer of the namespace agrees on the exact string:
  * worker/git-sync.ts's `pushSettingsBranches` never pushes a
- * `canopycms-settings-*` branch this deployment doesn't own, and api/branch.ts's
- * `createBranchHandler` rejects a user-requested branch whose SANITIZED name
- * falls in this namespace.
+ * `canopycms-settings-*` branch this deployment doesn't own, and
+ * paths/validation.ts's `parseCreatedBranchName` refuses a typed branch name
+ * whose created name falls in this namespace.
  *
  * The WHOLE prefix is reserved, not just this deployment's own settings branch:
  * two deployments can share one GitHub repo, and a content branch landing on

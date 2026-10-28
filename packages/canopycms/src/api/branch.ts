@@ -284,9 +284,9 @@ export const createBranchHandler = async (
 
     // Scope note: the remote-mirror check further down applies ONLY to this
     // user-facing creation path; http/handler.ts's auto-create (base/active
-    // branches) and loadOrCreateBranchContext provision known names. The settings-branch
-    // checks here (parseCreatedBranchName's, and the one below) give this path a specific 400; every
-    // provisioning path, this one included, also refuses a settings branch in
+    // branches) and loadOrCreateBranchContext provision known names. parseCreatedBranchName's
+    // reserved-prefix rule and the configured-name check below give this path a specific 400;
+    // every provisioning path, this one included, also refuses a settings branch in
     // BranchWorkspaceManager.openOrCreateBranch.
 
     // Settings live in a separate directory but share the git remote, so a content branch may not
@@ -304,14 +304,6 @@ export const createBranchHandler = async (
         }
       }
     }
-
-    // Reserve the WHOLE canopycms-settings- namespace, not just this
-    // deployment's own settings branch name. Two CanopyCMS deployments can
-    // share one GitHub repo, each with its own settings branch under this
-    // prefix; the worker (worker/git-sync.ts) treats any
-    // `canopycms-settings-*` ref specially (orphan-branch reconcile/push
-    // logic), so another deployment's settings branch is a real name that
-    // must not be claimable as a content branch here either.
 
     // Reject the base branch name outright, even before the base branch is
     // provisioned. No recorded fork point exists yet for a not-yet-created
