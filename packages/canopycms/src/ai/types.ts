@@ -7,7 +7,6 @@
 
 import type { FieldConfig } from '../config'
 import type { MissingReference, ResolvedReferenceMeta } from '../entry-schema'
-import type { SeoFieldLocation } from '../static/seo'
 
 /** A reference whose target this export shows: the target's own data plus where it lives. */
 export type AIResolvedReference = Record<string, unknown> &
@@ -64,9 +63,9 @@ export interface ExcludeConfig {
   /** Custom predicate — return true to exclude the entry */
   where?: (entry: AIEntryMeta) => boolean
   /**
-   * Leave out entries marked `noindex`, read through `isNoindexEntry` at
-   * {@link AIContentConfig.seo}, the predicate the sitemap and robots metadata use. Default
-   * `true`; `false` exports them.
+   * Leave out entries marked `noindex`, read through `isNoindexEntry` at `config.seo`, the
+   * predicate and location the sitemap and robots metadata use. Default `true`; `false` exports
+   * them.
    */
   noindex?: boolean
 }
@@ -226,8 +225,9 @@ export type EntryTransforms = Record<string, EntryTransformFn>
 /** What {@link AIReferenceLinkFn} knows about a target beyond its data. */
 export interface AIReferenceLinkContext {
   /**
-   * The target's MD/MDX body as stored, `undefined` for a data-only entry. It only informs this
-   * decision: none of it reaches the entries that link to the target.
+   * The target's body as stored: an md/mdx entry's body, or a json/yaml entry's `isBody` field,
+   * which the target leaves out as a link-only reference does. `undefined` when it has none. It
+   * only informs this decision: none of it reaches the entries that link to the target.
    */
   body: string | undefined
   /**
@@ -269,11 +269,6 @@ export interface AIContentConfig {
   mountPath?: string
   /** Opt-out exclusions — content to skip */
   exclude?: ExcludeConfig
-  /**
-   * Where entries keep their SEO fields, when not the flat defaults. Drives the `noindex` read,
-   * so pass the same object as `createNextCanopyContext({ seo })`, or the two can disagree.
-   */
-  seo?: SeoFieldLocation
   /** Custom bundles — filtered content subsets */
   bundles?: BundleConfig[]
   /** Per-entry-type, per-field markdown overrides */

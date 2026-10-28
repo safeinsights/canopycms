@@ -13,6 +13,7 @@ import {
   ensureReferenceFieldsHaveScope,
   ensureItemTitleFieldsExist,
   ensureNoGroupsInsideComplexFields,
+  ensureMaxItemsPlacement,
   ensureNoFlattenedFieldNameCollisions,
   validateCanopyConfig,
 } from '../validation'
@@ -204,6 +205,21 @@ describe('config validation', () => {
     expect(() =>
       validateCanopyConfig({ ...base, danglingReferences: 'off' as unknown as 'warn' }),
     ).toThrow()
+  })
+
+  it('keeps seo through the parse and refuses a misspelled or misshapen one', () => {
+    const base = { ...gitAuthor, mode: 'prod' as const }
+    const seo = { group: 'seo', fields: { noindex: 'hidden', title: 'seoTitle' } }
+    expect(validateCanopyConfig({ ...base, seo }).seo).toEqual(seo)
+    expect(validateCanopyConfig(base).seo).toBeUndefined()
+    for (const bad of [
+      { fields: { noIndex: 'hidden' } },
+      { group: '' },
+      { fields: { noindex: 3 } },
+      { grop: 'seo' },
+    ]) {
+      expect(() => validateCanopyConfig({ ...base, seo: bad as never })).toThrow()
+    }
   })
 
   it('lets a later fragment override an earlier fragment field-by-field', () => {
@@ -999,6 +1015,74 @@ describe('ensureNoGroupsInsideComplexFields', () => {
         },
       ]),
     ).toThrow('Inline group "inner" cannot be nested inside a object field')
+  })
+})
+
+describe('ensureMaxItemsPlacement', () => {
+  const quoteBlock = (fields: unknown[]) => ({
+    name: 'blocks',
+    type: 'block',
+    templates: [{ name: 'quote', fields }],
+  })
+
+  it('accepts maxItems on a string list, a reference list, an object list and a block field', () => {
+    expect(() =>
+      ensureMaxItemsPlacement([
+        { name: 'tags', type: 'string', list: true, maxItems: 3 },
+        { name: 'featured', type: 'reference', list: true, maxItems: 1 },
+        { name: 'links', type: 'object', list: true, maxItems: 5, fields: [] },
+        { ...quoteBlock([]), maxItems: 2 },
+      ]),
+    ).not.toThrow()
+  })
+
+  it('accepts a list inside a group, an object or a block template', () => {
+    const tags = { name: 'tags', type: 'string', list: true, maxItems: 2 }
+    expect(() =>
+      ensureMaxItemsPlacement([
+        { name: 'meta', type: 'group', fields: [tags] },
+        { name: 'hero', type: 'object', fields: [tags] },
+        quoteBlock([tags]),
+      ]),
+    ).not.toThrow()
+  })
+
+  it('refuses maxItems on a non-list string field, naming the field', () => {
+    expect(() =>
+      ensureMaxItemsPlacement([{ name: 'title', type: 'string', maxItems: 2 }], 'a schema'),
+    ).toThrow(
+      'a schema: field "title" has maxItems, but it is not a list; only a `list: true` field or a block field holds items',
+    )
+  })
+
+  it('refuses maxItems on a non-list object field', () => {
+    expect(() =>
+      ensureMaxItemsPlacement([{ name: 'hero', type: 'object', maxItems: 2, fields: [] }]),
+    ).toThrow('field "hero" has maxItems, but it is not a list')
+  })
+
+  it('refuses a non-list field nested inside an object, a group or a block template', () => {
+    const bad = { name: 'headline', type: 'string', maxItems: 2 }
+    for (const nested of [
+      { name: 'hero', type: 'object', fields: [bad] },
+      { name: 'meta', type: 'group', fields: [bad] },
+      quoteBlock([bad]),
+    ]) {
+      expect(() => ensureMaxItemsPlacement([nested])).toThrow('field "headline" has maxItems')
+    }
+  })
+
+  it('refuses a maxItems that is not a positive whole number', () => {
+    for (const maxItems of [0, -1, 1.5, '2', Number.NaN]) {
+      expect(() =>
+        ensureMaxItemsPlacement([{ name: 'tags', type: 'string', list: true, maxItems }]),
+      ).toThrow('field "tags" has maxItems, which must be a positive whole number')
+    }
+  })
+
+  it('ignores a field that carries no maxItems', () => {
+    expect(() => ensureMaxItemsPlacement([{ name: 'title', type: 'string' }])).not.toThrow()
+    expect(() => ensureMaxItemsPlacement(undefined)).not.toThrow()
   })
 })
 

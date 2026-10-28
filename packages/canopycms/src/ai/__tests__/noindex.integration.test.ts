@@ -13,6 +13,7 @@ import { unsafeAsLogicalPath, unsafeAsSlug } from '../../paths/test-utils'
 import { collectStaticPaths } from '../../static'
 import { generateAIContent } from '../generate'
 import { createAIContentHandler } from '../handler'
+import type { SeoFieldLocation } from '../../static/seo'
 import type { AIContentConfig, AIEntry, AIManifest } from '../types'
 
 const schema: RootCollectionConfig = {
@@ -99,12 +100,13 @@ describe('AI content and noindex', () => {
     await fs.rm(root, { recursive: true, force: true })
   })
 
-  const generate = (aiConfig?: AIContentConfig) =>
+  const generate = (aiConfig?: AIContentConfig, seo?: SeoFieldLocation) =>
     generateAIContent({
       store,
       flatSchema: flat,
       contentRoot: config.contentRoot,
       config: aiConfig,
+      seo,
     })
 
   const bundled: AIContentConfig = {
@@ -139,7 +141,7 @@ describe('AI content and noindex', () => {
   })
 
   it('reads the flag at the configured SEO field names', async () => {
-    const custom = await generate({ seo: { fields: { noindex: 'hideFromSearch' } } })
+    const custom = await generate(undefined, { fields: { noindex: 'hideFromSearch' } })
     expect(custom.files.has('guides/custom.md')).toBe(false)
     expect(custom.files.has('guides/stub.md')).toBe(true)
 
@@ -152,19 +154,19 @@ describe('AI content and noindex', () => {
     await expect(generate(aiConfig)).rejects.toThrow('exclude.noindex must be a boolean')
   })
 
+  it('refuses seo on the AI config, which belongs in CanopyConfig', async () => {
+    const aiConfig = { seo: { group: 'seo' } } as unknown as AIContentConfig
+    await expect(generate(aiConfig)).rejects.toThrow('seo is not an AI content option')
+  })
+
   it('reads the flag inside a configured SEO group', async () => {
     await store.write(unsafeAsLogicalPath('content/guides'), unsafeAsSlug('grouped'), {
       format: 'md',
       data: { title: 'Grouped', seo: { noindex: true } },
       body: 'Grouped text.',
     })
-    expect((await generate({ seo: { group: 'seo' } })).files.has('guides/grouped.md')).toBe(false)
+    expect((await generate(undefined, { group: 'seo' })).files.has('guides/grouped.md')).toBe(false)
     expect((await generate()).files.has('guides/grouped.md')).toBe(true)
-  })
-
-  it('refuses an unknown seo.fields key', async () => {
-    const aiConfig = { seo: { fields: { noIndex: 'hidden' } } } as unknown as AIContentConfig
-    await expect(generate(aiConfig)).rejects.toThrow('unknown seo.fields key(s): noIndex')
   })
 
   it('shows exclude.where the body with its links resolved', async () => {
@@ -173,11 +175,6 @@ describe('AI content and noindex', () => {
     })
     expect(files.has('guides/overview.md')).toBe(false)
     expect(files.has('guides/basics.md')).toBe(true)
-  })
-
-  it('refuses a misshapen seo location', async () => {
-    const aiConfig = { seo: { fields: { noindex: true } } } as unknown as AIContentConfig
-    await expect(generate(aiConfig)).rejects.toThrow('seo.fields must map')
   })
 
   it('renders a body link to a noindex or excluded entry as its text, with no URL', async () => {
@@ -232,6 +229,27 @@ describe('AI content and noindex', () => {
     expect(await (await get('guides/all.md')).text()).not.toContain('Stub-only text.')
     const manifest = (await (await get('manifest.json')).json()) as AIManifest
     expect(manifest.collections[0].entries.map((e) => e.slug)).not.toContain('stub')
+  })
+
+  it('reads the flag at config.seo in the route handler', async () => {
+    vi.spyOn(process, 'cwd').mockReturnValue(root)
+    const handler = createAIContentHandler({
+      config: {
+        ...config,
+        mode: 'dev',
+        deployedAs: 'static',
+        seo: { fields: { noindex: 'hideFromSearch' } },
+      },
+      entrySchemaRegistry: {},
+      _testFlatSchema: flat,
+    })
+    const get = (requestPath: string) =>
+      handler(new Request(`http://localhost/ai/${requestPath}`), {
+        params: Promise.resolve({ path: requestPath.split('/') }),
+      })
+
+    expect((await get('guides/custom.md')).status).toBe(404)
+    expect((await get('guides/stub.md')).status).toBe(200)
   })
 
   it('still enumerates a noindex entry for the build', async () => {

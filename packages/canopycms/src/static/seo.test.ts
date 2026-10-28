@@ -97,6 +97,10 @@ describe('extractSeoFields', () => {
 })
 
 describe('isNoindexEntry', () => {
+  it('keeps the default name when a field name is undefined', () => {
+    expect(isNoindexEntry({ noindex: true }, { fields: { noindex: undefined } })).toBe(true)
+  })
+
   it('is true only for an explicit boolean true', () => {
     expect(isNoindexEntry({ noindex: true })).toBe(true)
     expect(isNoindexEntry({ noindex: false })).toBe(false)

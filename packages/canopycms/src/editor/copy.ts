@@ -19,3 +19,10 @@ export const EDITOR_ACTIONS = {
   changeUrl: 'Change URL',
   changeSlug: 'Change slug',
 } as const
+
+/**
+ * Why a list at its `maxItems` adds nothing more, as a disabled Add's Tooltip or an input's hint.
+ * `one` and `many` name what the list holds.
+ */
+export const listFullReason = (maxItems: number, one = 'item', many = 'items'): string =>
+  `This list holds at most ${maxItems} ${maxItems === 1 ? one : many}. Remove one to add another.`

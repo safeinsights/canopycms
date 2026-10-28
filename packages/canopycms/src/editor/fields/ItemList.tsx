@@ -4,15 +4,18 @@ import React, { useEffect, useId, useRef, useState } from 'react'
 
 import {
   ActionIcon,
+  Badge,
   Box,
   Group,
   Menu,
   Paper,
+  Skeleton,
   Stack,
   Text,
   Tooltip,
   UnstyledButton,
   VisuallyHidden,
+  type MantineColor,
 } from '@mantine/core'
 import {
   DndContext,
@@ -47,6 +50,10 @@ import type { ItemExpansion } from './item-expansion'
 interface ItemSummary {
   title: string
   secondary?: string
+  /** A status shown after the title, in its colour's light variant; part of the row's name. */
+  badge?: { label: string; color: MantineColor }
+  /** The title is still loading: the row shows a placeholder in its place. */
+  pending?: boolean
 }
 
 export interface ItemListProps<T> {
@@ -64,7 +71,10 @@ export interface ItemListProps<T> {
   /** True when a field inside row `index` has a validation error. */
   hasErrors?: (index: number) => boolean
   onMove: (from: number, to: number) => void
-  onDuplicate: (index: number) => void
+  /** Without it, the row menu offers no Duplicate. */
+  onDuplicate?: (index: number) => void
+  /** Why Duplicate can't act now, such as a list at its `maxItems`; shown in its place. */
+  duplicateBlockedReason?: string
   /** Takes row `index` out; focus has already moved to the enclosing `[data-removal-focus]` list. */
   onRemove: (index: number) => void
   /** Rendered before row `index`, such as a block list's insert-here control. */
@@ -74,6 +84,11 @@ export interface ItemListProps<T> {
    * Cleared once used.
    */
   focusAfterRenderRef?: React.MutableRefObject<number | null>
+  /**
+   * Said through the list's live region, by a caller whose own control keeps focus when it adds a
+   * row. Pass a new object for each announcement.
+   */
+  announcement?: { message: string }
   'data-testid'?: string
 }
 
@@ -82,7 +97,7 @@ const ROW_GAP = 8
 /**
  * The rows of an object list or block list: each collapses to a one-line summary and carries a
  * drag handle (pointer and keyboard, via dnd-kit) and a "…" menu with Move up, Move down,
- * Duplicate and Remove. A read-only list keeps only collapsing. A collapsed row stays mounted
+ * Duplicate (when the list offers it) and Remove. A read-only list keeps only collapsing. A collapsed row stays mounted
  * and opens when something asks to reveal a field inside it (`REVEAL_FIELD_EVENT`).
  */
 export function ItemList<T>({
@@ -100,6 +115,8 @@ export function ItemList<T>({
   onRemove,
   renderBetween,
   focusAfterRenderRef,
+  announcement: callerAnnouncement,
+  duplicateBlockedReason,
   'data-testid': testId,
 }: ItemListProps<T>) {
   const listRef = useRef<HTMLDivElement>(null)
@@ -123,6 +140,12 @@ export function ItemList<T>({
     )
     if (row) focusFieldTarget(row)
   })
+
+  const [lastCallerAnnouncement, setLastCallerAnnouncement] = useState(callerAnnouncement)
+  if (callerAnnouncement !== lastCallerAnnouncement) {
+    setLastCallerAnnouncement(callerAnnouncement)
+    if (callerAnnouncement) setAnnouncement(callerAnnouncement.message)
+  }
 
   const titleAt = (index: number) => summarize(items[index], index).title
   const indexOf = (id: UniqueIdentifier) => itemKeys.indexOf(String(id))
@@ -157,7 +180,7 @@ export function ItemList<T>({
   }
 
   const duplicate = (index: number) => {
-    onDuplicate(index)
+    onDuplicate?.(index)
     setAnnouncement(`${titleAt(index)} duplicated, position ${index + 2} of ${items.length + 1}.`)
   }
 
@@ -195,7 +218,8 @@ export function ItemList<T>({
                   isLast={idx === items.length - 1}
                   onMoveUp={() => move(idx, idx - 1)}
                   onMoveDown={() => move(idx, idx + 1)}
-                  onDuplicate={() => duplicate(idx)}
+                  onDuplicate={onDuplicate ? () => duplicate(idx) : undefined}
+                  duplicateBlockedReason={duplicateBlockedReason}
                   onRemove={() => remove(idx)}
                 >
                   {renderItem(item, idx)}
@@ -223,7 +247,8 @@ interface ItemRowProps {
   isLast: boolean
   onMoveUp: () => void
   onMoveDown: () => void
-  onDuplicate: () => void
+  onDuplicate?: () => void
+  duplicateBlockedReason?: string
   onRemove: () => void
   children: React.ReactNode
 }
@@ -242,6 +267,7 @@ const ItemRow: React.FC<ItemRowProps> = ({
   onMoveUp,
   onMoveDown,
   onDuplicate,
+  duplicateBlockedReason,
   onRemove,
   children,
 }) => {
@@ -287,7 +313,7 @@ const ItemRow: React.FC<ItemRowProps> = ({
   }
 
   // Rows can share a title (two sections of one template), so names carry the second value too.
-  const name = summary.secondary ? `${summary.title}, ${summary.secondary}` : summary.title
+  const name = [summary.title, summary.secondary, summary.badge?.label].filter(Boolean).join(', ')
   const actionsLabel = `Actions for ${name}`
 
   return (
@@ -348,18 +374,34 @@ const ItemRow: React.FC<ItemRowProps> = ({
                 transition: 'transform 120ms ease',
               }}
             />
-            <Text
-              size="sm"
-              fw={500}
-              truncate="end"
-              style={summary.secondary ? { flexShrink: 0, maxWidth: '60%' } : { minWidth: 0 }}
-            >
-              {summary.title}
-            </Text>
+            {summary.pending ? (
+              // About the height of the title's line, which replaces it.
+              <Skeleton height={14} width="40%" my={3} data-testid="item-row-title-pending" />
+            ) : (
+              <Text
+                size="sm"
+                fw={500}
+                truncate="end"
+                style={summary.secondary ? { flexShrink: 0, maxWidth: '60%' } : { minWidth: 0 }}
+              >
+                {summary.title}
+              </Text>
+            )}
             {summary.secondary && (
               <Text size="sm" c="dimmed" truncate="end" style={{ minWidth: 0 }}>
                 {summary.secondary}
               </Text>
+            )}
+            {summary.badge && !summary.pending && (
+              <Badge
+                variant="light"
+                color={summary.badge.color}
+                size="sm"
+                tt="none"
+                style={{ flexShrink: 0 }}
+              >
+                {summary.badge.label}
+              </Badge>
             )}
             {hasErrors && !expanded && (
               <Group gap={2} wrap="nowrap" ml="auto" style={{ flexShrink: 0 }}>
@@ -401,9 +443,15 @@ const ItemRow: React.FC<ItemRowProps> = ({
               >
                 Move down
               </ReasonedMenuItem>
-              <Menu.Item onClick={thenFocusMenu(onDuplicate)} data-testid="item-row-duplicate">
-                Duplicate
-              </Menu.Item>
+              {onDuplicate && (
+                <ReasonedMenuItem
+                  blockedReason={duplicateBlockedReason}
+                  onClick={thenFocusMenu(onDuplicate)}
+                  data-testid="item-row-duplicate"
+                >
+                  Duplicate
+                </ReasonedMenuItem>
+              )}
               <Menu.Divider />
               <DestructiveMenuItem onClick={onRemove} data-testid="item-row-remove">
                 {EDITOR_ACTIONS.remove}

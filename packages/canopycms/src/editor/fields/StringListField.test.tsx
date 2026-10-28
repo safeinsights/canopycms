@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { CanopyCMSProvider } from '../theme'
@@ -11,7 +12,8 @@ const Harness: React.FC<{
   onChange?: (v: string[]) => void
   description?: string
   readOnly?: boolean
-}> = ({ initial = [], onChange, description, readOnly }) => {
+  maxItems?: number
+}> = ({ initial = [], onChange, description, readOnly, maxItems }) => {
   const [value, setValue] = useState<string[]>(initial)
   return (
     <CanopyCMSProvider>
@@ -19,6 +21,7 @@ const Harness: React.FC<{
         label="Tags"
         description={description}
         readOnly={readOnly}
+        maxItems={maxItems}
         value={value}
         onChange={(next) => {
           setValue(next)
@@ -121,5 +124,51 @@ describe('StringListField', () => {
       expect(describedBy()).toBeUndefined()
       expect(screen.queryByText(/press enter/i)).toBeNull()
     })
+  })
+})
+
+describe('StringListField at its maxItems', () => {
+  it('adds nothing more and says why in place of the Enter hint', async () => {
+    const user = userEvent.setup()
+    const changes: string[][] = []
+    render(<Harness initial={['red', 'blue']} maxItems={2} onChange={(v) => changes.push(v)} />)
+
+    expect(describedBy()).toBe('This list holds at most 2 items. Remove one to add another.')
+    const input = document.querySelector('input[data-canopy-field="tags"]') as HTMLInputElement
+    await user.type(input, 'green{Enter}')
+    expect(changes).toEqual([])
+  })
+
+  it('keeps the Enter hint below the cap', () => {
+    render(<Harness initial={['red']} maxItems={2} />)
+    expect(describedBy()).toBe('Press Enter to add.')
+  })
+})
+
+describe('StringListField over its maxItems', () => {
+  it('keeps every stored item when something is pasted', async () => {
+    const user = userEvent.setup()
+    const changes: string[][] = []
+    render(
+      <Harness
+        initial={['a', 'b', 'c', 'd', 'e']}
+        maxItems={3}
+        onChange={(v) => changes.push(v)}
+      />,
+    )
+    const input = document.querySelector('input[data-canopy-field="tags"]') as HTMLInputElement
+    await user.click(input)
+    await user.paste('f')
+    expect(changes.length).toBeGreaterThan(0)
+    for (const change of changes) expect(change.slice(0, 5)).toEqual(['a', 'b', 'c', 'd', 'e'])
+  })
+
+  it('adds nothing on Enter', async () => {
+    const user = userEvent.setup()
+    const changes: string[][] = []
+    render(<Harness initial={['a', 'b', 'c']} maxItems={2} onChange={(v) => changes.push(v)} />)
+    const input = document.querySelector('input[data-canopy-field="tags"]') as HTMLInputElement
+    await user.type(input, 'g{Enter}')
+    expect(changes).toEqual([])
   })
 })

@@ -54,6 +54,109 @@ entries under **Released**.
 
 ## Released
 
+### 0.6.0
+
+#### Clerk organizations-as-groups is a deployment setting, and survives a Clerk instance without Organizations — **behaviour change**
+
+<!-- changeset: clerk-orgs-as-groups -->
+
+_First in 0.6.0._
+
+**What changed.** `CanopyCmsService` takes `clerkOrganizationsAsGroups` (default `true`, unchanged), which the worker honours; in a deployment it, not the plugin's `useOrganizationsAsGroups`, decides the groups. When Clerk refuses the organization list with a 403 (Organizations disabled), the refresh now writes users with no groups and logs a warning, instead of failing whole; any other failure still keeps the last snapshot. Memberships are fetched instance-wide rather than per user. The scaffolds write `false` explicitly: `useOrganizationsAsGroups` in `canopycms init`'s `canopy.ts`, and `clerkOrganizationsAsGroups` in `canopycms init-deploy aws`'s CDK stack.
+
+**To adopt.** On a Clerk instance without Organizations, set `clerkOrganizationsAsGroups: false` on `CanopyCmsService` and `useOrganizationsAsGroups: false` in `createClerkAuthPlugin`. See [Deploying to AWS](docs/deploying-to-aws.md).
+
+### 0.5.0
+
+#### Reorderable list references, and `maxItems` on list fields — **behaviour change: a build fails on a list over its cap**
+
+<!-- changeset: reference-list-reorder-and-max-items -->
+
+_First in 0.5.0._
+
+**What changed.** A `type: 'reference', list: true` field now edits as rows in stored order, like an `object` list: drag a row or use its "…" menu to move or remove it, open a row to swap its entry in place, and pick from Add under the rows to append. Neither control offers an entry the list already holds. Any `list: true` field, and any `block` field, takes `maxItems`. The editor stops adding at the cap and says why, a save over it is refused, and a production build fails on an entry over it, naming the entry, field, count and cap. Adding `maxItems` to a list that already holds more therefore fails the build until an editor removes the extra items. `maxItems` on a field that holds no items is refused when the entry schema registry is created.
+
+**To adopt.** Set `maxItems: 3` on the list field in its entry schema. See [Field Types](README.md#field-types).
+
+#### SEO field location moves into config; reference pickers mark hidden entries and take a sort order — **breaking: `createNextCanopyContext({ seo })` and `AIContentConfig.seo` are removed**
+
+<!-- changeset: seo-config-hidden-picks-option-sort -->
+
+_First in 0.5.0._
+
+**What changed.** `defineCanopyConfig` takes `seo: { group?, fields? }`, the one place every surface reads an entry's `noindex` flag: the sitemap and `entryToMetadata` that `createNextCanopyContext` returns, AI content and the editor's reference picker. A per-call `seo`/`group`/`fields` still overrides it. The free `generateContentSitemap` takes `seo` as an argument and refuses to run without it when the config sets one; `createNextCanopyContext` and the AI content config refuse a leftover `seo`. A reference picker now badges an entry hidden from search as "Hidden from search", and picking one adds a note naming the setting on that entry's form, since a page listing only indexed entries won't show it. A reference field takes `optionSort`: `'label'` (the default), `'collection'`, or `{ field, direction }`. Point `field` at an ISO date, since strings compare as text.
+
+**To adopt.** Move `seo` from `createNextCanopyContext({ seo })` and from `defineAIContentConfig({ seo })` into `defineCanopyConfig({ seo })`. See [Sitemap and SEO Metadata](README.md#sitemap-and-seo-metadata) and [How References Work in the Editor](README.md#how-references-work-in-the-editor).
+
+**Now deletable.** A shared `seo` constant passed separately to the Next context and the AI content config.
+
+### 0.4.0
+
+#### Link-only references to json/yaml entries leave out the body — **behaviour change (resolved data and types)**
+
+<!-- changeset: link-only-references-omit-data-body -->
+
+_First in 0.4.0._
+
+**What changed.** A reference field without `includeBody: true` now resolves a json or yaml
+target without that target's `isBody` field, as it already resolved an md/mdx target without its
+body. A long body is no longer copied into every entry that merely links to it. A field that is
+only named `body`, with no `isBody`, is ordinary data and still resolves. The live-preview resolve
+endpoint and the AI export's `referenceLink` target follow the same rule, and `referenceLink`
+now receives a json/yaml target's `isBody` field as `context.body`. Live preview resolves every
+reference link-only, so an `includeBody: true` reference to a json/yaml target now previews
+without its body, as one to an md/mdx target already did.
+
+With `resolvedSchema`, the target's `isBody` field is now optional in the resolved type unless
+the reference sets `includeBody: true`. This applies to md/mdx targets too, which already
+resolved without it.
+
+**To adopt.** Where a reference renders its target's prose, set `includeBody: true` on that
+reference field. Code that reads the body from a link-only reference's resolved type now sees
+`string | undefined`; either set `includeBody: true` or handle the missing value. See
+[Resolving References in a Listing](README.md#resolving-references-in-a-listing).
+
+### 0.3.3
+
+#### Bare URLs in a markdown body survive a save
+
+<!-- changeset: bare-urls-keep-their-text -->
+
+_First in 0.3.3._
+
+**What changed.** The rich-text editor reads a bare URL (`www.example.org`, `https://example.org`
+or an email address) as GFM does. Opening an entry no longer marks it modified, and saving a
+frontmatter change keeps the body byte for byte. Before, every bare URL was rewritten as an
+explicit link, and a sentence's period went into the href (`[www.example.org.](https://www.example.org.)`).
+A URL typed in the editor is saved with the trailing punctuation GFM leaves out of a link
+(`.`, `,`, `:`, `;`, `!`, `?`, `*`, `_`, `~`, an unbalanced `)`) outside it. Editing a bare URL's
+text updates its href; a bare URL given a label keeps its link.
+
+### 0.3.2
+
+#### The content panel's header lines up with the entry header
+
+<!-- changeset: shell-header-heights -->
+
+_First in 0.3.2._
+
+**What changed.** The content panel's header and the entry header beside it now share one fixed
+height, so their bottom borders line up whatever the height of the controls inside each.
+
+### 0.3.1
+
+#### The branch list shows exactly the branches you can open
+
+<!-- changeset: branch-list-follows-access-check -->
+
+_First in 0.3.1._
+
+**What changed.** The branch list now includes a branch only when branch access grants it, so
+the two can no longer disagree. Under `defaultBranchAccess: 'allow'`, a colleague's branch with
+no ACL now appears in your list, and opening it no longer shows "Not available · read-only" with
+Save locked while its content loads. A branch whose explicit ACL leaves out its own creator no
+longer appears in that creator's list, matching the access check that already refused them.
+
 ### 0.3.0
 
 #### The branch bar's tooltips open beside their controls

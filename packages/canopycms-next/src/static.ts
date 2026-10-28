@@ -151,7 +151,11 @@ export interface GenerateContentSitemapOptions {
   trailingSlash?: boolean
   /** Scope to a collection logical path (e.g. 'content/posts'). Defaults to the whole content root. */
   rootPath?: string
-  /** Where the SEO fields live, when they aren't the flat defaults. Drives the `noindex` read. */
+  /**
+   * Where the SEO fields live; drives the `noindex` read. The bound helper on
+   * `createNextCanopyContext` defaults it to `config.seo`. Called directly, it is this value
+   * alone, and required when the build context's config sets `seo`.
+   */
   seo?: SeoFieldLocation
   /**
    * Drop entries from the sitemap. Applied ON TOP of the `noindex` exclusion, which is not
@@ -213,6 +217,32 @@ export interface GenerateContentSitemapOptions {
 }
 
 /**
+ * Merge the site's SEO field location (`config.seo`) with a per-call override, as the bound
+ * helpers on `createNextCanopyContext` do.
+ *
+ * Only what the caller actually supplies overrides it: an omitted or `undefined` `group` falls
+ * through, and `fields` merge name by name, so renaming the title for one page keeps the site's
+ * `noindex` name. A plain spread would not do this, because `entryToMetadata`'s options always
+ * carry `fields`/`group` keys, present but `undefined` when the caller omits them.
+ * @internal Exported for tests.
+ */
+export function mergeSeoFieldLocation(
+  configDefault: SeoFieldLocation | undefined,
+  callOverride: SeoFieldLocation | undefined,
+): SeoFieldLocation {
+  const merged: SeoFieldLocation = { ...configDefault }
+  if (callOverride?.fields !== undefined) {
+    const fields = { ...configDefault?.fields }
+    for (const [key, name] of Object.entries(callOverride.fields)) {
+      if (name !== undefined) fields[key as keyof typeof fields] = name
+    }
+    merged.fields = fields
+  }
+  if (callOverride?.group !== undefined) merged.group = callOverride.group
+  return merged
+}
+
+/**
  * Build Next's `MetadataRoute.Sitemap` from CanopyCMS content.
  *
  * **Every routable entry type is included by default.** There is no list of "sitemap-able" entry
@@ -242,6 +272,13 @@ export async function generateContentSitemap(
 ): Promise<MetadataRoute.Sitemap> {
   const { siteUrl, trailingSlash, rootPath, seo, exclude, lastModified, priority, pathFor } =
     options
+  if (seo === undefined && buildCtx.services?.config.seo !== undefined) {
+    throw new Error(
+      'CanopyCMS: generateContentSitemap was called directly without `seo`, but the config sets ' +
+        '`seo`. Use the generateContentSitemap that createNextCanopyContext returns, which reads ' +
+        'config.seo, or pass `seo` here, so the sitemap reads noindex where the config says.',
+    )
+  }
 
   // A sitemap with a non-absolute <loc> is invalid — search engines reject the WHOLE file, not
   // just the bad entry, and the build stays green because nothing here threw. 'example.com' (no
@@ -401,7 +438,9 @@ export interface EntryToMetadataOptions extends ExtractSeoFieldsOptions {
  * as unset — see `extractSeoFields`.
  *
  * `noindex` goes through the same core predicate the sitemap uses, so a page marked noindex is
- * suppressed in both surfaces or neither.
+ * suppressed in both surfaces or neither. Called directly, as below, it reads the SEO fields at
+ * the `fields`/`group` given here alone; the `entryToMetadata` that `createNextCanopyContext`
+ * returns defaults them to `config.seo`.
  *
  * @example
  * export async function generateMetadata({ params }): Promise<Metadata> {

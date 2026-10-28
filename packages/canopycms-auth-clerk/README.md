@@ -133,7 +133,9 @@ Bootstrap admins are automatically treated as members of the Admins group, even 
 
 ### Using Organizations as Groups
 
-When `useOrganizationsAsGroups` is enabled (default), Clerk organizations are automatically mapped to CanopyCMS groups for permission management. Create an organization named "Admins" or "Reviewers" in Clerk and add users to grant them those permissions.
+When `useOrganizationsAsGroups` is enabled (default), Clerk organizations are mapped to CanopyCMS groups, keyed by organization ID (`org_...`). Grant an organization access by naming it in a branch or path ACL in the Permission Manager. An organization cannot grant Admins or Reviewers: reserved group IDs are stripped from provider groups.
+
+In an AWS deployment the CDK prop `clerkOrganizationsAsGroups` governs, because the Lambda reads the cache the worker writes; keep it equal to the plugin option. The plugin option governs dev and uncached use. If Clerk refuses the organization list with a 403 (Organizations disabled on the instance), the refresh still writes users, with no groups, and logs a warning; set the option to `false` to stop asking.
 
 ## Example App Integration
 

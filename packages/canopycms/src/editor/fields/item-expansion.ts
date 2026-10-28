@@ -17,10 +17,16 @@ export interface ItemExpansion {
  * Which rows of a collapsible list are open, by list-item key (`useListItemKeys`), so a row keeps
  * its state through moves, and through a Remove and its Undo. A list inside a row that moves
  * remounts and starts over. A list's first rows start open as `EXPAND_ALL_UP_TO` says; a row added
- * later (Add, Duplicate) starts open. `resetKey` names the entry being edited: a new one starts
- * over. The form's own Expand all and Collapse all (`FormExpansionContext`) reach every list.
+ * later (Add, Duplicate) starts open. With `rowsStartOpen: false`, every row starts shut, for a
+ * list whose collapsed rows already say all it holds. `resetKey` names the entry being edited: a
+ * new one starts over. The form's own Expand all and Collapse all (`FormExpansionContext`) reach
+ * every list.
  */
-export function useItemExpansion(itemKeys: readonly string[], resetKey: string): ItemExpansion {
+export function useItemExpansion(
+  itemKeys: readonly string[],
+  resetKey: string,
+  { rowsStartOpen = true }: { rowsStartOpen?: boolean } = {},
+): ItemExpansion {
   const [toggled, setToggled] = useState<{ resetKey: string; open: Map<string, boolean> }>(() => ({
     resetKey,
     open: new Map(),
@@ -39,7 +45,7 @@ export function useItemExpansion(itemKeys: readonly string[], resetKey: string):
     if (defaults.current.open.has(key)) return
     defaults.current.open.set(
       key,
-      firstPopulation ? idx === 0 || itemKeys.length <= EXPAND_ALL_UP_TO : true,
+      rowsStartOpen && (firstPopulation ? idx === 0 || itemKeys.length <= EXPAND_ALL_UP_TO : true),
     )
   })
   if (itemKeys.length > 0) defaults.current.started = true

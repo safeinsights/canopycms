@@ -80,8 +80,9 @@ function parse(text: string, format: MarkdownBodyFormat): MdNode | undefined {
  * A node's meaning as a string: its tree without source positions. `data` goes too, because
  * the parser fills it only with derived information (an MDX expression's estree, which carries
  * its own offsets) and never with content. Line endings inside values are normalised, so a CRLF
- * file's blocks match the editor's LF ones. A bare URL and `[url](url)` share a tree, which keeps
- * a bare URL on disk when the editor (whose `linkPlugin()` autolinks, in `MarkdownField.tsx`) sends it back as a link.
+ * file's blocks match the editor's LF ones. A bare URL and the `[text](url)` the editor writes for
+ * it share a tree, since the editor imports it as GFM's link (`markdown-fidelity-visitors.ts`), so
+ * a bare URL stays on disk.
  */
 function canonical(node: MdNode): string {
   return JSON.stringify(node, (key, value: unknown) => {

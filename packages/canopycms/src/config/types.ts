@@ -10,6 +10,7 @@ import type { LogicalPath, ContentId } from '../paths/types'
 import type { PermissionPath } from '../authorization/types'
 import type { EntryLinkUrlResolver } from '../entry-link-resolver'
 import type { CropRect } from '../assets/transform-directives'
+import type { SeoFieldLocation } from '../static/seo'
 
 const scalarFieldTypes = ['string', 'number', 'boolean', 'datetime', 'code'] as const
 
@@ -61,12 +62,20 @@ interface BaseFieldConfig {
   /** Mark this field as the display title for entries using this schema. At most one field per schema. */
   isTitle?: boolean
   /**
-   * Mark this field as the body content for md/mdx entries.
-   * The field must be type 'markdown' or 'mdx'. At most one per schema.
-   * When present, the file's markdown content is mapped to this field,
-   * making TypeFromEntrySchema include it without manual `& { body: string }`.
+   * Mark this field as the entry's body. The field must be type 'markdown' or 'mdx'. At most one
+   * per schema. On an md/mdx entry, the file's markdown content is mapped to this field, making
+   * TypeFromEntrySchema include it without manual `& { body: string }`. On a json/yaml entry, it
+   * is the prose a link-only reference omits. Either way a reference carries it only with
+   * `includeBody: true`.
    */
   isBody?: boolean
+  /**
+   * On a `list: true` field or a `block` field: the most items the list may hold. The editor
+   * stops adding at the cap, saving over it is refused, and a static build fails on an entry
+   * over it, so adding a cap to a list that already holds more fails the build until the
+   * content is fixed. `ensureMaxItemsPlacement` (`validation.ts`) refuses it elsewhere in a registry schema.
+   */
+  maxItems?: number
 }
 
 interface PrimitiveFieldConfig extends BaseFieldConfig {
@@ -141,7 +150,9 @@ export interface ReferenceFieldConfig extends BaseFieldConfig {
   options?: ReferenceOption[]
   /**
    * Include the referenced entry's body in the resolved value, under that entry type's own
-   * body field name (`isBody: true`, else `body`). Defaults to `false`.
+   * body field name (`isBody: true`, else `body`). Defaults to `false`. The body is an md/mdx
+   * target's markdown content, or a json/yaml target's `isBody` field; a json/yaml field merely
+   * named `body` is ordinary data and always resolves.
    *
    * This is the embed-vs-link distinction, declared where it is actually known. A reference
    * that **embeds** its target — a shared call-to-action block rendered inline — needs the
@@ -155,12 +166,32 @@ export interface ReferenceFieldConfig extends BaseFieldConfig {
    * contains both kinds: a page with a shared CTA *and* a related-posts list cannot be served
    * by a single call-level setting, and a call-level flag would mean the same field resolved
    * to different shapes in different places.
-   *
-   * Only affects formats that HAVE a separate body — md and mdx. A json/yaml target's whole
-   * document is already its data, so this is a no-op there.
    */
   includeBody?: boolean
+  /** Order of the picker's options. Default `'label'`. See {@link ReferenceOptionSort}. */
+  optionSort?: ReferenceOptionSort
 }
+
+/**
+ * How a reference picker orders its options. Every mode runs after the search filter.
+ *
+ * - `'label'`: alphabetical by label.
+ * - `'collection'`: one group per collection, in content-tree order (a collection, then its
+ *   subcollections), each in its collection's own order, then by label.
+ * - `{ field, direction }`: by the target's value at `field`, a dotted path for a nested field
+ *   (`'meta.publishedAt'`). Numbers compare as numbers and sort before strings (`'desc'` reverses that too); strings compare
+ *   as plain text, so point it at an ISO date (`YYYY-MM-DD`; unquoted frontmatter dates count):
+ *   a display date like `'March 4'` sorts by month name. An entry with no value sorts first
+ *   under `'desc'`, last under `'asc'` (the default). Ties go by label.
+ *
+ * @example
+ * // Newest first, with entries not yet given a date at the top.
+ * optionSort: { field: 'publishedAt', direction: 'desc' }
+ */
+export type ReferenceOptionSort =
+  | 'label'
+  | 'collection'
+  | { field: string; direction?: 'asc' | 'desc' }
 
 /**
  * Image field config. The value is a structured object (see `ImageFieldValue`
@@ -519,6 +550,8 @@ export interface CanopyConfig {
   validateEntry?: ValidateEntryHook
   /** Site default for every field checked as MDX — see {@link CanopyConfigInput.mdxAllow}. */
   mdxAllow?: MdxAllowlist
+  /** Where entries keep their SEO fields — see {@link CanopyConfigInput.seo}. */
+  seo?: SeoFieldLocation
   /** Dev-mode-only behavior — see {@link CanopyConfigInput.dev}. */
   dev?: DevConfig
 }
@@ -609,6 +642,13 @@ export interface CanopyConfigInput {
   validateEntry?: ValidateEntryHook
   /** What every field checked as MDX accepts; a field's own `mdxAllow` replaces it key by key. */
   mdxAllow?: MdxAllowlist
+  /**
+   * Where entries keep their SEO fields: `group` when `defineSeoFieldGroup({ group })` nests
+   * them, `fields` for renamed ones. Omit for the flat default. Every surface that reads an
+   * entry's `noindex` reads it here: the sitemap and page metadata helpers `createNextCanopyContext`
+   * returns, AI content and the editor's reference picker.
+   */
+  seo?: SeoFieldLocation
   /** Dev-mode-only behavior (content-sync divergence detection). Ignored when mode !== 'dev'. */
   dev?: DevConfig
 }

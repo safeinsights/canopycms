@@ -4,17 +4,15 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { BranchContextWithSchema } from '../types'
 import { ContentStore } from '../content-store'
 import { defineEndpoint } from './route-builder'
-import { ReferenceResolver } from '../reference-resolver'
+import { ReferenceResolver, type ReferenceOption } from '../reference-resolver'
+import type { ReferenceOptionSort } from '../config'
+import { referenceSortFieldSchema } from '../config/schemas/field'
 import { parseLogicalPath } from '../paths'
 import type { LogicalPath } from '../paths/types'
 import { branchNameSchema } from './validators'
 
 export type ReferenceOptionsResponse = ApiResponse<{
-  options: Array<{
-    id: string
-    label: string
-    collection: string
-  }>
+  options: ReferenceOption[]
 }>
 
 const getReferenceOptionsParamsSchema = z.object({
@@ -36,9 +34,18 @@ const getReferenceOptionsHandler = async (
       entryTypes: z.string().optional(),
       displayField: z.string().optional(),
       search: z.string().optional(),
+      sort: z.enum(['label', 'collection', 'field']).optional(),
+      sortField: referenceSortFieldSchema.optional(),
+      sortDir: z.enum(['asc', 'desc']).optional(),
     })
     .refine((data) => data.collections || data.entryTypes, {
       message: 'At least one of "collections" or "entryTypes" query parameters is required',
+    })
+    .refine((data) => (data.sort === 'field') === (data.sortField !== undefined), {
+      message: '"sortField" is required with sort=field, and only allowed with it',
+    })
+    .refine((data) => data.sortDir === undefined || data.sort === 'field', {
+      message: '"sortDir" is only allowed with sort=field',
     })
   const queryResult = querySchema.safeParse(req.query ?? {})
   if (!queryResult.success) {
@@ -53,6 +60,14 @@ const getReferenceOptionsHandler = async (
   const entryTypesParam = queryResult.data.entryTypes
   const displayField = queryResult.data.displayField || 'title'
   const search = queryResult.data.search
+  // The refinements above pair sortField with sort=field, so sortField alone decides.
+  const { sort: sortParam, sortField, sortDir } = queryResult.data
+  const sort: ReferenceOptionSort | undefined =
+    sortField !== undefined
+      ? { field: sortField, direction: sortDir }
+      : sortParam === 'field'
+        ? undefined
+        : sortParam
 
   const flatSchema = branchContext.flatSchema
   const store = new ContentStore(branchContext.branchRoot, flatSchema, {
@@ -106,6 +121,7 @@ const getReferenceOptionsHandler = async (
     search,
     entryTypes,
     (logicalPath) => checkAccess(logicalPath, 'read').allowed,
+    { seo: ctx.services.config.seo, sort },
   )
 
   return {
@@ -119,7 +135,9 @@ const getReferenceOptionsHandler = async (
  * Get reference options for a field
  * GET /:branch/reference-options
  * Query params: collections (comma-separated, optional), entryTypes (comma-separated, optional),
- *   displayField, search. At least one of collections or entryTypes is required.
+ *   displayField, search. At least one of collections or entryTypes is required. `sort` is
+ *   label (default), collection or field; field takes `sortField` (a dotted path) and `sortDir`
+ *   (asc, the default, or desc). See `ReferenceOptionSort`.
  */
 const getReferenceOptions = defineEndpoint({
   namespace: 'content',

@@ -795,19 +795,34 @@ export class EditorPage {
     return this.page.locator(`[id="${listboxId}"] [role="option"]`)
   }
 
+  /** The rows-and-Add container of a `list: true` reference field. */
+  getReferenceList(fieldName: string): Locator {
+    return this.formPane.locator(`[data-testid="reference-list-${fieldName}"]`)
+  }
+
   /**
-   * Select multiple options in a multi-select reference field (Mantine MultiSelect).
-   * @param fieldName - The data-canopy-field name
-   * @param optionLabels - Array of visible labels to select
+   * Append picks to a `list: true` reference field through its Add control, which keeps focus and
+   * leaves out entries already picked.
+   * @param fieldName - The list's canopy path
+   * @param optionLabels - Visible labels to pick, in order
    */
-  async selectMultiReferenceOptions(fieldName: string, optionLabels: string[]): Promise<void> {
-    await this.waitForReferenceOptions(fieldName)
+  async addReferenceListPicks(fieldName: string, optionLabels: string[]): Promise<void> {
+    const add = this.getReferenceList(fieldName).getByRole('textbox', { name: /^Add to / })
     for (const label of optionLabels) {
-      const options = await this.openReferenceOptions(fieldName)
-      const option = options.filter({ hasText: label })
+      await add.click()
+      await expect(add).toHaveAttribute('aria-controls', /.+/, { timeout: STANDARD_TIMEOUT })
+      const listboxId = await add.getAttribute('aria-controls')
+      const option = this.page.locator(`[id="${listboxId}"] [role="option"]`).filter({
+        hasText: label,
+      })
       await option.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
       await option.click()
     }
+  }
+
+  /** The row titles of a `list: true` reference field, in order. */
+  referenceListTitles(fieldName: string): Locator {
+    return this.getReferenceList(fieldName).getByTestId('item-row')
   }
 
   /**

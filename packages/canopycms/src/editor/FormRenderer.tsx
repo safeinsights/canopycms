@@ -31,6 +31,7 @@ import { DateTimeField } from './fields/DateTimeField'
 import { BlockField, type BlockInstance } from './fields/BlockField'
 import { SelectField } from './fields/SelectField'
 import { ReferenceField } from './fields/ReferenceField'
+import { ReferenceListField } from './fields/ReferenceListField'
 import { CodeField } from './fields/CodeField'
 import { ImageField } from './fields/ImageField'
 import { ObjectField } from './fields/ObjectField'
@@ -494,6 +495,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               onChange={(v) => update(v)}
               dataCanopyField={normalizeCanopyPath(path)}
               readOnly={readOnly}
+              maxItems={field.maxItems}
             />,
           )
         }
@@ -539,6 +541,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               onChange={(v) => update(v)}
               dataCanopyField={normalizeCanopyPath(path)}
               readOnly={readOnly}
+              maxItems={field.maxItems}
             />,
           )
         }
@@ -612,6 +615,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             onChange={(next) => update(next)}
             dataCanopyField={normalizeCanopyPath(path)}
             readOnly={readOnly}
+            maxItems={isMulti ? selectField.maxItems : undefined}
           />,
         )
       }
@@ -620,31 +624,55 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
         const staticOptions = referenceField.options
           ? normalizeOptions(referenceField.options)
           : undefined
-        const isMulti = Boolean(referenceField.list)
+        if (referenceField.list) {
+          return wrapWithComments(
+            <ReferenceListField
+              key={fieldKey(path)}
+              id={fieldId}
+              label={label}
+              description={field.description}
+              required={field.required}
+              options={staticOptions}
+              collections={referenceField.collections}
+              entryTypes={referenceField.entryTypes}
+              displayField={referenceField.displayField}
+              branch={branch}
+              optionSort={referenceField.optionSort}
+              value={Array.isArray(currentValue) ? currentValue : []}
+              onChange={(next) => update(next)}
+              path={path}
+              canopyPath={canopyPath}
+              readOnly={readOnly}
+              resetKey={boundaryResetKey}
+              maxItems={referenceField.maxItems}
+              itemError={(index) => fieldErrors?.[normalizeCanopyPath([...path, index])]}
+              onRemoved={(index, id, title) =>
+                onRemoved?.({
+                  kind: 'list-item',
+                  listPath: path,
+                  index,
+                  item: id,
+                  label: `"${title}" from ${label}`,
+                })
+              }
+            />,
+          )
+        }
         return wrapWithComments(
           <ReferenceField
             key={fieldKey(path)}
             id={fieldId}
             label={label}
             description={field.description}
-            options={staticOptions?.map((opt) => ({
-              label: opt.label,
-              value: opt.value,
-            }))}
+            options={staticOptions}
             collections={referenceField.collections}
             entryTypes={referenceField.entryTypes}
             displayField={referenceField.displayField}
             branch={branch}
-            value={
-              isMulti
-                ? Array.isArray(currentValue)
-                  ? (currentValue as string[])
-                  : []
-                : ((currentValue as string) ?? '')
-            }
-            multiple={isMulti}
+            optionSort={referenceField.optionSort}
+            value={currentValue ?? ''}
             onChange={(next) => update(next)}
-            dataCanopyField={normalizeCanopyPath(path)}
+            dataCanopyField={canopyPath}
             readOnly={readOnly}
           />,
         )
@@ -691,6 +719,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             readOnly={readOnly}
             resetKey={boundaryResetKey}
             hasErrors={rowHasErrors(path)}
+            maxItems={blockField.maxItems}
             onRemoved={(index, block) => {
               const template = blockField.templates.find((t) => t.name === block.template)
               onRemoved?.({

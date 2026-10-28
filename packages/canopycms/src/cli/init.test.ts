@@ -155,6 +155,14 @@ describe('canopycms init', () => {
     expect(canopy).toContain('createDevAuthPlugin')
   })
 
+  it('clerk canopy.ts turns organizations-as-groups off, since a new Clerk instance has none', async () => {
+    await init(defaultOpts(tmpDir, { authProvider: 'clerk' }))
+
+    const canopy = await fs.readFile(path.join(tmpDir, 'app/lib/canopy.ts'), 'utf-8')
+    expect(canopy).toContain('createClerkAuthPlugin({ useOrganizationsAsGroups: false })')
+    expect(canopy).toContain('clerkOrganizationsAsGroups')
+  })
+
   it('clerk canopy.ts fails closed: prod always uses Clerk, never dev auth (SEC-C1)', async () => {
     await init(defaultOpts(tmpDir, { authProvider: 'clerk' }))
 

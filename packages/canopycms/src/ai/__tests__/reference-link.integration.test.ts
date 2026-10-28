@@ -321,3 +321,83 @@ describe('decideReferenceLinks', () => {
     expect(lookup('noUrlTargetA')).toBe('/supplied')
   })
 })
+
+describe('generateAIContent: referenceLink for a yaml target with an isBody field', () => {
+  const yamlSchema = {
+    collections: [
+      {
+        name: 'people',
+        path: 'people',
+        entries: [
+          {
+            name: 'person',
+            format: 'yaml' as const,
+            default: true,
+            schema: [
+              { name: 'fullName', type: 'string' as const, isTitle: true },
+              { name: 'bio', type: 'mdx' as const, isBody: true },
+            ],
+          },
+        ],
+      },
+      {
+        name: 'posts',
+        path: 'posts',
+        entries: [
+          {
+            name: 'post',
+            format: 'md' as const,
+            default: true,
+            schema: [{ name: 'title', type: 'string' as const }, personRef],
+          },
+        ],
+      },
+    ],
+  } as const
+  let root: string
+
+  beforeEach(async () => {
+    root = await tmpDir()
+  })
+  afterEach(async () => {
+    await fs.rm(root, { recursive: true, force: true })
+  })
+
+  it('offers the target without the field, as the store resolves it, and the field as its body', async () => {
+    const flat = flattenSchema(
+      yamlSchema,
+      defineCanopyTestConfig({ schema: yamlSchema }).contentRoot,
+    )
+    const store = new ContentStore(root, flat)
+    await store.write(unsafeAsLogicalPath('content/people'), unsafeAsSlug('dana'), {
+      format: 'yaml',
+      data: { fullName: 'Dana Example', bio: 'Dana charts currents.' },
+    })
+    const dana = await idOf(store, 'content/people', 'dana')
+    await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('first'), {
+      format: 'md',
+      data: { title: 'First', author: dana },
+      body: '',
+    })
+    const asResolved = await store.resolveReferenceTarget(dana)
+
+    const calls: Array<{ target: unknown; context: AIReferenceLinkContext }> = []
+    await generateAIContent({
+      store: new ContentStore(root, flat),
+      flatSchema: flat,
+      contentRoot: 'content',
+      config: {
+        referenceLink: (target, context) => {
+          calls.push({ target, context })
+          return undefined
+        },
+      },
+      generatedAt: '2026-01-01T00:00:00.000Z',
+    })
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0].target).toEqual(asResolved)
+    expect(calls[0].target).not.toHaveProperty('bio')
+    expect(calls[0].context.body).toBe('Dana charts currents.')
+  })
+})

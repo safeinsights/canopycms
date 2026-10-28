@@ -46,7 +46,10 @@ type InferableField = {
   entryTypes?: readonly string[]
   /** For reference fields: collection paths to scope the search. */
   collections?: readonly string[]
-  /** For reference fields: resolve the target's body too. See ReferenceFieldConfig.includeBody. */
+  /**
+   * For reference fields: resolve the target's body too. Without it the `resolvedSchema`'s
+   * `isBody` field is optional in the resolved type. See ReferenceFieldConfig.includeBody.
+   */
   includeBody?: boolean
 }
 
@@ -80,7 +83,9 @@ export interface ResolvedReferenceMeta {
 
 /**
  * Assemble a resolved reference: the target's own data, then its body if the field asked to
- * embed it, then the reserved metadata.
+ * embed it, then the reserved metadata. A link-only reference carries no body for any format:
+ * an md/mdx target passes none here, and a json/yaml target's `data` arrives without its
+ * `isBody` field (`linkOnlyReferenceData`), so both formats resolve alike.
  *
  * The ordering is the contract, not a detail. Metadata LAST means a target that models `id` as
  * a content field cannot shadow the real content ID, which the write boundary recovers from
@@ -332,7 +337,10 @@ type FieldValue<F extends InferableField> = F extends {
       : F extends { type: 'reference'; resolvedSchema: infer S }
         ? ScalarValue<
             F,
-            | (InferContentShape<Extract<S, readonly InferableField[]>> &
+            | (InferContentShape<
+                Extract<S, readonly InferableField[]>,
+                F['includeBody'] extends true ? false : true
+              > &
                 ResolvedReferenceMeta & { unavailable?: undefined })
             | UnavailableReference
             | null
@@ -362,17 +370,35 @@ type FieldValue<F extends InferableField> = F extends {
  *
  * Works with any structurally compatible array; importing FieldConfig is not required.
  */
-type InferContentShape<Fields extends readonly InferableField[]> = Simplify<
+type InferContentShape<
+  Fields extends readonly InferableField[],
+  BodyOptional extends boolean = false,
+> = Simplify<
   {
-    [F in FlattenInlineGroups<Fields>[number] as F['required'] extends false
+    [F in FlattenInlineGroups<Fields>[number] as IsOptionalKey<F, BodyOptional> extends true
       ? never
       : F['name']]: FieldValue<F>
   } & {
-    [F in FlattenInlineGroups<Fields>[number] as F['required'] extends false
+    [F in FlattenInlineGroups<Fields>[number] as IsOptionalKey<F, BodyOptional> extends true
       ? F['name']
       : never]?: FieldValue<F>
   }
 >
+
+/**
+ * Whether InferContentShape gives a field `?:`: an explicit `required: false`, or, with
+ * `BodyOptional` (a reference target resolved without `includeBody`), the `isBody` field.
+ */
+type IsOptionalKey<
+  F extends InferableField,
+  BodyOptional extends boolean,
+> = F['required'] extends false
+  ? true
+  : BodyOptional extends true
+    ? F['isBody'] extends true
+      ? true
+      : false
+    : false
 
 /** Define an entry schema's field array with literal inference, without sprinkling `as const`. */
 export const defineEntrySchema = <const T extends readonly InferableField[]>(fields: T): T => fields
@@ -439,7 +465,8 @@ export const defineInlineFieldGroup = <
  *
  * **Flat by default** — an inline group, stored at the top level of the content file with no data
  * key of its own. `group: 'seo'` nests them under that key instead, and the same
- * `{ group: 'seo' }` must then be passed to `extractSeoFields` / `entryToMetadata`.
+ * `{ group: 'seo' }` must then be set as `seo` in `defineCanopyConfig`, or passed to
+ * `extractSeoFields` and the free `entryToMetadata`.
  *
  * @example
  * // Flat (recommended): frontmatter carries `metaTitle:` at the top level.
@@ -542,8 +569,9 @@ export function defineSeoFieldGroup(
 export function defineSeoFieldGroup<const G extends string>(
   opts: SeoFieldGroupOptions & {
     /**
-     * Nest the fields under this data key instead of storing them flat. Must match the `group`
-     * option passed to `extractSeoFields` / `entryToMetadata`.
+     * Nest the fields under this data key instead of storing them flat. Must match
+     * `CanopyConfig.seo.group`, or the `group` passed to `extractSeoFields` and the free
+     * `entryToMetadata`.
      */
     group: G
   },

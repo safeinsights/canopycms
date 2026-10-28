@@ -242,6 +242,7 @@ export async function generateAIContentFiles(
     contentRoot: contentRootName,
     config: aiConfig,
     entryLinkUrl: config.entryLinkUrl,
+    seo: config.seo,
     ...resolveBuildStamp(),
   })
 

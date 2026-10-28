@@ -35,7 +35,7 @@ describe('referenceFieldSchema', () => {
   // zod strips unknown keys by default, so a runtime-consumed flag that is missing here is
   // deleted silently by any consumer that adopts the parse output -- the feature no-ops with
   // no error at all. Every key resolution actually reads must therefore be declared.
-  it.each(['displayField', 'includeBody', 'entryTypes', 'collections'] as const)(
+  it.each(['displayField', 'includeBody', 'entryTypes', 'collections', 'optionSort'] as const)(
     'preserves the runtime-consumed key %s',
     (key) => {
       const input: Record<string, unknown> = {
@@ -45,6 +45,7 @@ describe('referenceFieldSchema', () => {
         collections: ['content/snippets'],
         displayField: 'title',
         includeBody: true,
+        optionSort: { field: 'meta.publishedAt', direction: 'desc' },
       }
       const parsed = referenceFieldSchema.parse(input) as Record<string, unknown>
       expect(parsed[key]).toEqual(input[key])
@@ -73,6 +74,34 @@ describe('referenceFieldSchema', () => {
   })
 })
 
+describe('referenceFieldSchema optionSort', () => {
+  const parse = (optionSort: unknown) =>
+    referenceFieldSchema.parse({
+      name: 'pick',
+      type: 'reference',
+      entryTypes: ['post'],
+      optionSort,
+    })
+
+  it.each(['label', 'collection', { field: 'publishedAt' }, { field: 'a.b', direction: 'asc' }])(
+    'accepts %j',
+    (optionSort) => {
+      expect(parse(optionSort).optionSort).toEqual(optionSort)
+    },
+  )
+
+  it.each([
+    'newest',
+    { field: '' },
+    { field: 'a..b' },
+    { field: '.a' },
+    { field: 'a', direction: 'down' },
+    { field: 'a', dir: 'desc' },
+  ])('refuses %j', (optionSort) => {
+    expect(() => parse(optionSort)).toThrow()
+  })
+})
+
 describe('stampOnPublish', () => {
   it('survives the fieldSchema parse on a datetime field', () => {
     const parsed = fieldSchema.parse({
@@ -87,6 +116,31 @@ describe('stampOnPublish', () => {
     expect(() =>
       fieldSchema.parse({ name: 'publishedAt', type: 'datetime', stampOnPublish: 'yes' }),
     ).toThrow()
+  })
+})
+
+describe('maxItems', () => {
+  it('survives the fieldSchema parse on a list, a reference list, an object list and a block', () => {
+    for (const field of [
+      { name: 'tags', type: 'string', list: true },
+      { name: 'featured', type: 'reference', list: true, collections: ['posts'] },
+      { name: 'links', type: 'object', list: true, fields: [{ name: 'label', type: 'string' }] },
+      {
+        name: 'blocks',
+        type: 'block',
+        templates: [{ name: 'quote', fields: [{ name: 'text', type: 'string' }] }],
+      },
+    ]) {
+      expect(fieldSchema.parse({ ...field, maxItems: 3 })).toMatchObject({ maxItems: 3 })
+    }
+  })
+
+  it('rejects a cap that is not a positive whole number', () => {
+    for (const maxItems of [0, -1, 1.5, '2']) {
+      expect(() =>
+        fieldSchema.parse({ name: 'tags', type: 'string', list: true, maxItems }),
+      ).toThrow()
+    }
   })
 })
 

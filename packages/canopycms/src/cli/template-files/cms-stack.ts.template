@@ -172,6 +172,9 @@ export class CmsStack extends Stack {
       ].filter((arn): arn is string => arn !== undefined),
       githubTokenSecretArn: githubToken?.secretArn,
       clerkSecretKeySecretArn: clerkSecretKey.secretArn,
+      // Whether the worker maps Clerk Organizations onto Canopy groups. It needs Organizations
+      // enabled on the Clerk instance; keep it equal to useOrganizationsAsGroups in canopy.ts.
+      clerkOrganizationsAsGroups: false,
       // GitHub App auth, when configured instead of the token above. Undefined
       // unless the adopter set all three; CanopyCmsService refuses a partial
       // set, and refuses an App alongside githubTokenSecretArn.

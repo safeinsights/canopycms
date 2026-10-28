@@ -63,6 +63,7 @@ export function createAIContentHandler(
       contentRoot: contentRootName,
       config: aiConfig,
       entryLinkUrl: config.entryLinkUrl,
+      seo: config.seo,
     })
 
     cachedResult = result
