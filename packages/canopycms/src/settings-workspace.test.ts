@@ -1036,6 +1036,49 @@ describe('SettingsWorkspaceManager first clone', () => {
     expect((await simpleGit({ baseDir: settingsRoot }).status()).current).toBe(BRANCH)
   }, 60_000)
 
+  it('sees the build it waited on through a cached absence of the root that opening the parent clears', async () => {
+    const { root, settingsRoot, options } = await setup()
+    const a = await loadProcess()
+    const b = await loadProcess()
+    const aCloning = deferred()
+    const gate = deferred()
+    const aClone = a.GitManager.cloneWorkspace.bind(a.GitManager)
+    vi.spyOn(a.GitManager, 'cloneWorkspace').mockImplementation(async (...args) => {
+      aCloning.resolve()
+      await gate.promise
+      return aClone(...args)
+    })
+    const bClone = vi.spyOn(b.GitManager, 'cloneWorkspace')
+    // B's client cached the root's absence before A published it; only opening the parent
+    // after the publish makes it look again.
+    let published = false
+    let stale = true
+    const rename = fs.rename.bind(fs)
+    vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+      await rename(from, to)
+      if (to === settingsRoot) published = true
+    })
+    const readdir = fs.readdir.bind(fs)
+    vi.spyOn(fs, 'readdir').mockImplementation((async (dir: string, opts?: unknown) => {
+      if (dir === root && published) stale = false
+      if (dir === settingsRoot && published && stale) {
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+      }
+      return readdir(dir, opts as undefined)
+    }) as typeof fs.readdir)
+
+    const first = new a.settings.SettingsWorkspaceManager(config).ensureGitWorkspace(options)
+    await aCloning.promise
+    const bWaiting = waitingForBuildLock(settingsRoot)
+    const second = new b.settings.SettingsWorkspaceManager(config).ensureGitWorkspace(options)
+    await bWaiting
+    gate.resolve()
+
+    await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined])
+    expect(published).toBe(true)
+    expect(bClone).not.toHaveBeenCalled()
+  }, 60_000)
+
   it('builds in the waiting cold start when the build it waited on failed', async () => {
     const { settingsRoot, options } = await setup()
     const a = await loadProcess()
@@ -1088,15 +1131,17 @@ describe('SettingsWorkspaceManager first clone', () => {
     await new other.settings.SettingsWorkspaceManager(config).ensureGitWorkspace(options)
     const head = await simpleGit({ baseDir: settingsRoot }).revparse(['HEAD'])
 
-    // This process's NFS client still reports the root absent until its publish reaches the server.
+    // This process's NFS client still reports the root absent, even in a listing of its parent,
+    // until its own publish reaches the server.
     const fresh = await loadProcess()
     let renamed = false
     const readdir = fs.readdir.bind(fs)
-    vi.spyOn(fs, 'readdir').mockImplementation(((dir: string, opts?: unknown) => {
+    vi.spyOn(fs, 'readdir').mockImplementation((async (dir: string, opts?: unknown) => {
       if (dir === settingsRoot && !renamed) {
-        return Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
       }
-      return readdir(dir, opts as undefined)
+      const entries = await readdir(dir, opts as undefined)
+      return dir === root && !renamed ? entries.filter((name) => name !== 'settings') : entries
     }) as typeof fs.readdir)
     const rename = fs.rename.bind(fs)
     vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {

@@ -136,9 +136,20 @@ async function settingsFilesPresent(settingsRoot: string): Promise<boolean> {
 async function settingsRootState(
   options: EnsureSettingsWorkspaceOptions,
 ): Promise<'vacant' | 'in-use' | 'interrupted'> {
+  // Listing the parent opens it, which makes NFS revalidate it, so another host's publish is
+  // seen even where this client cached the name's absence before that publish.
+  const settingsRoot = path.resolve(options.settingsRoot)
+  let siblings: string[]
+  try {
+    siblings = await fs.readdir(path.dirname(settingsRoot))
+  } catch (err: unknown) {
+    if (isNodeError(err) && err.code === 'ENOENT') return 'vacant'
+    throw err
+  }
+  if (!siblings.includes(path.basename(settingsRoot))) return 'vacant'
   let entries: string[]
   try {
-    entries = await fs.readdir(options.settingsRoot)
+    entries = await fs.readdir(settingsRoot)
   } catch (err: unknown) {
     if (isNodeError(err) && err.code === 'ENOENT') return 'vacant'
     if (isNodeError(err) && err.code === 'ENOTDIR') return 'interrupted'
