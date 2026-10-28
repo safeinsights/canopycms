@@ -21,12 +21,21 @@ export function BranchesLoadFailedNotice({
 }: BranchesLoadFailedNoticeProps) {
   return (
     <Stack gap={4} py="sm" align={align} data-testid={testId}>
-      <Text size="sm" c="red">
+      <Text size="sm" c="var(--canopy-danger-text)">
         {"Couldn't load the branch list, so no branch can open."}
       </Text>
+      {/* `aria-disabled`, not `loading`, which disables the button and drops its focus. */}
       {onRetry && (
-        <Button size="compact-sm" variant="subtle" loading={retrying} onClick={onRetry}>
-          Retry
+        <Button
+          size="compact-sm"
+          variant="subtle"
+          aria-disabled={retrying || undefined}
+          style={{ cursor: retrying ? 'default' : undefined }}
+          onClick={() => {
+            if (!retrying) onRetry()
+          }}
+        >
+          {retrying ? 'Retrying…' : 'Retry'}
         </Button>
       )}
     </Stack>

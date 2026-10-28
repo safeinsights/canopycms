@@ -1938,8 +1938,8 @@ const EditorContent: React.FC<EditorProps> = ({
 
   const openBranchManager = (options?: { create?: boolean }) => {
     openBranchesDrawer(options?.create === true)
-    // Always retry, not only when branchless. Opening the manager is
-    // the one in-app retry for a failed branches fetch, and the fetch
+    // Always retry, not only when branchless. Besides the panes' Retry on a
+    // branchless start, opening the manager retries a failed branches fetch, and the fetch
     // is terminal on its own: SWRProvider sets shouldRetryOnError and
     // revalidateOnFocus false, and useBranchesData's refreshInterval
     // is 0 without data. Reloading is idempotent.
