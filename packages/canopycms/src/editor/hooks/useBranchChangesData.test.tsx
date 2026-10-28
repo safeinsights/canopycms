@@ -1,4 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
+import { useSWRConfig } from 'swr'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { createMockApiClient, type MockApiClient } from '../../api/__test__/mock-client'
@@ -92,5 +93,37 @@ describe('useBranchChangesData', () => {
     const { result } = renderChanges()
     await waitFor(() => expect(result.current.error).toEqual({ kind: 'syncing' }))
     expect(result.current.data).toBeUndefined()
+  })
+})
+
+describe('useBranchChangesData ordering', () => {
+  it('never lets a reload that started before SWR’s latest fetch replace that fetch’s answer', async () => {
+    client.changes.list.mockResolvedValue({ ok: true, status: 200, data: answer('content/a') })
+    const { result } = renderHook(
+      () => ({
+        changes: useBranchChangesData(client as never, 'feature', true),
+        swr: useSWRConfig(),
+      }),
+      { wrapper: createApiClientWrapper(client) },
+    )
+    await waitFor(() => expect(result.current.changes.data).toEqual(answer('content/a')))
+
+    let settleReload: (value: unknown) => void = () => {}
+    client.changes.list.mockImplementationOnce(
+      () => new Promise((resolve) => (settleReload = resolve)),
+    )
+    let reloading: Promise<void> = Promise.resolve()
+    act(() => {
+      reloading = result.current.changes.reload()
+    })
+    client.changes.list.mockResolvedValue({ ok: true, status: 200, data: answer('content/newer') })
+    await act(() => result.current.swr.mutate('canopy:changes:feature'))
+    await waitFor(() => expect(result.current.changes.data).toEqual(answer('content/newer')))
+
+    await act(async () => {
+      settleReload({ ok: true, status: 200, data: answer('content/older') })
+      await reloading
+    })
+    expect(result.current.changes.data).toEqual(answer('content/newer'))
   })
 })

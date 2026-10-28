@@ -60,28 +60,38 @@ export function useBranchChangesData(
 ): BranchChangesState {
   const { mutate } = useSWRConfig()
   const key = branch && enabled ? branchChangesKey(branch) : null
-  const swr = useSWR(key, () => fetchBranchChanges(apiClient, branch))
+  // One start order for SWR's own fetches and explicit reloads, and per key the start of the
+  // newest answer that landed: an answer that started earlier than that one is never shown.
+  const startedRef = useRef(0)
+  const landedRef = useRef(new Map<string, number>())
+  const isStale = (cacheKey: string, seq: number) => seq < (landedRef.current.get(cacheKey) ?? 0)
+  const land = (cacheKey: string, seq: number) => landedRef.current.set(cacheKey, seq)
+  const swr = useSWR(key, async (cacheKey: string) => {
+    const seq = ++startedRef.current
+    const data = await fetchBranchChanges(apiClient, branch)
+    if (!isStale(cacheKey, seq)) land(cacheKey, seq)
+    return data
+  })
   // An explicit reload's failure, for the branch it was for; SWR holds only its own fetch's.
   const [reloadFailure, setReloadFailure] = useState<{
     branch: string
     error: BranchChangesError
   }>()
   const [reloading, setReloading] = useState(0)
-  const seqRef = useRef(0)
   useEffect(() => setReloadFailure(undefined), [swr.data])
 
   const reload = useCallback(async () => {
     if (!key) return
-    const seq = ++seqRef.current
+    const seq = ++startedRef.current
     setReloading((n) => n + 1)
     try {
       const data = await fetchBranchChanges(apiClient, branch)
-      // Last caller wins: an older reload settling late never replaces a newer one's answer.
-      if (seq !== seqRef.current) return
+      if (isStale(key, seq)) return
+      land(key, seq)
       setReloadFailure(undefined)
       await mutate(key, data, { revalidate: false })
     } catch (err) {
-      if (seq === seqRef.current) setReloadFailure({ branch, error: toError(err) })
+      if (!isStale(key, seq)) setReloadFailure({ branch, error: toError(err) })
     } finally {
       setReloading((n) => n - 1)
     }
