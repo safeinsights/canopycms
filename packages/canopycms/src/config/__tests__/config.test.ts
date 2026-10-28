@@ -1305,6 +1305,16 @@ describe('defineCanopyConfig().client()', () => {
     expect(client().basePath).toBe('/preview-123')
   })
 
+  it('names no branch, which only the server can know for its deployment', () => {
+    const { client } = defineCanopyConfig({
+      ...gitAuthor,
+      defaultBaseBranch: 'testing-main',
+      defaultActiveBranch: 'testing-main',
+    })
+    expect(Object.keys(client())).not.toContain('defaultBaseBranch')
+    expect(Object.keys(client())).not.toContain('defaultActiveBranch')
+  })
+
   it('leaves basePath undefined on the client config when unset (regression guard)', () => {
     const { client } = defineCanopyConfig({ ...gitAuthor })
     expect(client().basePath).toBeUndefined()

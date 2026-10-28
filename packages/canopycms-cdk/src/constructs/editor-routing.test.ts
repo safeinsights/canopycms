@@ -15,7 +15,11 @@ import { CanopyCmsService } from './cms-service'
 import type { CanopyCmsServiceProps } from './cms-service'
 import { CanopyCmsDistribution } from './cms-distribution'
 import { AssetSupport, ASSETS_PATH_PATTERN, ASSETS_TRANSFORM_PATH_PATTERN } from './asset-support'
-import { EDITOR_PATH_PATTERNS, cloudFrontPathPatternMatches } from './editor-routing'
+import {
+  EDITOR_PATH_PATTERNS,
+  MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT,
+  cloudFrontPathPatternMatches,
+} from './editor-routing'
 import { newTestApp } from '../../test-support/test-synth'
 
 const EDITOR_PATTERNS = ['/edit', '/edit/*', '/api/canopycms/*']
@@ -307,9 +311,19 @@ describe('CanopyCmsService.attachTo', () => {
     expect(() => service.attachTo(site)).toThrow(/already called for this distribution/)
   })
 
-  it('refuses a Lambda timeout CloudFront cannot match', () => {
-    const { stack, service } = buildStack('AttachTooLongStack', { timeout: Duration.seconds(90) })
-    expect(() => service.attachTo(siteDistribution(stack))).toThrow(/service-quota increase/)
+  it('attaches at the 120s CloudFront default quota and refuses past it', () => {
+    const max = MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT.toSeconds()
+    expect(max).toBe(120)
+
+    const atMax = buildStack('AttachAtMaxStack', { timeout: Duration.seconds(max) })
+    atMax.service.attachTo(siteDistribution(atMax.stack))
+    const config = distributionConfig(Template.fromStack(atMax.stack))
+    expect(config.Origins.some((o) => o.CustomOriginConfig?.OriginReadTimeout === max)).toBe(true)
+
+    const over = buildStack('AttachTooLongStack', { timeout: Duration.seconds(max + 1) })
+    expect(() => over.service.attachTo(siteDistribution(over.stack))).toThrow(
+      /originReadTimeout is 121s.*at most 120s.*Service Quotas/s,
+    )
   })
 
   it.each([

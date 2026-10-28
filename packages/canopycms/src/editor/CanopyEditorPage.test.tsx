@@ -33,6 +33,7 @@ const baseConfig = {
   contentRoot: 'content',
   gitBotAuthorName: 'Bot',
   gitBotAuthorEmail: 'bot@example.com',
+  // A server config field, which pins no branch even if a config object carries it.
   defaultBaseBranch: 'main',
 } as const
 
@@ -48,13 +49,13 @@ describe('CanopyEditorPage', () => {
     expect(props?.initialSelectedId).toBe('id-1')
   })
 
-  it('falls back to config defaults when search params are missing', () => {
+  it('pins no branch without ?branch=, so the editor adopts the server default', () => {
     capturedProps = undefined
     const { render } = require('@testing-library/react') as typeof import('@testing-library/react')
     const Page = CanopyEditorPage(baseConfig as any)
     render(<Page />)
     const props = capturedProps as CanopyEditorProps | undefined
-    expect(props?.branchName).toBe('main')
+    expect(props?.branchName).toBeUndefined()
   })
 
   it('threads the optional customRenderers argument through to CanopyEditor unchanged', () => {

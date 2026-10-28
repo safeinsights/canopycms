@@ -709,17 +709,12 @@ export type FlatSchemaItem =
  * Client config - subset safe for browser (DRY - derived from CanopyConfig)
  * Use flatSchema for O(1) cached access to the flattened schema structure.
  * Schema is loaded from .collection.json files on the server and provided as flatSchema.
+ * It names no branch: the config evaluated in the browser lacks the server's environment, so an
+ * editor no `?branch=` or `branchName` pins adopts the branches API's `defaultBranch`.
  */
 export type CanopyClientConfig = Pick<
   CanopyConfig,
-  | 'defaultBaseBranch'
-  | 'defaultActiveBranch'
-  | 'contentRoot'
-  | 'editor'
-  | 'mode'
-  | 'entryLinkUrl'
-  | 'basePath'
-  | 'mdxAllow'
+  'contentRoot' | 'editor' | 'mode' | 'entryLinkUrl' | 'basePath' | 'mdxAllow'
 > & {
   flatSchema: FlatSchemaItem[]
 }

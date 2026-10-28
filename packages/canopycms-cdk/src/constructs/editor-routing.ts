@@ -9,8 +9,18 @@ import {
 } from 'aws-cdk-lib'
 import { ASSETS_PATH_PATTERN, ASSETS_TRANSFORM_PATH_PATTERN } from './asset-support'
 
-/** CloudFront's maximum origin read timeout without a service-quota increase. */
-export const MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT = Duration.seconds(60)
+/**
+ * The longest origin read timeout these constructs accept: CloudFront's default
+ * quota for "Response timeout per origin" (1-120 s; 30 s unset; CloudFront Developer Guide,
+ * Quotas > General quotas on distributions).
+ *
+ * A cap rather than a pass-through of a raised quota because the editor's client
+ * deadline sits just above it (`REQUEST_TIMEOUT_MS` in canopycms
+ * `api/request-deadline.ts`, pinned by `request-deadline-pin.test.ts`) and cannot
+ * see the account's quota: a longer origin would be given up on by the browser
+ * before CloudFront answers.
+ */
+export const MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT = Duration.seconds(120)
 
 /**
  * The routes the editor needs from the CMS Lambda on a distribution it shares
@@ -89,18 +99,19 @@ export function cloudFrontPathPatternMatches(pattern: string, path: string): boo
 }
 
 /**
- * Throws when the origin read timeout exceeds the 60s CloudFront accepts
- * without a quota increase, which it would reject at deploy. Neither construct
- * takes a higher, quota-raised value.
+ * Throws when the origin read timeout exceeds {@link MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT},
+ * so a configuration the editor's deadline cannot cover fails at synth, not mid-deploy.
  */
 export function assertOriginReadTimeout(readTimeout: Duration, owner: string): void {
-  if (readTimeout.toSeconds() > MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT.toSeconds()) {
+  const max = MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT.toSeconds()
+  if (readTimeout.toSeconds() > max) {
     throw new Error(
-      `${owner}: originReadTimeout is ${readTimeout.toSeconds()}s, but CloudFront ` +
-        `allows at most ${MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT.toSeconds()}s without a service-quota ` +
-        `increase, and these constructs do not take a higher value. Lower the CMS Lambda's ` +
-        `timeout to ${MAX_CLOUDFRONT_ORIGIN_READ_TIMEOUT.toSeconds()}s or less. A shorter origin ` +
-        `timeout than the Lambda's would 504 at the edge on requests that actually succeed.`,
+      `${owner}: originReadTimeout is ${readTimeout.toSeconds()}s, but these constructs ` +
+        `support at most ${max}s, CloudFront's default quota for "Response timeout per ` +
+        `origin" (Service Quotas > CloudFront). Raising that quota does not lift this ` +
+        `limit: the editor's request deadline is set just above ${max}s. Lower the CMS ` +
+        `Lambda's timeout to ${max}s or less. A shorter origin timeout than the Lambda's ` +
+        `would 504 at the edge on requests that actually succeed.`,
     )
   }
 }

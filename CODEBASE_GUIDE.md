@@ -279,7 +279,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md#task-queue-async-github-operations).
 - `project-root.ts` — `findProjectRoot`, walks up to the nearest `canopycms.config.ts`
 - `sync.ts` — interactive wrapper over `sync-core.ts` for content sync between working tree and branch workspaces
 - `migrate.ts` — converts a plain content tree to CanopyCMS naming conventions, idempotent
-- `init-github-app.ts` — registers or verifies the GitHub App the worker authenticates as
+- `init-github-app.ts` — registers or verifies the worker's GitHub App; messages in `github-app-output.ts`
 - `github-app-manifest.ts` — App naming, `CANOPY_APP_PERMISSIONS`, and the installation read-back verdict
 - `prompt.ts` — the stdin prompts, sharing one end-of-input flag
 - `generate-ai-content.ts` — the AI static-content generation command
@@ -551,7 +551,7 @@ Manager hooks, in `editor/hooks/` — see
 
 - `useBranchManager.tsx` — branch state; adopts the server's `defaultBranch` when unpinned; overlays just-created branches
 - `useBranchActions.tsx` — switch and create behind the unsaved-changes confirm; adopts server-sanitized names
-- `create-branch-request.ts` — `requestBranchCreate`: a 90 s create deadline, settled by the branch list
+- `create-branch-request.ts` — `requestBranchCreate`: a 150 s create deadline, settled by the branch list
 - `useEntryManager.ts` — loading/saving, `readEntryValue`, `adoptEntryVersion`, `listAllEntries` cursors, Back/Forward (`editor-history.ts`)
 - `useDraftManager.ts` — `localStorage` draft overlay, discard confirmation, per-entry field errors; `singleSaving`/`lastSaved`; verifies restored drafts; `applySubmitStamps`; `handleSaveAll` (outcomes in `save-all.ts`)
 - `useSchemaManager.ts` — schema mutations, returning result objects

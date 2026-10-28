@@ -267,6 +267,30 @@ describe('applyReferenceCache', () => {
     expect(idsToFetch(schema, { author: ['idTopAAAAAAA'] }, 'main', new Map(), 0)).toEqual([])
   })
 
+  it("passes a list's targets through as the entry's read resolved them, beside cached ids", () => {
+    const missing = { id: 'idList2AAAAA', unavailable: true, reason: 'missing' }
+    const draftWithTargets = {
+      contributors: [person('idList1AAAAA'), missing, 'idTopAAAAAAA', { name: 'no id' }],
+      credits: [{ people: [person('idCreditAAAA')] }],
+    }
+    const { resolvedValue, loadingState } = applyReferenceCache(
+      schema,
+      draftWithTargets,
+      'main',
+      cacheOf(['idTopAAAAAAA']),
+    )
+
+    expect(resolvedValue.contributors).toEqual([
+      person('idList1AAAAA'),
+      missing,
+      person('idTopAAAAAAA'),
+      null,
+    ])
+    expect(loadingState.contributors).toEqual([false, false, false, false])
+    expect(resolvedValue.credits).toEqual([{ people: [person('idCreditAAAA')] }])
+    expect(idsToFetch(schema, draftWithTargets, 'main', new Map(), 0)).toEqual(['idTopAAAAAAA'])
+  })
+
   it('handles inline-shaped block items, whose fields sit beside the template name', () => {
     const { resolvedValue } = applyReferenceCache(
       schema,
