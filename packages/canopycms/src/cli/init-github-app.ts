@@ -44,6 +44,18 @@ import {
   readbackVerdict,
   type InstallationSummary,
 } from './github-app-manifest'
+import {
+  cross,
+  deploymentSettingsMessage,
+  errColors,
+  failMark,
+  link,
+  outColors,
+  recoveryPreamble,
+  registrationMessage,
+  step,
+  tick,
+} from './github-app-output'
 import { askLine, pressEnter } from './prompt'
 
 /** How long `create` waits for the browser round trip before giving up. */
@@ -67,14 +79,60 @@ export type AppTarget = {
 type KeyDestination = { kind: 'command'; argv: string[] } | { kind: 'file'; filePath: string }
 
 /**
+ * Organisation-owned and user-owned Apps live under different paths, and each
+ * form 404s or fails for the other's. Every App URL the command builds starts here.
+ */
+function appsBaseUrl(target: AppTarget): string {
+  return target.isOrganization
+    ? `https://github.com/organizations/${encodeURIComponent(target.owner)}/settings/apps`
+    : 'https://github.com/settings/apps'
+}
+
+/**
+ * The App's own settings page.
+ * @internal Exported for tests.
+ */
+export function appSettingsUrl(target: AppTarget, slug: string): string {
+  return `${appsBaseUrl(target)}/${encodeURIComponent(slug)}`
+}
+
+/**
+ * The recovery note printed when the key could not be stored.
+ * @internal Exported for tests.
+ */
+export function keyNotStoredMessage(
+  target: AppTarget,
+  created: { id: number; slug: string },
+): string {
+  return (
+    `\n${errColors.bold(errColors.red('Stopping here:'))} the App exists but its key was not stored, so installing it now\n` +
+    '  would achieve nothing. To recover, open the App and generate a private key from\n' +
+    '  its "Private keys" section, then run `verify`; or delete the App and start again.\n\n' +
+    `  GITHUB_APP_ID=${created.id}\n` +
+    `  App settings: ${link(appSettingsUrl(target, created.slug), errColors)}`
+  )
+}
+
+/**
+ * Step 2 of `create`: where to install the App.
+ * @internal Exported for tests.
+ */
+export function installStepMessage(target: AppTarget, slug: string): string {
+  return (
+    `\n${step(2, `Install it on ${target.owner}/${target.repo}:`)}\n\n` +
+    `   ${link(`${appSettingsUrl(target, slug)}/installations`)}\n\n` +
+    '   That page shows an Install button first — the repository picker only appears after\n' +
+    '   you click it. Choose "Only select repositories" and pick that one repository.\n'
+  )
+}
+
+/**
  * Where the manifest form posts: user-owned and organisation repositories use
  * different URLs, and posting the wrong one fails at the form.
  * @internal Exported for tests.
  */
 export function manifestPostUrl(target: AppTarget, state: string): string {
-  const base = target.isOrganization
-    ? `https://github.com/organizations/${encodeURIComponent(target.owner)}/settings/apps/new`
-    : 'https://github.com/settings/apps/new'
+  const base = `${appsBaseUrl(target)}/new`
   // The `state` rides on the ACTION URL, not inside the manifest body: it is a
   // query parameter GitHub echoes back on the redirect, and putting it in the
   // JSON would look implemented while protecting nothing.
@@ -705,7 +763,7 @@ export async function handOffWithRetry(pem: string, destination: KeyDestination)
   for (;;) {
     const result = await handOffKey(pem, attempt)
     if (result.stored) {
-      console.log(`\n  private key: ${result.detail}`)
+      console.log(`\n${tick(`Private key: ${result.detail}`)}`)
       return true
     }
 
@@ -875,17 +933,19 @@ async function readBackInstallation(
   }
 
   const installation = found.body
-  console.log(`\n  installation ${installation.id} on ${target.owner}/${target.repo}`)
+  console.log(
+    `\n${outColors.bold(`Installation ${installation.id}`)} on ${target.owner}/${target.repo}`,
+  )
 
   const findings = readbackVerdict(installation)
   if (findings.length === 0) {
-    console.log('  grant matches exactly what this package needs:')
+    console.log('  The grant matches exactly what this package needs:')
     for (const [name, level] of Object.entries(CANOPY_APP_PERMISSIONS)) {
-      console.log(`    ✓ ${name}: ${level}`)
+      console.log(`    ${tick(`${name}: ${level}`)}`)
     }
   } else {
     for (const finding of findings) {
-      console.error(`    ✗ ${finding.message}`)
+      console.error(`    ${cross(finding.message)}`)
     }
   }
 
@@ -896,33 +956,33 @@ async function readBackInstallation(
   const installations = await installationCount(jwt)
   if (installations === null) {
     console.error(
-      '    ✗ could not list this App\'s installations, so "installed once" is UNCHECKED.\n' +
+      `    ${failMark} could not list this App's installations, so "installed once" is UNCHECKED.\n` +
         '      Reported as a failure rather than passed over: this is the check that observes\n' +
         '      the one-App-per-site rule, and an unread check is not a satisfied one.',
     )
   } else if (installations === 1) {
     installationsOk = true
-    console.log('    ✓ installed once, so this key reaches no other account')
+    console.log(`    ${tick('installed once, so this key reaches no other account')}`)
   } else if (installations > 1) {
     console.error(
-      `    ✗ this App is installed ${installations} times, and should be installed ONCE.\n` +
+      `    ${failMark} this App is installed ${installations} times, and should be installed ONCE.\n` +
         '      Its private key is App-level: whoever holds it can mint a token for any of\n' +
         '      those installations. Register a separate App per site instead, and remove\n' +
         '      the installations that do not belong to this one.',
     )
   } else {
     console.error(
-      `    ✗ GitHub reports ${installations} installations of this App, yet one was just read\n` +
+      `    ${failMark} GitHub reports ${installations} installations of this App, yet one was just read\n` +
         '      back for this repository. Something is inconsistent; re-run before trusting it.',
     )
   }
 
   const mint = await proveTokenMint(jwt, installation.id, target.repo)
   if (mint.ok) {
-    console.log(`    ✓ installation token ${mint.detail}`)
+    console.log(`    ${tick(`installation token ${mint.detail}`)}`)
   } else {
     console.error(
-      `    ✗ could not mint an installation token — ${mint.detail}\n` +
+      `    ${failMark} could not mint an installation token — ${mint.detail}\n` +
         '      If that message says the requested permissions are not granted to this\n' +
         '      installation, that is a GitHub behaviour rather than a bug here: adding a\n' +
         '      permission to an App does NOT apply to existing installations until an account\n' +
@@ -1052,16 +1112,7 @@ async function createCommand(options: InitGitHubAppOptions): Promise<number> {
   // PRINTED BEFORE THE BROWSER OPENS, not on failure: if the redirect never
   // arrives, the App HAS still been created with no key held, and printing
   // the recovery only then could target a terminal that is already gone.
-  console.log(
-    'IF THIS GOES WRONG AFTER YOU CLICK CREATE, read this first:\n' +
-      '  The App will exist and this command will not have its private key. That is\n' +
-      '  recoverable. Either:\n' +
-      '    - delete the App in its settings and re-run this command, or\n' +
-      '    - open the App, scroll to "Private keys", and click "Generate a private key".\n' +
-      '      It downloads a .pem and that is the only chance to save it. This is NOT the\n' +
-      '      "client secret" listed a few sections above: that is for OAuth user flows, is\n' +
-      '      unused by this App, and fails confusingly when used to sign.\n',
-  )
+  console.log(recoveryPreamble())
 
   const state = randomUUID()
   let formDir: string | undefined
@@ -1095,21 +1146,15 @@ async function createCommand(options: InitGitHubAppOptions): Promise<number> {
     await writeFile(formFile, creationForm(postUrl, manifest), { mode: 0o600, flag: 'wx' })
 
     console.log(
-      `Registering "${name}" for ${target.owner}/${target.repo}.\n\n` +
-        'Its permissions, which is the part that matters:\n\n' +
-        `${JSON.stringify(CANOPY_APP_PERMISSIONS, null, 2)}\n\n` +
-        `The key will go to ${describeDestination(destination)} — and if that fails you will\n` +
-        `be asked for somewhere else before it is discarded.\n\n` +
-        '1. Open this file in a browser:\n\n' +
-        `     ${formFile}\n\n` +
-        '   The browser matters, twice over. It must be LOGGED IN TO GITHUB as an owner of\n' +
-        `   ${target.owner}, and it must be running on THIS machine — the redirect comes back to\n` +
-        `   127.0.0.1:${callback.port}, which only a local browser can reach. An embedded or\n` +
-        '   app-internal browser bounces off the GitHub login wall and simply appears to do\n' +
-        '   nothing when you click Create.\n\n' +
-        '   The page posts the manifest to GitHub, which shows you the App pre-filled with\n' +
-        '   exactly those permissions. Review them and click Create.\n\n' +
-        `Waiting for GitHub to redirect back (up to ${CALLBACK_TIMEOUT_MS / 60000} minutes)...`,
+      registrationMessage({
+        name,
+        owner: target.owner,
+        repo: target.repo,
+        destination: describeDestination(destination),
+        formFile,
+        callbackPort: callback.port,
+        timeoutMinutes: CALLBACK_TIMEOUT_MS / 60000,
+      }),
     )
 
     let code: string
@@ -1127,7 +1172,7 @@ async function createCommand(options: InitGitHubAppOptions): Promise<number> {
       return 1
     }
 
-    console.log('  got the manifest code; exchanging it for the App credentials')
+    console.log(`\n${tick('Got the manifest code; exchanging it for the App credentials')}`)
     const created = await convertManifest(code)
     if (!created) {
       console.error(
@@ -1141,8 +1186,10 @@ async function createCommand(options: InitGitHubAppOptions): Promise<number> {
       return 1
     }
     console.log(
-      `  created App ${created.slug} (id ${created.id}) — private key captured; sending it to` +
-        ` ${describeDestination(destination)}`,
+      tick(
+        `Created App ${outColors.bold(created.slug)} (id ${created.id}); private key captured, sending it to` +
+          ` ${describeDestination(destination)}`,
+      ),
     )
 
     // THE KEY IS HANDED OFF FIRST, before the install prompt and the readback,
@@ -1154,22 +1201,11 @@ async function createCommand(options: InitGitHubAppOptions): Promise<number> {
     if (!stored) {
       // No point installing an App whose key was just discarded. Say what IS
       // still actionable — the App id, the handle for a replacement key.
-      console.error(
-        `\nStopping here: the App exists but its key was not stored, so installing it now\n` +
-          '  would achieve nothing. To recover, open the App and generate a private key from\n' +
-          '  its "Private keys" section, then run `verify`; or delete the App and start again.\n\n' +
-          `  GITHUB_APP_ID=${created.id}\n` +
-          `  App settings: https://github.com/settings/apps/${created.slug}`,
-      )
+      console.error(keyNotStoredMessage(target, created))
       return 1
     }
 
-    console.log(
-      `\n2. Install it on ${target.owner}/${target.repo}:\n\n` +
-        `     https://github.com/settings/apps/${created.slug}/installations\n\n` +
-        '   That page shows an Install button first — the repository picker only appears after\n' +
-        '   you click it. Choose "Only select repositories" and pick that one repository.\n',
-    )
+    console.log(installStepMessage(target, created.slug))
     await pressEnter('   Press Enter once it is installed.')
 
     // Wrapped so a rejection here cannot change what was already reported about
@@ -1186,17 +1222,7 @@ async function createCommand(options: InitGitHubAppOptions): Promise<number> {
       readback = { ok: false, installationId: null }
     }
 
-    console.log(
-      '\nSet these on your deployment:\n\n' +
-        `  GITHUB_APP_ID=${created.id}\n` +
-        `  GITHUB_APP_INSTALLATION_ID=${readback.installationId ?? '<run `verify` to read it>'}\n` +
-        '  GITHUB_APP_PRIVATE_KEY_SECRET_ARN=<wherever you just put the key>\n\n' +
-        '  Both ids are numeric. The App ID is NOT the "Client ID" (`Iv1.…`) shown beside it,\n' +
-        '  and the installation id is NOT the App ID — an App installed twice has one App ID\n' +
-        '  and two installation ids.\n\n' +
-        'Re-check this any time, without creating anything:\n' +
-        `  canopycms init-github-app verify --app-id ${created.id} --key-file <path>`,
-    )
+    console.log(deploymentSettingsMessage(created.id, readback.installationId))
 
     return stored && readback.ok ? 0 : 1
   } finally {
