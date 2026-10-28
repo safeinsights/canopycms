@@ -137,7 +137,8 @@ export const Default: Story = {
   render: () => (
     <div className="h-[90vh] bg-gray-50">
       <MockFetch>
-        <CanopyEditor config={config} entries={entries} />
+        {/* This mock serves no branch list, so nothing would name a branch to adopt. */}
+        <CanopyEditor config={config} entries={entries} branchName="main" />
       </MockFetch>
     </div>
   ),
