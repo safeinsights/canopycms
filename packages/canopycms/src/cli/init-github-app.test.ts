@@ -575,6 +575,19 @@ describe('handOffKey', () => {
     },
   )
 
+  it.skipIf(process.platform === 'win32')(
+    'does not let a zero exit stand when the bridge reports `cat` failed',
+    async () => {
+      // A command that exits 0 leaving more unread than its pipe holds kills the
+      // `cat` feeding it; the bridge's fd-3 status is then the only sign, since
+      // the key's own write into the socket may have completed.
+      const { child } = fakeChild({ exitCode: 0, catStatus: '141\n' })
+      const result = await handOffKey(PEM, { kind: 'command', argv: ['store'] }, () => child)
+      expect(result.stored).toBe(false)
+      expect(result.detail).toContain('exited 141 (SIGPIPE')
+    },
+  )
+
   it('reports a child that could not be spawned at all', async () => {
     const { child } = fakeChild({ emitError: new Error('spawn ENOENT') })
     const result = await handOffKey(PEM, { kind: 'command', argv: ['nope'] }, () => child)
@@ -625,6 +638,15 @@ describe('handOffKey', () => {
     }
   })
 })
+
+/**
+ * The most an unprivileged process can grow a pipe to: Linux's `fs.pipe-max-size`, or 1MiB
+ * where no such file exists (macOS pipes stop at 64KB).
+ */
+async function pipeMaxSize(): Promise<number> {
+  const stated = await readFile('/proc/sys/fs/pipe-max-size', 'utf8').catch(() => '')
+  return Math.max(Number.parseInt(stated, 10) || 0, 1024 * 1024)
+}
 
 describe.skipIf(process.platform === 'win32')(
   'handOffKey through a real destination command',
@@ -679,13 +701,16 @@ describe.skipIf(process.platform === 'win32')(
       // `true` exits 0 having read nothing. With a real ~1.7KB key that is a race
       // `cat` wins — its one write lands in the pipe buffer before `true` closes
       // the read end — MEASURED as stored 100 times of 100 on macOS, so that case
-      // cannot be pinned deterministically. Input larger than a pipe buffer
-      // (64KB on Linux and on macOS) can: `cat` cannot write it all into a pipe
-      // nobody reads, so it dies of SIGPIPE however the timing falls. MEASURED on
-      // macOS at this size: the verdict came from `cat`'s status (141), not from
-      // a write error on this side, 20 times of 20 — which is what makes this
-      // the test of the fd-3 check rather than of `writeError`.
-      const input = `${PEM}${'x'.repeat(100_000)}\n`
+      // cannot be pinned deterministically. Input larger than the pipe can hold
+      // can: `cat` cannot write it all into a pipe nobody reads, so it fails
+      // however the timing falls. The pipe is not a fixed 64KB: uutils `cat`, the
+      // default on Ubuntu 26.04, raises its output pipe to 1MiB, and no
+      // unprivileged process can raise it past `fs.pipe-max-size`, so the input
+      // is twice that. Input this large also overruns the socket feeding `cat`,
+      // so which check decides (`cat`'s status on fd 3, or the write error on
+      // this side) depends on the platform's `cat` and buffers; this test pins
+      // the verdict, and the fake-child test of a `141` pins the fd-3 check.
+      const input = `${PEM}${'x'.repeat(2 * (await pipeMaxSize()))}\n`
       const result = await handOffKey(input, { kind: 'command', argv: ['true'] })
       expect(result.stored).toBe(false)
     })
