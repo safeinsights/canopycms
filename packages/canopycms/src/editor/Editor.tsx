@@ -1633,8 +1633,9 @@ const EditorContent: React.FC<EditorProps> = ({
   }
   // What the branch changes against its base, read while the panel shows so Changed has its count.
   // The protected base has nothing to compare. Changed keeps its place while the branch list loads,
-  // so the control never re-flows, and reads once the branch is known not to be the base; a list
-  // that failed, or lacks the branch, offers none.
+  // so the control doesn't re-flow then, and reads once the branch is known not to be the base. A
+  // list that failed, or lacks the branch, offers none, so a branch just created can lack Changed
+  // until the list catches up.
   const changesOffered = branchPending || currentBranch?.isProtected === false
   const changesAvailable = !!currentBranch && currentBranch.isProtected === false
   const branchChanges = useBranchChangesData(

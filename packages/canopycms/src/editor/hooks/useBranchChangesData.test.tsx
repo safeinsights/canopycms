@@ -1,5 +1,4 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { useSWRConfig } from 'swr'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { createMockApiClient, type MockApiClient } from '../../api/__test__/mock-client'
@@ -21,6 +20,12 @@ const answer = (logicalPath: string): BranchChangesData => ({
   collections: [],
   hiddenChanges: false,
 })
+const ok = (logicalPath: string): BranchChangesResponse => ({
+  ok: true,
+  status: 200,
+  data: answer(logicalPath),
+})
+const failed: BranchChangesResponse = { ok: false, status: 500, error: 'Disk full' }
 
 let client: MockApiClient
 
@@ -34,9 +39,24 @@ const renderChanges = (branch = 'feature', enabled = true) =>
     initialProps: { branch, enabled },
   })
 
+/** The next request, held until the returned function settles it. */
+const holdNext = () => {
+  let settle: (value: BranchChangesResponse) => void = () => {}
+  client.changes.list.mockImplementationOnce(() => new Promise((resolve) => (settle = resolve)))
+  return (value: BranchChangesResponse) => settle(value)
+}
+
+/** The hook with `content/a` loaded. */
+const renderLoaded = async () => {
+  client.changes.list.mockResolvedValue(ok('content/a'))
+  const rendered = renderChanges()
+  await waitFor(() => expect(rendered.result.current.data).toEqual(answer('content/a')))
+  return rendered
+}
+
 describe('useBranchChangesData', () => {
   it('loads the branch’s changes', async () => {
-    client.changes.list.mockResolvedValue({ ok: true, status: 200, data: answer('content/a') })
+    client.changes.list.mockResolvedValue(ok('content/a'))
     const { result } = renderChanges()
     expect(result.current.isLoading).toBe(true)
     await waitFor(() => expect(result.current.data).toEqual(answer('content/a')))
@@ -45,7 +65,7 @@ describe('useBranchChangesData', () => {
   })
 
   it('fetches nothing while disabled or branchless, then loads once enabled', async () => {
-    client.changes.list.mockResolvedValue({ ok: true, status: 200, data: answer('content/a') })
+    client.changes.list.mockResolvedValue(ok('content/a'))
     const { result, rerender } = renderChanges('feature', false)
     await act(() => result.current.reload())
     rerender({ branch: '', enabled: true })
@@ -58,34 +78,42 @@ describe('useBranchChangesData', () => {
   })
 
   it('reloads with a fresh fetch and replaces the data', async () => {
-    client.changes.list.mockResolvedValue({ ok: true, status: 200, data: answer('content/a') })
-    const { result } = renderChanges()
-    await waitFor(() => expect(result.current.data).toBeDefined())
-    client.changes.list.mockResolvedValue({ ok: true, status: 200, data: answer('content/b') })
+    const { result } = await renderLoaded()
+    client.changes.list.mockResolvedValue(ok('content/b'))
     await act(() => result.current.reload())
     expect(client.changes.list).toHaveBeenCalledTimes(2)
     expect(result.current.data).toEqual(answer('content/b'))
   })
 
-  it('maps a 409 to syncing and anything else to failed, keeping the data loaded before', async () => {
-    client.changes.list.mockResolvedValue({ ok: true, status: 200, data: answer('content/a') })
-    const { result } = renderChanges()
-    await waitFor(() => expect(result.current.data).toBeDefined())
-
-    client.changes.list.mockResolvedValue({ ok: false, status: 409, error: 'syncing' })
+  it('maps a 409 to syncing with the server’s words, and anything else to failed', async () => {
+    const { result } = await renderLoaded()
+    client.changes.list.mockResolvedValue({
+      ok: false,
+      status: 409,
+      error: 'This branch changed while its changes were being read. Try again in a moment.',
+    })
     await act(() => result.current.reload())
-    expect(result.current.error).toEqual({ kind: 'syncing', message: 'syncing' })
-    expect(result.current.data).toEqual(answer('content/a'))
-
-    client.changes.list.mockResolvedValue({ ok: false, status: 500, error: 'Disk full' })
+    expect(result.current.error).toEqual({
+      kind: 'syncing',
+      message: 'This branch changed while its changes were being read. Try again in a moment.',
+    })
+    client.changes.list.mockResolvedValue(failed)
     await act(() => result.current.reload())
     expect(result.current.error).toEqual({ kind: 'failed', message: 'Disk full' })
+  })
 
-    // The same answer as before: SWR keeps its data's identity, yet the error still clears.
-    client.changes.list.mockResolvedValue({ ok: true, status: 200, data: answer('content/a') })
+  it('shows a failing reload’s error over the data it had, and Retry clears it', async () => {
+    const { result } = await renderLoaded()
+    client.changes.list.mockResolvedValue(failed)
+    await act(() => result.current.reload())
+    expect(result.current.error).toEqual({ kind: 'failed', message: 'Disk full' })
+    // SWR keeps the last data beside an error.
+    expect(result.current.data).toEqual(answer('content/a'))
+
+    client.changes.list.mockResolvedValue(ok('content/b'))
     await act(() => result.current.reload())
     expect(result.current.error).toBeUndefined()
-    expect(result.current.data).toEqual(answer('content/a'))
+    expect(result.current.data).toEqual(answer('content/b'))
   })
 
   it('reports a failed first load', async () => {
@@ -97,115 +125,57 @@ describe('useBranchChangesData', () => {
 })
 
 describe('useBranchChangesData ordering', () => {
-  it('never lets a reload that started before SWR’s latest fetch replace that fetch’s answer', async () => {
-    client.changes.list.mockResolvedValue({ ok: true, status: 200, data: answer('content/a') })
-    const { result } = renderHook(
-      () => ({
-        changes: useBranchChangesData(client as never, 'feature', true),
-        swr: useSWRConfig(),
-      }),
-      { wrapper: createApiClientWrapper(client) },
-    )
-    await waitFor(() => expect(result.current.changes.data).toEqual(answer('content/a')))
-
-    let settleReload: (value: BranchChangesResponse) => void = () => {}
-    client.changes.list.mockImplementationOnce(
-      () => new Promise((resolve) => (settleReload = resolve)),
-    )
-    let reloading: Promise<void> = Promise.resolve()
-    act(() => {
-      reloading = result.current.changes.reload()
-    })
-    client.changes.list.mockResolvedValue({ ok: true, status: 200, data: answer('content/newer') })
-    await act(() => result.current.swr.mutate('canopy:changes:feature'))
-    await waitFor(() => expect(result.current.changes.data).toEqual(answer('content/newer')))
-
-    await act(async () => {
-      settleReload({ ok: true, status: 200, data: answer('content/older') })
-      await reloading
-    })
-    expect(result.current.changes.data).toEqual(answer('content/newer'))
-  })
-
-  /** The hook plus SWR's mutate, loaded with `content/a`. */
-  const renderLoaded = async () => {
-    client.changes.list.mockResolvedValue({ ok: true, status: 200, data: answer('content/a') })
-    const rendered = renderHook(
-      () => ({
-        changes: useBranchChangesData(client as never, 'feature', true),
-        swr: useSWRConfig(),
-      }),
-      { wrapper: createApiClientWrapper(client) },
-    )
-    await waitFor(() => expect(rendered.result.current.changes.data).toEqual(answer('content/a')))
-    return rendered
-  }
-  /** The next request, held until the returned function settles it. */
-  const holdNext = () => {
-    let settle: (value: BranchChangesResponse) => void = () => {}
-    client.changes.list.mockImplementationOnce(() => new Promise((resolve) => (settle = resolve)))
-    return (value: BranchChangesResponse) => settle(value)
-  }
-
-  it('drops an SWR fetch’s error, or older data, when a reload that started after it has landed', async () => {
-    const { result } = await renderLoaded()
-    for (const late of [
-      { ok: false, status: 500, error: 'Disk full' },
-      { ok: true, status: 200, data: answer('content/older') },
-    ] as BranchChangesResponse[]) {
-      const settleSwr = holdNext()
-      let revalidating: Promise<unknown> = Promise.resolve()
-      act(() => {
-        revalidating = result.current.swr.mutate('canopy:changes:feature')
-      })
-      client.changes.list.mockResolvedValue({ ok: true, status: 200, data: answer('content/r') })
-      await act(() => result.current.changes.reload())
-      expect(result.current.changes.data).toEqual(answer('content/r'))
-      await act(async () => {
-        settleSwr(late)
-        await revalidating
-      })
-      expect(result.current.changes.error).toBeUndefined()
-      expect(result.current.changes.data).toEqual(answer('content/r'))
-    }
-  })
-
-  it('shows a newer SWR fetch’s answer over a reload that settled before it', async () => {
-    const { result } = await renderLoaded()
-    const settleReload = holdNext()
-    let reloading: Promise<void> = Promise.resolve()
-    act(() => {
-      reloading = result.current.changes.reload()
-    })
-    const settleSwr = holdNext()
-    let revalidating: Promise<unknown> = Promise.resolve()
-    act(() => {
-      revalidating = result.current.swr.mutate('canopy:changes:feature')
-    })
-    await act(async () => {
-      settleReload({ ok: true, status: 200, data: answer('content/reload') })
-      await reloading
-    })
-    await act(async () => {
-      settleSwr({ ok: true, status: 200, data: answer('content/swr') })
-      await revalidating
-    })
-    expect(result.current.changes.data).toEqual(answer('content/swr'))
-    expect(result.current.changes.error).toBeUndefined()
-  })
-
-  it('keeps the server’s words for a 409', async () => {
-    client.changes.list.mockResolvedValue({
-      ok: false,
-      status: 409,
-      error: 'This branch changed while its changes were being read. Try again in a moment.',
-    })
+  it('shows a reload’s answer over the automatic fetch it overtook, whenever that settles', async () => {
+    const settleFirst = holdNext()
     const { result } = renderChanges()
-    await waitFor(() =>
-      expect(result.current.error).toEqual({
-        kind: 'syncing',
-        message: 'This branch changed while its changes were being read. Try again in a moment.',
-      }),
-    )
+    client.changes.list.mockResolvedValue(ok('content/reload'))
+    await act(() => result.current.reload())
+    expect(result.current.data).toEqual(answer('content/reload'))
+    await act(async () => settleFirst(ok('content/first')))
+    expect(result.current.data).toEqual(answer('content/reload'))
+  })
+
+  it('shows no error from an older fetch that fails after a newer one succeeded', async () => {
+    const settleFirst = holdNext()
+    const { result } = renderChanges()
+    client.changes.list.mockResolvedValue(ok('content/reload'))
+    await act(() => result.current.reload())
+    await act(async () => settleFirst(failed))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(result.current.error).toBeUndefined()
+    expect(result.current.data).toEqual(answer('content/reload'))
+  })
+
+  it('keeps a fetch that outlives a branch switch on its own branch', async () => {
+    const settleA = holdNext()
+    const { result, rerender } = renderChanges('a')
+    client.changes.list.mockResolvedValue(ok('content/b'))
+    rerender({ branch: 'b', enabled: true })
+    await waitFor(() => expect(result.current.data).toEqual(answer('content/b')))
+    await act(async () => settleA(ok('content/a')))
+    expect(result.current.data).toEqual(answer('content/b'))
+    expect(client.changes.list.mock.calls.map(([params]) => params)).toEqual([
+      { branch: 'a' },
+      { branch: 'b' },
+    ])
+
+    client.changes.list.mockResolvedValue(ok('content/b2'))
+    await act(() => result.current.reload())
+    expect(client.changes.list).toHaveBeenLastCalledWith({ branch: 'b' })
+    rerender({ branch: 'a', enabled: true })
+    await waitFor(() => expect(result.current.data).toEqual(answer('content/a')))
+  })
+
+  it('shows a later failed reload’s error over the newest data, not stale data', async () => {
+    // An automatic fetch, overtaken by a reload, settles late with older data; a reload then fails.
+    const settleFirst = holdNext()
+    const { result } = renderChanges()
+    client.changes.list.mockResolvedValue(ok('content/new'))
+    await act(() => result.current.reload())
+    await act(async () => settleFirst(ok('content/stale')))
+    client.changes.list.mockResolvedValue(failed)
+    await act(() => result.current.reload())
+    expect(result.current.error).toEqual({ kind: 'failed', message: 'Disk full' })
+    expect(result.current.data).toEqual(answer('content/new'))
   })
 })

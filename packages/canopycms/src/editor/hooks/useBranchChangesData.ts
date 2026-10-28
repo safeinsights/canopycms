@@ -6,13 +6,15 @@
  * `enabled` is false fetches nothing.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
-import useSWR, { useSWRConfig } from 'swr'
+import { useCallback, useRef } from 'react'
+import useSWR from 'swr'
 import type { ApiClient } from '../context'
 import type { BranchChangesData } from '../../api/branch-changes'
 
+const KEY_PREFIX = 'canopy:changes:'
+
 /** Cache key for a branch's changes against its base. */
-const branchChangesKey = (branch: string): string => `canopy:changes:${branch}`
+const branchChangesKey = (branch: string): string => `${KEY_PREFIX}${branch}`
 
 /**
  * Why a branch's changes could not be loaded: the branch moved under the read (a 409, nothing
@@ -54,7 +56,10 @@ export interface BranchChangesState {
   error: BranchChangesError | undefined
   isLoading: boolean
   isValidating: boolean
-  /** Fetches afresh, never coalesced with a load in flight (hooks/README.md "Explicit reload"). */
+  /**
+   * Starts a fresh fetch through SWR's revalidating `mutate()`, never coalesced with one in
+   * flight; SWR keeps whichever fetch started last (hooks/README.md).
+   */
   reload: () => Promise<void>
 }
 
@@ -63,98 +68,35 @@ export function useBranchChangesData(
   branch: string,
   enabled: boolean,
 ): BranchChangesState {
-  const { mutate } = useSWRConfig()
   const key = branch && enabled ? branchChangesKey(branch) : null
-  // SWR's own fetches and explicit reloads share one start order. Per key: the fetches in flight,
-  // the newest answer to have settled, and the one the cache shows. SWR keeps only its latest
-  // fetch's answer and drops one that started before a write, so a reload writes only when no
-  // newer fetch is in flight, leaving that one to deliver; a fetch failing after a newer answer
-  // settled gives that answer, not its error.
-  const startedRef = useRef(0)
-  const inFlightRef = useRef(new Map<string, Set<number>>())
-  const newestRef = useRef(new Map<string, { seq: number; data: BranchChangesData }>())
-  const shownRef = useRef(new Map<string, number>())
-  const start = (cacheKey: string) => {
-    const seq = ++startedRef.current
-    const set = inFlightRef.current.get(cacheKey) ?? new Set<number>()
-    inFlightRef.current.set(cacheKey, set.add(seq))
-    return seq
-  }
-  const settle = (cacheKey: string, seq: number, data?: BranchChangesData) => {
-    inFlightRef.current.get(cacheKey)?.delete(seq)
-    if (data && seq > (newestRef.current.get(cacheKey)?.seq ?? 0)) {
-      newestRef.current.set(cacheKey, { seq, data })
-    }
-  }
-  const newerInFlight = (cacheKey: string, seq: number) =>
-    [...(inFlightRef.current.get(cacheKey) ?? [])].some((other) => other > seq)
-  /** The newest settled answer, when the cache shows an older one. */
-  const unshownAnswer = (cacheKey: string) => {
-    const newest = newestRef.current.get(cacheKey)
-    return newest && newest.seq > (shownRef.current.get(cacheKey) ?? 0) ? newest : undefined
-  }
-
+  // Per key, how many fetches have started, and the last answer one returned.
+  const startsRef = useRef(new Map<string, number>())
+  const answersRef = useRef(new Map<string, BranchChangesData>())
   const swr = useSWR(key, async (cacheKey: string) => {
-    const seq = start(cacheKey)
-    let data: BranchChangesData
+    const started = (startsRef.current.get(cacheKey) ?? 0) + 1
+    startsRef.current.set(cacheKey, started)
     try {
-      data = await fetchBranchChanges(apiClient, branch)
+      // The branch comes from the key, so a fetch outliving a branch switch reads its own branch.
+      const data = await fetchBranchChanges(apiClient, cacheKey.slice(KEY_PREFIX.length))
+      answersRef.current.set(cacheKey, data)
+      return data
     } catch (err) {
-      settle(cacheKey, seq)
-      // A newer answer stands, so this fetch's failure is older news.
-      const newest = newestRef.current.get(cacheKey)
-      if (newest && newest.seq > seq) return newest.data
+      // SWR 2.4 drops an overtaken fetch's result but still shows its error. Overtaken, it
+      // resolves instead, and SWR drops that: a newer fetch holds the key, or has finished.
+      if ((startsRef.current.get(cacheKey) ?? 0) > started) return answersRef.current.get(cacheKey)
       throw err
     }
-    settle(cacheKey, seq, data)
-    shownRef.current.set(cacheKey, seq)
-    return data
   })
-  // An explicit reload's failure, for the branch it was for; SWR holds only its own fetch's.
-  const [reloadFailure, setReloadFailure] = useState<{
-    branch: string
-    error: BranchChangesError
-  }>()
-  const [reloading, setReloading] = useState(0)
-  useEffect(() => setReloadFailure(undefined), [swr.data])
-
+  const { mutate } = swr
   const reload = useCallback(async () => {
-    if (!key) return
-    const seq = start(key)
-    setReloading((n) => n + 1)
-    try {
-      let failure: unknown
-      try {
-        settle(key, seq, await fetchBranchChanges(apiClient, branch))
-      } catch (err) {
-        settle(key, seq)
-        failure = err
-      }
-      if (newerInFlight(key, seq)) return
-      const newest = unshownAnswer(key)
-      if (newest) {
-        shownRef.current.set(key, newest.seq)
-        setReloadFailure(undefined)
-        await mutate(key, newest.data, { revalidate: false })
-      } else if (failure !== undefined && (newestRef.current.get(key)?.seq ?? 0) < seq) {
-        setReloadFailure({ branch, error: toError(failure) })
-      }
-    } finally {
-      setReloading((n) => n - 1)
-    }
-  }, [apiClient, branch, key, mutate])
+    await mutate()
+  }, [mutate])
 
-  const error =
-    reloadFailure?.branch === branch
-      ? reloadFailure.error
-      : swr.error === undefined
-        ? undefined
-        : toError(swr.error)
   return {
     data: swr.data,
-    error: key ? error : undefined,
+    error: key && swr.error !== undefined ? toError(swr.error) : undefined,
     isLoading: swr.isLoading,
-    isValidating: swr.isValidating || reloading > 0,
+    isValidating: swr.isValidating,
     reload,
   }
 }
