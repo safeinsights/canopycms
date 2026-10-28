@@ -148,6 +148,9 @@ const stubApi = (changed: string[]) => {
     if (path.includes('/content/content/posts/') && (!init?.method || init.method === 'GET')) {
       return Promise.resolve(okJson({ title: 'Loaded title', version: 100 }))
     }
+    if (path.includes('/content/content/posts/') && init?.method === 'PUT') {
+      return Promise.resolve(okJson({ format: 'json', data: { title: 'Saved' }, version: 101 }))
+    }
     return Promise.resolve(okJson({}))
   })
   vi.stubGlobal('fetch', fetch)
@@ -208,6 +211,29 @@ describe('Show changes', () => {
     expect((await within(dialog).findByTestId('entry-changes-unsaved')).textContent).toContain(
       'Unsaved edits aren’t included.',
     )
+  })
+
+  it('fetches nothing for a closed drawer when a save reloads the branch’s changes', async () => {
+    const fetch = stubApi(['content/posts/hello'])
+    const calls = (fragment: string) =>
+      fetch.mock.calls.filter(([input]) =>
+        new URL(String(input), 'http://localhost').pathname.endsWith(fragment),
+      ).length
+    renderEditor()
+    await waitFor(() => expect(titleInput().value).toBe('Loaded title'))
+    await userEvent.click(await screen.findByTestId('entry-show-changes'))
+    const dialog = await screen.findByRole('dialog', { name: 'Changes to Hello' })
+    await within(dialog).findByTestId('entry-changes-summary')
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    const entryReads = calls('/main/changes/content/posts/hello')
+    const listReads = calls('/main/changes')
+
+    await userEvent.type(titleInput(), ' edited')
+    await userEvent.click(screen.getByTestId('save-button'))
+    await waitFor(() => expect(calls('/main/changes')).toBeGreaterThan(listReads))
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(calls('/main/changes/content/posts/hello')).toBe(entryReads)
   })
 
   it('isn’t offered on an entry the branch hasn’t changed', async () => {
