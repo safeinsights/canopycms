@@ -1072,9 +1072,9 @@ class LocalGitHubGateway implements GitHubGateway {
       this.octokit.pulls.get({ ...this.repo, pull_number: number, request: { signal } }),
     )
     const head = data.head.ref
-    // GitHub compares owner and repository names case-insensitively. A deleted fork has no repo.
-    const headRepo = data.head.repo?.full_name.toLowerCase()
-    if (headRepo !== `${this.repo.owner}/${this.repo.repo}`.toLowerCase()) {
+    // By id, not name: the configured name keeps working after a rename or transfer, and the base
+    // repository is the one asked. A deleted fork has no repo.
+    if (data.head.repo?.id !== data.base.repo.id) {
       throw new GatewayRefusalError(
         'pull-request',
         head,

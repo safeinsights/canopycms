@@ -89,6 +89,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.unstubAllEnvs()
 })
 
 describe('resolveGatewayListen', () => {
@@ -349,6 +350,8 @@ describe('runGateway: a healthy boot on a token', () => {
       'site-settings',
     ],
   ])('resolves the settings branch from %j as the worker does: %s', async (vars, expected) => {
+    // resolveDeploymentName reads the process's variable first; the harness's env stands in for it.
+    vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', '')
     const h = harness({ env: { ...baseEnv(), ...vars } })
 
     await runGateway(h.deps)

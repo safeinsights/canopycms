@@ -72,12 +72,20 @@ function octokitStub() {
   }
 }
 
-/** A `pulls.get` answer whose head is `ref` in `repo` (null: a deleted fork). */
-function pullRequestHead(ref: string, repo: string | null = 'test-owner/test-repo') {
+/** The id of the repository the gateway asks about, and so of every pull request's base. */
+const REPO_ID = 1001
+
+/** A `pulls.get` answer whose head is `ref` in the repository `repoId` (null: a deleted fork). */
+function pullRequestHead(
+  ref: string,
+  repoId: number | null = REPO_ID,
+  fullName = 'test-owner/test-repo',
+) {
   return {
     number: 2,
     node_id: 'PR_2',
-    head: { ref, repo: repo === null ? null : { full_name: repo } },
+    head: { ref, repo: repoId === null ? null : { id: repoId, full_name: fullName } },
+    base: { ref: 'main', repo: { id: REPO_ID, full_name: 'test-owner/test-repo' } },
   }
 }
 
@@ -395,7 +403,8 @@ describe('pull requests by number', () => {
     ['outside the namespace', pullRequestHead('developer-branch'), 'outside-namespace'],
     ['protected', pullRequestHead('main'), 'protected'],
     ['a settings branch', pullRequestHead('canopycms-settings-prod'), 'settings'],
-    ['in a fork', pullRequestHead('canopycms-feature', 'someone/test-repo'), 'outside-namespace'],
+    // A fork may share the repository's name; only its id tells it apart.
+    ['in a fork', pullRequestHead('canopycms-feature', 2002), 'outside-namespace'],
     ['in a deleted fork', pullRequestHead('canopycms-feature', null), 'outside-namespace'],
   ] as const)('refuses one whose head is %s, permanently', async (_label, answer, reason) => {
     const octokit = octokitStub()
@@ -413,8 +422,8 @@ describe('pull requests by number', () => {
 
   it("acts on one whose head is this repository's, in the namespace or on the legacy list", async () => {
     for (const [answer, options] of [
-      // GitHub's own casing of the repository may differ from the configured owner and name.
-      [pullRequestHead('canopycms-feature', 'Test-Owner/Test-Repo'), {}],
+      // Renamed since it was configured: GitHub answers the new name, and the same id.
+      [pullRequestHead('canopycms-feature', REPO_ID, 'new-owner/new-name'), {}],
       [pullRequestHead('spring'), { legacyBranches: ['spring'] }],
     ] as const) {
       const octokit = octokitStub()

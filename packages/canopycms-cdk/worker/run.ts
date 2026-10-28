@@ -20,6 +20,7 @@ import {
   DEFAULT_TASK_TIMEOUT,
   GitHubGatewayUnreachableError,
   assertSelfChecks,
+  resolveWorkerSettingsBranch,
   workerLog,
   workerLogError,
   workerLogWarn,
@@ -524,6 +525,21 @@ async function buildSplitWorker(
     throw new Error(`${GATEWAY_FATAL_PREFIX}${health.fatalError}`)
   }
   if (!health.ready) throw new Error('The GitHub gateway is not ready')
+
+  // The gateway pushes only the settings branch it resolved from its own environment, so one that
+  // differs from this worker's would keep every settings change off GitHub, a warning a cycle.
+  const settingsBranch = resolveWorkerSettingsBranch({
+    settingsBranch: env.CANOPYCMS_SETTINGS_BRANCH,
+    deploymentName: env.CANOPYCMS_DEPLOYMENT_NAME,
+  })
+  const gatewaySettingsBranch = health.branchPolicy.settingsBranch
+  if (gatewaySettingsBranch !== settingsBranch) {
+    throw new Error(
+      `The GitHub gateway pushes the settings branch ${JSON.stringify(gatewaySettingsBranch)}, ` +
+        `but this worker's is ${JSON.stringify(settingsBranch)}: set CANOPYCMS_DEPLOYMENT_NAME ` +
+        "and CANOPYCMS_SETTINGS_BRANCH alike in the worker's .env and gateway.env",
+    )
+  }
 
   // The gateway holds the Clerk key; the worker writes what it fetches.
   const refreshAuthCache = health.clerkConfigured

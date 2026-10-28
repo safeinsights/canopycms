@@ -103,6 +103,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.unstubAllEnvs()
 })
 
 // The inferred value, not just whether the worker runs: once the contract
@@ -210,7 +211,7 @@ const HEALTHY: GitHubGatewayHealth = {
     githubDefault: 'main',
     namespace: 'canopycms-',
     legacy: [],
-    settingsBranch: null,
+    settingsBranch: 'canopycms-settings-prod',
   },
 }
 
@@ -873,6 +874,38 @@ describe('runWorker: split mode', () => {
     expect(h.connectGateway).not.toHaveBeenCalled()
     expect(h.createWorker).not.toHaveBeenCalled()
     expect(h.exitCodes()).toEqual([1])
+  })
+
+  it("refuses to start beside a gateway that pushes another settings branch than this worker's", async () => {
+    // resolveDeploymentName reads the process's variable first; the harness's env stands in for it.
+    vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', '')
+    const h = harness({ env: { ...splitEnv(), CANOPYCMS_DEPLOYMENT_NAME: 'docs' } })
+
+    await runWorker(h.deps)
+
+    expect(h.record).toHaveBeenCalledTimes(1)
+    const { error } = h.record.mock.calls[0][0] as { error: Error }
+    expect(error.message).toBe(
+      'The GitHub gateway pushes the settings branch "canopycms-settings-prod", but this ' +
+        'worker\'s is "canopycms-settings-docs": set CANOPYCMS_DEPLOYMENT_NAME and ' +
+        "CANOPYCMS_SETTINGS_BRANCH alike in the worker's .env and gateway.env",
+    )
+    expect(h.createWorker).not.toHaveBeenCalled()
+    expect(h.exitCodes()).toEqual([1])
+  })
+
+  it('starts beside a gateway that pushes the same settings branch', async () => {
+    vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', '')
+    const h = harness({ env: { ...splitEnv(), CANOPYCMS_SETTINGS_BRANCH: 'site-settings' } })
+    h.gateway.health.mockResolvedValue({
+      ...HEALTHY,
+      branchPolicy: { ...HEALTHY.branchPolicy, settingsBranch: 'site-settings' },
+    })
+
+    await runWorker(h.deps)
+
+    expect(h.record).not.toHaveBeenCalled()
+    expect(h.createWorker).toHaveBeenCalledTimes(1)
   })
 
   it("refuses CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS on the worker's unit, which only the gateway reads", async () => {
