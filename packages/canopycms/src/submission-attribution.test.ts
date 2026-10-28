@@ -659,6 +659,20 @@ describe('buildCommentsBlock', () => {
     expect(buildCommentsBlock(many.slice(0, 2), 'feature/x', longUrl)).toContain('open in editor')
   })
 
+  it('leaves the section its full budget whatever the block holds, and both stay bounded', () => {
+    const paths = Array.from({ length: 100 }, (_, i) => `content/${'d'.repeat(280)}/p${i}.json`)
+    const threads = Array.from({ length: 50 }, () =>
+      thread({ entryPath: `content/${'d'.repeat(280)}`, text: 'z'.repeat(80) }),
+    )
+    const input = { changedPaths: paths, description: 'x'.repeat(5_000), branch: 'f' }
+    const bare = buildPrSection(input)
+    const withBlock = buildPrSection({ ...input, threads })
+    // The description is not cut to make room for the block.
+    expect(withBlock).toContain('x'.repeat(5_000))
+    expect(withBlock.length).toBeLessThan(56_000)
+    expect(bare.length).toBeLessThan(41_000)
+  })
+
   it('survives malformed threads from the unvalidated comments.json', () => {
     const malformed = [
       null,

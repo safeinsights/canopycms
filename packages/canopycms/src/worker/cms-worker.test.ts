@@ -527,6 +527,39 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
       .readFile(path.join(contentBranchesPath, branch, '.canopy-meta', 'branch.json'), 'utf-8')
       .then(JSON.parse)
 
+  it("re-renders a queued submit's comment block from comments.json when it runs", async () => {
+    const { worker, octokit } = makePrWorker()
+    await setupBranchDir('feature-x')
+    await new CommentStore(path.join(contentBranchesPath, 'feature-x')).addComment({
+      userId: 'u1',
+      text: 'Added after the submit was queued',
+      type: 'branch',
+    })
+    octokit.pulls.list.mockResolvedValue({ data: [] })
+    octokit.pulls.create.mockResolvedValue({
+      data: { number: 9, html_url: 'https://github.com/test-owner/test-repo/pull/9' },
+    })
+
+    await enqueueTask(taskDir, {
+      action: 'push-and-create-or-update-pr',
+      payload: {
+        branch: 'feature-x',
+        title: 'Submit feature-x',
+        body: buildPrSection({ changedPaths: ['a.md'], branch: 'feature-x' }),
+        mergeSectionIntoBody: true,
+        editorUrl: 'https://cms.example.org/edit',
+      },
+    })
+    await worker.processTaskQueue()
+
+    const body: string = octokit.pulls.create.mock.calls[0]![0].body
+    expect(body).toContain('**1 unresolved editor comment thread**')
+    expect(body).toContain(
+      '- Branch — `Added after the submit was queued` ([open in editor](https://cms.example.org/edit?branch=feature-x))',
+    )
+    expect(body).not.toContain('No editor comments.')
+  })
+
   it('recovers an orphaned PR instead of creating a duplicate, and records its number', async () => {
     // Simulates the GIT-H1 crash scenario: PR #77 already exists on GitHub
     // from a prior attempt, but branch metadata never got pullRequestNumber

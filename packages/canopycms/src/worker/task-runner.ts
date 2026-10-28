@@ -28,7 +28,7 @@ import { RefusedPushError, assertPlainBranchName } from './github-mirror'
 import { pushToGitHub } from './github-transfer'
 import { clearHistoryRewrittenMarker, readPublishedSha } from './history-rewrite'
 import { writeWorkerStatus } from '../task-queue/worker-status'
-import { SYNC_PR_COMMENTS_ACTION, renderPrCommentsBody } from '../pr-comments'
+import { SYNC_PR_COMMENTS_ACTION, refreshCommentsBlock, renderPrCommentsBody } from '../pr-comments'
 import { workerLog, workerLogError, workerLogWarn } from './log'
 import { assertSharedRepoConfig } from './shared-repo-git'
 import type { WorkerContext } from './worker-context'
@@ -421,6 +421,17 @@ export async function executeTask(
       }
       await ctx.pushBranchToGitHub(branch, signal)
 
+      const mergeSectionIntoBody = payload.mergeSectionIntoBody === true
+      const queuedBody = optionalString(payload, 'body', '')
+      const body = mergeSectionIntoBody
+        ? await refreshCommentsBlock({
+            branchRoot: ctx.branchWorkspacePath(branch),
+            branch,
+            editorUrl: typeof payload.editorUrl === 'string' ? payload.editorUrl : undefined,
+            section: queuedBody,
+            warn: workerLogWarn,
+          })
+        : queuedBody
       let result: { number: number; url: string; created: boolean }
       try {
         result = await ctx.github().createOrUpdatePullRequest(
@@ -428,10 +439,10 @@ export async function executeTask(
             head: branch,
             base,
             title: optionalString(payload, 'title', `Submit ${branch}`),
-            body: optionalString(payload, 'body', ''),
+            body,
             // Content submits (api/github-sync.ts) set both.
             markReadyIfDraft: payload.markReadyIfDraft === true,
-            mergeSectionIntoBody: payload.mergeSectionIntoBody === true,
+            mergeSectionIntoBody,
           },
           signal,
         )

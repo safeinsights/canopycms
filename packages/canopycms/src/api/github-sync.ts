@@ -10,6 +10,8 @@ import { buildPrSection, mergePrSection, type SubmissionEditor } from '../submis
 import { isNoCommitsBetweenError, isRefAlreadyGoneError } from '../github-service'
 import { baseBranchOf } from '../utils/base-branch'
 import { CommentStore } from '../comment-store'
+import { prBodyLockKey } from '../pr-comments'
+import { withLock } from '../utils/async-mutex'
 
 /**
  * The caller uses this to update branch metadata.
@@ -43,7 +45,7 @@ export interface SubmissionRecord {
 /** The branch's comment threads for the PR body, or null (said so in the body) if unreadable. */
 async function readThreadsOrWarn(context: BranchContext) {
   try {
-    return await new CommentStore(context.branchRoot).listThreads({ includeResolved: true })
+    return await new CommentStore(context.branchRoot).listThreadsStrict()
   } catch (err) {
     console.warn(
       `CanopyCMS: Could not read the editor comments of ${context.branch.name} for its PR:`,
@@ -101,12 +103,16 @@ export async function syncSubmitPr(
   if (githubService) {
     try {
       if (context.branch.pullRequestNumber) {
+        const prNumber = context.branch.pullRequestNumber
         // Read before writing: the update keeps the human text around the
         // canopycms section, and the same read says whether the PR is a draft.
-        const pr = await githubService.getPullRequest(context.branch.pullRequestNumber)
-        await githubService.updatePullRequest(context.branch.pullRequestNumber, {
-          title: prTitle,
-          body: mergePrSection(pr.body, prSection),
+        const pr = await withLock(prBodyLockKey(context.branchRoot), async () => {
+          const current = await githubService.getPullRequest(prNumber)
+          await githubService.updatePullRequest(prNumber, {
+            title: prTitle,
+            body: mergePrSection(current.body, prSection),
+          })
+          return current
         })
         // Best-effort draft->ready conversion. This branch updates a known
         // PR number directly (not through createOrUpdatePR), so it doesn't
@@ -145,14 +151,16 @@ export async function syncSubmitPr(
         // shared createOrUpdatePullRequest helper (github-service.ts), which
         // treats conversion as best-effort so a permissions-limited token
         // can't fail this submit.
-        const result = await githubService.createOrUpdatePR({
-          head: context.branch.name,
-          base: baseBranch,
-          title: prTitle,
-          body: prSection,
-          markReadyIfDraft: true,
-          mergeSectionIntoBody: true,
-        })
+        const result = await withLock(prBodyLockKey(context.branchRoot), () =>
+          githubService.createOrUpdatePR({
+            head: context.branch.name,
+            base: baseBranch,
+            title: prTitle,
+            body: prSection,
+            markReadyIfDraft: true,
+            mergeSectionIntoBody: true,
+          }),
+        )
         return {
           prUrl: result.url,
           prNumber: result.number,
@@ -188,6 +196,8 @@ export async function syncSubmitPr(
       title: prTitle,
       body: prSection,
       mergeSectionIntoBody: true,
+      // The worker re-renders the comment block from comments.json when the task runs.
+      ...(submission.editorUrl ? { editorUrl: submission.editorUrl } : {}),
       baseBranch,
       pullRequestNumber: context.branch.pullRequestNumber,
       // A content submit is an explicit "ready for review" action: convert a

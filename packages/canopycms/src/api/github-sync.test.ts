@@ -4,6 +4,8 @@ import path from 'node:path'
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { CommentStore } from '../comment-store'
+import { prBodyLockKey } from '../pr-comments'
+import { withLock } from '../utils/async-mutex'
 import type { GitHubService } from '../github-service'
 import type { CanopyConfig } from '../config'
 import { createMockApiContext, createMockBranchContext } from '../test-utils'
@@ -348,11 +350,8 @@ describe('syncSubmitPr (GIT-H1)', () => {
           expect(body).toContain('- `content/pages/home` — `Fix the intro`')
         }
 
-        // A comments.json the store cannot list costs only the summary.
-        await fs.writeFile(
-          path.join(branchRoot, '.canopy-meta', 'comments.json'),
-          '{"version":1,"threads":null}',
-        )
+        // An unreadable comments.json costs only the summary, and is never reported as no comments.
+        await fs.writeFile(path.join(branchRoot, '.canopy-meta', 'comments.json'), '{not json')
         const consoleSpy = mockConsole()
         const unreadable = makeGitHubService()
         const result = await syncSubmitPr(
@@ -369,6 +368,32 @@ describe('syncSubmitPr (GIT-H1)', () => {
       } finally {
         await fs.rm(branchRoot, { recursive: true, force: true })
       }
+    })
+
+    it("waits for a comment sync's write before reading the PR body", async () => {
+      const githubService = makeGitHubService()
+      const branchContext = createMockBranchContext({
+        branchName: 'feature/x',
+        pullRequestNumber: 123,
+      })
+      let release!: () => void
+      const held = withLock(
+        prBodyLockKey(branchContext.branchRoot),
+        () => new Promise<void>((r) => (release = r)),
+      )
+
+      const submitted = syncSubmitPr(
+        createMockApiContext({ services: { config: baseConfig, githubService } }),
+        branchContext,
+        submission,
+      )
+      await new Promise((r) => setTimeout(r, 20))
+      expect(githubService.getPullRequest).not.toHaveBeenCalled()
+
+      release()
+      await held
+      await submitted
+      expect(githubService.updatePullRequest).toHaveBeenCalledTimes(1)
     })
 
     it('updates a known PR by replacing only its section, keeping human text', async () => {

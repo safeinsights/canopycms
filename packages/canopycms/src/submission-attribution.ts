@@ -27,7 +27,8 @@ const MAX_EMAIL_LENGTH = 254
 const MAX_DESCRIPTION_LENGTH = 10_000
 /** How many changed paths the PR body lists. */
 export const MAX_LISTED_ENTRIES = 100
-const MAX_SECTION_LENGTH = 45_000
+/** The section's own text, its comment block aside; with the block's own cap, under 55,000. */
+const MAX_SECTION_LENGTH = 40_000
 
 /**
  * The PR body region canopycms owns. On update only the text between these
@@ -396,7 +397,11 @@ interface SectionLayout {
   description: string
 }
 
-function renderPrSection(input: PrSectionInput, layout: SectionLayout): string {
+function renderPrSection(
+  input: PrSectionInput,
+  layout: SectionLayout,
+  commentsBlock: string,
+): string {
   const parts: string[] = []
 
   const [submitter] = input.submitter ? cleanEditors([input.submitter]) : []
@@ -434,13 +439,7 @@ function renderPrSection(input: PrSectionInput, layout: SectionLayout): string {
     parts.push(`**Changed entries (${paths.length})**\n\n${listed.join('\n')}`)
   }
 
-  parts.push(
-    buildCommentsBlock(
-      input.threads === undefined ? [] : input.threads,
-      input.branch,
-      input.editorUrl,
-    ),
-  )
+  parts.push(commentsBlock)
 
   // Last, so an unclosed fence or `<details>` in free Markdown cannot swallow
   // the attribution above it.
@@ -465,29 +464,38 @@ function truncateUnits(text: string, max: number): string {
 
 /**
  * The canopycms-owned PR body section, including its start and end markers. GitHub refuses a
- * body over 65,536 characters and the rest of the body is a human's, so a section over
- * MAX_SECTION_LENGTH loses its entry links, then the description's end, then entries from
- * the end of the list. The attribution lines themselves are never cut. The comment block counts
- * toward it as rendered now; a re-render (mergeCommentsBlock) stays within MAX_COMMENTS_LENGTH.
+ * body over 65,536 characters and the rest of the body is a human's, so a section whose text
+ * apart from the comment block is over MAX_SECTION_LENGTH loses its entry links, then the
+ * description's end, then entries from the end of the list. The attribution lines themselves
+ * are never cut. The comment block, rendered now or re-rendered later, has MAX_COMMENTS_LENGTH.
  */
 export function buildPrSection(input: PrSectionInput): string {
   const raw = input.description?.trim()
   const description = raw ? neutralizeComments(truncate(raw, MAX_DESCRIPTION_LENGTH)) : ''
+  const block = buildCommentsBlock(
+    input.threads === undefined ? [] : input.threads,
+    input.branch,
+    input.editorUrl,
+  )
+  const size = (l: SectionLayout) => renderPrSection(input, l, block).length - block.length
   const layout: SectionLayout = { entryLinks: true, listed: MAX_LISTED_ENTRIES, description }
-  const fits = (l: SectionLayout) => renderPrSection(input, l).length <= MAX_SECTION_LENGTH
+  const fits = (l: SectionLayout) => size(l) <= MAX_SECTION_LENGTH
 
-  if (fits(layout)) return renderPrSection(input, layout)
+  if (fits(layout)) return renderPrSection(input, layout, block)
   layout.entryLinks = false
-  if (fits(layout)) return renderPrSection(input, layout)
+  if (fits(layout)) return renderPrSection(input, layout, block)
   // The description's separator is two newlines.
-  const room =
-    MAX_SECTION_LENGTH - renderPrSection(input, { ...layout, description: '' }).length - 2
+  const room = MAX_SECTION_LENGTH - size({ ...layout, description: '' }) - 2
   if (room > 0) {
-    return renderPrSection(input, { ...layout, description: truncateUnits(description, room) })
+    return renderPrSection(
+      input,
+      { ...layout, description: truncateUnits(description, room) },
+      block,
+    )
   }
   layout.description = ''
   while (layout.listed > 0 && !fits(layout)) layout.listed = Math.max(0, layout.listed - 10)
-  return renderPrSection(input, layout)
+  return renderPrSection(input, layout, block)
 }
 
 /**

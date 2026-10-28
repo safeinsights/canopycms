@@ -1,7 +1,8 @@
 import type { ApiContext } from './types'
 import type { BranchContext } from '../types'
 import { clientOperatingStrategy } from '../operating-mode'
-import { SYNC_PR_COMMENTS_ACTION, renderPrCommentsBody } from '../pr-comments'
+import { SYNC_PR_COMMENTS_ACTION, prBodyLockKey, renderPrCommentsBody } from '../pr-comments'
+import { runWithDeadline } from './request-deadline'
 import { enqueueTask, listTasks } from '../task-queue/cms-task-queue'
 import { getTaskQueueDir } from '../task-queue/task-queue-config'
 import { withLock } from '../utils/async-mutex'
@@ -16,18 +17,22 @@ function openPullRequest(context: BranchContext): number | undefined {
     : pullRequestNumber
 }
 
+/** How long a comment request waits on GitHub for its summary update, lock wait included. */
+const DIRECT_SYNC_TIMEOUT_MS = 10_000
+
 /**
  * Brings the PR's editor-comment summary up to date after a comment is added, replied to or
  * resolved. Best-effort: a failure is logged and never fails the comment request.
  *
- * Direct path: read the PR body, replace the block, write it back. GitHub's PR update takes
- * no expected version, so a human editing the body at that moment can lose one side; the
- * per-branch lock only orders writers in this process (docs/concurrency.md).
+ * Direct path: read the PR body, replace the block, write it back, within
+ * DIRECT_SYNC_TIMEOUT_MS so a slow or rate-limited GitHub never holds the comment request.
+ * GitHub's PR update takes no expected version; the per-branch lock (prBodyLockKey) only
+ * orders this process's writers (docs/concurrency.md).
  *
- * Queued path: one pending task per branch, rendered by the worker from comments.json when it
- * runs, so a burst of comments costs one update. Skipping the enqueue loses nothing: the
- * comment was written before this call, and a task still pending now reads comments.json only
- * after it leaves pending. A task already running doesn't count, so a later change gets a run.
+ * Queued path: one pending task per branch and PR, rendered by the worker from comments.json
+ * when it runs, so a burst of comments costs one update. The comment was written before this
+ * call and a pending task reads comments.json only after it leaves pending, so the skipped
+ * change is in its render; a task already running doesn't count, so a later change gets one.
  */
 export async function syncPrComments(ctx: ApiContext, context: BranchContext): Promise<void> {
   const prNumber = openPullRequest(context)
@@ -39,25 +44,34 @@ export async function syncPrComments(ctx: ApiContext, context: BranchContext): P
   try {
     const { githubService } = ctx.services
     if (githubService) {
-      await withLock(`pr-comments:${context.branchRoot}`, async () => {
-        const pr = await githubService.getPullRequest(prNumber)
-        if (pr.state !== 'open') return
-        const body = await renderPrCommentsBody({
-          branchRoot: context.branchRoot,
-          branch,
-          editorUrl,
-          body: pr.body,
-        })
-        if (body !== undefined) await githubService.updatePullRequest(prNumber, { body })
-      })
+      await runWithDeadline(
+        (signal) =>
+          withLock(prBodyLockKey(context.branchRoot), async () => {
+            const pr = await githubService.getPullRequest(prNumber, signal)
+            if (pr.state !== 'open') return
+            const body = await renderPrCommentsBody({
+              branchRoot: context.branchRoot,
+              branch,
+              editorUrl,
+              body: pr.body,
+            })
+            if (body !== undefined)
+              await githubService.updatePullRequest(prNumber, { body }, signal)
+          }),
+        { method: 'PATCH', path: `pull request #${prNumber}`, timeoutMs: DIRECT_SYNC_TIMEOUT_MS },
+      )
       return
     }
 
     const taskDir = getTaskQueueDir(ctx.services.config)
     const pending = await listTasks(taskDir, 'pending', Number.MAX_SAFE_INTEGER)
-    if (pending.some((t) => t.action === SYNC_PR_COMMENTS_ACTION && t.payload.branch === branch)) {
-      return
-    }
+    const queued = pending.some(
+      (t) =>
+        t.action === SYNC_PR_COMMENTS_ACTION &&
+        t.payload.branch === branch &&
+        t.payload.pullRequestNumber === prNumber,
+    )
+    if (queued) return
     await enqueueTask(taskDir, {
       action: SYNC_PR_COMMENTS_ACTION,
       payload: { branch, pullRequestNumber: prNumber, ...(editorUrl ? { editorUrl } : {}) },

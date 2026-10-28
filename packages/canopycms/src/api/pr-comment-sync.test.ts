@@ -151,6 +151,39 @@ describe('syncPrComments, direct path', () => {
     expect(service.getPullRequest).not.toHaveBeenCalled()
   })
 
+  it('gives up after 10 seconds, so a slow GitHub never holds the comment request', async () => {
+    vi.useFakeTimers()
+    const consoleSpy = mockConsole()
+    try {
+      const service = github()
+      service.getPullRequest.mockReturnValue(new Promise(() => {}))
+
+      const synced = syncPrComments(directCtx(service), branchWithPr())
+      await vi.advanceTimersByTimeAsync(10_000)
+      await expect(synced).resolves.toBeUndefined()
+
+      expect(service.getPullRequest.mock.calls[0]?.[1]).toBeInstanceOf(AbortSignal)
+      expect(service.getPullRequest.mock.calls[0]?.[1].aborted).toBe(true)
+      expect(consoleSpy).toHaveWarned(/editor comments on PR #7/)
+    } finally {
+      consoleSpy.restore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('writes nothing, and warns, when comments.json cannot be read', async () => {
+    const consoleSpy = mockConsole()
+    await fs.mkdir(path.join(branchRoot, '.canopy-meta'), { recursive: true })
+    await fs.writeFile(path.join(branchRoot, '.canopy-meta', 'comments.json'), '{not json')
+    const service = github()
+
+    await syncPrComments(directCtx(service), branchWithPr())
+
+    expect(service.updatePullRequest).not.toHaveBeenCalled()
+    expect(consoleSpy).toHaveWarned(/editor comments on PR #7/)
+    consoleSpy.restore()
+  })
+
   it('logs and returns when GitHub fails', async () => {
     const consoleSpy = mockConsole()
     await addThread('Hi')
@@ -168,12 +201,14 @@ describe('syncPrComments, queued path', () => {
   const queuedCtx = () => createMockApiContext({ services: { config } })
   const pending = () => listTasks(getTaskQueueDir(config), 'pending')
 
-  it('queues one task per branch while one is pending', async () => {
+  it('queues one task per branch and PR while one is pending', async () => {
     await syncPrComments(queuedCtx(), branchWithPr())
     await syncPrComments(queuedCtx(), branchWithPr())
     await syncPrComments(queuedCtx(), branchWithPr({ name: 'feature/y' }))
 
-    const tasks = await pending()
+    const tasks = (await pending()).sort((a, b) =>
+      String(a.payload.branch).localeCompare(String(b.payload.branch)),
+    )
     expect(tasks.map((t) => [t.action, t.payload])).toEqual([
       [
         'sync-pr-comments',
@@ -184,6 +219,12 @@ describe('syncPrComments, queued path', () => {
         { branch: 'feature/y', pullRequestNumber: 7, editorUrl: 'https://cms.example.org/edit' },
       ],
     ])
+  })
+
+  it('queues again for a new PR while a task for the old one is pending', async () => {
+    await syncPrComments(queuedCtx(), branchWithPr())
+    await syncPrComments(queuedCtx(), branchWithPr({ pullRequestNumber: 8 }))
+    expect((await pending()).map((t) => t.payload.pullRequestNumber).sort()).toEqual([7, 8])
   })
 
   it('queues nothing without an open PR', async () => {
