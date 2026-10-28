@@ -177,6 +177,8 @@ export interface EntryNavigatorProps {
   branchChanges?: BranchChangesView
   /** Lists the unsaved entries, as the top bar's count does; else Unsaved is chosen here. */
   onShowUnsaved?: () => void
+  /** Opens a deleted entry's changes, read-only; without it its row is plain text. */
+  onShowDeletedChanges?: (entry: BranchChangeEntry, label: string) => void
   /** Entries with unsaved changes, counting drafts whose entries the tree doesn't list yet. */
   unsavedCount?: number
   /** The named unsaved entries; Unsaved offers any the tree has no row for beneath it. */
@@ -537,6 +539,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   entryFilter = 'all',
   branchChanges,
   onShowUnsaved,
+  onShowDeletedChanges,
   unsavedCount: unsavedCountProp = 0,
   unsavedEntries,
   entryListFailed = false,
@@ -878,6 +881,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     const deleted = (changes?.entries ?? [])
       .filter((e) => e.status === 'deleted')
       .map((e) => ({
+        entry: e,
         path: e.logicalPath,
         label: e.title || slugLabel(e.logicalPath),
         collection: collectionLabel(e.collectionPath),
@@ -1699,17 +1703,35 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           <Text size="xs" c="dimmed">
             Deleted on this branch
           </Text>
-          {changedDeleted.map((entry) => (
-            <Group key={entry.path} gap={6} px={10} wrap="nowrap" style={{ minWidth: 0 }}>
-              <Text size="sm" truncate="end" style={{ minWidth: 0 }}>
+          {changedDeleted.map((entry) => {
+            const name = (
+              <Text component="span" size="sm" truncate="end" style={{ minWidth: 0 }}>
                 {entry.label}{' '}
                 <Text component="span" size="xs" c="dimmed">
                   {entry.collection}
                 </Text>
               </Text>
-              <ChangeMarker kind="deleted" context={null} />
-            </Group>
-          ))}
+            )
+            return onShowDeletedChanges ? (
+              <Button
+                key={entry.path}
+                size="compact-sm"
+                variant="subtle"
+                color="gray"
+                maw="100%"
+                rightSection={<ChangeMarker kind="deleted" context={null} />}
+                onClick={() => onShowDeletedChanges(entry.entry, entry.label)}
+                data-testid="entry-nav-deleted-entry"
+              >
+                {name}
+              </Button>
+            ) : (
+              <Group key={entry.path} gap={6} px={10} wrap="nowrap" style={{ minWidth: 0 }}>
+                {name}
+                <ChangeMarker kind="deleted" context={null} />
+              </Group>
+            )
+          })}
         </Stack>
       )}
     </>

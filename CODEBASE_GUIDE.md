@@ -119,6 +119,7 @@ Route handlers, one file per endpoint namespace:
 - `branch-withdraw.ts` — `/branch-withdraw`: withdraw a PR
 - `branch-review.ts` — `/branch-review`: request changes
 - `branch-changes.ts` — `GET /:branch/changes`
+- `branch-entry-changes.ts` — `GET /:branch/changes/...entryPath`
 - `branch-merge.ts` — `/branch-merge`: merge and clean up
 - `content.ts` — `/content`: read and write; runs entry-link and adopter `validateEntry` validation on write
 - `entries.ts` — `/entries`: entry management; cursor-paginated listing
@@ -518,6 +519,7 @@ Top-level components and helpers:
 - `raw-asset-base.ts` — `authenticatedAssetBase`, `readAssetBase`
 - `canopy-path.ts` — field-path spelling (`normalizeCanopyPath`) and `isPathFieldName`
 - `field-breadcrumb.ts` / `field-target.ts` — a field path's label breadcrumb; `findFieldTarget`, `focusFieldTarget`, `revealField`
+- `entry-diff.ts` — `computeEntryDiff`
 - `schema-label.ts` — `schemaLabel`: a field's, group's or template's label, else its humanised name
 - `undo-removal.ts` — `FieldRemoval`, `restoreRemoval`, `openThreadsWithin` — undo for a form Remove or Clear
 - `user-display.ts` — `SYSTEM_USER_LABEL`, `userIdLabel`
@@ -597,7 +599,7 @@ Components, in `editor/components/`:
 - `UnsavedMark.tsx` — the unsaved dot
 - `EditorRail.tsx` — the rail's buttons and Settings menu
 - `EntryCreateModal.tsx` / `RenameEntryModal.tsx` / `ConfirmDeleteModal.tsx` — entry lifecycle dialogs
-- `BranchesDrawer.tsx` — Branches drawer
+- `BranchesDrawer.tsx` / `EntryChangesDrawer.tsx` — Branches, Show changes drawers
 - `StagedChangesDrawer.tsx` — unsaved-changes drawer
 - `UserBadge.tsx` — user avatar and name
 - `BranchAccessList.tsx` — a branch card's access list

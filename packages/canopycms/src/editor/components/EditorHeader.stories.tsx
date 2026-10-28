@@ -72,6 +72,16 @@ export const Saved: Story = {
   args: { hasUnsavedChanges: false, modifiedCount: 0 },
 }
 
+/** The open entry differs from the base branch, so the header offers "Show changes". */
+export const ShowChanges: Story = {
+  args: { hasUnsavedChanges: false, modifiedCount: 0, onShowChanges: noop },
+}
+
+export const NarrowShowChanges: Story = {
+  parameters: phone,
+  args: { onShowChanges: noop },
+}
+
 /** In review: the status says so beside the pill, Submit becomes Withdraw, and saves are blocked. */
 export const InReview: Story = {
   args: {

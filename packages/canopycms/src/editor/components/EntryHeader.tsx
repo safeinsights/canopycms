@@ -1,12 +1,14 @@
 'use client'
 
 import React, { type Ref } from 'react'
-import { Box, Group } from '@mantine/core'
+import { Box, Button, Group } from '@mantine/core'
+import { IconArrowsDiff } from '@tabler/icons-react'
 import type { BranchStatus } from '../../types'
 import type { EditorEntry } from '../Editor'
 import type { BreadcrumbSegment } from '../editor-utils'
 import { SHELL_HEADER_HEIGHT, SHELL_REGION_BORDER } from '../shell/EditorShell'
 import { describeBranchLock } from '../branch-lock'
+import { EDITOR_ACTIONS } from '../copy'
 import { EntryBreadcrumb } from './EntryBreadcrumb'
 import { EntrySaveButton } from './EntrySaveButton'
 
@@ -25,6 +27,9 @@ export interface EntryHeaderProps {
   onEntryReveal?: () => void
   /** The entry menu's trigger. */
   navigatorToggleRef?: Ref<HTMLButtonElement>
+  /** Opens the open entry's changes against the base; offered only while it has some. */
+  onShowChanges?: () => void
+  showChangesRef?: Ref<HTMLButtonElement>
   /** Replaces the open entry with the server's copy. */
   onFileReload: () => void
   onFileDiscardDraft: () => void
@@ -75,6 +80,8 @@ export function EntryHeader({
   onCollectionOpen,
   onEntryReveal,
   navigatorToggleRef,
+  onShowChanges,
+  showChangesRef,
   onFileReload,
   onFileDiscardDraft,
   onEntryRename,
@@ -162,6 +169,19 @@ export function EntryHeader({
           entryMenuRef={navigatorToggleRef}
         />
       </Box>
+      {onShowChanges && (
+        <Button
+          ref={showChangesRef}
+          size="compact-sm"
+          variant="subtle"
+          leftSection={<IconArrowsDiff size={14} aria-hidden />}
+          onClick={onShowChanges}
+          data-testid="entry-show-changes"
+          style={{ flexShrink: 0 }}
+        >
+          {EDITOR_ACTIONS.showChanges}
+        </Button>
+      )}
       <EntrySaveButton
         onSave={onSave}
         saveBlockedReason={saveBlockedReason}

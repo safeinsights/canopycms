@@ -2937,6 +2937,22 @@ describe('EntryNavigator - the Changed filter', () => {
     expect(within(deleted).queryByRole('button')).toBeNull()
   })
 
+  it('makes each deleted entry a button opening its changes, when it can', async () => {
+    const onShowDeletedChanges = vi.fn()
+    renderHarness({ onShowDeletedChanges })
+    const deleted = screen.getByTestId('entry-nav-branch-changed-deleted')
+    const buttons = within(deleted).getAllByRole('button')
+    expect(buttons.map((b) => b.textContent)).toEqual([
+      'Old FAQ GuidesDeleted',
+      'Untitled one GuidesDeleted',
+    ])
+    await userEvent.click(buttons[0])
+    expect(onShowDeletedChanges).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'deleted', logicalPath: 'content/guides/old-faq' }),
+      'Old FAQ',
+    )
+  })
+
   it('offers an added entry the tree has no row for, which opens it', async () => {
     const onSelect = vi.fn()
     renderHarness({
