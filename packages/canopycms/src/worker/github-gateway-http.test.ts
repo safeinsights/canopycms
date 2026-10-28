@@ -60,7 +60,13 @@ function fakeGateway(): FakeGateway {
       fatalError: null,
       preflight: 'not-an-app' as const,
       clerkConfigured: false,
-      protectedBranches: { configured: ['main'], githubDefault: 'main' },
+      branchPolicy: {
+        configured: ['main'],
+        githubDefault: 'main',
+        namespace: 'canopycms-',
+        legacy: [],
+        settingsBranch: null,
+      },
     })),
     defaultBranch: vi.fn(async () => 'main'),
     isProtectedBranch: vi.fn(async () => false),
@@ -1562,21 +1568,31 @@ describe('the instance operations over the socket', () => {
       fatalError: null,
       preflight: 'not-an-app' as const,
       clerkConfigured: false,
-      protectedBranches: { configured: entries, githubDefault: 'main' },
+      branchPolicy: {
+        configured: entries,
+        githubDefault: 'main',
+        namespace: 'canopycms-',
+        legacy: [],
+        settingsBranch: null,
+      },
     })
     await serve(gateway)
     const client = connectGitHubGateway(socketPath)
 
-    expect((await client.health()).protectedBranches.configured).toHaveLength(
-      MAX_PROTECTED_BRANCHES + 1,
-    )
+    expect((await client.health()).branchPolicy.configured).toHaveLength(MAX_PROTECTED_BRANCHES + 1)
 
     gateway.health.mockResolvedValue({
       ready: true,
       fatalError: null,
       preflight: 'not-an-app' as const,
       clerkConfigured: false,
-      protectedBranches: { configured: [...entries, 'one-more'], githubDefault: 'main' },
+      branchPolicy: {
+        configured: [...entries, 'one-more'],
+        githubDefault: 'main',
+        namespace: 'canopycms-',
+        legacy: [],
+        settingsBranch: null,
+      },
     })
     await expect(client.health()).rejects.toThrow(/health answer does not fit/)
   })

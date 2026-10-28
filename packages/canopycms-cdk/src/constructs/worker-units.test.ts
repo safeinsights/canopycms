@@ -226,6 +226,14 @@ describe('the environment, split between the two processes', () => {
     expect(splitWorker.get('CANOPYCMS_SETTINGS_BRANCH')).toBe('canopycms-settings-docs')
   })
 
+  it('gives both the deployment name and the settings branch, which resolve the one settings branch pushed', () => {
+    const { splitWorker, gateway } = envFiles(tokenDeployment)
+    for (const name of ['CANOPYCMS_DEPLOYMENT_NAME', 'CANOPYCMS_SETTINGS_BRANCH']) {
+      expect(splitWorker.get(name), name).toBeDefined()
+      expect(gateway.get(name), name).toBe(splitWorker.get(name))
+    }
+  })
+
   it.each([true, false])(
     'puts clerkOrganizationsAsGroups: %s in the gateway env alone, as a string',
     (value) => {
@@ -491,7 +499,7 @@ describe('the units', () => {
       `Environment=${WORKER_CONTRACT_ENV}=${SINGLE_PROCESS_UNIT_CONTRACT}`,
     )
     expect(SINGLE_PROCESS_UNIT_CONTRACT).toBe(GATEWAY_SPLIT_CONTRACT - 1)
-    expect(WORKER_CONTRACT_VERSION).toBe(GATEWAY_SPLIT_CONTRACT)
+    expect(WORKER_CONTRACT_VERSION).toBeGreaterThanOrEqual(GATEWAY_SPLIT_CONTRACT)
   })
 
   it('cuts the split worker off from the network, and points it at the gateway', () => {

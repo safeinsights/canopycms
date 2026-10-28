@@ -20,6 +20,7 @@ import {
   DEFAULT_TASK_TIMEOUT,
   GitHubGatewayUnreachableError,
   assertSelfChecks,
+  resolveWorkerSettingsBranch,
   workerLog,
   workerLogError,
   workerLogWarn,
@@ -161,15 +162,28 @@ export function isRecentGatewayFatal(recorded: RecordedFatal, now = Date.now()):
 /** The environment variable whose entries `parseProtectedBranches` reads. */
 const PROTECTED_BRANCHES_ENV = 'CANOPYCMS_PROTECTED_BRANCHES'
 
+/** The environment variable whose entries `parseLegacyBranches` reads. */
+const LEGACY_BRANCHES_ENV = 'CANOPYCMS_LEGACY_BRANCHES'
+
 /**
- * `CANOPYCMS_PROTECTED_BRANCHES` as a list. Comma-separated: a comma is legal in a branch name,
- * but the construct refuses one in an entry.
+ * A comma-separated branch list from `env`. A comma is legal in a branch name, but the construct
+ * refuses one in an entry.
  */
-export function parseProtectedBranches(env: NodeJS.ProcessEnv): string[] {
-  return (env[PROTECTED_BRANCHES_ENV] ?? '')
+function parseBranchList(env: NodeJS.ProcessEnv, name: string): string[] {
+  return (env[name] ?? '')
     .split(',')
     .map((entry) => entry.trim())
     .filter((entry) => entry !== '')
+}
+
+/** `CANOPYCMS_PROTECTED_BRANCHES` as a list. */
+export function parseProtectedBranches(env: NodeJS.ProcessEnv): string[] {
+  return parseBranchList(env, PROTECTED_BRANCHES_ENV)
+}
+
+/** `CANOPYCMS_LEGACY_BRANCHES` as a list. */
+export function parseLegacyBranches(env: NodeJS.ProcessEnv): string[] {
+  return parseBranchList(env, LEGACY_BRANCHES_ENV)
 }
 
 /** The worker unit's missing-`StateDirectory=` message. */
@@ -424,6 +438,7 @@ async function buildSingleProcessWorker(
     refreshGitHubToken: () => githubTokenSecret.refresh(),
     refreshAuthCache,
     protectedBranches: parseProtectedBranches(env),
+    legacyBranches: parseLegacyBranches(env),
     ...commonWorkerConfig(env),
   })
   return {
@@ -465,13 +480,18 @@ async function buildSplitWorker(
     WORKER_STATE_DIRECTORY_MISSING,
   )
 
-  // The gateway enforces the protected set from its own environment, so a list left here would
-  // protect nothing while looking as if it did.
-  if (parseProtectedBranches(env).length > 0) {
-    throw new Error(
-      `${PROTECTED_BRANCHES_ENV} is set on the worker unit, but beside the GitHub gateway it is ` +
-        "the gateway's setting: move it to the gateway's environment (gateway.env)",
-    )
+  // The gateway enforces the branch policy from its own environment, so a list left here would
+  // do nothing while looking as if it did.
+  for (const [name, entries] of [
+    [PROTECTED_BRANCHES_ENV, parseProtectedBranches(env)],
+    [LEGACY_BRANCHES_ENV, parseLegacyBranches(env)],
+  ] as const) {
+    if (entries.length > 0) {
+      throw new Error(
+        `${name} is set on the worker unit, but beside the GitHub gateway it is ` +
+          "the gateway's setting: move it to the gateway's environment (gateway.env)",
+      )
+    }
   }
 
   // Likewise the gateway fetches the Clerk snapshot, so the setting is its own.
@@ -505,6 +525,21 @@ async function buildSplitWorker(
     throw new Error(`${GATEWAY_FATAL_PREFIX}${health.fatalError}`)
   }
   if (!health.ready) throw new Error('The GitHub gateway is not ready')
+
+  // The gateway pushes only the settings branch it resolved from its own environment, so one that
+  // differs from this worker's would keep every settings change off GitHub, a warning a cycle.
+  const settingsBranch = resolveWorkerSettingsBranch({
+    settingsBranch: env.CANOPYCMS_SETTINGS_BRANCH,
+    deploymentName: env.CANOPYCMS_DEPLOYMENT_NAME,
+  })
+  const gatewaySettingsBranch = health.branchPolicy.settingsBranch
+  if (gatewaySettingsBranch !== settingsBranch) {
+    throw new Error(
+      `The GitHub gateway pushes the settings branch ${JSON.stringify(gatewaySettingsBranch)}, ` +
+        `but this worker's is ${JSON.stringify(settingsBranch)}: set CANOPYCMS_DEPLOYMENT_NAME ` +
+        "and CANOPYCMS_SETTINGS_BRANCH alike in the worker's .env and gateway.env",
+    )
+  }
 
   // The gateway holds the Clerk key; the worker writes what it fetches.
   const refreshAuthCache = health.clerkConfigured

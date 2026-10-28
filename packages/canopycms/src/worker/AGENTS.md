@@ -32,7 +32,7 @@ Each of the four disjoint call trees under `start()` is its own module, reached 
 | `github-transfer.ts`                               | The worker's side of the bundle transfer: fetching into remote.git, the seed, the push                                                                                |
 | `bundle-header.ts`                                 | A git bundle header's grammar, read in node before git sees the bundle                                                                                                |
 | `github-gateway-http.ts`, `github-gateway-wire.ts` | The gateway over a unix socket, and what crosses it                                                                                                                   |
-| `branch-policy.ts`                                 | Gateway policy: protected branches, settings rules, names                                                                                                             |
+| `branch-policy.ts`                                 | Gateway policy: protected branches, the namespace, settings rules, names                                                                                              |
 | `gateway-egress.ts`                                | Scrubbing and escaping all the gateway emits                                                                                                                          |
 | `git-process.ts`                                   | Streamed git, bounded by inactivity, a deadline, abort and output caps                                                                                                |
 | `self-checks.ts`                                   | The split's boot self-checks                                                                                                                                          |
@@ -60,8 +60,9 @@ via `ctx.github()`, and `github-auth`, `github-mirror` and `shared-repo-git` sit
 - Every worker-status.json write holds the worker lock, a pre-`start()` failure's and a lock
   loss's included; `selfStopped` settles only for a stop the worker chose: `cms-worker.ts`.
 - `scrubPersistedRemote` fails CLOSED and re-runs every boot: `cms-worker.ts`.
-- No push to, deletion of or pull request from a protected branch: `branch-policy.ts`; a push's
-  check is in `MirrorSession.pushToGitHub`.
+- What the gateway never writes (protected, outside `canopycms-`, others' settings):
+  `branch-policy.ts`; push check in `MirrorSession.pushToGitHub`, PRs by number in
+  `assertOwnPullRequest`.
 - The credential only in mirror sessions' per-command files (`github-mirror.ts`, `withCredentialConfig`); other
   shared-repository git only via `sharedRepoGit`, after `assertSharedRepoConfig`:
   `shared-repo-git.ts`'s module doc.

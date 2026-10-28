@@ -30,7 +30,7 @@ import type { GitHubGateway } from './github-gateway'
 const execFileAsync = promisify(execFile)
 
 const BASE = 'main'
-const BRANCH = 'feature'
+const BRANCH = 'canopycms-feature'
 
 /** The hook events a planted script listens on: every one a fetch, push, rebase or merge fires. */
 const HOOKS = [
@@ -353,8 +353,10 @@ describe('config planted in a branch clone', () => {
     expect(await f.sentinelLines()).toEqual([])
     const status = await readStatus()
     const failure = status?.lastGitSync?.failed.find((entry) => entry.branch === BRANCH)
-    expect(failure?.error).toMatch(/^Refusing to run git in \S+\/feature: /)
-    expect(failure?.error).toMatch(/filter\.planted\.smudge in \S+\/feature\/\.git\/config/)
+    expect(failure?.error).toMatch(/^Refusing to run git in \S+\/canopycms-feature: /)
+    expect(failure?.error).toMatch(
+      /filter\.planted\.smudge in \S+\/canopycms-feature\/\.git\/config/,
+    )
     expect(failure?.error).toMatch(/merge\.planted\.driver/)
     const meta = await BranchMetadataFileManager.loadOnly(f.branchPath)
     expect(meta?.branch.rebaseFailure?.message).toMatch(/filter\.planted\.smudge/)
@@ -468,9 +470,9 @@ describe('config planted in a branch clone', () => {
     expect(await f.sentinelLines()).toEqual([])
     const status = await readStatus()
     const error = status?.lastGitSync?.failed.find((entry) => entry.branch === BRANCH)?.error
-    expect(error).toMatch(/include\.path in \S+\/feature\/\.git\/config/)
+    expect(error).toMatch(/include\.path in \S+\/canopycms-feature\/\.git\/config/)
     expect(error).toMatch(/filter\.planted\.smudge in \S+included\.cfg/)
-    expect(error).toMatch(/core\.fsmonitor in \S+\/feature\/\.git\/config\.worktree/)
+    expect(error).toMatch(/core\.fsmonitor in \S+\/canopycms-feature\/\.git\/config\.worktree/)
   })
 })
 

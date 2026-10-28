@@ -38,6 +38,9 @@ export function sanitizeBranchName(branchName: string): SanitizedBranchName {
  */
 export const RESERVED_SETTINGS_BRANCH_PREFIX = 'canopycms-settings-'
 
+/** The namespace the GitHub gateway writes, and why it is fixed: worker/branch-policy.ts. */
+export const CMS_BRANCH_PREFIX = 'canopycms-'
+
 /**
  * Whether `branchName` is a settings branch, never a content branch: the reserved prefix, or the
  * configured name (which need not carry it). Compared sanitized, the form git and disk use.

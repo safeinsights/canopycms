@@ -1875,8 +1875,9 @@ export class CanopyCmsService extends Construct {
       // The SAME string the Lambda's environment gets above, including an
       // `environment.CANOPYCMS_DEPLOYMENT_NAME` override - the two halves
       // resolve one settings branch (`canopycms-settings-<name>`) between them,
-      // and disagreeing here is what the runtime warning detects.
-      ['CANOPYCMS_DEPLOYMENT_NAME', deploymentName, 'worker'],
+      // and disagreeing here is what the runtime warning detects. The gateway resolves the same
+      // settings branch from it, the only settings branch it pushes.
+      ['CANOPYCMS_DEPLOYMENT_NAME', deploymentName, 'both'],
       // The AWS SDK JS v3 cannot resolve a region from IMDS on its own - without
       // this a bare `SecretsManagerClient({})` crash-loops with "Region is
       // missing".
@@ -1951,10 +1952,10 @@ export class CanopyCmsService extends Construct {
       envEntries.push([WORKER_CAPACITY_ENV, 'spot', 'gateway'])
     }
     if (settingsBranch !== undefined) {
-      // Only when explicitly set - an absent prop must keep today's behavior
-      // (the worker falls through to the computed `canopycms-settings-<name>`),
-      // so this must never stamp an empty string either way.
-      envEntries.push(['CANOPYCMS_SETTINGS_BRANCH', settingsBranch, 'worker'])
+      // Only when explicitly set: unset, the worker and the gateway both compute
+      // `canopycms-settings-<name>`, and an empty value would name no branch. Both read it: the
+      // gateway pushes no settings branch but the one the worker resolves.
+      envEntries.push(['CANOPYCMS_SETTINGS_BRANCH', settingsBranch, 'both'])
     }
     if (protectedBranches.length > 0) {
       // Only the gateway enforces it, and a split worker refuses it.
