@@ -28,6 +28,24 @@ describe('restyleMarkdown', () => {
     ['ordered numbering counting up', '1. a\n3. b\n7. c', '1. a\n2. b\n3. c'],
     ['ordered numbering all one number', '1. a\n1. b\n5. c', '1. a\n1. b\n1. c'],
     ['ordered numbering that keeps each width', '9. a\n12. b\n13. c', '9. a\n10. b\n11. c'],
+    ['ordered numbering from a repeated start', '2. a\n2. b\n2. c', '2. a\n3. b\n4. c'],
+    [
+      'rules inside a list',
+      '- a\n\n  ---\n\n- b\n\n* c\n\n  ***',
+      '- a\n\n  ***\n\n- b\n\n* c\n\n  ---',
+    ],
+    [
+      'consecutive link reference definitions',
+      'Text [a] [b].\n\n[a]: https://a.example\n\n[b]: https://b.example',
+      'Text [a] [b].\n\n[a]: https://a.example\n[b]: https://b.example',
+    ],
+    [
+      'emphasis after a `_` in a URL or math',
+      'See https://x.com/a_b, $a_b$ and *c*.',
+      'See https://x.com/a_b, $a_b$ and _c_.',
+    ],
+    ['emphasis in strikethrough', 'x~~*a*~~', 'x~~_a_~~'],
+    ['tilde fences in a block quote', '> ~~~\n> x\n> ~~~', '> ```\n> x\n> ```'],
     ['strong', '__bold__ and **bold**', '**bold** and **bold**'],
     ['emphasis', '*a* and _b_ (*c*) *"q"*.', '_a_ and _b_ (_c_) _"q"_.'],
     ['emphasis inside emphasis', '*a _b_ c*', '_a *b* c_'],
@@ -62,6 +80,9 @@ describe('restyleMarkdown', () => {
     ['a tight item with a nested list', '- a\n  - b'],
     ['a list with a paragraph between it and the next', '- a\n\npara\n\n- b'],
     ['an ordered list whose renumbering would change a width', '8. a\n10. b'],
+    ['ordered lists typed as Prettier numbers them', '3. a\n1. b\n1. c\n\n- x\n\n0. d\n1. e\n1. f'],
+    ['an escaped `_` in math', 'Energy $E\\_k = mv^2$ and\n\n$$\nx\\_1\n$$'],
+    ['an escaped `_` in a wiki link', 'See [[My\\_Page]].'],
     ['an escaped `_` in a link or at a word edge', '[a\\_b](u) and end\\_ and \\_start'],
     [
       'link destinations, titles and alt',
@@ -99,6 +120,22 @@ describe('restyleMarkdown', () => {
     expect(restyleMarkdown(source, tree, () => false, readsBack)?.text).toBe(
       '- a\n\n_b_\n\n+ c\n\n_d_',
     )
+  })
+
+  it('finds the blocks that do not read back in a few parses each, not one per block', () => {
+    const source = Array.from({ length: 200 }, (_, i) => `*p${i}*`).join('\n\n')
+    const tree = fromMarkdown(source, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] })
+    let parses = 0
+    // Stands in for one block, the 101st, whose restyle would not mean the same.
+    const readsBack = (text: string): MdNode | undefined => {
+      parses++
+      return text.includes('_p100_') ? undefined : fromMarkdown(text)
+    }
+    const out = restyleMarkdown(source, tree, () => false, readsBack)?.text
+    expect(out).toBe(
+      source.replace(/\*(p\d+)\*/g, (all, p: string) => (p === 'p100' ? all : `_${p}_`)),
+    )
+    expect(parses).toBeLessThan(20)
   })
 
   it('restyles only the blocks it is not told to keep', () => {
@@ -168,15 +205,57 @@ describe('restyleMarkdown over the repository', () => {
     expect(problems).toEqual([])
     expect(checked).toBeGreaterThan(50)
   }, 120_000)
+
+  it('saves a source-mode edit to one block of a Prettier-clean file as that edit alone', async () => {
+    const problems: string[] = []
+    let checked = 0
+    for (const file of files.filter((name) => name.endsWith('.md'))) {
+      const body = matter(fs.readFileSync(path.join(root, file), 'utf8'), {}).content
+      if ((await format(body, { parser: 'markdown' })) !== body) continue
+      const tree = fromMarkdown(body, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] })
+      const blocks = (tree.children ?? [])
+        .filter((block) => block.type === 'list' || block.type === 'paragraph')
+        .slice(0, 4)
+      for (const block of blocks) {
+        const from = block.position?.start.offset
+        const to = block.position?.end.offset
+        const at = lastTextEnd(block)
+        if (from === undefined || to === undefined || at === undefined) continue
+        const insert = (text: string) => `${text.slice(0, at)} zz${text.slice(at)}`
+        const expected = insert(body)
+        const typed = insert(otherStyle(body, from, to))
+        if (JSON.stringify(meaning(typed)) !== JSON.stringify(meaning(expected))) continue
+        checked++
+        if (preserveMarkdownSource(body, typed, 'md') !== expected) problems.push(`${file}@${from}`)
+      }
+    }
+    expect(problems).toEqual([])
+    expect(checked).toBeGreaterThan(100)
+  }, 120_000)
 })
 
-/** `body` with its `-` bullets as `*` and its `_` emphasis as `*`, as a source editor might type it. */
-function otherStyle(body: string): string {
+/** Where the last `text` node under `node` ends. */
+function lastTextEnd(node: MdNode): number | undefined {
+  if (node.type === 'text') return node.position?.end.offset
+  const children = node.children ?? []
+  for (let i = children.length - 1; i >= 0; i--) {
+    const child = children[i]
+    const end = child === undefined ? undefined : lastTextEnd(child)
+    if (end !== undefined) return end
+  }
+  return undefined
+}
+
+/**
+ * `body` with its `-` bullets as `*` and its `_` emphasis as `*`, as a source editor might type
+ * it, in `[from, to)`. Each change keeps the length, so offsets into `body` still hold.
+ */
+function otherStyle(body: string, from = 0, to = body.length): string {
   const edits: { at: number; text: string }[] = []
   const walk = (node: MdNode): void => {
     const start = node.position?.start.offset
     const end = node.position?.end.offset
-    if (start !== undefined && end !== undefined) {
+    if (start !== undefined && end !== undefined && start >= from && end <= to) {
       if (node.type === 'listItem' && body[start] === '-') edits.push({ at: start, text: '*' })
       if (node.type === 'emphasis' && body[start] === '_' && body[end - 1] === '_') {
         edits.push({ at: start, text: '*' }, { at: end - 1, text: '*' })

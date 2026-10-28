@@ -77,16 +77,36 @@ function apply(source: string, edits: readonly Edit[], from = 0, to = source.len
   return out + source.slice(at, to)
 }
 
-/** Where each `text` node under `node` that holds a literal `_` starts. */
+/**
+ * Where each `text` node under `node` that holds a literal `_` outside `$` math starts. Text in
+ * links does not count: Prettier reads `[a_b](u) _x_` and `https://x/a_b _x_` correctly.
+ */
 function underscoreStarts(node: MdNode): number[] {
+  if (node.type === 'link' || node.type === 'linkReference') return []
   if (node.type === 'text') {
     const start = startOf(node)
-    return start !== undefined && (node.value ?? '').includes('_') ? [start] : []
+    const plain = (node.value ?? '').replace(/\$[^$]*\$/g, '')
+    return start !== undefined && plain.includes('_') ? [start] : []
   }
   return (node.children ?? []).flatMap(underscoreStarts)
 }
 
+/**
+ * The number Prettier writes for item `index` of an ordered list typed with `numbers`: the first
+ * keeps its number; the rest count up from it, or are all 1 when the list is typed that way
+ * (its second number is 1, and so is its third when it starts at 0).
+ */
+export function orderedNumber(numbers: readonly number[], index: number): number {
+  const [first = 1, second, third] = numbers
+  if (index === 0) return first
+  const ones =
+    numbers.length > 1 && second === 1 && (first !== 0 || numbers.length < 3 || third === 1)
+  return ones ? 1 : first + index
+}
+
 class Restyler {
+  /** The marker each list is written with, its own when it is not restyled. */
+  private readonly listMarker = new Map<MdNode, string>()
   /** Per block that holds phrasing, where its text nodes with a literal `_` start. */
   private readonly underscores = new Map<MdNode, number[]>()
 
@@ -106,7 +126,7 @@ class Restyler {
         this.text(node, ancestors, out)
         return
       case 'thematicBreak':
-        this.replaceWhole(node, RULE, out)
+        this.replaceWhole(node, this.ruleIn(ancestors), out)
         return
       case 'code':
         this.fence(node, out)
@@ -187,9 +207,21 @@ class Restyler {
         marker = choices.find((choice) => choice !== before && choice !== nextFixed) ?? current
         markers.set(child, marker)
       }
+      this.listMarker.set(child, marker)
       previous = { ordered, marker }
     })
     return markers
+  }
+
+  /**
+   * A rule's text: `---`, but inside a list Prettier writes `***`, or `---` when the list takes
+   * the alternate marker.
+   */
+  private ruleIn(ancestors: readonly MdNode[]): string {
+    const list = [...ancestors].reverse().find((a) => a.type === 'list')
+    if (list === undefined) return RULE
+    const marker = this.listMarker.get(list)
+    return marker === BULLETS[0] || marker === DELIMITERS[0] ? '***' : RULE
   }
 
   /** A list's bullet, or its ordered delimiter, read from its first item. */
@@ -215,16 +247,15 @@ class Restyler {
     const numbers = starts.map((at) =>
       at === undefined ? null : /^(\d{1,9})[.)]/.exec(this.source.slice(at, at + 11)),
     )
-    const first = Number(numbers[0]?.[1])
-    const step = numbers.length > 1 && Number(numbers[1]?.[1]) === first ? 0 : 1
+    const typed = numbers.map((match) => Number(match?.[1]))
     const renumber = numbers.every(
-      (match, i) => match !== null && String(first + step * i).length === match[1]?.length,
+      (match, i) => match !== null && String(orderedNumber(typed, i)).length === match[1]?.length,
     )
     numbers.forEach((match, i) => {
       const at = starts[i]
       if (match === null || at === undefined) return
       const digits = match[1] ?? ''
-      const wanted = renumber ? String(first + step * i) : digits
+      const wanted = renumber ? String(orderedNumber(typed, i)) : digits
       if (wanted !== digits || match[0].slice(-1) !== marker) {
         out.push({ start: at, end: at + match[0].length, text: wanted + marker })
       }
@@ -245,7 +276,9 @@ class Restyler {
     if (!always && lines.length < 3) return
     const eol = gap.includes('\r\n') ? '\r\n' : '\n'
     const prefix = lines[lines.length - 1] ?? ''
-    const text = eol + prefix.trimEnd() + eol + prefix
+    // Prettier keeps consecutive link reference definitions together.
+    const together = a?.type === 'definition' && b?.type === 'definition'
+    const text = together ? eol + prefix : eol + prefix.trimEnd() + eol + prefix
     if (text !== gap) out.push({ start: end, end: start, text })
   }
 
@@ -293,7 +326,7 @@ class Restyler {
 
   /** Whether the characters past the markers around `[start, end)` include a word character. */
   private besideWord(start: number, end: number): boolean {
-    const markers = '*_~'
+    const markers = '*_'
     let before = start - 1
     while (before >= 0 && markers.includes(this.source[before] ?? '')) before--
     let after = end
@@ -323,8 +356,15 @@ class Restyler {
       out.push({ start: start + match.index, end: start + match.index + match[0].length, text: '' })
     }
     if (ancestors.some((a) => a.type === 'link' || a.type === 'linkReference')) return
+    // In `$` math and `[[wiki links]]`, which plugins read raw, `\_` and `_` differ.
+    const block = [...ancestors]
+      .reverse()
+      .find((a) => a.type === 'paragraph' || a.type === 'heading' || a.type === 'tableCell')
+    const blockStart = startOf(block)
+    const blockEnd = endOf(block)
+    if (blockStart === undefined || blockEnd === undefined) return
+    if (/\$|\[\[/.test(this.source.slice(blockStart, blockEnd))) return
     for (const match of raw.matchAll(/(?<=[\p{L}\p{N}])\\_(?=[\p{L}\p{N}])/gu)) {
-      if (raw[match.index - 1] === '\\') continue
       out.push({ start: start + match.index, end: start + match.index + 1, text: '' })
     }
   }
@@ -342,7 +382,7 @@ class Restyler {
     const end = endOf(node)
     if (start === undefined || end === undefined) return
     const raw = this.source.slice(start, end)
-    const close = /(?:\r?\n)[ \t]*(~{3,})[ \t]*$/.exec(raw)
+    const close = /(?:\r?\n)[ \t>]*(~{3,})[ \t]*$/.exec(raw)
     if (!/^~~~(?!~)[^`\n]*\n/.test(raw) || close?.[1] === undefined || raw.includes('`')) return
     const closeAt = start + close.index + close[0].indexOf('~')
     out.push(
@@ -449,19 +489,23 @@ export function restyleMarkdown<T extends MdNode>(
   const changed = groups.filter((group) => group.length > 0)
   if (changed.length === 0) return undefined
 
-  const whole = apply(source, changed.flat())
-  const wholeTree = readsBack(whole)
-  if (wholeTree !== undefined) return { text: whole, tree: wholeTree }
-
+  // The whole restyle first, then halves of it, until each block that does not read back stands
+  // alone: a parse per try, so a few such blocks cost a few parses each, not one per block.
   let kept: Edit[] = []
   let best: { text: string; tree: T } | undefined
-  for (const group of changed) {
-    const trial = [...kept, ...group]
+  const attempt = (tried: readonly Edit[][]): void => {
+    const trial = [...kept, ...tried.flat()]
     const text = apply(source, trial)
     const parsed = readsBack(text)
-    if (parsed === undefined) continue
-    kept = trial
-    best = { text, tree: parsed }
+    if (parsed !== undefined) {
+      kept = trial
+      best = { text, tree: parsed }
+    } else if (tried.length > 1) {
+      const half = Math.ceil(tried.length / 2)
+      attempt(tried.slice(0, half))
+      attempt(tried.slice(half))
+    }
   }
+  attempt(changed)
   return best
 }

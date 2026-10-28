@@ -354,6 +354,20 @@ Intro paragraph.
       )
     })
 
+    it('restyles a new block whose meaning matches an untouched one on disk', () => {
+      const page = '\nA\n\n---\n\nB\n'
+      expect(preserveMarkdownSource(page, 'A\n\n---\n\nB\n\n***\n\nC *x*', 'md')).toBe(
+        '\nA\n\n---\n\nB\n\n---\n\nC _x_\n',
+      )
+    })
+
+    it('numbers items as Prettier does, leaving an untouched one alone', () => {
+      const page = '\n0. a\n1. b\n1. c\n'
+      expect(preserveMarkdownSource(page, '0. a\n1. b, edited\n1. c', 'md')).toBe(
+        '\n0. a\n1. b, edited\n1. c\n',
+      )
+    })
+
     it("restyles a new item's text but keeps the list's own marker", () => {
       const typed = PAGE.replace('* Star list on disk\n', '* Star list on disk\n* New *em* item\n')
       expect(preserveMarkdownSource(PAGE, typed, 'md')).toBe(

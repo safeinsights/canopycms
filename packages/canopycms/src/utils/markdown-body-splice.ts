@@ -32,7 +32,7 @@ import { mdxjs } from 'micromark-extension-mdxjs'
 
 import { createDebugLogger } from './debug'
 import { getErrorMessage } from './error'
-import { restyleMarkdown, type MdNode } from './markdown-restyle'
+import { orderedNumber, restyleMarkdown, type MdNode } from './markdown-restyle'
 import { withSourceLineEndings } from './yaml-source-splice'
 
 const log = createDebugLogger({ prefix: 'MarkdownBodySplice' })
@@ -431,16 +431,14 @@ function listMarkers(
     offset === undefined ? null : /^(\d{1,9})([.)])/.exec(text.slice(offset, offset + 10))
   const first = numberAt(firstStart)
   if (first === null) return undefined
-  const start = Number(first[1])
   const delimiter = first[2] ?? '.'
   // `01.`, `02.`: zero-padded to the first marker's width.
   const padTo = first[1]?.startsWith('0') ? first[1].length : 0
-  const second = items.length > 1 ? numberAt(startOf(items[1])) : null
-  const step = second !== null && Number(second[1]) === start ? 0 : 1
+  const typed = items.map((item) => Number(numberAt(startOf(item))?.[1]))
   return (itemText, index) => {
     const current = /^\d{1,9}[.)]/.exec(itemText)
     if (current === null) return undefined
-    const marker = `${String(start + step * index).padStart(padTo, '0')}${delimiter}`
+    const marker = `${String(orderedNumber(typed, index)).padStart(padTo, '0')}${delimiter}`
     if (marker.length !== current[0].length && itemText.includes('\n')) return undefined
     return marker + itemText.slice(current[0].length)
   }
@@ -473,6 +471,29 @@ interface Edit {
   readonly tree: Root
 }
 
+/**
+ * The indexes of the edit's top-level blocks the splice writes from disk: those the alignment
+ * matches, and those that moved (an unmatched original of the same meaning, each used once).
+ */
+function diskBlocks(oNodes: readonly MdNode[], nNodes: readonly MdNode[]): Set<number> {
+  const oKeys = oNodes.map(canonical)
+  const nKeys = nNodes.map(canonical)
+  const pairs = matchSequences(oKeys, nKeys)
+  const fromDisk = new Set(pairs.map(([, ni]) => ni))
+  const matched = new Set(pairs.map(([oi]) => oi))
+  const unmatched = new Map<string, number>()
+  oKeys.forEach((key, index) => {
+    if (!matched.has(index)) unmatched.set(key, (unmatched.get(key) ?? 0) + 1)
+  })
+  nKeys.forEach((key, index) => {
+    const left = unmatched.get(key) ?? 0
+    if (fromDisk.has(index) || left === 0) return
+    unmatched.set(key, left - 1)
+    fromDisk.add(index)
+  })
+  return fromDisk
+}
+
 function splice(
   original: string | undefined,
   updated: string,
@@ -482,14 +503,11 @@ function splice(
   const after = parse(updated, format)
   if (after === undefined) return undefined
   const target = canonical(after)
-  const kept = new Set(before?.children?.map(canonical))
+  const fromDisk = diskBlocks(before?.children ?? [], after.children)
   const restyled = restyleMarkdown(
     updated,
     after,
-    (index) => {
-      const block = after.children[index]
-      return block !== undefined && kept.has(canonical(block))
-    },
+    (index) => fromDisk.has(index),
     (text) => {
       const tree = parse(text, format)
       return tree !== undefined && canonical(tree) === target ? tree : undefined
