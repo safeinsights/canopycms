@@ -12,6 +12,7 @@ import {
 import { getFormatExtension } from '../utils/format'
 import type { ContentFormat } from '../config'
 import { defineEndpoint } from './route-builder'
+import { BaseBranchMissingError } from '../git-manager'
 import { branchParamSchema } from './validators'
 import { getBranchProtection } from '../authorization/protected-branch'
 import { isAdmin } from '../authorization/helpers'
@@ -45,6 +46,8 @@ export interface BranchChangesData {
   hiddenChanges: boolean
   /** The branch and its base share no commit, so there is no fork point to compare against. */
   baseUnavailable?: boolean
+  /** The remote no longer has the base branch, so nothing can be compared until it is back. */
+  baseMissing?: boolean
   /** Changed files that are neither entries nor collection settings. Admins only. */
   otherFiles?: string[]
   /** `otherFiles` holds only the first {@link MAX_OTHER_FILES}. Admins only. */
@@ -60,6 +63,8 @@ const MAX_OTHER_FILES = 200
 
 const SYNCING_ERROR = (base: string) =>
   `This branch is being synced with ${base}. Try again in a moment.`
+const CHANGED_MID_READ_ERROR =
+  'This branch changed while its changes were being read. Try again in a moment.'
 const READ_FAILED_ERROR = "Couldn't read this branch's changes right now. Try again in a moment."
 
 type FileStatus = 'A' | 'M' | 'D'
@@ -111,24 +116,27 @@ const branchChangesHandler = async (
   const git = ctx.services.createGitManagerFor(branchContext.branchRoot, {
     baseBranch: branchContext.branch.baseBranch,
   })
-  let changes: Omit<BranchChangesData, 'base'> | 'moved'
+  let changes: Omit<BranchChangesData, 'base'> | 'syncing' | 'moved'
   try {
     const head = await git.headSha()
     const mergeBase = await git.mergeBaseWithBase()
     if (!mergeBase) return { ok: true, status: 200, data: { ...empty, baseUnavailable: true } }
     changes = await readChanges(ctx, req, branchContext, git, mergeBase)
-    // A rebase that started, or ran, during the read leaves a mix of the two trees.
-    if ((await git.headSha()) !== head || (await isRebaseInProgress(branchContext.branchRoot))) {
-      changes = 'moved'
-    }
+    // A rebase or a commit (a submit's) during the read leaves a mix of two trees.
+    if (await isRebaseInProgress(branchContext.branchRoot)) changes = 'syncing'
+    else if ((await git.headSha()) !== head) changes = 'moved'
   } catch (err) {
+    if (err instanceof BaseBranchMissingError) {
+      return { ok: true, status: 200, data: { ...empty, baseMissing: true } }
+    }
     canopyLogWarn(
       `CanopyCMS: could not read what ${branchContext.branch.name} changes against ${base}:`,
       redactCredentials(getErrorMessage(err)),
     )
     return { ok: false, status: 503, error: READ_FAILED_ERROR }
   }
-  if (changes === 'moved') return { ok: false, status: 409, error: SYNCING_ERROR(base) }
+  if (changes === 'syncing') return { ok: false, status: 409, error: SYNCING_ERROR(base) }
+  if (changes === 'moved') return { ok: false, status: 409, error: CHANGED_MID_READ_ERROR }
   return { ok: true, status: 200, data: { base, ...changes } }
 }
 

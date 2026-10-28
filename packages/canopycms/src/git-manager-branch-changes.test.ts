@@ -7,7 +7,7 @@ import path from 'node:path'
 import { simpleGit, type SimpleGit } from 'simple-git'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { GitManager } from './git-manager'
+import { BaseBranchMissingError, GitManager } from './git-manager'
 import { initTestRepo, openBareRepo } from './test-utils'
 
 let tmpDir: string
@@ -117,23 +117,27 @@ describe('GitManager.mergeBaseWithBase', () => {
     expect((await clone.raw(['cat-file', '-t', newTip])).trim()).toBe('commit')
   })
 
-  it('fetches objects only, moving no ref and writing no FETCH_HEAD', async () => {
+  it('fetches objects only, moving no ref, tag or FETCH_HEAD', async () => {
+    await clone.raw(['config', 'remote.origin.tagOpt', '--tags'])
     const trackingBefore = (await clone.raw(['rev-parse', 'refs/remotes/origin/main'])).trim()
     const refsBefore = await clone.raw(['for-each-ref'])
     const fetchHead = path.join(clonePath, '.git', 'FETCH_HEAD')
     await fs.writeFile(fetchHead, 'pinned by another fetch\n', 'utf8')
     await pushToBase({ 'content/new.md': 'new' })
+    await seed.raw(['tag', 'v-new'])
+    await seed.raw(['push', '-q', 'origin', 'refs/tags/v-new'])
 
     await manager().mergeBaseWithBase()
 
     expect((await clone.raw(['rev-parse', 'refs/remotes/origin/main'])).trim()).toBe(trackingBefore)
     expect(await clone.raw(['for-each-ref'])).toBe(refsBefore)
+    expect(await clone.raw(['for-each-ref', 'refs/tags'])).toBe('')
     expect(await fs.readFile(fetchHead, 'utf8')).toBe('pinned by another fetch\n')
   })
 
   it('throws when the remote has no base branch', async () => {
     await openBareRepo(remotePath).raw(['update-ref', '-d', 'refs/heads/main'])
-    await expect(manager().mergeBaseWithBase()).rejects.toThrow(/has no branch 'main'/)
+    await expect(manager().mergeBaseWithBase()).rejects.toBeInstanceOf(BaseBranchMissingError)
   })
 
   it('is undefined when HEAD shares no history with the base', async () => {
@@ -226,6 +230,51 @@ describe('GitManager.diffNameStatusAgainst and listUntrackedFiles', () => {
       await fs.chmod(path.join(clonePath, 'top.txt'), 0o644)
     }
   })
+
+  it('reports a file that became a symlink to the same bytes, and the reverse', async () => {
+    await write(clonePath, 'content/link-to-be', 'a.md')
+    await fs.symlink('a.md', path.join(clonePath, 'content/file-to-be'))
+    await clone.raw(['add', '--', 'content/link-to-be', 'content/file-to-be'])
+    await clone.raw(['commit', '-qm', 'types'])
+    const base = (await clone.revparse(['HEAD'])).trim()
+    await fs.rm(path.join(clonePath, 'content/link-to-be'))
+    await fs.symlink('a.md', path.join(clonePath, 'content/link-to-be'))
+    await fs.rm(path.join(clonePath, 'content/file-to-be'))
+    await write(clonePath, 'content/file-to-be', 'a.md')
+    expect([...(await manager().diffNameStatusAgainst(base))].map((c) => c.path).sort()).toEqual([
+      'content/file-to-be',
+      'content/link-to-be',
+    ])
+  })
+
+  it('stops resuming past unhashable files after 50 runs, counting the rest as changed', async () => {
+    const unreadable = (n: number) =>
+      Array.from({ length: n }, (_, i) => `content/u${String(i).padStart(3, '0')}.md`)
+    const files = [...unreadable(51), 'content/z-last.md']
+    for (const file of files) await write(clonePath, file, 'same')
+    await clone.raw(['add', '--', ...files])
+    await clone.raw(['commit', '-qm', 'many'])
+    const base = (await clone.revparse(['HEAD'])).trim()
+    const later = new Date(Date.now() + 60_000)
+    for (const file of files) await fs.utimes(path.join(clonePath, file), later, later)
+    const lock = async (list: string[], mode: number) => {
+      for (const file of list) await fs.chmod(path.join(clonePath, file), mode)
+    }
+    try {
+      await lock(unreadable(51), 0o000)
+      // 51 refusals: the 50th run stops short of the last file, which stays changed.
+      expect((await manager().diffNameStatusAgainst(base)).map((c) => c.path)).toContain(
+        'content/z-last.md',
+      )
+      await lock(unreadable(51).slice(3), 0o644)
+      // 3 refusals: the runs resume past each and reach the last file, which matches.
+      expect((await manager().diffNameStatusAgainst(base)).map((c) => c.path).sort()).toEqual(
+        unreadable(3),
+      )
+    } finally {
+      await lock(unreadable(51), 0o644)
+    }
+  }, 60_000)
 
   it('leaves out ignored files from the untracked list', async () => {
     await write(clonePath, '.gitignore', 'ignored.md\n')

@@ -43,7 +43,7 @@ import { BaseBranchUnresolvedError } from './utils/base-branch'
 import { canopyLogWarn } from './utils/logger'
 import type { ProvisionLog } from './utils/provision-log'
 import { acquireProvisioningLock } from './utils/provisioning-lock'
-import { runGit } from './worker/git-process'
+import { spawnGit } from './worker/git-process'
 
 const log = createDebugLogger({ prefix: 'GitManager' })
 
@@ -125,6 +125,10 @@ const NO_AUTO_GC_CONFIG: readonly string[] = ['gc.auto=0', 'maintenance.auto=fal
 
 /** How long `hash-object --stdin-paths` may go without output before it is killed. */
 const HASH_INACTIVITY_TIMEOUT_MS = 60_000
+/** `hash-object` runs per diff; each run past the first skips one path git couldn't hash. */
+const MAX_HASH_RUNS = 50
+const SYMLINK_MODE = '120000'
+const FILE_MODES = new Set(['100644', '100755'])
 
 /**
  * The blob SHA git gives a symlink pointing at `target`, in the object format of `likeSha` (a
@@ -368,6 +372,14 @@ export interface GitManagerOptions {
 }
 
 export type GitStatus = Pick<StatusResult, 'files' | 'ahead' | 'behind' | 'current' | 'tracking'>
+
+/** The remote has no branch of the base branch's name, so there is nothing to fork from. */
+export class BaseBranchMissingError extends Error {
+  constructor(remote: string, baseBranch: string) {
+    super(`CanopyCMS: remote '${remote}' has no branch '${baseBranch}'`)
+    this.name = 'BaseBranchMissingError'
+  }
+}
 
 /** @internal Exported for tests. */
 export class GitConflictError extends Error {
@@ -1796,20 +1808,19 @@ export class GitManager {
    * The commit HEAD forked from the base branch at, or `undefined` when they share no history.
    * Takes the base tip from the remote by `ls-remote` rather than `<remote>/<base>`: the worker
    * fetches by path, which moves no remote-tracking ref, so that ref is left behind by every
-   * rebase. A tip this clone lacks is fetched as objects only (`--refmap=`,
+   * rebase. A tip this clone lacks is fetched as objects only (`--refmap=`, `--no-tags`,
    * `--no-write-fetch-head`, git 2.29+): no ref and no FETCH_HEAD moves, so a concurrent fetch
-   * pinning FETCH_HEAD is never repointed. Throws when the remote has no base branch or can't
-   * be read.
+   * pinning FETCH_HEAD is never repointed. Throws {@link BaseBranchMissingError} when the
+   * remote has no base branch, and any other error when it can't be read.
    */
   async mergeBaseWithBase(): Promise<string | undefined> {
     const tip = await this.remoteBranchTip(this.baseBranch)
-    if (!tip) {
-      throw new Error(`CanopyCMS: remote '${this.remote}' has no branch '${this.baseBranch}'`)
-    }
+    if (!tip) throw new BaseBranchMissingError(this.remote, this.baseBranch)
     if (!(await this.hasCommit(tip))) {
       await this.git.raw([
         'fetch',
         '--refmap=',
+        '--no-tags',
         '--no-write-fetch-head',
         '--end-of-options',
         this.remote,
@@ -1855,18 +1866,23 @@ export class GitManager {
     ])
     // -z raw output alternates ":<srcmode> <dstmode> <srcsha> <dstsha> <status>" and a path.
     const tokens = output.split('\0')
-    const changes: Array<{ status: 'A' | 'M' | 'D'; path: string; unhashed?: string }> = []
+    const changes: Array<{
+      status: 'A' | 'M' | 'D'
+      path: string
+      unhashed?: { sha: string; mode: string }
+    }> = []
     for (let i = 0; i + 1 < tokens.length; i += 2) {
-      const [, , srcSha, dstSha, code] = tokens[i].slice(1).split(' ')
+      const [srcMode, , srcSha, dstSha, code] = tokens[i].slice(1).split(' ')
       const path = tokens[i + 1]
       const letter = code?.charAt(0)
       if (letter === 'A' || letter === 'D') changes.push({ status: letter, path })
       else if (letter === 'M' || letter === 'T') {
-        changes.push({ status: 'M', path, unhashed: /^0+$/.test(dstSha) ? srcSha : undefined })
+        const unhashed = /^0+$/.test(dstSha) ? { sha: srcSha, mode: srcMode } : undefined
+        changes.push({ status: 'M', path, unhashed })
       }
     }
     const unchanged = await this.matchingBlobs(
-      changes.flatMap((c) => (c.unhashed ? [{ path: c.path, sha: c.unhashed }] : [])),
+      changes.flatMap((c) => (c.unhashed ? [{ path: c.path, ...c.unhashed }] : [])),
     )
     return changes
       .filter((c) => !unchanged.has(c.path))
@@ -1874,12 +1890,16 @@ export class GitManager {
   }
 
   /**
-   * The paths whose working-tree file hashes to `sha`, as git hashes it: a symlink's blob is its
-   * target, a file's goes through one `hash-object --stdin-paths`, so its attributes' filters
-   * apply. A path that is gone or can't be hashed matches nothing, so it stays reported as
-   * changed; a batch git refuses is retried a path at a time, so one such path fails no other.
+   * The paths whose working-tree file hashes to `sha` and is of the type `mode` says, as git
+   * hashes it: a symlink's blob is its target, a file's goes through `hash-object --stdin-paths`,
+   * so its attributes' filters apply. A path that is gone, changed type or can't be hashed matches
+   * nothing, so it stays reported as changed. git stops at a path it can't hash, having printed
+   * the SHAs before it, so the next run resumes past that path; after
+   * {@link MAX_HASH_RUNS} runs the rest stay changed.
    */
-  private async matchingBlobs(files: Array<{ path: string; sha: string }>): Promise<Set<string>> {
+  private async matchingBlobs(
+    files: Array<{ path: string; sha: string; mode: string }>,
+  ): Promise<Set<string>> {
     const matching = new Set<string>()
     const regular: Array<{ path: string; sha: string }> = []
     for (const file of files) {
@@ -1887,38 +1907,54 @@ export class GitManager {
       if (file.path.includes('\n')) continue
       const stat = await fs.lstat(path.join(this.repoPath, file.path)).catch(() => undefined)
       if (!stat) continue
-      if (stat.isSymbolicLink()) {
+      if (file.mode === SYMLINK_MODE && stat.isSymbolicLink()) {
         const target = await fs.readlink(path.join(this.repoPath, file.path)).catch(() => undefined)
         if (target !== undefined && symlinkBlobSha(target, file.sha) === file.sha) {
           matching.add(file.path)
         }
-      } else if (stat.isFile()) regular.push(file)
+      } else if (FILE_MODES.has(file.mode) && stat.isFile()) regular.push(file)
     }
-    if (regular.length === 0) return matching
-    const hashed = await this.hashPaths(regular.map((f) => f.path)).catch(() => undefined)
-    if (hashed && hashed.length === regular.length) {
-      regular.forEach((file, i) => {
-        if (hashed[i] === file.sha) matching.add(file.path)
+    for (let start = 0, runs = 0; start < regular.length && runs < MAX_HASH_RUNS; runs++) {
+      const batch = regular.slice(start)
+      const { shas, complete } = await this.hashPaths(batch.map((f) => f.path))
+      shas.forEach((sha, i) => {
+        if (batch[i] && sha === batch[i].sha) matching.add(batch[i].path)
       })
-      return matching
-    }
-    for (const file of regular) {
-      const sha = await this.hashPaths([file.path]).catch(() => undefined)
-      if (sha?.[0] === file.sha) matching.add(file.path)
+      if (complete) break
+      start += shas.length + 1
     }
     return matching
   }
 
-  /** `hash-object --stdin-paths` over `paths`, one SHA per path, in order. */
-  private async hashPaths(paths: readonly string[]): Promise<string[]> {
-    const output = await runGit(['hash-object', '--stdin-paths'], {
-      cwd: this.repoPath,
-      env: gitChildEnv({ GIT_CEILING_DIRECTORIES: path.dirname(this.repoPath) }),
-      config: NO_AUTO_GC_CONFIG,
-      stdin: `${paths.join('\n')}\n`,
-      inactivityTimeoutMs: HASH_INACTIVITY_TIMEOUT_MS,
-    })
-    return output.split('\n').filter(Boolean)
+  /**
+   * `hash-object --stdin-paths` over `paths`: one SHA per path, in order, up to the path it
+   * stopped at when `complete` is false.
+   */
+  private async hashPaths(
+    paths: readonly string[],
+  ): Promise<{ shas: string[]; complete: boolean }> {
+    const chunks: Buffer[] = []
+    let proc: ReturnType<typeof spawnGit>
+    try {
+      proc = spawnGit(['hash-object', '--stdin-paths'], {
+        cwd: this.repoPath,
+        env: gitChildEnv({ GIT_CEILING_DIRECTORIES: path.dirname(this.repoPath) }),
+        config: NO_AUTO_GC_CONFIG,
+        stdin: `${paths.join('\n')}\n`,
+        inactivityTimeoutMs: HASH_INACTIVITY_TIMEOUT_MS,
+      })
+    } catch {
+      return { shas: [], complete: false }
+    }
+    const read = (async () => {
+      for await (const chunk of proc.stdout) chunks.push(chunk as Buffer)
+    })().catch(() => {})
+    const complete = await proc.exited.then(
+      () => true,
+      () => false,
+    )
+    await read
+    return { shas: Buffer.concat(chunks).toString('utf8').split('\n').filter(Boolean), complete }
   }
 
   /** Repo-relative paths of the working tree's untracked, non-ignored files. */

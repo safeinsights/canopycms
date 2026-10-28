@@ -6,7 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { simpleGit, type SimpleGit } from 'simple-git'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import { defineCanopyTestConfig } from '../config-test'
 import { flattenSchema, type PathPermission, type RootCollectionConfig } from '../config'
@@ -21,6 +21,7 @@ import {
   openBareRepo,
 } from '../test-utils'
 import { unsafeAsBranchName } from '../paths/test-utils'
+import { mockConsole } from '../test-utils/console-spy'
 import type { ApiContext, ApiRequest } from './types'
 import { listBranchChanges, type BranchChangesData } from './branch-changes'
 
@@ -422,11 +423,11 @@ describe('GET /:branch/changes: reads that race or fail', () => {
     error: 'This branch is being synced with main. Try again in a moment.',
   }
 
-  it('refuses with 409 when HEAD moves during the read', async () => {
+  it('refuses with 409, saying the branch changed, when HEAD moves during the read', async () => {
     await write(files.hello, entryJson('Edited'))
     const ctx = createCtx({
       git: gitThat(() =>
-        clone.raw(['commit', '-q', '--allow-empty', '-m', 'rebased']).then(() => {}),
+        clone.raw(['commit', '-q', '--allow-empty', '-m', 'submitted']).then(() => {}),
       ),
     })
     const res = await listBranchChanges.handler(
@@ -434,7 +435,11 @@ describe('GET /:branch/changes: reads that race or fail', () => {
       { user: user() },
       { branch: unsafeAsBranchName('feature') },
     )
-    expect(res).toEqual(syncing)
+    expect(res).toEqual({
+      ok: false,
+      status: 409,
+      error: 'This branch changed while its changes were being read. Try again in a moment.',
+    })
   })
 
   it('refuses with 409 when a rebase starts during the read', async () => {
@@ -449,7 +454,9 @@ describe('GET /:branch/changes: reads that race or fail', () => {
     expect(res).toEqual(syncing)
   })
 
-  it('answers 503, not an empty list, when git fails', async () => {
+  it('answers 503, not an empty list, when git fails, and logs why', async () => {
+    const consoleSpy = mockConsole()
+    onTestFinished(() => consoleSpy.restore())
     await fs.rm(path.join(tmpDir, 'remote.git'), { recursive: true, force: true })
     const res = await listBranchChanges.handler(
       createCtx(),
@@ -460,6 +467,18 @@ describe('GET /:branch/changes: reads that race or fail', () => {
       ok: false,
       status: 503,
       error: "Couldn't read this branch's changes right now. Try again in a moment.",
+    })
+    expect(consoleSpy).toHaveWarned(/could not read what feature changes against main/)
+  })
+
+  it('says the base is missing, not a failure to retry, when the remote lost the base branch', async () => {
+    await openBareRepo(path.join(tmpDir, 'remote.git')).raw(['update-ref', '-d', 'refs/heads/main'])
+    expect(await changes(createCtx())).toEqual({
+      base: 'main',
+      entries: [],
+      collections: [],
+      hiddenChanges: false,
+      baseMissing: true,
     })
   })
 
