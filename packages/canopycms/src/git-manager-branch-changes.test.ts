@@ -117,6 +117,25 @@ describe('GitManager.mergeBaseWithBase', () => {
     expect((await clone.raw(['cat-file', '-t', newTip])).trim()).toBe('commit')
   })
 
+  it('fetches objects only, moving no ref and writing no FETCH_HEAD', async () => {
+    const trackingBefore = (await clone.raw(['rev-parse', 'refs/remotes/origin/main'])).trim()
+    const refsBefore = await clone.raw(['for-each-ref'])
+    const fetchHead = path.join(clonePath, '.git', 'FETCH_HEAD')
+    await fs.writeFile(fetchHead, 'pinned by another fetch\n', 'utf8')
+    await pushToBase({ 'content/new.md': 'new' })
+
+    await manager().mergeBaseWithBase()
+
+    expect((await clone.raw(['rev-parse', 'refs/remotes/origin/main'])).trim()).toBe(trackingBefore)
+    expect(await clone.raw(['for-each-ref'])).toBe(refsBefore)
+    expect(await fs.readFile(fetchHead, 'utf8')).toBe('pinned by another fetch\n')
+  })
+
+  it('throws when the remote has no base branch', async () => {
+    await openBareRepo(remotePath).raw(['update-ref', '-d', 'refs/heads/main'])
+    await expect(manager().mergeBaseWithBase()).rejects.toThrow(/has no branch 'main'/)
+  })
+
   it('is undefined when HEAD shares no history with the base', async () => {
     await clone.raw(['checkout', '-q', '--orphan', 'unrelated'])
     await clone.raw(['commit', '-q', '-m', 'unrelated root'])
@@ -164,6 +183,48 @@ describe('GitManager.diffNameStatusAgainst and listUntrackedFiles', () => {
     expect(await manager().diffNameStatusAgainst(base)).toEqual([{ status: 'M', path: 'top.txt' }])
     // `git diff` would refresh these stat-only entries and write the index back.
     expect((await fs.stat(path.join(clonePath, '.git/index'))).mtimeMs).toBe(indexBefore)
+  })
+
+  it('hashes a stat-only symlink as git does, and reports a retargeted one', async () => {
+    await fs.symlink('a.md', path.join(clonePath, 'content/link'))
+    await fs.symlink('a.md', path.join(clonePath, 'content/moved-link'))
+    await clone.raw(['add', '--', 'content/link', 'content/moved-link'])
+    await clone.raw(['commit', '-qm', 'links'])
+    const base = (await clone.revparse(['HEAD'])).trim()
+    const later = new Date(Date.now() + 60_000)
+    await fs.lutimes(path.join(clonePath, 'content/link'), later, later)
+    await fs.rm(path.join(clonePath, 'content/moved-link'))
+    await fs.symlink('b c.md', path.join(clonePath, 'content/moved-link'))
+    await fs.lutimes(path.join(clonePath, 'content/moved-link'), later, later)
+    expect(await manager().diffNameStatusAgainst(base)).toEqual([
+      { status: 'M', path: 'content/moved-link' },
+    ])
+  })
+
+  it('counts a file that vanishes mid-read, or that git cannot hash, as changed, and no other', async () => {
+    const base = (await clone.revparse(['HEAD'])).trim()
+    const later = new Date(Date.now() + 60_000)
+    for (const file of ['content/a.md', 'content/b c.md', 'content/-dash.md', 'top.txt']) {
+      await fs.utimes(path.join(clonePath, file), later, later)
+    }
+    await fs.chmod(path.join(clonePath, 'top.txt'), 0o000)
+    const original = fs.lstat
+    vi.spyOn(fs, 'lstat').mockImplementation(async (target, ...rest) => {
+      if (String(target).endsWith('b c.md')) await fs.rm(String(target), { force: true })
+      return original(target, ...(rest as []))
+    })
+    try {
+      expect(
+        [...(await manager().diffNameStatusAgainst(base))].sort((a, b) =>
+          a.path.localeCompare(b.path),
+        ),
+      ).toEqual([
+        { status: 'M', path: 'content/b c.md' },
+        { status: 'M', path: 'top.txt' },
+      ])
+    } finally {
+      await fs.chmod(path.join(clonePath, 'top.txt'), 0o644)
+    }
   })
 
   it('leaves out ignored files from the untracked list', async () => {
