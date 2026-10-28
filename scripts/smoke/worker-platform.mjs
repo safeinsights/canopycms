@@ -56,7 +56,7 @@ const SHUTDOWN_MARKER = `${BOOT_DIR}/shutdown-called`
  * the real bundle and instance files.
  */
 function shims(downloads) {
-  const log = `echo "$(basename "$0")\${*:+ $*}" >> ${CALLS_LOG}`
+  const log = `{ printf '%s' "$(basename "$0")"; [ "$#" -eq 0 ] || printf ' %q' "$@"; echo; } >> ${CALLS_LOG}`
   const cases = Object.entries(downloads)
     .map(([dest, file]) => `    '${dest}') cp '${BOOT_DIR}/${file}' "$4"; exit 0 ;;`)
     .join('\n')
@@ -105,7 +105,8 @@ exit 0
  * of the agent's start, and the required part's failures all call shutdown.
  */
 const EXPECTED_CALLS = [
-  /^mount -t efs -o tls,iam,accesspoint=\S+ \S+:\/ \/mnt\/efs$/,
+  // As printf %q writes it, commas escaped.
+  /^mount -t efs -o tls\\,iam\\,accesspoint=\S+ \S+:\/ \/mnt\/efs$/,
   /^aws s3 cp s3:\/\/\S+ \/tmp\/canopy-worker\.js$/,
   /^aws s3 cp s3:\/\/\S+ \/tmp\/canopy-instance-files\.sh$/,
   /^systemctl daemon-reload$/,
@@ -157,6 +158,11 @@ const POST_BOOT_CHECKS = [
   ['the EFS fstab entry is written', 'grep -q " /mnt/efs efs _netdev,tls,iam," /etc/fstab'],
   ['logrotate accepts the worker logs config', 'logrotate -d /etc/logrotate.d/canopy-worker'],
   // Syntax only: running the bundle would start the worker.
+  // --check parses an ESM bundle only under this marker; without it, it skips the parse.
+  [
+    'the bundle is marked as a module',
+    `test "$(cat /opt/canopy-worker/package.json)" = '{"type":"module"}'`,
+  ],
   ['node-22 parses the installed bundle', '/usr/bin/node-22 --check /opt/canopy-worker/index.js'],
   [
     'the CloudWatch agent config is JSON',
@@ -169,9 +175,9 @@ const HOST_SYSCTLS = ['vm.swappiness', 'kernel.core_pattern', 'fs.suid_dumpable'
 
 const MINUTE = 60_000
 
-/** Ctrl-C also fails the running child, so main's `finally` still cleans up the host. */
+/** Ctrl-C reaches the running child too; run() sees it die and stops, so `finally` cleans up. */
 let interrupted = false
-for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => (interrupted = true))
+process.on('SIGINT', () => (interrupted = true))
 
 /** Bounded, so a hang fails the run rather than outlasting the job, which reads as cancelled. */
 function run(
@@ -194,6 +200,8 @@ function run(
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
   })
+  if (result.signal === 'SIGINT' || result.status === 130) interrupted = true
+  if (interrupted && !cleanup) throw new Error('interrupted')
   if (result.error?.code === 'ETIMEDOUT') {
     throw new Error(`${cmd} ${args[0]} timed out after ${timeoutMs / MINUTE} minutes`)
   }
@@ -217,7 +225,16 @@ async function pullImage() {
   for (const image of IMAGES) {
     for (let attempt = 1; attempt <= 3; attempt++) {
       if (interrupted) throw new Error('interrupted')
-      if (run('docker', ['pull', '-q', image], { allowFail: true }).status === 0) return image
+      try {
+        const pull = run('docker', ['pull', '-q', image], {
+          allowFail: true,
+          timeoutMs: 3 * MINUTE,
+        })
+        if (pull.status === 0) return image
+      } catch (err) {
+        if (interrupted) throw err
+        console.log(err.message)
+      }
       await sleep(attempt * 10_000)
     }
   }
@@ -236,7 +253,6 @@ function checkBoot(container, downloads) {
 
   const calls = exec(container, `cat ${CALLS_LOG}`, { quiet: true })
     .stdout.split('\n')
-    .map((line) => line.trim())
     .filter(Boolean)
   console.log(`Shimmed calls:\n  ${calls.join('\n  ')}`)
   const required = calls.slice(0, EXPECTED_CALLS.length)
@@ -278,9 +294,15 @@ function stageRepo(dir) {
     run('git', ['ls-files', '-z', ...args], { cwd: REPO_ROOT, quiet: true })
       .stdout.split('\0')
       .filter(Boolean)
-  const deleted = new Set(files(['--deleted']))
+  // Deleted files, and sparse-checkout ones (tagged S), are listed but not on disk.
+  const absent = new Set([
+    ...files(['--deleted']),
+    ...files(['-t', '--cached'])
+      .filter((entry) => entry.startsWith('S '))
+      .map((entry) => entry.slice(2)),
+  ])
   for (const file of files(['--cached', '--others', '--exclude-standard'])) {
-    if (deleted.has(file)) continue
+    if (absent.has(file)) continue
     cpSync(path.join(REPO_ROOT, file), path.join(dir, file), {
       recursive: false,
       verbatimSymlinks: true,
@@ -377,6 +399,12 @@ async function main() {
     }
     ok = true
   } finally {
+    // A boot that timed out is still running in the container, and would write the sysctls again.
+    exec(container, 'pkill -KILL -f "user-data[.]sh"', {
+      allowFail: true,
+      quiet: true,
+      cleanup: true,
+    })
     for (const [key, value] of hostSysctls) {
       const file = `/proc/sys/${key.replaceAll('.', '/')}`
       exec(container, `printf '%s\\n' '${value}' > ${file}`, {
