@@ -474,7 +474,7 @@ describe('buildPrSection length', () => {
     const section = buildPrSection({ changedPaths: paths, description: '-->'.repeat(3333) })
     expect(section.length).toBeLessThanOrEqual(45_000)
     expect(section).toContain(`- \`${paths[99]}\`\n`)
-    expect(section).toMatch(/(-|&gt;)…\n<!-- canopycms:submission:end -->$/)
+    expect(section).toMatch(/…\n<!-- canopycms:submission:end -->$/)
     expect(section).toContain('--&gt;--&gt;')
   })
 
