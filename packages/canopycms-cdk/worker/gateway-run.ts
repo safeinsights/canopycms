@@ -41,7 +41,7 @@ import {
 } from '../src/constructs/worker-lifecycle'
 import type { GetSecretOptions } from './secrets'
 import type { ReactiveSecret } from './credential-refresh'
-import { createClerkSnapshotFetcher } from './clerk-refresh'
+import { createClerkSnapshotFetcher, parseClerkOrganizationsAsGroups } from './clerk-refresh'
 import { parseProtectedBranches, readRepoEnv, readWorkerCredentials } from './run'
 import type { TerminationNotice, TerminationWatchOptions } from './termination-watch'
 
@@ -161,6 +161,9 @@ async function buildGateway(
     GATEWAY_STATE_DIRECTORY_MISSING,
   )
 
+  // Parsed before any secret is read, so a bad value fails the boot first.
+  const useOrganizationsAsGroups = parseClerkOrganizationsAsGroups(env)
+
   const { githubToken, githubTokenSecret, githubAppAuth, clerkSecret } =
     await readWorkerCredentials(env, deps.getSecret, {
       onAppPrivateKey: (privateKey) => {
@@ -194,6 +197,7 @@ async function buildGateway(
     protectedBranches: parseProtectedBranches(env),
     authSnapshot: createClerkSnapshotFetcher({
       secret: clerkSecret,
+      useOrganizationsAsGroups,
       log: { warn: gatewayLogWarn, error: gatewayLogError },
     }),
     ...instanceOptions(deps),

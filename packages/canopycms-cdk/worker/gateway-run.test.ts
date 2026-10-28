@@ -336,6 +336,28 @@ describe('runGateway: a healthy boot on a token', () => {
     expect(withKey.options().authSnapshot).toBeTypeOf('function')
   })
 
+  it.each([
+    [undefined, true],
+    ['true', true],
+    ['false', false],
+  ])(
+    'passes CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS=%j to the Clerk snapshot fetch as %s',
+    async (value, expected) => {
+      fetchClerkSnapshotMock.mockReset()
+      fetchClerkSnapshotMock.mockResolvedValue({ users: [], groups: [], memberships: {} })
+      const env: NodeJS.ProcessEnv = { ...baseEnv(), CLERK_SECRET_KEY: 'sk_test_clerk_key' }
+      if (value !== undefined) env.CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS = value
+      const h = harness({ env })
+      await runGateway(h.deps)
+
+      await h.options().authSnapshot?.()
+
+      expect(fetchClerkSnapshotMock).toHaveBeenCalledWith(
+        expect.objectContaining({ useOrganizationsAsGroups: expected }),
+      )
+    },
+  )
+
   it('reads the termination watch’s spot setting from the environment', async () => {
     const h = harness({ env: { ...baseEnv(), [WORKER_CAPACITY_ENV]: 'spot' } })
     await runGateway(h.deps)
@@ -435,6 +457,29 @@ describe('runGateway: a boot that fails serves the cause, then exits 1', () => {
       expect(h.exitCodes()).toEqual([1])
     },
   )
+
+  it('serves a CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS that is neither true nor false, before reading any secret', async () => {
+    const h = harness({
+      env: {
+        ...baseEnv(),
+        CANOPYCMS_GITHUB_TOKEN: '',
+        CANOPYCMS_GITHUB_TOKEN_SECRET_ARN: 'arn:tok',
+        CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS: 'nope',
+      },
+    })
+
+    const running = runGateway(h.deps)
+    await flush()
+
+    const { fatalError } = await standInHealth(h)
+    expect(fatalError).toContain('CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS')
+    expect(fatalError).toContain('"nope"')
+    expect(h.getSecret).not.toHaveBeenCalled()
+    expect(h.createGateway).not.toHaveBeenCalled()
+    h.hold.resolve()
+    await running
+    expect(h.exitCodes()).toEqual([1])
+  })
 
   it('serves a rejected getSecret’s message', async () => {
     const h = harness({

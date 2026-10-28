@@ -312,7 +312,7 @@ Commands: `init`, `init-deploy aws`, `init-github-app <create|verify>`, `worker 
 - `worker/secrets.ts` — `getSecret`, the repo's only Secrets Manager consumer, with retries and JSON-field extraction
 - `worker/credential-refresh.ts` — `createReactiveSecret`, re-reads a secret on failure behind a five-minute floor
 - `worker/github-app-auth.ts` — `buildGitHubAppAuth`, the App credential from a key read once at boot
-- `worker/clerk-refresh.ts` — `createClerkAuthCacheRefresher`, `createClerkSnapshotFetcher`: one retry on a re-read key after a Clerk 401/403
+- `worker/clerk-refresh.ts` — `createClerkAuthCacheRefresher`, `createClerkSnapshotFetcher` (one retry on a re-read key after a Clerk 401/403), `parseClerkOrganizationsAsGroups`
 - `canary/bin/canary.ts` — sandbox proving ground for `AssetSupport`; see [DEVELOPING.md](DEVELOPING.md#cdk-asset-verification-the-canary-stack)
 - `test-support/test-synth.ts` — `newTestApp`, test-owned synth output; see [DEVELOPING.md](DEVELOPING.md#test-owned-cdk-synth-output-newtestapp)
 - `test-support/synth-leak-guard.ts` — fails a suite that leaves `cdk.out` directories behind in the temp dir
