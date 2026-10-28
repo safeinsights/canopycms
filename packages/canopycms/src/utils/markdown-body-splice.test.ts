@@ -383,6 +383,48 @@ Intro paragraph.
       expect(preserveMarkdownSource(PAGE, typed, 'md')).toBe(typed)
     })
 
+    it.each([
+      ['intraword emphasis with `*`', 'Many *API*s, 5*x* and un*frigging*believable.'],
+      ['character references', 'A&nbsp;B, &#x202E;, &#8203; and &amp;.'],
+      ['escapes and syntax only a plugin reads', 'Price \\$5, $a*b*c$, [[Page]] and \\* or \\#.'],
+      ['an escaped `_` at a word edge', 'end\\_ and \\_start'],
+    ])('keeps %s as typed in an edited paragraph', async (_case, line) => {
+      const typed = PAGE.replace('Intro text.', `${line} *x*`)
+      const out = preserveMarkdownSource(PAGE, typed, 'md')
+      expect(out).toBe(PAGE.replace('Intro text.', `${line} _x_`))
+      const prettier = await format(out, { parser: 'markdown' })
+      expect(prettier).toContain(`${line} _x_`)
+    })
+
+    it('unescapes `_` between word characters, as Prettier does', () => {
+      const typed = PAGE.replace('Intro text.', 'a\\_b and snake\\_case\\_name *x*')
+      expect(preserveMarkdownSource(PAGE, typed, 'md')).toBe(
+        PAGE.replace('Intro text.', 'a_b and snake_case_name _x_'),
+      )
+    })
+
+    it('writes emphasis inside emphasis with `*`, as Prettier does', () => {
+      const typed = PAGE.replace('Intro text.', '*outer _inner_ more*')
+      expect(preserveMarkdownSource(PAGE, typed, 'md')).toBe(
+        PAGE.replace('Intro text.', '_outer *inner* more_'),
+      )
+    })
+
+    it('keeps escapes on the continuation lines of quoted and listed text', () => {
+      // `here ` ends in a soft line ending, whose trailing space the text does not keep.
+      const typed = `${PAGE.slice(1)}\n> one *x*\n> two \\$ here \n> three\n\n- item *y*\n  more \\$ text`
+      expect(preserveMarkdownSource(PAGE, typed, 'md')).toBe(
+        `${PAGE}\n> one _x_\n> two \\$ here\n> three\n\n- item _y_\n  more \\$ text\n`,
+      )
+    })
+
+    it("keeps a JSX attribute's quotes when its value holds the other kind", () => {
+      const page = '\n<C c=\'he said "hi"\'>\nText.\n</C>\n'
+      expect(preserveMarkdownSource(page, page.replace('Text.', 'Text *x*.'), 'mdx')).toBe(
+        '\n<C c=\'he said "hi"\'>\n  Text _x_.\n</C>\n',
+      )
+    })
+
     it('reprints an edited JSX block in mdx and keeps the untouched one as written', () => {
       const page =
         '\n<Callout type="info">\nFirst *note*.\n</Callout>\n\n<Callout>\nSecond.\n</Callout>\n'
