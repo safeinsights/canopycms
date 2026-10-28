@@ -1,10 +1,13 @@
 /**
  * Source-preserving save for md/mdx bodies.
  *
- * The editor sends a body re-serialised from its own document model, so every block comes back
- * in the serialiser's style (bullet and emphasis markers, rule style, escapes, no blank line
- * after the frontmatter) whether or not the user touched it. This writes the on-disk text of
- * every block whose MEANING the edit left alone, and the editor's text only where it changed:
+ * The rich editor sends a body re-serialised from its own document model, so every block comes
+ * back in the serialiser's style (bullet and emphasis markers, rule style, escapes, no blank line
+ * after the frontmatter) whether or not the user touched it; the source editor sends whatever was
+ * typed. This writes the on-disk text of every block whose MEANING the edit left alone, and the
+ * edit's text only where it changed. The edit is first re-serialised in
+ * `MARKDOWN_EXPORT_OPTIONS`'s style, so a changed block is written in that one style whichever
+ * editor mode produced it:
  *
  * - Top-level blocks are aligned by a position-free canonical form of their mdast, so a block
  *   matches only when it parses to the same tree. A matched block is written from disk.
@@ -15,25 +18,30 @@
  *   stands for the original it is paired with) is the disk's; elsewhere it is the editor's,
  *   re-indented into the original's nesting and written in its line endings.
  *
- * The result is kept only if it parses to exactly the tree the editor's body parses to. A splice
- * that fails that check is retried without descending into lists, and failing that the editor's
- * body is written as sent: the worst case is the editor's own serialisation, never different
- * content.
+ * The result is kept only if it parses to exactly the tree the editor's body parses to, and so is
+ * the re-serialised edit. A splice that fails that check is retried without descending into
+ * lists, then both again from the edit as sent; failing all four, the re-serialised edit is
+ * written whole, or the edit as sent when it did not read back: the worst case is never
+ * different content.
  */
 
 import { fromMarkdown } from 'mdast-util-from-markdown'
-import { gfmFromMarkdown } from 'mdast-util-gfm'
-import { mdxFromMarkdown } from 'mdast-util-mdx'
+import { gfmFromMarkdown, gfmToMarkdown } from 'mdast-util-gfm'
+import { mdxFromMarkdown, mdxToMarkdown } from 'mdast-util-mdx'
+import { toMarkdown } from 'mdast-util-to-markdown'
 import { gfm } from 'micromark-extension-gfm'
 import { mdxjs } from 'micromark-extension-mdxjs'
 
 import { createDebugLogger } from './debug'
 import { getErrorMessage } from './error'
+import { MARKDOWN_EXPORT_OPTIONS } from './markdown-export-options'
 import { withSourceLineEndings } from './yaml-source-splice'
 
 const log = createDebugLogger({ prefix: 'MarkdownBodySplice' })
 
 export type MarkdownBodyFormat = 'md' | 'mdx'
+
+type Root = ReturnType<typeof fromMarkdown>
 
 /** The parts of an mdast node this module reads. */
 interface MdNode {
@@ -62,7 +70,7 @@ interface Piece {
 /** Above this many LCS cells the middle of a sequence is treated as one changed run. */
 const MAX_LCS_CELLS = 4_000_000
 
-function parse(text: string, format: MarkdownBodyFormat): MdNode | undefined {
+function parse(text: string, format: MarkdownBodyFormat): Root | undefined {
   try {
     return format === 'mdx'
       ? fromMarkdown(text, {
@@ -454,10 +462,12 @@ function listMarkers(
 
 /**
  * The body to write for an edit from `original` (on disk) to `updated` (the editor's body):
- * `updated`'s content, in `original`'s text wherever the two agree. See the module header.
+ * `updated`'s content, in `original`'s text wherever the two agree. With no `original` to keep
+ * text from (a new file, or a body on disk that does not parse), the whole edit is restyled.
+ * See the module header.
  */
 export function preserveMarkdownSource(
-  original: string,
+  original: string | undefined,
   updated: string,
   format: MarkdownBodyFormat,
 ): string {
@@ -471,18 +481,59 @@ export function preserveMarkdownSource(
   }
 }
 
-function splice(original: string, updated: string, format: MarkdownBodyFormat): string | undefined {
-  const before = parse(original, format)
-  const after = parse(updated, format)
-  if (before === undefined || after === undefined) return undefined
-  const target = canonical(after)
+/** An edit's text and its parse, whose positions index that text. */
+interface Edit {
+  readonly text: string
+  readonly tree: Root
+}
 
-  for (const deep of [true, false]) {
-    const candidate = new Splicer(original, updated, deep).body(before, after)
-    if (candidate === undefined) continue
-    const reparsed = parse(candidate, format)
-    if (reparsed !== undefined && canonical(reparsed) === target) return candidate
-    log.debug('markdown-body-splice', 'splice does not read back as the edit', { deep })
+/**
+ * The edit written in `MARKDOWN_EXPORT_OPTIONS`'s style, or undefined when it cannot be written
+ * or does not read back as `target`. The whole body is written at once, so a block's style can
+ * depend on its neighbours as it does in the rich editor (an ordered list's numbering, the
+ * alternate bullet of a list that follows another).
+ */
+function restyle(edit: Root, format: MarkdownBodyFormat, target: string): Edit | undefined {
+  try {
+    const text = toMarkdown(edit, {
+      ...MARKDOWN_EXPORT_OPTIONS,
+      extensions: format === 'mdx' ? [gfmToMarkdown(), mdxToMarkdown()] : [gfmToMarkdown()],
+    })
+    const tree = parse(text, format)
+    if (tree !== undefined && canonical(tree) === target) return { text, tree }
+    log.debug('markdown-body-splice', 'restyled edit does not read back as the edit')
+  } catch (err: unknown) {
+    log.debug('markdown-body-splice', 'edit cannot be restyled', { error: getErrorMessage(err) })
   }
   return undefined
+}
+
+function splice(
+  original: string | undefined,
+  updated: string,
+  format: MarkdownBodyFormat,
+): string | undefined {
+  const before = original === undefined ? undefined : parse(original, format)
+  const after = parse(updated, format)
+  if (after === undefined) return undefined
+  const target = canonical(after)
+  const restyled = restyle(after, format, target)
+  if (original === undefined || before === undefined) return restyled?.text
+  const asSent: Edit = { text: updated, tree: after }
+
+  // The rich editor already writes this style, so its restyled edit is usually the edit as sent.
+  const edits = restyled === undefined || restyled.text === updated ? [asSent] : [restyled, asSent]
+  for (const edit of edits) {
+    for (const deep of [true, false]) {
+      const candidate = new Splicer(original, edit.text, deep).body(before, edit.tree)
+      if (candidate === undefined) continue
+      const reparsed = parse(candidate, format)
+      if (reparsed !== undefined && canonical(reparsed) === target) return candidate
+      log.debug('markdown-body-splice', 'splice does not read back as the edit', {
+        deep,
+        restyled: edit !== asSent,
+      })
+    }
+  }
+  return restyled?.text
 }
