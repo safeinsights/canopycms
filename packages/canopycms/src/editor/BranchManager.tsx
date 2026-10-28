@@ -143,8 +143,8 @@ export const getBranchPermissions = (
   const canSubmit = canPerformWorkflowActions && !(branch.submitBlocked ?? true)
 
   // Withdraw: can perform workflow actions AND branch is submitted or
-  // approved -- 'approved' is included because withdraw is that status's only
-  // non-destructive exit, and getBranchPermissions must grant canWithdraw for
+  // approved -- 'approved' is included because withdraw is the author's way back from it (an
+  // author is offered no Request changes), and getBranchPermissions must grant canWithdraw for
   // it to be reachable. Allowed even when the PR was closed without merging:
   // that's the deliberate recovery path for a closed-unmerged PR (server-side
   // skip in api/branch-withdraw.ts). Not additionally gated on
@@ -248,8 +248,8 @@ interface BranchWorkflowAction {
 
 /**
  * The workflow action a branch's status calls for, or undefined when none applies: Submit for
- * an unprotected branch in editing, Withdraw once it is in review. 'approved' withdraws too, as
- * its only non-destructive exit. A user without workflow access is offered neither, since it
+ * an unprotected branch in editing, Withdraw once it is in review, 'approved' included: it is the
+ * author's way back. A user without workflow access is offered neither, since it
  * would never apply to them; a reason is given only for a block that depends on the branch's state.
  */
 const workflowAction = (
@@ -340,7 +340,7 @@ const BranchCard: React.FC<BranchCardProps> = ({
   // given only for the open branch.
   const heldBack = (a: BranchWorkflowAction | undefined) =>
     a && workflowBlockedReason ? { ...a, blockedReason: workflowBlockedReason } : a
-  // Shown to a reviewer other than the creator; the closed PR is the only thing that then blocks it.
+  // Shown to a reviewer other than the creator; a closed PR or a held-back open branch blocks it.
   const reviewsOthers =
     isReviewer(user?.groups) && !!user && b.createdBy !== user.userId && !b.isProtected
   const approve: BranchWorkflowAction | undefined = heldBack(

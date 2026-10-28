@@ -18,8 +18,8 @@ export interface ReviewedBranch {
 /**
  * How `user` relates to `branch`'s review. A reviewer or admin who neither made the branch nor was
  * given access to it by name or by group, on a submitted or approved branch that is not the
- * protected base branch, is `reviewing`: offered Approve and Request changes in place of
- * Withdraw. With a closed pull request the same user is `reviewing-closed`, since there is
+ * protected base branch, is `reviewing`: Approve (on a submitted branch) and Request changes
+ * lead instead of Withdraw, which stays in the card's "…" menu. With a closed pull request the same user is `reviewing-closed`, since there is
  * nothing to approve and Withdraw is the way forward. Anyone else is `none`.
  */
 export type ReviewRole = 'reviewing' | 'reviewing-closed' | 'none'
@@ -40,7 +40,7 @@ export function reviewRoleOf(
   return branch.pullRequestState === 'closed' ? 'reviewing-closed' : 'reviewing'
 }
 
-/** Whether `user` is offered Approve and Request changes on `branch`; see {@link reviewRoleOf}. */
+/** Whether `user` reviews `branch`, so its review actions lead; see {@link reviewRoleOf}. */
 export const isReviewerOfOthersReview = (
   branch: ReviewedBranch,
   user: { userId: string; groups?: readonly string[] } | undefined,

@@ -42,8 +42,8 @@ from `packages/canopycms/src/editor/branch-lock.ts`.
   asks for more input ("Change URL…"). None on a command that acts at once or only opens a
   confirm or a menu ("Delete branch", "Add section"); never three ASCII dots.
 - **One primary action per card, by role**: on the open branch's card, a reviewer of someone
-  else's submission sees "Approve", with "Request changes" beside it, and anyone else its
-  workflow action; another submitted branch's card shows such a reviewer "Review"; other cards
+  else's submission sees "Approve" and "Request changes" (the latter alone once approved), and
+  anyone else its workflow action; another branch in review shows them "Review"; others
   show "Open".
 - **Dismissing a dialog** that mixes staged and immediate changes: "Discard changes" while edits
   are staged, "Close" after an immediate save, otherwise "Cancel".

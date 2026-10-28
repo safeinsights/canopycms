@@ -2295,7 +2295,7 @@ describe('useBranchManager', () => {
 
       const { body } = await dialogBody()
       expect(body).toContain(
-        'Approve "feature"? It stays locked until it is withdrawn or its pull request is merged.',
+        'Approve "feature"? It stays locked until it is withdrawn or changes are requested.',
       )
       expect(body).not.toContain('GitHub')
     })

@@ -12,7 +12,7 @@ const NOTE_ANNOUNCE_FROM = REQUEST_CHANGES_NOTE_MAX_LENGTH - 100
 export function approveMessage(branchName: string, hasPullRequest: boolean): string {
   return hasPullRequest
     ? `Approve "${branchName}"? Its pull request stays open on GitHub for someone with access to merge it.`
-    : `Approve "${branchName}"? It stays locked until it is withdrawn or its pull request is merged.`
+    : `Approve "${branchName}"? It stays locked until it is withdrawn or changes are requested.`
 }
 
 /** The Request changes dialog's body: what happens, and an optional note for the editor. */

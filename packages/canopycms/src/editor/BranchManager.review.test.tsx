@@ -273,6 +273,23 @@ describe('BranchCard review actions', () => {
       expect(onSelect).toHaveBeenCalledWith(NAME)
     })
 
+    it('leaves Request changes working on an approved branch, open or not', async () => {
+      const onRequestChanges = vi.fn()
+      const { unmount } = renderCard(branch({ status: 'approved' }), reviewer, true, {
+        onRequestChanges,
+      })
+      const visible = screen.getByTestId(`request-changes-branch-button-${NAME}`)
+      expect(visible.getAttribute('aria-disabled')).toBeNull()
+      await userEvent.click(visible)
+      unmount()
+      renderCard(branch({ status: 'approved' }), reviewer, false, { onRequestChanges })
+      await userEvent.click(screen.getByTestId(`branch-actions-menu-${NAME}`))
+      const item = await screen.findByTestId(`request-changes-branch-button-${NAME}`)
+      expect(item.getAttribute('aria-disabled')).toBeNull()
+      await userEvent.click(item)
+      expect(onRequestChanges).toHaveBeenCalledTimes(2)
+    })
+
     it('calls onApprove from the menu of a branch that is not open', async () => {
       const onApprove = vi.fn()
       renderCard(branch(), reviewer, false, { onApprove })

@@ -758,9 +758,9 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const reviewFailureId = (kind: ReviewKind, branch: string) => `canopy-${kind}-failed-${branch}`
 
   /**
-   * Shows why an Approve or Request changes failed. Retry is offered only where one can pass: no
-   * answer, or a 5xx. A 4xx is a plain message and a reload, so the buttons catch up with the
-   * branch. A 409 means the branch left review (see `showLeftReview`).
+   * Why an Approve or Request changes failed. Retry only on an API 5xx, 408, 429 or unsent request;
+   * a timeout or gateway 5xx may have landed, so it reloads and says what to check. Other 4xx: a
+   * plain message and a reload. A 409 means the branch left review (see `showLeftReview`).
    */
   const reportReviewFailure = async (
     err: unknown,

@@ -436,9 +436,9 @@ function workflowAction({
 }: WorkflowActionInput): WorkflowAction | null {
   const isSubmitted = branchStatus === 'submitted'
   const isEditing = branchStatus === 'editing'
-  // 'approved' withdraws too -- it is that status's only
-  // non-destructive exit now that the submit status gate refuses a
-  // non-editing branch (api/branch-status.ts, api/branch-withdraw.ts).
+  // 'approved' withdraws too -- it is the author's way back from
+  // either status, since the editor offers an author no Request changes
+  // and the submit gate refuses a non-editing branch (api/branch-withdraw.ts).
   // This button is a two-state toggle, so every withdrawable status
   // has to drive the withdraw side of it, not just 'submitted'.
   const isWithdrawable = isSubmitted || branchStatus === 'approved'

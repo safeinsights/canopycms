@@ -154,9 +154,9 @@ describe('getBranchPermissions', () => {
   })
 
   it('allows creator to withdraw an approved branch', () => {
-    // Withdraw is 'approved's only non-destructive exit: request-changes still
-    // requires 'submitted', and the submit status gate refuses a non-editing
-    // branch. Without this the status is a dead end with no UI path out.
+    // Withdraw is the author's way back from 'approved': the editor offers an
+    // author no Request changes, and the submit status gate refuses a
+    // non-editing branch.
     const branch: BranchSummary = {
       name: 'main',
       status: 'approved',
