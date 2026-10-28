@@ -19,7 +19,10 @@ A list nested in a list item can start anywhere too:
 
 One after a paragraph in its item:
 
-- Then: 7. Check the preview. 8. Publish.
+- Then:
+
+  7. Check the preview.
+  8. Publish.
 
 One after a heading in its item needs no blank line:
 
