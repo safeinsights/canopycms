@@ -37,13 +37,10 @@ const withdrawBranchHandler = async (
     }
   }
 
-  // 'approved' is accepted alongside 'submitted' because withdraw is its only
-  // non-destructive exit. Every non-'editing' status blocks content writes, and
-  // request-changes requires 'submitted' -- so before this, an approved branch
-  // could only be escaped by a raw workflow.submit call, which silently
-  // discarded the approval and is now refused by the submit status gate
-  // (api/branch-status.ts). Without this, closing that hole would seal the dead
-  // end completely, leaving deletion as the only way out.
+  // 'approved' is accepted alongside 'submitted' because withdraw is the author's
+  // way back from either: the editor offers an author no Request changes. Every
+  // non-'editing' status blocks content writes, and a raw workflow.submit would
+  // discard the approval, which the submit status gate refuses (api/branch-status.ts).
   //
   // 'archived' stays refused: the PR is merged and there is nothing to return to.
   const status = branchContext.branch.status
