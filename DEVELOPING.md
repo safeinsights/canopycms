@@ -1340,6 +1340,21 @@ Flags: `--pm pnpm|npm`, `--next <version>` (default 16.1.7), `--pnpm-version` (d
 
 CI runs it as `standalone-image`, matrixed over pnpm and npm on `ubuntu-latest` and pnpm on `ubuntu-24.04-arm` (the Lambda's default architecture). It is gated by `dorny/paths-filter` like `dual-build` — the job always reports, only the expensive build and boot steps are skipped — on every source and packaging input of the three packages, the lockfile, the root `package.json`, `.nvmrc`, and the script and workflow themselves. `ci.yml` carries the list and why it is that wide. Its base images come from an Actions cache that [cms-base-images.yml](.github/workflows/cms-base-images.yml) fills daily on `main`, because public.ecr.aws refuses anonymous pulls from runners whose shared IP used its quota; see `scripts/smoke/base-images.mjs`.
 
+### Worker Platform Check (`worker-platform.yml`)
+
+`scripts/smoke/worker-platform.mjs` boots the worker's user data, as `CanopyCmsService` synthesizes it (`packages/canopycms-cdk/test-support/render-user-data.ts`), in an `amazonlinux:2023` container. Then, as `ec2-user`, it runs `packages/canopycms/src/worker` and `packages/canopycms-cdk/worker` with the git and Node that boot installed. Every worker boot takes AL2023's newest packages, so this is where a new git or Node breaks first. **Its header comment is authoritative**, including what a container cannot show. In short:
+
+- **The script runs verbatim**, so its `dnf` lines and tools are the ones checked. Shims stand in only for `aws s3 cp`, `mount -t efs`, `systemctl` and `shutdown`, and each refuses a call it was not written for.
+- **Before the boot**, the driver installs what the AMI ships and the image lacks (`AMI_BASELINE`) from the image's locked release.
+- **The container is privileged**, so the swap and `sysctl` steps run for real. The driver puts back the host's three sysctls and turns off only `/swapfile`.
+
+```bash
+node scripts/smoke/worker-platform.mjs              # needs Docker and a pnpm-installed workspace
+node scripts/smoke/worker-platform.mjs --skip-tests --keep
+```
+
+CI runs it on `ubuntu-24.04-arm` on every pull request, on `main`, and daily. A failed daily run opens a P1 issue, comments on it while the run keeps failing, and closes it on the next pass. GitHub mails a scheduled failure only to whoever last edited the cron.
+
 ### Backlog: GitHub Issues
 
 The backlog is this repository's GitHub issues, ranked on the [CanopyCMS backlog Project](https://github.com/orgs/safeinsights/projects/5): its **Do next** status, in row order, is what to work on now. The issue type (Bug, Feature or Task) carries kind. Labels carry severity (`P0` to `P3`), audience (`adopters:KB`, `MKT`, `BOTH` or `NEITHER`), and two flags: `needs-decision` (blocked on an open maintainer decision) and `security`. Code and docs cite an issue as `safeinsights/canopycms#N`.

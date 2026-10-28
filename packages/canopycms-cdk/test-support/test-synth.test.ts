@@ -25,8 +25,9 @@ const packageRoot = path.join(thisDir, '..')
 const UNSCANNED_DIRS = new Set(['node_modules', 'dist', 'cdk.out'])
 
 /**
- * The files allowed to construct a CDK App directly: this suite's helper, and
- * the canary's deployable entrypoint.
+ * The files allowed to construct a CDK App directly: this suite's helper, the
+ * canary's deployable entrypoint, and render-user-data.ts, a script that runs
+ * outside vitest and so has no suite root to synthesize into.
  *
  * An allowlist rather than skipping `canary/` wholesale, which is what this
  * replaced: that directory is exempt only because of the one entrypoint in it,
@@ -36,6 +37,7 @@ const UNSCANNED_DIRS = new Set(['node_modules', 'dist', 'cdk.out'])
 const ALLOWED_TO_CONSTRUCT = new Set([
   path.join(thisDir, 'test-synth.ts'),
   path.join(packageRoot, 'canary', 'bin', 'canary.ts'),
+  path.join(thisDir, 'render-user-data.ts'),
 ])
 
 /**

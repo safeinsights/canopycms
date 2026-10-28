@@ -1,0 +1,85 @@
+name: Worker platform
+
+# Boots the CMS worker's synthesized user data in an Amazon Linux 2023 container at the latest
+# release, then runs the worker's git tests there with the git and Node that boot installed
+# (scripts/smoke/worker-platform.mjs, which also lists what a container cannot show). Every worker
+# boot takes AL2023's newest packages, so production moves to a new git or Node within a week of
+# its release whether or not anything here changed: the daily run is what notices that first.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '41 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Worker boot and git tests on AL2023 (arm64)
+    # arm64, as the worker's t4g instances are.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # For the host half only: building the worker bundle and synthesizing the user data. The
+      # tests install their own dependencies inside the container, with its Node.
+      - uses: ./.github/actions/setup
+
+      - name: Boot the worker's user data and run the worker tests
+        run: node scripts/smoke/worker-platform.mjs
+
+  # GitHub mails a failed scheduled run only to whoever last edited the cron, so a failing daily
+  # run opens an issue instead, comments on it while it keeps failing, and closes it on the first
+  # run that passes. Only this job can write issues, and it runs no repository code.
+  report:
+    name: Report the scheduled result
+    needs: check
+    if: >-
+      always() && github.ref == 'refs/heads/main' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') &&
+      (needs.check.result == 'success' || needs.check.result == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open, update or close the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RESULT: ${{ needs.check.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title='The daily worker platform check is failing'
+          number=$(gh issue list --repo "$REPO" --state open --author 'app/github-actions' \
+            --search "in:title \"$title\"" --json number,title \
+            --jq "map(select(.title == \"$title\")) | .[0].number // empty")
+
+          if [ "$RESULT" = success ]; then
+            if [ -n "$number" ]; then
+              gh issue comment "$number" --repo "$REPO" --body "Passed again: $RUN_URL"
+              gh issue close "$number" --repo "$REPO" --reason completed
+            fi
+            exit 0
+          fi
+
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --repo "$REPO" --body "Still failing: $RUN_URL"
+            exit 0
+          fi
+          body="The scheduled run of the worker platform check failed: $RUN_URL
+
+          The check boots the CMS worker's user data on Amazon Linux 2023 at the latest release, then
+          runs the worker's git tests there (scripts/smoke/worker-platform.mjs). Production workers
+          install the same latest packages at every boot, so a new git, Node 22, coreutils or
+          amazon-efs-utils that breaks this check reaches them within a week.
+
+          .github/workflows/worker-platform.yml opens this issue, comments on it while the daily run
+          keeps failing, and closes it when a run passes."
+          gh issue create --repo "$REPO" --title "$title" --type Bug --label P1 --body "$body"
