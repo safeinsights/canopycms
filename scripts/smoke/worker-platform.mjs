@@ -56,7 +56,7 @@ const SHUTDOWN_MARKER = `${BOOT_DIR}/shutdown-called`
  * the real bundle and instance files.
  */
 function shims(downloads) {
-  const log = `echo "$(basename "$0") $*" >> ${CALLS_LOG}`
+  const log = `echo "$(basename "$0")\${*:+ $*}" >> ${CALLS_LOG}`
   const cases = Object.entries(downloads)
     .map(([dest, file]) => `    '${dest}') cp '${BOOT_DIR}/${file}' "$4"; exit 0 ;;`)
     .join('\n')
@@ -156,6 +156,8 @@ const POST_BOOT_CHECKS = [
   ],
   ['the EFS fstab entry is written', 'grep -q " /mnt/efs efs _netdev,tls,iam," /etc/fstab'],
   ['logrotate accepts the worker logs config', 'logrotate -d /etc/logrotate.d/canopy-worker'],
+  // Syntax only: running the bundle would start the worker.
+  ['node-22 parses the installed bundle', '/usr/bin/node-22 --check /opt/canopy-worker/index.js'],
   [
     'the CloudWatch agent config is JSON',
     '/usr/bin/node-22 -e \'JSON.parse(require("fs").readFileSync("/opt/aws/amazon-cloudwatch-agent/etc/canopy-worker-logs.json", "utf8"))\'',
@@ -165,11 +167,25 @@ const POST_BOOT_CHECKS = [
 /** Kernel settings the boot writes, which a privileged container writes on the host's kernel. */
 const HOST_SYSCTLS = ['vm.swappiness', 'kernel.core_pattern', 'fs.suid_dumpable']
 
-function run(cmd, args, { input, cwd, allowFail = false, quiet = false } = {}) {
+const MINUTE = 60_000
+
+/** Ctrl-C also fails the running child, so main's `finally` still cleans up the host. */
+let interrupted = false
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => (interrupted = true))
+
+/** Bounded, so a hang fails the run rather than outlasting the job, which reads as cancelled. */
+function run(
+  cmd,
+  args,
+  { input, cwd, allowFail = false, quiet = false, timeoutMs = 10 * MINUTE, cleanup = false } = {},
+) {
+  if (interrupted && !cleanup) throw new Error('interrupted')
   if (!quiet) console.log(`$ ${cmd} ${args.join(' ')}`)
   const result = spawnSync(cmd, args, {
     cwd,
     input,
+    timeout: timeoutMs,
+    killSignal: 'SIGKILL',
     stdio: [
       input === undefined ? 'inherit' : 'pipe',
       quiet ? 'pipe' : 'inherit',
@@ -178,6 +194,9 @@ function run(cmd, args, { input, cwd, allowFail = false, quiet = false } = {}) {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
   })
+  if (result.error?.code === 'ETIMEDOUT') {
+    throw new Error(`${cmd} ${args[0]} timed out after ${timeoutMs / MINUTE} minutes`)
+  }
   if (result.error) throw result.error
   if (result.status !== 0 && !allowFail) {
     if (quiet) process.stderr.write(`${result.stdout ?? ''}${result.stderr ?? ''}`)
@@ -187,19 +206,17 @@ function run(cmd, args, { input, cwd, allowFail = false, quiet = false } = {}) {
 }
 
 /** A shell command in the container, as root unless `user` is given. */
-function exec(container, script, { user, env = {}, allowFail, quiet } = {}) {
+function exec(container, script, { user, env = {}, ...options } = {}) {
   const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`])
   const userArgs = user ? ['-u', user, '-w', `/home/${user}`] : []
-  return run('docker', ['exec', ...userArgs, ...envArgs, container, 'bash', '-c', script], {
-    allowFail,
-    quiet,
-  })
+  return run('docker', ['exec', ...userArgs, ...envArgs, container, 'bash', '-c', script], options)
 }
 
 /** Pulls retry, and fall back to the next registry: both refuse anonymous pulls past a quota. */
 async function pullImage() {
   for (const image of IMAGES) {
     for (let attempt = 1; attempt <= 3; attempt++) {
+      if (interrupted) throw new Error('interrupted')
       if (run('docker', ['pull', '-q', image], { allowFail: true }).status === 0) return image
       await sleep(attempt * 10_000)
     }
@@ -217,7 +234,10 @@ function checkBoot(container, downloads) {
   const marker = exec(container, `test -e ${SHUTDOWN_MARKER}`, { allowFail: true, quiet: true })
   if (marker.status === 0) failures.push('the boot called shutdown (its ERR trap fired)')
 
-  const calls = exec(container, `cat ${CALLS_LOG}`, { quiet: true }).stdout.trim().split('\n')
+  const calls = exec(container, `cat ${CALLS_LOG}`, { quiet: true })
+    .stdout.split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
   console.log(`Shimmed calls:\n  ${calls.join('\n  ')}`)
   const required = calls.slice(0, EXPECTED_CALLS.length)
   const after = calls.slice(EXPECTED_CALLS.length)
@@ -254,17 +274,17 @@ function checkBoot(container, downloads) {
 
 /** The checkout's files, tracked and untracked but not ignored, as a tree to copy in. */
 function stageRepo(dir) {
-  const listed = run('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
-    quiet: true,
-  }).stdout
-  for (const file of listed.split('\0').filter(Boolean)) {
-    const from = path.join(REPO_ROOT, file)
-    try {
-      cpSync(from, path.join(dir, file), { recursive: false, verbatimSymlinks: true })
-    } catch (err) {
-      // A tracked file deleted in the working tree.
-      if (err.code !== 'ENOENT') throw err
-    }
+  const files = (args) =>
+    run('git', ['ls-files', '-z', ...args], { cwd: REPO_ROOT, quiet: true })
+      .stdout.split('\0')
+      .filter(Boolean)
+  const deleted = new Set(files(['--deleted']))
+  for (const file of files(['--cached', '--others', '--exclude-standard'])) {
+    if (deleted.has(file)) continue
+    cpSync(path.join(REPO_ROOT, file), path.join(dir, file), {
+      recursive: false,
+      verbatimSymlinks: true,
+    })
   }
 }
 
@@ -288,10 +308,16 @@ function runTests(container, scratch) {
     GIT_COMMITTER_NAME: 'CI Bot',
     GIT_COMMITTER_EMAIL: 'ci@canopycms.test',
   }
-  const asWorker = (script) => exec(container, script, { user: WORKER_USER, env })
+  const asWorker = (script, options) =>
+    exec(container, script, { user: WORKER_USER, env, ...options })
   asWorker(`npm config set prefix ${home}/.npm-global && npm install -g -q pnpm@${pnpmVersion}`)
   asWorker('cd canopycms && command -v git node && pnpm install --frozen-lockfile')
-  asWorker('cd canopycms/packages/canopycms && pnpm exec vitest run src/worker')
+  // Plus the git-heavy modules outside worker/ that the worker runs on the instance.
+  asWorker(
+    'cd canopycms/packages/canopycms && pnpm exec vitest run src/worker src/git-manager ' +
+      'src/branch-provisioning src/branch-sparse src/branch-workspace src/utils/git',
+    { timeoutMs: 25 * MINUTE },
+  )
   asWorker('cd canopycms/packages/canopycms-cdk && pnpm exec vitest run --dir worker')
 }
 
@@ -337,6 +363,7 @@ async function main() {
     console.log('\n--- boot: the synthesized user data ---')
     const boot = exec(container, `PATH=${BOOT_DIR}/shims:$PATH bash ${BOOT_DIR}/user-data.sh`, {
       allowFail: true,
+      timeoutMs: 20 * MINUTE,
     })
     console.log(`--- boot exited ${boot.status} ---\n`)
     const failures = checkBoot(container, downloads)
@@ -352,14 +379,18 @@ async function main() {
   } finally {
     for (const [key, value] of hostSysctls) {
       const file = `/proc/sys/${key.replaceAll('.', '/')}`
-      exec(container, `printf '%s\\n' '${value}' > ${file}`, { allowFail: true, quiet: true })
+      exec(container, `printf '%s\\n' '${value}' > ${file}`, {
+        allowFail: true,
+        quiet: true,
+        cleanup: true,
+      })
     }
     if (values.keep) {
       console.log(`Left running: docker exec -it ${container} bash`)
     } else {
       // Only the boot's own swap file: `-a` would also take the host's.
-      exec(container, 'swapoff /swapfile', { allowFail: true, quiet: true })
-      run('docker', ['rm', '-f', container], { allowFail: true, quiet: true })
+      exec(container, 'swapoff /swapfile', { allowFail: true, quiet: true, cleanup: true })
+      run('docker', ['rm', '-f', container], { allowFail: true, quiet: true, cleanup: true })
     }
     rmSync(scratch, { recursive: true, force: true })
   }

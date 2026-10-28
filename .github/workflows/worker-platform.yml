@@ -40,12 +40,19 @@ jobs:
   report:
     name: Report the scheduled result
     needs: check
+    # A scheduled run that hit the job's timeout reports as cancelled, and nobody cancels one by
+    # hand, so it counts as a failure; a dispatched run cancelled by hand reports nothing.
     if: >-
       always() && github.ref == 'refs/heads/main' &&
       (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') &&
-      (needs.check.result == 'success' || needs.check.result == 'failure')
+      (needs.check.result == 'success' || needs.check.result == 'failure' ||
+      (needs.check.result == 'cancelled' && github.event_name == 'schedule'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Two overlapping runs would each find no open issue and each open one.
+    concurrency:
+      group: worker-platform-report
+      cancel-in-progress: false
     permissions:
       issues: write
     steps:
