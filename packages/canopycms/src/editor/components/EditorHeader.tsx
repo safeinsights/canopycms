@@ -183,13 +183,14 @@ export function EditorHeader({
       : status.action
 
   // Controls come and go as a submit or withdraw changes the lock, and focus follows them.
-  const [[wayRef, saveAllRef, workflowRef], focusTarget] = useFocusHandOff(3)
+  const [[wayRef, saveAllRef, workflowRef, secondaryRef], focusTarget] = useFocusHandOff(4)
   const workflowControl = {
     onSubmit,
     onWithdraw,
     onApprove,
     onRequestChanges,
     controlRef: workflowRef,
+    secondaryRef,
     // A withdraw that leaves no workflow action returns focus to the way forward, else Save all.
     returnFocusTo: () => focusTarget(2),
   }
@@ -512,6 +513,8 @@ interface WorkflowControlProps {
   onRequestChanges: NonNullable<EditorHeaderProps['onRequestChanges']>
   /** The control's own button: the wide button, or the caret. */
   controlRef: Ref<HTMLButtonElement>
+  /** A review's second control, Request changes beside Approve or the caret that holds it. */
+  secondaryRef?: Ref<HTMLButtonElement>
   /** Where the confirm dialog returns focus: whichever control is mounted as it closes. */
   returnFocusTo: () => HTMLElement | null
 }
@@ -539,18 +542,21 @@ function ReviewButtons({
   onApprove,
   onRequestChanges,
   controlRef,
+  secondaryRef,
   returnFocusTo,
   narrow,
   ...rest
 }: WorkflowControlProps & { narrow: boolean }) {
   // The bar's hand-off slot goes to Approve while there is one, in either layout, so focus on it
-  // moves on when it goes; then Request changes, the one control left, takes the slot.
+  // moves on when it goes; then Request changes, the one control left, takes the slot. Beside
+  // Approve, Request changes (or the caret that holds it) has a slot of its own, so focus on it
+  // moves on when the branch leaves review.
   const approveEl = useRef<HTMLButtonElement>(null)
   const requestChangesEl = useRef<HTMLButtonElement>(null)
   const approveRef = useMergedRef(approveEl, action.offersApprove ? controlRef : undefined)
   const requestChangesRef = useMergedRef(
     requestChangesEl,
-    action.offersApprove ? undefined : controlRef,
+    action.offersApprove ? (narrow ? undefined : secondaryRef) : controlRef,
   )
   // Each returns focus to its own button while that is mounted, else to the control left.
   const approveReturn = () => (approveEl.current?.isConnected ? approveEl.current : returnFocusTo())
@@ -599,6 +605,7 @@ function ReviewButtons({
         returnFocusTo={returnFocusTo}
         includeApprove={false}
         color="brand"
+        controlRef={secondaryRef}
       />
     </Button.Group>
   )

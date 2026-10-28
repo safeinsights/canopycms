@@ -72,12 +72,12 @@ const acceptsReview = (status: string | undefined, kind: ReviewKind): boolean =>
   kind === 'approve' ? status === 'submitted' : status === 'submitted' || status === 'approved'
 
 /** The line for a branch the reviewer's page still showed in review after it left. */
-const leftReviewMessage = (status: string | undefined, kind: ReviewKind): string =>
+const leftReviewMessage = (status: string, kind: ReviewKind): string =>
   status === 'editing'
     ? "This branch is no longer in review: it's back with its editor."
     : status === 'approved' && kind === 'approve'
       ? 'This branch is already approved.'
-      : `This branch is ${status ?? 'unreadable'}, so ${kind === 'approve' ? "it can't be approved" : "changes can't be requested"}.`
+      : `This branch is ${status}, so ${kind === 'approve' ? "it can't be approved" : "changes can't be requested"}.`
 
 /** @internal Exported for tests. */
 export const branchActionOutcomeUnknown = (
@@ -720,14 +720,21 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   // branch leaves review.
   const noteDrafts = useRef(new Map<string, string>())
 
+  // The stale-status toasts that carry a note and stay up, by id: a plain one never replaces them.
+  const stickyStaleToasts = useRef(new Set<string>())
+
   /**
    * A review action found its branch out of review, or the page already knew it was. A warning,
    * not an error: nothing is lost yet. A typed note is shown to copy, so it stays up until
-   * dismissed. The draft goes, because the review cycle it belonged to is over.
+   * dismissed, and a later toast without a note leaves it be. The note's draft is the caller's to
+   * judge: Request changes still takes a branch that is merely approved.
    */
   const showLeftReview = (branch: string, message: string, note: string | undefined) => {
     const id = `canopy-review-stale-${branch}`
+    if (!note && stickyStaleToasts.current.has(id)) return
     notifications.hide(id)
+    stickyStaleToasts.current.delete(id)
+    if (note) stickyStaleToasts.current.add(id)
     notifications.show({
       id,
       message: note ? (
@@ -737,9 +744,8 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
       ),
       color: 'yellow',
       withCloseButton: true,
-      ...(note ? { autoClose: false } : {}),
+      ...(note ? { autoClose: false, onClose: () => stickyStaleToasts.current.delete(id) } : {}),
     })
-    noteDrafts.current.delete(branch)
   }
 
   /** Forgets a branch's draft when the listing shows it out of review. */
@@ -773,7 +779,9 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   ) => {
     if (err instanceof StaleStatusError) {
       showLeftReview(branch, err.message, details.note)
-      await loadBranches()
+      // What the branch is now decides whether a Request changes note is still wanted.
+      const fresh = await reloadBranches()
+      if (fresh) dropDraftsOutOfReview(fresh.branches)
       return
     }
     if (isUnanswered(err)) {
@@ -783,8 +791,23 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     const message = err instanceof Error ? err.message : details.fallback
     const id = reviewFailureId(kind, branch)
     notifications.hide(id)
-    if (err instanceof RefusedError && err.status < 500) {
-      notifications.show({ id, message, color: 'red' })
+    // A 4xx is a refusal no retry passes, except for asking again later (408, 429).
+    if (
+      err instanceof RefusedError &&
+      err.status < 500 &&
+      err.status !== 408 &&
+      err.status !== 429
+    ) {
+      notifications.show({
+        id,
+        message: details.note ? (
+          <NoteNotSavedMessage message={message} note={details.note} hint="Copy it to keep it." />
+        ) : (
+          message
+        ),
+        color: 'red',
+        ...(details.note ? { autoClose: false } : {}),
+      })
       await loadBranches()
       return
     }
@@ -795,17 +818,25 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
           message={message}
           onRetry={() => {
             notifications.hide(id)
-            // The page may be stale by now: a branch that left review has nothing to retry.
-            const status = latest.current.branches.find((b) => b.name === branch)?.status
-            if (status !== undefined && !acceptsReview(status, kind)) {
-              showLeftReview(
-                branch,
-                leftReviewMessage(status, kind),
-                noteDrafts.current.get(branch),
-              )
-              return
-            }
-            details.retry()
+            void (async () => {
+              // The page may be stale by now: a branch that left review has nothing to retry.
+              // The listing is fetched first, so the decision is made on where the branch is now.
+              const fresh = await reloadBranches()
+              const status = (fresh?.branches ?? latest.current.branches).find(
+                (b) => b.name === branch,
+              )?.status
+              if (status !== undefined && !acceptsReview(status, kind)) {
+                showLeftReview(
+                  branch,
+                  leftReviewMessage(status, kind),
+                  noteDrafts.current.get(branch),
+                )
+                // An approved branch still takes Request changes, so its draft stays.
+                if (!acceptsReview(status, 'request-changes')) noteDrafts.current.delete(branch)
+                return
+              }
+              details.retry()
+            })()
           }}
         />
       ),

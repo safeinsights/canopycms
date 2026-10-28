@@ -1993,6 +1993,31 @@ describe('EditorHeader - review actions', () => {
     expect(document.activeElement).toBe(screen.getByTestId('request-changes-button'))
   })
 
+  it('moves focus on, not to the page, when a late request for changes takes the review buttons away', () => {
+    const props: HeadersProps = { ...defaultProps, ...inReview, userContext: reviewer }
+    const { rerender } = render(<Headers {...props} />, { wrapper: Wrapper })
+    act(() => screen.getByTestId('request-changes-button').focus())
+
+    rerender(<Headers {...props} branchStatus="editing" branchWriteBlocked={false} />)
+
+    expect(screen.queryByTestId('request-changes-button')).toBeNull()
+    expect(document.activeElement).not.toBe(document.body)
+    expect(document.activeElement).toBeTruthy()
+  })
+
+  it('below md, moves focus on from the review caret when the branch leaves review', () => {
+    stubNarrowWindow()
+    const props: HeadersProps = { ...defaultProps, ...inReview, userContext: reviewer }
+    const { rerender } = render(<Headers {...props} />, { wrapper: Wrapper })
+    act(() => screen.getByRole('button', { name: 'More review actions' }).focus())
+
+    rerender(<Headers {...props} branchStatus="editing" branchWriteBlocked={false} />)
+
+    expect(screen.queryByRole('button', { name: 'More review actions' })).toBeNull()
+    expect(document.activeElement).not.toBe(document.body)
+    expect(document.activeElement).toBeTruthy()
+  })
+
   it('below md, moves focus from Approve to Request changes when an approve takes Approve away', () => {
     stubNarrowWindow()
     const props: HeadersProps = { ...defaultProps, ...inReview, userContext: reviewer }
