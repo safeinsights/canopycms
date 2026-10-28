@@ -322,9 +322,10 @@ TLS. Two things to know:
 
 - **The origin-read timeout must match the Lambda's.** CloudFront's default is 30
   seconds, so a longer request (a first-touch branch provision clones onto EFS inside
-  it) gets a 504 at the edge while the Lambda finishes behind it. Both default to one
+  it) gets a 504 at the edge while the Lambda finishes. Both default to one
   constant; pass `CanopyCmsService.timeout` as `originReadTimeout` when you override
-  it. Above 60 seconds CloudFront needs a quota increase, so synth refuses it.
+  it. Synth refuses over 120 seconds, CloudFront's default quota; the editor's
+  135-second request deadline sits just above, so a raised quota does not lift it.
 - **Extra behaviors keep your ordering.** CloudFront matches path patterns in order,
   so `additionalBehaviors` keeps the order you listed, overrides included. That is how
   `AssetSupport`'s behaviors join the generated distribution.

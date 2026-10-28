@@ -328,8 +328,22 @@ async function causeOf(proc: GitProcess, err: unknown, reason: string): Promise<
 }
 
 /**
+ * The most a fetch bundle's header may hold outside prerequisites' comments: a line per branch
+ * GitHub moved and one per boundary commit, so far more than a push's one head.
+ */
+const FETCH_BUNDLE_HEADER_MAX_BYTES = 16 * 1024 * 1024
+
+/**
  * Unbundle the gateway's bundle `bundleId` into the repository at `gitDir`, under the pins. It
  * adds objects and moves no ref.
+ *
+ * Not `git bundle unbundle`, which first runs a connectivity walk from every ref in `gitDir`:
+ * from git 2.56 one corrupt object in any branch's history is fatal to that walk, and so to every
+ * fetch until an operator repairs `remote.git`, where a reconcile skips that branch alone. Each
+ * prerequisite is checked to be a commit by its object header instead, so one torn after its
+ * header is taken like torn history anywhere else, and left to its branch's reconcile. The pack
+ * goes to the `index-pack --fix-thin --stdin` that `bundle unbundle` runs after its walk. A delta
+ * whose base is missing still fails, in index-pack.
  */
 async function unbundle(
   ctx: TransferContext,
@@ -339,15 +353,85 @@ async function unbundle(
 ): Promise<void> {
   const stream = await ctx.github().openBundle(bundleId)
   try {
-    await runGit(['bundle', 'unbundle', '--progress', '--end-of-options', '-'], {
+    const chunks = stream[Symbol.asyncIterator]()
+    const read = await readHeader(stream, chunks, ctx.taskTimeoutMs, signal)
+    const missing = await missingCommits(ctx, gitDir, read.header.prerequisites, signal)
+    if (missing.length > 0) {
+      throw new Error(`Refusing the bundle: its prerequisite ${missing[0]} is not a commit here`)
+    }
+    const { rest: first } = read
+    const pack = Readable.from(
+      (async function* () {
+        if (first.length > 0) yield first
+        for (;;) {
+          const rest = await chunks.next()
+          if (rest.done) return
+          yield rest.value as Buffer
+        }
+      })(),
+    )
+    await runGit(['index-pack', '-v', '--fix-thin', '--stdin'], {
       ...sharedRepoProcessOptions(gitDir, 'bare'),
-      stdin: stream,
+      stdin: pack,
       inactivityTimeoutMs: ctx.taskTimeoutMs,
       signal,
     })
   } finally {
     stream.destroy()
   }
+}
+
+/**
+ * Read the header of the fetch bundle `stream`, bounded as git is (worker/git-process.ts): the
+ * stream is destroyed when `signal` aborts or nothing arrives for `inactivityTimeoutMs`, since no
+ * git runs yet to be stopped.
+ */
+async function readHeader(
+  stream: Readable,
+  chunks: AsyncIterator<unknown>,
+  inactivityTimeoutMs: number,
+  signal?: AbortSignal,
+): Promise<ReadBundleHeader> {
+  signal?.throwIfAborted()
+  let timer: NodeJS.Timeout | undefined
+  const onAbort = () => stream.destroy(new Error('Reading the bundle was aborted'))
+  signal?.addEventListener('abort', onAbort, { once: true })
+  try {
+    const reader = new BundleHeaderReader('skip', FETCH_BUNDLE_HEADER_MAX_BYTES)
+    for (;;) {
+      clearTimeout(timer)
+      timer = setTimeout(
+        () => stream.destroy(new Error(`The bundle sent nothing for ${inactivityTimeoutMs}ms`)),
+        inactivityTimeoutMs,
+      )
+      const next = await chunks.next()
+      if (next.done) throw new Error('The bundle ended before its header did')
+      const read = reader.push(next.value as Buffer)
+      if (read !== null) return read
+    }
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', onAbort)
+  }
+}
+
+/** Of `ids`, those that are not a commit in the repository at `gitDir`. */
+async function missingCommits(
+  ctx: TransferContext,
+  gitDir: string,
+  ids: readonly string[],
+  signal?: AbortSignal,
+): Promise<string[]> {
+  if (ids.length === 0) return []
+  const lines = (
+    await runGit(['cat-file', '--batch-check=%(objectname) %(objecttype)', '--end-of-options'], {
+      ...sharedRepoProcessOptions(gitDir, 'bare'),
+      stdin: ids.map((id) => `${id}\n`).join(''),
+      inactivityTimeoutMs: ctx.taskTimeoutMs,
+      signal,
+    })
+  ).split('\n')
+  return ids.filter((id, i) => lines[i] !== `${id} commit`)
 }
 
 /** One ref move: to `to` from `from` (all zeros: must not exist), or a delete when `to` is null. */
