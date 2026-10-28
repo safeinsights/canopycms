@@ -89,7 +89,8 @@ export function pushRefusalMessage(branch: string, reason: PushPolicyRefusal): s
     case 'other-settings':
       return (
         `${refusing}: it is a settings branch, and not this deployment's, which is the only one ` +
-        'this gateway pushes. Nothing in CanopyCMS queues this; find out what wrote this task.'
+        'this gateway pushes. Check that CANOPYCMS_DEPLOYMENT_NAME and CANOPYCMS_SETTINGS_BRANCH ' +
+        "match the CMS's own settings branch; if they do, find out what asked for this push."
       )
     case 'outside-namespace':
       return `${refusing}: ${OUTSIDE_NAMESPACE_WHY}`
@@ -236,8 +237,8 @@ export type DefaultBranchReader = () => Promise<string | null>
  * `CMS_BRANCH_PREFIX`, be this deployment's settings branch, or be a `legacyBranches` entry,
  * compared exactly. Sanitized equivalence, right for the protected set where matching more refuses
  * more, would let an allow-list admit more. The protected set wins inside the namespace too.
- * The prefix is fixed in code, so nothing the CMS Lambda can reach widens it, and it contains the
- * settings prefix, so one GitHub ruleset pattern, `canopycms-*`, names every branch written.
+ * The prefix is fixed in code, so nothing the CMS Lambda can reach widens it. It contains the
+ * settings prefix, so a default settings branch is in the namespace too.
  *
  * Settings branches are pushed plainly or not at all: no lease, no deletion, no pull request.
  * One is a name with the reserved prefix or this deployment's settings branch. Only this

@@ -268,10 +268,6 @@ function sameRefs(a: Map<string, string>, b: Map<string, string>): boolean {
 }
 
 /**
- * The default `taskTimeoutMs`. Exported because a split worker's gateway client passes it as its
- * `fetchInactivityMs` and the gateway uses it as its `timeoutMs`, as the in-process gateway does.
- */
-/**
  * The settings branch a worker owns: `settingsBranch` when set, else
  * `canopycms-settings-{deploymentName}` by `resolveDeploymentName`, which reads
  * `CANOPYCMS_DEPLOYMENT_NAME` first. The split gateway resolves its own the same way, from its own
@@ -287,6 +283,10 @@ export function resolveWorkerSettingsBranch(config: {
   )
 }
 
+/**
+ * The default `taskTimeoutMs`. Exported because a split worker's gateway client passes it as its
+ * `fetchInactivityMs` and the gateway uses it as its `timeoutMs`, as the in-process gateway does.
+ */
 export const DEFAULT_TASK_TIMEOUT = 60_000
 const DEFAULT_MAX_RETRIES = 3
 const DEFAULT_LOCK_STALE_MS = 60_000

@@ -1952,10 +1952,9 @@ export class CanopyCmsService extends Construct {
       envEntries.push([WORKER_CAPACITY_ENV, 'spot', 'gateway'])
     }
     if (settingsBranch !== undefined) {
-      // Only when explicitly set - an absent prop must keep today's behavior
-      // (the worker falls through to the computed `canopycms-settings-<name>`),
-      // so this must never stamp an empty string either way. Both read it: the gateway pushes
-      // no settings branch but the one the worker resolves.
+      // Only when explicitly set: unset, the worker and the gateway both compute
+      // `canopycms-settings-<name>`, and an empty value would name no branch. Both read it: the
+      // gateway pushes no settings branch but the one the worker resolves.
       envEntries.push(['CANOPYCMS_SETTINGS_BRANCH', settingsBranch, 'both'])
     }
     if (protectedBranches.length > 0) {

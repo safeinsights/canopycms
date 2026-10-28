@@ -12,11 +12,12 @@ row: Gateway writes only canopycms-* branches, plus a legacy list
 -->
 
 **What changed.** The GitHub gateway now pushes, force-pushes, deletes and opens pull requests only
-for branches starting `canopycms-`, this deployment's own settings branch, and the exact names in a
-new legacy list. It no longer pushes another deployment's `canopycms-settings-*` branch. Before it
-updates, closes or drafts a pull request by number, it reads the pull request from GitHub and
-refuses unless the head is one of those branches, in this repository. A compromised CMS Lambda can
-no longer drive the gateway at a developer's branch, a deploy branch or someone else's pull request.
+for branches starting `canopycms-` and the exact names in a new legacy list. Of the settings
+branches it pushes only this deployment's own, as before with no lease, deletion or pull request.
+Before it updates, closes or drafts a pull request by number, it reads the pull request from GitHub
+and refuses unless the head is such a branch, in this repository. A compromised CMS Lambda can no
+longer drive the gateway at a developer's branch, a deploy branch, another deployment's settings,
+or a pull request from outside the namespace.
 
 **To adopt.** Deploy the stack template first: the gateway now reads `CANOPYCMS_DEPLOYMENT_NAME`
 and `CANOPYCMS_SETTINGS_BRANCH`, which the template now writes to `gateway.env` too (a hand install
