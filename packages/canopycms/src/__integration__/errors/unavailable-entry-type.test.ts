@@ -12,7 +12,7 @@ import { createApiClient } from '../test-utils/api-client'
 import type { ApiResponse } from '../../api/types'
 import type { EntryTypeConfig, FieldConfig, RootCollectionConfig } from '../../config'
 
-const BRANCH = 'feature-unavailable'
+const BRANCH = 'canopycms-feature-unavailable'
 const nameFields: FieldConfig[] = [{ name: 'name', type: 'string' }]
 const entrySchemaRegistry = { nameSchema: nameFields }
 

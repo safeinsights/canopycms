@@ -57,6 +57,7 @@ export {
 export {
   sanitizeBranchName,
   RESERVED_SETTINGS_BRANCH_PREFIX,
-  RESERVED_ROUTE_BRANCH_NAMES,
+  CMS_BRANCH_PREFIX,
+  cmsBranchName,
   isSettingsBranchName,
 } from './branch-name'

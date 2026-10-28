@@ -11,7 +11,7 @@ import { createMockAuthPlugin, TEST_INTERNAL_GROUPS } from '../test-utils/multi-
 import { createApiClient } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
 
-const BRANCH = 'feature-shared-edit'
+const BRANCH = 'canopycms-feature-shared-edit'
 
 function post(slug: string, body: string) {
   return {

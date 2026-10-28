@@ -28,6 +28,7 @@ import { BranchAccessList } from './components/BranchAccessList'
 // Import directly from helpers to avoid server-only code in authorization barrel
 import { isAdmin, isLockedOutOfBranch, isReviewer } from '../authorization/helpers'
 import { clientOperatingStrategy } from '../operating-mode/client'
+import { CMS_BRANCH_PREFIX, cmsBranchName } from '../paths/branch-name'
 import { DestructiveMenuItem } from './components/DestructiveMenuItem'
 import { ReasonedMenuItem } from './components/ReasonedMenuItem'
 import { RelativeTime } from './components/RelativeTime'
@@ -673,7 +674,12 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
               <Stack gap="sm">
                 <TextInput
                   label="Branch name"
-                  placeholder="feature/my-branch"
+                  placeholder="spring-update"
+                  description={
+                    newBranchName.trim()
+                      ? `Created as ${cmsBranchName(newBranchName.trim())}`
+                      : `Branch names start with ${CMS_BRANCH_PREFIX}`
+                  }
                   value={newBranchName}
                   onChange={(e) => setNewBranchName(e.target.value)}
                   required

@@ -69,7 +69,7 @@ describe('Input Validation', () => {
     it('returns 404 if branch param missing', async () => {
       // First create a branch
       await editorClient.post('/api/canopycms/branches', {
-        branch: 'test-branch',
+        branch: 'canopycms-test-branch',
         title: 'Test Branch',
       })
 
@@ -97,12 +97,15 @@ describe('Input Validation', () => {
 
     it('returns 400 if text is missing', async () => {
       // Try to add comment without text field
-      const response = await editorClient.post('/api/canopycms/feature-comments/comments', {
-        type: 'field',
-        entryPath: 'posts/test',
-        canopyPath: 'title',
-        // Missing: text
-      } as any)
+      const response = await editorClient.post(
+        '/api/canopycms/canopycms-feature-comments/comments',
+        {
+          type: 'field',
+          entryPath: 'posts/test',
+          canopyPath: 'title',
+          // Missing: text
+        } as any,
+      )
 
       expect(response.status).toBe(400)
       expect(response.ok).toBe(false)
@@ -113,12 +116,15 @@ describe('Input Validation', () => {
 
     it('returns 400 if type is missing', async () => {
       // Try to add comment without type field
-      const response = await editorClient.post('/api/canopycms/feature-comments/comments', {
-        text: 'This is a test comment',
-        entryPath: 'posts/test',
-        canopyPath: 'title',
-        // Missing: type
-      } as any)
+      const response = await editorClient.post(
+        '/api/canopycms/canopycms-feature-comments/comments',
+        {
+          text: 'This is a test comment',
+          entryPath: 'posts/test',
+          canopyPath: 'title',
+          // Missing: type
+        } as any,
+      )
 
       expect(response.status).toBe(400)
       expect(response.ok).toBe(false)
@@ -137,11 +143,14 @@ describe('Input Validation', () => {
       })
 
       // Try to add comment with invalid type
-      const response = await editorClient.post('/api/canopycms/feature-enum-test/comments', {
-        text: 'Test comment',
-        type: 'invalid-type',
-        entryPath: 'posts/test',
-      } as any)
+      const response = await editorClient.post(
+        '/api/canopycms/canopycms-feature-enum-test/comments',
+        {
+          text: 'Test comment',
+          type: 'invalid-type',
+          entryPath: 'posts/test',
+        } as any,
+      )
 
       expect(response.status).toBe(400)
       expect(response.ok).toBe(false)
@@ -159,7 +168,7 @@ describe('Input Validation', () => {
       // Try to resolve with empty threadId
       // Note: Router returns 404 when path params are missing (not matched route)
       const response = await editorClient.post(
-        '/api/canopycms/feature-resolve-test/comments//resolve',
+        '/api/canopycms/canopycms-feature-resolve-test/comments//resolve',
         {},
       )
 
@@ -178,7 +187,7 @@ describe('Input Validation', () => {
   // (static/index.ts's assertRoutableSlugs) later fails the whole build over.
   // -------------------------------------------------------------------------
   describe('Content Slug Routability', () => {
-    const BRANCH = 'slug-guard'
+    const BRANCH = 'canopycms-slug-guard'
 
     const postBody = (title: string) => ({
       format: 'mdx' as const,

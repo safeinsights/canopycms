@@ -12,7 +12,7 @@ import { createApiClient } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
 import type { ContentReadResponse, ContentWriteResponse } from '../../api/content'
 
-const BRANCH = 'feature-occ'
+const BRANCH = 'canopycms-feature-occ'
 const POST_URL = `/api/canopycms/${BRANCH}/content/posts/shared`
 
 const postBody = (author: string, body: string) => ({

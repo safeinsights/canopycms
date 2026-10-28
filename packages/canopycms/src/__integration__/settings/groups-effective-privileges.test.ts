@@ -105,7 +105,7 @@ describe('Internal groups: effective privileges (end-to-end)', () => {
 
   it('a group created via the API is matched by a branch ACL targeting it', async () => {
     const createRes = await adminClient.post('/api/canopycms/branches', {
-      branch: 'acl-test-branch',
+      branch: 'canopycms-acl-test-branch',
       title: 'ACL Test Branch',
     })
     expect(createRes.status).toBe(200)
@@ -125,7 +125,7 @@ describe('Internal groups: effective privileges (end-to-end)', () => {
     expect(groupId).toBeTruthy()
 
     // Restrict the branch to that group.
-    const accessRes = await adminClient.patch('/api/canopycms/acl-test-branch/access', {
+    const accessRes = await adminClient.patch('/api/canopycms/canopycms-acl-test-branch/access', {
       allowedGroups: [groupId],
     })
     expect(accessRes.status).toBe(200)
@@ -135,7 +135,7 @@ describe('Internal groups: effective privileges (end-to-end)', () => {
       config: workspace.config,
       authPlugin: createPersonaAuthPlugin('test-specialist'),
     })
-    const memberStatus = await memberClient.get('/api/canopycms/acl-test-branch/status')
+    const memberStatus = await memberClient.get('/api/canopycms/canopycms-acl-test-branch/status')
     expect(memberStatus.status).toBe(200)
 
     // ...but a non-member is denied.
@@ -143,7 +143,9 @@ describe('Internal groups: effective privileges (end-to-end)', () => {
       config: workspace.config,
       authPlugin: createPersonaAuthPlugin('test-outsider'),
     })
-    const outsiderStatus = await outsiderClient.get('/api/canopycms/acl-test-branch/status')
+    const outsiderStatus = await outsiderClient.get(
+      '/api/canopycms/canopycms-acl-test-branch/status',
+    )
     expect(outsiderStatus.status).toBe(403)
   })
 

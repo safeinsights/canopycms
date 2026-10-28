@@ -813,6 +813,26 @@ describe('BranchManager', () => {
       )
     })
 
+    it('shows the branch a typed name creates, in the canopycms- namespace', async () => {
+      renderBranchManager({
+        branches: baseBranches,
+        onCreate: vi.fn(async () => true),
+        mode: 'prod',
+      })
+      await userEvent.click(screen.getByRole('button', { name: 'New branch…' }))
+      const input = await screen.findByLabelText(/branch name/i)
+
+      expect(input.getAttribute('aria-describedby')).toBeTruthy()
+      expect(screen.getByText('Branch names start with canopycms-')).toBeTruthy()
+
+      await userEvent.type(input, 'spring/update')
+      expect(screen.getByText('Created as canopycms-spring-update')).toBeTruthy()
+
+      await userEvent.clear(input)
+      await userEvent.type(input, 'canopycms-already')
+      expect(screen.getByText('Created as canopycms-already')).toBeTruthy()
+    })
+
     it('keeps the form open with the entered values when the create resolves false', async () => {
       const pending = deferred()
       const onCreate = vi.fn(() => pending.promise)

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createCanopyRouter, matchRoute, type RouteDefinition } from './router'
-import { RESERVED_ROUTE_BRANCH_NAMES } from '../paths'
+import { CMS_BRANCH_PREFIX } from '../paths'
 import type { CanopyBinaryResponse } from './types'
 
 /** Build a minimal RouteDefinition for synthetic precedence tests. */
@@ -321,21 +321,19 @@ describe('matchRoute - CanopyHandler may return a CanopyBinaryResponse (M2 plumb
     expect(result).toEqual(binaryResult)
   })
 
-  // Keeps paths/branch-name.ts's RESERVED_ROUTE_BRANCH_NAMES honest. That
-  // constant cannot be computed from the router at runtime -- api/validators.ts
-  // is imported BY the route modules, so importing the router from the
-  // validation side would be a cycle -- so it is maintained by hand and pinned
-  // here instead. Adding a new static top-level namespace fails this test until
-  // the constant is updated, which is exactly the reminder we want.
-  describe('reserved branch names', () => {
-    it('matches the static top-level namespaces of the live route table', () => {
-      const staticFirstSegments = new Set(
-        createCanopyRouter()
-          .routes.map((route) => route.pattern[0])
-          .filter((segment) => segment && !segment.startsWith(':') && !segment.startsWith('...')),
-      )
+  // The router ranks a literal segment above `:branch`, so a branch named like a static top-level
+  // namespace would have its own routes shadowed. Editors' branches start with CMS_BRANCH_PREFIX
+  // (api/branch.ts), so no such namespace may.
+  describe('branch names', () => {
+    it('has no static top-level namespace in the namespace editors create branches in', () => {
+      const staticFirstSegments = createCanopyRouter()
+        .routes.map((route) => route.pattern[0])
+        .filter((segment) => segment && !segment.startsWith(':') && !segment.startsWith('...'))
 
-      expect([...staticFirstSegments].sort()).toEqual([...RESERVED_ROUTE_BRANCH_NAMES].sort())
+      expect(staticFirstSegments.length).toBeGreaterThan(0)
+      expect(
+        staticFirstSegments.filter((segment) => segment.startsWith(CMS_BRANCH_PREFIX)),
+      ).toEqual([])
     })
   })
 })
