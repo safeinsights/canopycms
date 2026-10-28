@@ -1,9 +1,9 @@
 /**
  * A git bundle's header, read in node before git sees the bundle: the gateway refuses a pushed
- * bundle on it (worker/github-mirror.ts), and the worker checks the bundle it is about to send
- * (worker/github-transfer.ts). git's own parser reads everything after a head's first space as the
- * refname and accepts a tab, so nothing here is lenient: a header either matches this grammar
- * exactly or is refused.
+ * bundle on it (worker/github-mirror.ts), and the worker checks the bundle it is about to send and
+ * reads the prerequisites of one it takes in (worker/github-transfer.ts). git's own parser reads
+ * everything after a head's first space as the refname and accepts a tab, so nothing here is
+ * lenient: a header either matches this grammar exactly or is refused.
  *
  * ```
  * "# v2 git bundle" LF  |  "# v3 git bundle" LF ("@object-format=sha1" LF)?    at most once
@@ -25,7 +25,7 @@
 
 /**
  * The header must end, with its blank line, within this many bytes, prerequisites' comments not
- * counted.
+ * counted, unless the reader is given another bound.
  * @internal Exported for tests.
  */
 export const BUNDLE_HEADER_MAX_BYTES = 64 * 1024
@@ -38,7 +38,8 @@ export const PREREQUISITE_COMMENT_MAX_BYTES = 1024
 
 /**
  * The header must end within this many bytes counting comments too: the bytes read, when
- * refusing; the bytes kept and sent, when shortening. The most a reader holds of a header.
+ * refusing; the bytes kept and sent, when shortening. The most a refusing or shortening reader
+ * holds of a header.
  * @internal Exported for tests.
  */
 export const BUNDLE_HEADER_TOTAL_MAX_BYTES = 256 * 1024
@@ -83,10 +84,12 @@ export interface ReadBundleHeader {
 
 /**
  * Reads a header from a bundle's bytes as they arrive, holding at most
- * {@link BUNDLE_HEADER_TOTAL_MAX_BYTES} of it, however long a comment is. A comment over
+ * {@link BUNDLE_HEADER_TOTAL_MAX_BYTES} of it (`maxBytes`, skipping), however long a comment is.
+ * A comment over
  * {@link PREREQUISITE_COMMENT_MAX_BYTES} is refused (`'refuse'`, the gateway, which keeps no copy
  * of the header) or cut to it (`'shorten'`, the worker, which sends {@link ReadBundleHeader.bytes}
- * in its place).
+ * in its place). `'skip'` keeps no comment byte at all and bounds only `maxBytes`, for a bundle
+ * only read, never sent on.
  */
 export class BundleHeaderReader {
   private section: Section = 'signature'
@@ -107,7 +110,10 @@ export class BundleHeaderReader {
   private comment: { bytes: number; kept: Buffer[] } | null = null
   private done = false
 
-  constructor(private readonly comments: 'refuse' | 'shorten') {}
+  constructor(
+    private readonly comments: 'refuse' | 'shorten' | 'skip',
+    private readonly maxBytes = BUNDLE_HEADER_MAX_BYTES,
+  ) {}
 
   /**
    * Take the next bytes: null while the header may still be completed by more, the header once its
@@ -199,9 +205,10 @@ export class BundleHeaderReader {
   }
 
   private checkBound(): void {
-    if (this.counted >= BUNDLE_HEADER_MAX_BYTES) {
-      throw new BundleHeaderError(`its header does not end within ${BUNDLE_HEADER_MAX_BYTES} bytes`)
+    if (this.counted >= this.maxBytes) {
+      throw new BundleHeaderError(`its header does not end within ${this.maxBytes} bytes`)
     }
+    if (this.comments === 'skip') return
     // Refusing, every comment byte is read; shortening, only the kept ones are held and sent, so
     // a single subject of any length shortens rather than counts.
     const total = this.comments === 'refuse' ? this.consumed : this.counted + this.keptBytes
