@@ -21,6 +21,7 @@ import { resolveEditorUrl } from '../editor-url'
 
 // Re-export for client generation
 export type { BranchMergeResponse } from './branch-merge'
+export type { RequestChangesBody } from './branch-review'
 
 /**
  * A submit's answer: the branch, plus the entries the submit stamped (stamp-on-publish.ts) when

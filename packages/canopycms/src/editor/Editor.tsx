@@ -51,6 +51,7 @@ import { PermissionManager } from './PermissionManager'
 import { SystemHealthPanel } from './admin/SystemHealthPanel'
 // Import directly from helpers to avoid server-only code in authorization barrel
 import { isAdmin, isPrivileged, isReviewer } from '../authorization/helpers'
+import { reviewRoleOf } from '../authorization/review-role'
 import { fieldBreadcrumb } from './field-breadcrumb'
 import type { CommentThread } from '../comment-store'
 import {
@@ -398,6 +399,9 @@ const EditorContent: React.FC<EditorProps> = ({
     labels: [],
   }))
   const applySubmitStampsRef = useRef<(stamped: readonly StampedEntry[]) => void>(() => {})
+  // Reloads the open branch's comments after a request for changes, whose note is a comment; the
+  // comment system is built further down.
+  const reloadCommentsRef = useRef<(branch: string) => void>(() => {})
   const {
     branchName: branchNameState,
     setBranchName,
@@ -408,6 +412,7 @@ const EditorContent: React.FC<EditorProps> = ({
     addCreatedBranch,
     handleSubmit,
     handleWithdraw,
+    handleApprove,
     handleRequestChanges,
     handleDelete,
     handleReloadBranchData,
@@ -420,6 +425,7 @@ const EditorContent: React.FC<EditorProps> = ({
     // The draft manager comes later, as it depends on this hook's branch.
     getUnsaved: () => resolveUnsavedRef.current(),
     onStamped: (stamped) => applySubmitStampsRef.current(stamped),
+    onChangesRequested: (branch) => reloadCommentsRef.current(branch),
   })
 
   // Content mutations (add/delete/rename/reorder entries) are locked whenever the
@@ -439,6 +445,20 @@ const EditorContent: React.FC<EditorProps> = ({
   // No lock reason is true yet while the list is unanswered; once it has failed, or answered
   // without this branch, the lock says which.
   const branchPending = !currentBranch && !branchesLoaded && !branchesLoadFailed
+  // The same inputs EditorHeader gives its own check, for the lock copy that names the way forward.
+  const branchReviewRole = reviewRoleOf(
+    {
+      status: currentBranch?.status,
+      createdBy: currentBranch?.createdBy,
+      users: currentBranch?.access.allowedUsers,
+      groups: currentBranch?.access.allowedGroups,
+      isProtected: currentBranch?.isProtected ?? true,
+      pullRequestState: currentBranch?.pullRequestState,
+    },
+    userContext,
+  )
+  const branchReviewing = branchReviewRole === 'reviewing'
+  const branchPullRequestClosed = branchReviewRole === 'reviewing-closed'
   const branchMissing = !currentBranch && branchesLoaded
   // The bar's lock-state row, with the inputs EditorHeader gets, for the states that must agree.
   const branchBarState = branchBarStatus({
@@ -690,6 +710,7 @@ const EditorContent: React.FC<EditorProps> = ({
     handleJumpToField,
     handleJumpToEntry,
     handleJumpToBranch,
+    loadComments,
   } = useCommentSystem({
     branchName: branchNameState,
     selectedPath,
@@ -702,6 +723,11 @@ const EditorContent: React.FC<EditorProps> = ({
     onCommentsChange: setCommentsForBranchSummaries,
     onRevealForm: revealForm,
   })
+
+  reloadCommentsRef.current = (branch) => {
+    if (sanitizeBranchName(branch) === sanitizeBranchName(branchNameState))
+      void loadComments(branch)
+  }
 
   const {
     groupsData,
@@ -2074,6 +2100,8 @@ const EditorContent: React.FC<EditorProps> = ({
                   branchReadOnly: currentBranch?.readOnly,
                   branchWriteBlocked: branchContentLocked,
                   branchMissing,
+                  reviewing: branchReviewing,
+                  pullRequestClosed: branchPullRequestClosed,
                 })
           }
           dirtyPaths={dirtyPaths}
@@ -2118,6 +2146,7 @@ const EditorContent: React.FC<EditorProps> = ({
               draftStorageFailed={draftStorageFailed}
               userContext={userContext}
               branchCreatedBy={currentBranch?.createdBy}
+              branchPullRequestState={currentBranch?.pullRequestState}
               branchAccess={currentBranch?.access}
               // Fail-closed for the same reason branchContentLocked above is:
               // isProtected/writeBlocked gate real actions in EditorHeader and EntryHeader
@@ -2156,6 +2185,16 @@ const EditorContent: React.FC<EditorProps> = ({
               onWithdraw={(returnFocusTo) => {
                 if (branchNameState && !isSaveAllRunning()) {
                   handleWithdraw(branchNameState, returnFocusTo).catch(console.error)
+                }
+              }}
+              onApprove={(returnFocusTo) => {
+                if (branchNameState && !isSaveAllRunning()) {
+                  handleApprove(branchNameState, returnFocusTo).catch(console.error)
+                }
+              }}
+              onRequestChanges={(returnFocusTo) => {
+                if (branchNameState && !isSaveAllRunning()) {
+                  handleRequestChanges(branchNameState, returnFocusTo).catch(console.error)
                 }
               }}
             />
@@ -2223,6 +2262,8 @@ const EditorContent: React.FC<EditorProps> = ({
                 branchLoading={branchLoading}
                 branchPending={branchPending}
                 branchMissing={branchMissing}
+                branchReviewing={branchReviewing}
+                branchPullRequestClosed={branchPullRequestClosed}
                 onCollectionOpen={(path) => revealInContentPanel({ kind: 'collection', path })}
                 onEntryReveal={() =>
                   currentEntry && revealInContentPanel({ kind: 'entry', path: currentEntry.path })
@@ -2438,7 +2479,12 @@ const EditorContent: React.FC<EditorProps> = ({
                     if (name === branchNameState && isSaveAllRunning()) return
                     handleWithdraw(name).catch((err) => console.error(err))
                   }}
+                  onApprove={(name) => {
+                    if (name === branchNameState && isSaveAllRunning()) return
+                    handleApprove(name).catch((err) => console.error(err))
+                  }}
                   onRequestChanges={(name) => {
+                    if (name === branchNameState && isSaveAllRunning()) return
                     handleRequestChanges(name).catch((err) => console.error(err))
                   }}
                   onDelete={(name) => {

@@ -85,7 +85,11 @@ export interface BranchListItem extends BranchMetadata {
  * list-item shape (server-computed flags included) so the editor can show the
  * result without waiting for a listing that may lag behind it.
  */
-export type BranchListItemResponse = ApiResponse<{ branch: BranchListItem }>
+export type BranchListItemResponse = ApiResponse<{
+  branch: BranchListItem
+  /** Set when the request succeeded but a secondary effect failed; show it to the user. */
+  warning?: string
+}>
 
 /** Response type for listing branches */
 export type BranchListResponse = ApiResponse<{
