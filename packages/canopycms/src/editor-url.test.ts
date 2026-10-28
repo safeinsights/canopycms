@@ -29,18 +29,26 @@ describe('resolveEditorUrl', () => {
     ).toBe('https://cms.example.org/edit')
   })
 
-  it('reads only the first X-Forwarded-Host value and ignores the case of the host', () => {
+  it('reads only the last X-Forwarded-Host value, the nearest proxy’s, ignoring host case', () => {
     expect(
       resolveEditorUrl({
         claimed: 'https://CMS.Example.org/edit',
-        header: headers({ 'x-forwarded-host': 'cms.example.ORG, proxy.internal' }),
+        header: headers({ 'x-forwarded-host': 'evil.example, cms.example.ORG' }),
       }),
     ).toBe('https://cms.example.org/edit')
     expect(
       resolveEditorUrl({
-        claimed,
-        header: headers({ 'x-forwarded-host': 'proxy.internal, cms.example.org' }),
+        claimed: 'https://evil.example/edit',
+        header: headers({ 'x-forwarded-host': 'evil.example, cms.example.org' }),
       }),
+    ).toBeUndefined()
+  })
+
+  it('refuses a URL that grows past 2048 characters once encoded', () => {
+    const wide = `https://cms.example.org/${'界'.repeat(1000)}`
+    expect(wide.length).toBeLessThan(2048)
+    expect(
+      resolveEditorUrl({ claimed: wide, header: headers({ host: 'cms.example.org' }) }),
     ).toBeUndefined()
   })
 

@@ -467,6 +467,24 @@ describe('buildPrSection length', () => {
       'open in editor',
     )
   })
+
+  it('cuts the end of the description next, keeping every listed entry', () => {
+    const paths = Array.from({ length: 100 }, (_, i) => `content/${'d'.repeat(280)}/p${i}.json`)
+    // Neutralizing doubles `-->`, so 10,000 characters of it write 20,000.
+    const section = buildPrSection({ changedPaths: paths, description: '-->'.repeat(3333) })
+    expect(section.length).toBeLessThanOrEqual(45_000)
+    expect(section).toContain(`- \`${paths[99]}\`\n`)
+    expect(section).toMatch(/--&gt;…\n<!-- canopycms:submission:end -->$/)
+  })
+
+  it('lists fewer entries, dropping the description, when the list alone is too long', () => {
+    const paths = Array.from({ length: 100 }, (_, i) => `content/${'\u{1F600}'.repeat(298)}${i}`)
+    const section = buildPrSection({ changedPaths: paths, description: 'Desc' })
+    expect(section.length).toBeLessThanOrEqual(45_000)
+    expect(section).toContain('**Changed entries (100)**')
+    expect(section).toMatch(/- …and \d+ more\n<!-- canopycms:submission:end -->$/)
+    expect(section).not.toContain('Desc')
+  })
 })
 
 describe('mergePrSection', () => {

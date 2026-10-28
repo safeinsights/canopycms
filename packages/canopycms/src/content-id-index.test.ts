@@ -727,8 +727,11 @@ describe('entryLogicalPathOfFile', () => {
     ['content/posts.a1b2c3d4e5f6/post.hello.b2c3d4e5f6a1.md', 'content', 'content/posts/hello'],
     ['content/page.about.c3d4e5f6a1b2.json', 'content', 'content/about'],
     ['content/posts/post.my.page.a1b2c3d4e5f6.json', 'content', 'content/posts/my.page'],
-    ['content/posts/Hello.a1b2c3d4e5f6.md', 'content', 'content/posts/hello'],
+    ['content/posts/post.Hello.a1b2c3d4e5f6.md', 'content', 'content/posts/hello'],
     ['site/content/docs/doc.intro.a1b2c3d4e5f6.mdx', 'site/content/', 'site/content/docs/intro'],
+    // The content root is kept as the schema spells it; only the directories below lose IDs.
+    ['Content/Posts.a1b2c3d4e5f6/post.a.b2c3d4e5f6a1.md', 'Content', 'Content/posts/a'],
+    ['site.v2/post.a.b2c3d4e5f6a1.md', 'site.v2', 'site.v2/a'],
   ])('maps %s under %s to %s', (file, root, expected) => {
     expect(entryLogicalPathOfFile(file, root)).toBe(expected)
   })
@@ -737,6 +740,9 @@ describe('entryLogicalPathOfFile', () => {
     ['public/post.hello.a1b2c3d4e5f6.md', 'content'],
     ['contentx/post.hello.a1b2c3d4e5f6.md', 'content'],
     ['content/posts/logo.png', 'content'],
+    ['content/posts/hero.big.a1b2c3d4e5f6.png', 'content'],
+    ['content/posts/hello.a1b2c3d4e5f6.md', 'content'],
+    ['content/posts/../../x/post.a.a1b2c3d4e5f6.md', 'content'],
     ['content/posts/.collection.json', 'content'],
     ['content/.canopy-meta/x.a1b2c3d4e5f6.json', 'content'],
     ['content/_ids_/a1b2c3d4e5f6', 'content'],
@@ -745,7 +751,7 @@ describe('entryLogicalPathOfFile', () => {
     expect(entryLogicalPathOfFile(file, root)).toBeNull()
   })
 
-  it('agrees with the index built from the same files', async () => {
+  it('agrees with the index built from the same typed entry files', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-entry-path-of-file-'))
     const files = [
       'content/posts.a1b2c3d4e5f6/post.hello.b2c3d4e5f6a1.md',

@@ -586,6 +586,24 @@ describe('services submitBranch', () => {
       expect([...result.entryPaths]).toEqual([[entryFile, 'content/pages/home']])
     })
 
+    it('checks only the paths the PR body lists', async () => {
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'text', 'utf8')
+      const entries = Array.from(
+        { length: 150 },
+        (_, i) => `content/pages/page.p${i}.${generateId()}.md`,
+      )
+      vi.spyOn(GitManager.prototype, 'listChangedPathsSinceBase').mockResolvedValue([
+        'a.txt',
+        ...entries,
+      ])
+      const stat = vi.spyOn(fs, 'stat')
+
+      await services.submitBranch({ context })
+
+      const checked = stat.mock.calls.filter(([p]) => String(p).includes('/content/pages/page.p'))
+      expect(checked).toHaveLength(99)
+    })
+
     it('links no entry the branch deletes', async () => {
       const deleted = `content/pages/page.gone.${generateId()}.md`
       await fs.writeFile(path.join(localPath, 'a.txt'), 'text', 'utf8')

@@ -48,6 +48,7 @@ import {
   describeEditors,
   type EditorLookup,
   type SubmissionEditor,
+  MAX_LISTED_ENTRIES,
 } from './submission-attribution'
 import { getBranchMetadataFileManager, recordBranchEditor } from './branch-metadata'
 import { readBranchMetadataFile } from './branch-metadata-file'
@@ -430,8 +431,9 @@ async function _createCanopyServicesInternal(
   ): Promise<Map<string, string>> => {
     const contentRoot = services.config.contentRoot || 'content'
     const entryPaths = new Map<string, string>()
+    // Only the paths the PR body lists can carry a link.
     await Promise.all(
-      paths.map(async (relativePath) => {
+      [...new Set(paths)].slice(0, MAX_LISTED_ENTRIES).map(async (relativePath) => {
         const entryPath = entryLogicalPathOfFile(relativePath, contentRoot)
         if (!entryPath) return
         // A deleted entry's link would open the editor on some other entry.

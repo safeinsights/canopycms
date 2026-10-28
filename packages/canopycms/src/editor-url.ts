@@ -3,12 +3,12 @@
  * built on it. The editor reads `?branch=` and `&entry=` (an entry's logical path) on load.
  */
 
-/** Longest editor URL accepted from a client. */
-const MAX_CLAIMED_URL_LENGTH = 2048
+/** Longest editor URL accepted, before and after URL encoding. */
+const MAX_URL_LENGTH = 2048
 
 /** The editor page URL with no query or fragment, or undefined if it is not plain http(s). */
 function editorPageUrl(raw: string): string | undefined {
-  if (raw.length > MAX_CLAIMED_URL_LENGTH) return undefined
+  if (raw.length > MAX_URL_LENGTH) return undefined
   let url: URL
   try {
     url = new URL(raw)
@@ -17,17 +17,18 @@ function editorPageUrl(raw: string): string | undefined {
   }
   if (url.protocol !== 'https:' && url.protocol !== 'http:') return undefined
   if (url.username || url.password) return undefined
-  return `${url.origin}${url.pathname}`
+  const page = `${url.origin}${url.pathname}`
+  return page.length > MAX_URL_LENGTH ? undefined : page
 }
 
 /**
- * The host the request was addressed to: the first `x-forwarded-host` value, else `Host`.
- * Behind canopycms-cdk's CloudFront the Lambda's own Host is the Function URL's, and the
- * viewer-request function overwrites `x-forwarded-host` with the viewer's Host, so a viewer
- * cannot choose it there.
+ * The host the request was addressed to: the last `x-forwarded-host` value, else `Host`. A
+ * proxy that appends puts its own value last, after any the client sent. Behind canopycms-cdk's
+ * CloudFront the Lambda's own Host is the Function URL's, and the default viewer-request
+ * function overwrites `x-forwarded-host` with the viewer's Host.
  */
 function requestHost(header: (name: string) => string | null): string | undefined {
-  const forwarded = header('x-forwarded-host')?.split(',')[0]?.trim()
+  const forwarded = header('x-forwarded-host')?.split(',').at(-1)?.trim()
   const host = forwarded || header('host')?.trim()
   return host || undefined
 }
