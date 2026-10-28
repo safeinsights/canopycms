@@ -184,6 +184,7 @@ and [Auth Caching](ARCHITECTURE.md#auth-caching-cachingauthplugin).
 - `path.ts` — path-level permissions: `checkPathAccess`, `resolveDefaultPathAccess`
 - `protected-branch.ts` — `getBranchProtection`, the single source of truth for protected-base-branch policy
 - `helpers.ts` — `isAdmin`, `isReviewer`, `isPrivileged`, and `isLockedOutOfBranch` (the browser-safe branch-lockdown check)
+- `review-role.ts` — `isReviewerOfOthersReview`
 - `types.ts` — `BranchAccessResult`, `ContentAccessResult`, `PermissionPath`
 - `validation.ts` — permission-path validation against traversal
 - `settings-file-store.ts` — `mutateSettingsJsonFile`, the shared cross-host layered-lock mutation helper
@@ -528,7 +529,6 @@ Top-level components and helpers:
 - `branch-status.ts` — status labels and colours
 - `branch-lock.ts` — `branchBarStatus`, the bar's lock-state table; `describeBranchLock`
 - `copy.ts` — fixed action verbs
-- `review-role.ts` — `isReviewerOfOthersReview`
 - `platform.ts` — `modKeyLabel()`, ⌘ or Ctrl
 - `slug.ts` — `slugFromTitle`; `validateEntrySlug`, the one slug validator
 - `utils/env.ts` — `getNotificationDuration`, longer under test

@@ -27,7 +27,7 @@ import type { UnsavedSummary } from './useDraftManager'
 import type { StampedEntry } from '../../stamp-on-publish'
 import { describeUnsaved } from './useBranchActions'
 import { writeEditorUrl } from './editor-history'
-import { REQUEST_CHANGES_NOTE_MAX_LENGTH } from '../review-role'
+import { REQUEST_CHANGES_NOTE_MAX_LENGTH } from '../../authorization/review-role'
 
 const BRANCHES_LOAD_FAILED_TOAST_ID = 'canopy-branches-load-failed'
 const BRANCH_OUTCOME_UNKNOWN_TOAST_ID = 'canopy-branch-outcome-unknown'

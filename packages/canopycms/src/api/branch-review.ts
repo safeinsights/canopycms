@@ -8,7 +8,7 @@ import { defineEndpoint } from './route-builder'
 import { syncConvertToDraft } from './github-sync'
 import { CommentStore } from '../comment-store'
 import { getErrorMessage } from '../utils/error'
-import { REQUEST_CHANGES_NOTE_MAX_LENGTH } from '../editor/review-role'
+import { REQUEST_CHANGES_NOTE_MAX_LENGTH } from '../authorization/review-role'
 
 /** Optional on the wire: a bodiless request means no note. */
 const requestChangesBodySchema = z

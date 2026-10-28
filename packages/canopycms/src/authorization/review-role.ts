@@ -1,4 +1,4 @@
-import { isReviewer } from '../authorization/helpers'
+import { isReviewer } from './helpers'
 
 /** What the review role depends on in a branch, whichever component holds it. */
 export interface ReviewedBranch {

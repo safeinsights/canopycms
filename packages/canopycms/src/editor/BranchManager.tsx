@@ -33,7 +33,7 @@ import { ReasonedMenuItem } from './components/ReasonedMenuItem'
 import { RelativeTime } from './components/RelativeTime'
 import { branchStatusPresentation } from './branch-status'
 import { CLOSED_PULL_REQUEST_REASON, EDITOR_ACTIONS } from './copy'
-import { isReviewerOfOthersReview } from './review-role'
+import { isReviewerOfOthersReview } from '../authorization/review-role'
 import { SYSTEM_USER_ID } from '../system-users'
 
 /** @internal Exported for tests. */
