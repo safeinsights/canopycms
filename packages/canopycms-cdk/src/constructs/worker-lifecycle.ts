@@ -72,6 +72,7 @@ export const WORKER_CONTRACT_BANNER_PREFIX = '// canopy-worker-contract: '
 const WORKER_CONTRACT_REQUIREMENTS = [
   'StateDirectory=canopy-worker',
   `canopy-github.socket and canopy-github.service, and ${GITHUB_GATEWAY_SOCKET_ENV} on the worker unit`,
+  'CANOPYCMS_DEPLOYMENT_NAME, and CANOPYCMS_SETTINGS_BRANCH when set, in gateway.env',
 ] as const
 
 /**

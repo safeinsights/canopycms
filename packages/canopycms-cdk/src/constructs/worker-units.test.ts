@@ -499,7 +499,7 @@ describe('the units', () => {
       `Environment=${WORKER_CONTRACT_ENV}=${SINGLE_PROCESS_UNIT_CONTRACT}`,
     )
     expect(SINGLE_PROCESS_UNIT_CONTRACT).toBe(GATEWAY_SPLIT_CONTRACT - 1)
-    expect(WORKER_CONTRACT_VERSION).toBe(GATEWAY_SPLIT_CONTRACT)
+    expect(WORKER_CONTRACT_VERSION).toBeGreaterThanOrEqual(GATEWAY_SPLIT_CONTRACT)
   })
 
   it('cuts the split worker off from the network, and points it at the gateway', () => {

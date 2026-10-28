@@ -45,7 +45,7 @@ StandardError=append:/var/log/canopy-worker/worker.log
 StateDirectory=canopy-worker
 EnvironmentFile=/opt/canopy-worker/.env
 # What this unit provides; a bundle needing more refuses to start.
-Environment=CANOPYCMS_WORKER_CONTRACT=2
+Environment=CANOPYCMS_WORKER_CONTRACT=3
 # The GitHub gateway, its only way to GitHub, the Clerk API and the
 # instance role.
 Environment=CANOPYCMS_GITHUB_GATEWAY_SOCKET=/run/canopy-github/gateway.sock

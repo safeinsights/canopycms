@@ -418,7 +418,7 @@ describe('runWorker: a failure before worker.start()', () => {
       error: expect.objectContaining({
         message: expect.stringContaining(
           `unit has 1 (contract 2 adds canopy-github.socket and canopy-github.service, and ` +
-            `${GITHUB_GATEWAY_SOCKET_ENV} on the worker unit)`,
+            `${GITHUB_GATEWAY_SOCKET_ENV} on the worker unit; contract 3 adds`,
         ),
       }),
     })
@@ -754,7 +754,7 @@ describe('runWorker: without the gateway socket, the single-process path', () =>
 
   it('refuses a bundle at the split contract, recording the missing socket variable', async () => {
     const h = harness({
-      env: { ...baseEnv(), [WORKER_CONTRACT_ENV]: String(GATEWAY_SPLIT_CONTRACT) },
+      env: { ...baseEnv(), [WORKER_CONTRACT_ENV]: String(WORKER_CONTRACT_VERSION) },
       bundleContract: GATEWAY_SPLIT_CONTRACT,
     })
 
@@ -773,7 +773,7 @@ describe('runWorker: without the gateway socket, the single-process path', () =>
 
   it('runs single-process at contract 1 with the same environment', async () => {
     const h = harness({
-      env: { ...baseEnv(), [WORKER_CONTRACT_ENV]: String(GATEWAY_SPLIT_CONTRACT) },
+      env: { ...baseEnv(), [WORKER_CONTRACT_ENV]: String(WORKER_CONTRACT_VERSION) },
       bundleContract: 1,
     })
 

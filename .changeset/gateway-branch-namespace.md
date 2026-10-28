@@ -20,7 +20,8 @@ no longer drive the gateway at a developer's branch, a deploy branch or someone 
 
 **To adopt.** Deploy the stack template first: the gateway now reads `CANOPYCMS_DEPLOYMENT_NAME`
 and `CANOPYCMS_SETTINGS_BRANCH`, which the template now writes to `gateway.env` too (a hand install
-adds them, as `gateway.env.example` shows). Then list every branch editors are still working on
+adds them, as `gateway.env.example` shows). The bundle needs worker contract 3, so the roll gate
+refuses it on an older template. Then list every branch editors are still working on
 whose name does not start with `canopycms-` in `CANOPYCMS_LEGACY_BRANCHES` on the gateway, exact
 names separated by commas. Until a branch is listed, its publishes, pull request updates and
 deletion fail permanently, naming the list.
