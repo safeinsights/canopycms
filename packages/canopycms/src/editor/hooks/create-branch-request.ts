@@ -1,7 +1,7 @@
 import type { BranchListItem, CreateBranchBody } from '../../api/branch'
 import { isCreatorsRecentBranch } from '../../api/branch-create-window'
 import { isApiTimeoutError, isNonApiResponse, type CanopyApiClient } from '../../api/client'
-import { sanitizeBranchName } from '../../paths/branch-name'
+import { cmsBranchName, sanitizeBranchName } from '../../paths/branch-name'
 
 /** @internal Exported for tests. Past the 60 s a Lambda behind CloudFront gets, so its 504 lands first. */
 export const CREATE_BRANCH_DEADLINE_MS = 90_000
@@ -62,7 +62,7 @@ async function findListedBranch(
   apiClient: Pick<CanopyApiClient, 'branches'>,
   requested: string,
 ): Promise<BranchListItem | undefined> {
-  const name = sanitizeBranchName(requested)
+  const name = cmsBranchName(requested)
   try {
     const listing = await apiClient.branches.list()
     if (!listing.ok) return undefined

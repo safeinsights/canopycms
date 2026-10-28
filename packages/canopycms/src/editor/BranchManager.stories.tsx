@@ -250,3 +250,29 @@ export const ReviewerOnSubmittedBranch: Story = {
     user: { userId: 'rita', groups: [RESERVED_GROUPS.REVIEWERS] },
   },
 }
+
+/** Type `text` into the branch-name field as a user would, so React sees the change. */
+async function typeBranchName(text: string): Promise<void> {
+  const input = document.querySelector<HTMLInputElement>('[data-testid="branch-name-input"]')
+  if (!input) return
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, text)
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+}
+
+/** The New branch form, empty: the field says the canopycms- prefix is added. */
+export const NewBranchForm: Story = {
+  args: { ...Default.args, startCreating: true },
+}
+
+/** A long name: the preview wraps below the field, which stays where it is. */
+export const NewBranchFormLongName: Story = {
+  args: NewBranchForm.args,
+  play: () => typeBranchName('Spring homepage refresh for the 2027 launch'),
+}
+
+/** A name that would be a settings branch: the field says why, and Create branch is off. */
+export const NewBranchFormRefusedName: Story = {
+  args: NewBranchForm.args,
+  play: () => typeBranchName('settings-prod'),
+}

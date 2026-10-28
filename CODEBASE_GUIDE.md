@@ -773,15 +773,15 @@ prefer the branch's recorded `context.branch.baseBranch` over the config value. 
 - `validation.ts` — security validation: `parseLogicalPath`, `parsePhysicalPath`, `parseBranchName`, `parseContentId`, `parseSlug`
 - `resolve.ts` — `resolveLogicalPath`
 - `branch.ts` — branch workspace path resolution; imports `node:fs` and the mode strategies, so server-only
-- `branch-name.ts` — the dependency-free home of `sanitizeBranchName`, `RESERVED_SETTINGS_BRANCH_PREFIX`, `isSettingsBranchName` and `RESERVED_ROUTE_BRANCH_NAMES`
+- `branch-name.ts` — the dependency-free home of `sanitizeBranchName`, `RESERVED_SETTINGS_BRANCH_PREFIX`, `isSettingsBranchName`, `CMS_BRANCH_PREFIX` and `cmsBranchName`
 - `index.ts` — the barrel, which re-exports `branch.ts` and so is not client-safe
 - `test-utils.ts` — test-only casts `unsafeAsBranchName` and `unsafeAsSlug`, not exported from the barrel
 
 **Client-bundle boundary**: import `sanitizeBranchName` from `branch-name.ts`, never the barrel or
 `branch.ts`; `pnpm lint:bundle` enforces it — see
-[DEVELOPING.md](DEVELOPING.md#client-bundle-boundary-check). Which branch names are reserved, and
-why the list is hand-maintained rather than derived, is in
-[ARCHITECTURE.md](ARCHITECTURE.md#reserved-branch-names).
+[DEVELOPING.md](DEVELOPING.md#client-bundle-boundary-check). How editors' branch names form,
+and what keeps them clear of routes and settings branches, is in
+[ARCHITECTURE.md](ARCHITECTURE.md#branch-names).
 
 The branded types: `LogicalPath` (content-relative, no embedded IDs, used for every collection
 path), `PhysicalPath` (filesystem paths that may carry embedded IDs), `BranchName`,

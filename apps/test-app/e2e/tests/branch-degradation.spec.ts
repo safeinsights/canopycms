@@ -89,7 +89,7 @@ test.describe('Branch Degradation', () => {
     // deterministic in both environments rather than accidentally
     // corrupting -- and then asserting against -- the one branch every
     // other spec's fixtures depend on.
-    const healthyBranchName = `b10-healthy-${Date.now()}`
+    const healthyBranchName = `canopycms-b10-healthy-${Date.now()}`
     const createRes = await createBranchViaAPI(BASE_URL, healthyBranchName, 'admin')
     expect(createRes.ok).toBe(true)
 

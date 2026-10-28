@@ -28,6 +28,8 @@ import { BranchAccessList } from './components/BranchAccessList'
 // Import directly from helpers to avoid server-only code in authorization barrel
 import { isAdmin, isLockedOutOfBranch, isReviewer } from '../authorization/helpers'
 import { clientOperatingStrategy } from '../operating-mode/client'
+import { CMS_BRANCH_PREFIX } from '../paths/branch-name'
+import { parseCreatedBranchName } from '../paths/validation'
 import { DestructiveMenuItem } from './components/DestructiveMenuItem'
 import { ReasonedMenuItem } from './components/ReasonedMenuItem'
 import { RelativeTime } from './components/RelativeTime'
@@ -603,14 +605,18 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   // Read synchronously: state would not yet show a first click to a second one in the same tick.
   const creatingRef = useRef(false)
 
+  // The server's own rules, so the field says what will be created, or why nothing can be.
+  const typedBranchName = newBranchName.trim()
+  const createdBranchName = typedBranchName ? parseCreatedBranchName(typedBranchName) : null
+
   const handleCreate = async () => {
-    if (creatingRef.current || !newBranchName.trim()) return
+    if (creatingRef.current || !createdBranchName?.ok) return
     creatingRef.current = true
     try {
       if (onBeforeCreate && !(await onBeforeCreate())) return
       setCreating(true)
       const created = await onCreate?.({
-        name: newBranchName.trim(),
+        name: typedBranchName,
         title: newBranchTitle.trim() || undefined,
         description: newBranchDescription.trim() || undefined,
       })
@@ -673,7 +679,17 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
               <Stack gap="sm">
                 <TextInput
                   label="Branch name"
-                  placeholder="feature/my-branch"
+                  placeholder="spring-update"
+                  // Below the input, so a preview that wraps never moves the field being typed in.
+                  inputWrapperOrder={['label', 'input', 'description', 'error']}
+                  description={
+                    createdBranchName === null
+                      ? `CanopyCMS adds “${CMS_BRANCH_PREFIX}” to the start of the name.`
+                      : createdBranchName.ok
+                        ? `Will be named ${createdBranchName.name}`
+                        : undefined
+                  }
+                  error={createdBranchName?.ok === false ? createdBranchName.error : undefined}
                   value={newBranchName}
                   onChange={(e) => setNewBranchName(e.target.value)}
                   required
@@ -701,7 +717,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                 <Button
                   size="sm"
                   onClick={handleCreate}
-                  disabled={!newBranchName.trim()}
+                  disabled={!createdBranchName?.ok}
                   loading={creating}
                   fullWidth
                   data-testid="create-branch-submit"

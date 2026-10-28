@@ -3,9 +3,9 @@ import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from './timeouts'
 // Isomorphic/dependency-free module (see its own doc comment) -- safe to
 // import directly in test code, same convention test-workspace.ts already
 // uses for other package internals (e.g. resource-generation.ts).
-import { sanitizeBranchName } from '../../../../packages/canopycms/src/paths/branch-name'
+import { cmsBranchName } from '../../../../packages/canopycms/src/paths/branch-name'
 
-export { sanitizeBranchName }
+export { cmsBranchName }
 
 /**
  * A branch list entry as returned by GET /api/canopycms/branches.

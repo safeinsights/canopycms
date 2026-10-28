@@ -49,17 +49,17 @@ describe('Permission Denied Errors', () => {
   it('returns 403 when editor tries to access restricted branch', async () => {
     // Admin creates a restricted branch
     await adminClient.post('/api/canopycms/branches', {
-      branch: 'admin-only',
+      branch: 'canopycms-admin-only',
       title: 'Admin Only Branch',
     })
 
-    await adminClient.patch('/api/canopycms/admin-only/access', {
+    await adminClient.patch('/api/canopycms/canopycms-admin-only/access', {
       allowedUsers: ['test-admin'],
       allowedGroups: [],
     })
 
     // Editor tries to access
-    const response = await editorClient.get('/api/canopycms/admin-only/status')
+    const response = await editorClient.get('/api/canopycms/canopycms-admin-only/status')
 
     expect(response.status).toBe(403)
     expect(response.ok).toBe(false)
@@ -70,12 +70,12 @@ describe('Permission Denied Errors', () => {
   it('returns 403 when editor tries to access restricted content path', async () => {
     // Admin creates branch with path restrictions
     await adminClient.post('/api/canopycms/branches', {
-      branch: 'restricted-paths',
+      branch: 'canopycms-restricted-paths',
       title: 'Restricted Paths',
     })
 
     // Write content as admin
-    await adminClient.put('/api/canopycms/restricted-paths/content/posts/admin-post', {
+    await adminClient.put('/api/canopycms/canopycms-restricted-paths/content/posts/admin-post', {
       format: 'mdx',
       data: {
         title: 'Admin Post',
@@ -98,14 +98,17 @@ describe('Permission Denied Errors', () => {
       title: 'Approval Test',
     })
 
-    await editorClient.post('/api/canopycms/feature-approval-test/submit', {
+    await editorClient.post('/api/canopycms/canopycms-feature-approval-test/submit', {
       message: 'Ready for review',
     })
 
     // Editor (not a reviewer) tries to approve
-    const response = await editorClient.post('/api/canopycms/feature-approval-test/approve', {
-      message: 'Trying to approve',
-    })
+    const response = await editorClient.post(
+      '/api/canopycms/canopycms-feature-approval-test/approve',
+      {
+        message: 'Trying to approve',
+      },
+    )
 
     expect(response.status).toBe(403)
     expect(response.ok).toBe(false)
@@ -119,19 +122,25 @@ describe('Permission Denied Errors', () => {
     })
 
     // Editor tries to delete (not their branch, not admin) - should fail
-    const editorDeleteResponse = await editorClient.delete('/api/canopycms/feature-delete-test')
+    const editorDeleteResponse = await editorClient.delete(
+      '/api/canopycms/canopycms-feature-delete-test',
+    )
 
     expect(editorDeleteResponse.status).toBe(403)
     expect(editorDeleteResponse.ok).toBe(false)
 
     // Reviewer tries to delete (not their branch, not admin) - should also fail
-    const reviewerDeleteResponse = await reviewerClient.delete('/api/canopycms/feature-delete-test')
+    const reviewerDeleteResponse = await reviewerClient.delete(
+      '/api/canopycms/canopycms-feature-delete-test',
+    )
 
     expect(reviewerDeleteResponse.status).toBe(403)
     expect(reviewerDeleteResponse.ok).toBe(false)
 
     // Admin can delete (they are the creator and also admin)
-    const adminDeleteResponse = await adminClient.delete('/api/canopycms/feature-delete-test')
+    const adminDeleteResponse = await adminClient.delete(
+      '/api/canopycms/canopycms-feature-delete-test',
+    )
 
     expect(adminDeleteResponse.status).toBe(200)
     expect(adminDeleteResponse.ok).toBe(true)
@@ -145,10 +154,13 @@ describe('Permission Denied Errors', () => {
     })
 
     // Editor tries to modify access control (not their branch, not admin) - should fail
-    const response = await editorClient.patch('/api/canopycms/feature-access-test/access', {
-      allowedUsers: ['test-editor'],
-      allowedGroups: [],
-    })
+    const response = await editorClient.patch(
+      '/api/canopycms/canopycms-feature-access-test/access',
+      {
+        allowedUsers: ['test-editor'],
+        allowedGroups: [],
+      },
+    )
 
     expect(response.status).toBe(403)
     expect(response.ok).toBe(false)
@@ -157,17 +169,17 @@ describe('Permission Denied Errors', () => {
   it('returns proper error message for permission denied', async () => {
     // Admin creates restricted branch
     await adminClient.post('/api/canopycms/branches', {
-      branch: 'restricted',
+      branch: 'canopycms-restricted',
       title: 'Restricted',
     })
 
-    await adminClient.patch('/api/canopycms/restricted/access', {
+    await adminClient.patch('/api/canopycms/canopycms-restricted/access', {
       allowedUsers: ['test-admin'],
       allowedGroups: [],
     })
 
     // Editor tries to access
-    const response = await editorClient.get('/api/canopycms/restricted/status')
+    const response = await editorClient.get('/api/canopycms/canopycms-restricted/status')
 
     expect(response.status).toBe(403)
     const error = await response.json<ApiResponse>()
@@ -184,36 +196,42 @@ describe('Permission Denied Errors', () => {
       title: 'Reviewer Test',
     })
 
-    await editorClient.put('/api/canopycms/feature-reviewer-test/content/posts/test-post', {
-      format: 'mdx',
-      data: {
-        title: 'Test Post',
-        author: 'Editor',
-        date: '2024-01-01',
-        tags: ['test'],
+    await editorClient.put(
+      '/api/canopycms/canopycms-feature-reviewer-test/content/posts/test-post',
+      {
+        format: 'mdx',
+        data: {
+          title: 'Test Post',
+          author: 'Editor',
+          date: '2024-01-01',
+          tags: ['test'],
+        },
+        body: 'Original content',
       },
-      body: 'Original content',
-    })
+    )
 
     // Reviewer can read (view access)
     const readResponse = await reviewerClient.get(
-      '/api/canopycms/feature-reviewer-test/content/posts/test-post',
+      '/api/canopycms/canopycms-feature-reviewer-test/content/posts/test-post',
     )
     expect(readResponse.status).toBe(200)
 
     // Reviewer tries to edit (should fail - reviewers have read-only access)
     // TODO: Once role-based write restrictions are enforced, this should be 403
-    await reviewerClient.put('/api/canopycms/feature-reviewer-test/content/posts/test-post', {
-      expectedVersion: (readResponse.body as ApiResponse<{ version?: number }>).data?.version,
-      format: 'mdx',
-      data: {
-        title: 'Modified by Reviewer',
-        author: 'Reviewer',
-        date: '2024-01-01',
-        tags: ['test'],
+    await reviewerClient.put(
+      '/api/canopycms/canopycms-feature-reviewer-test/content/posts/test-post',
+      {
+        expectedVersion: (readResponse.body as ApiResponse<{ version?: number }>).data?.version,
+        format: 'mdx',
+        data: {
+          title: 'Modified by Reviewer',
+          author: 'Reviewer',
+          date: '2024-01-01',
+          tags: ['test'],
+        },
+        body: 'Modified content',
       },
-      body: 'Modified content',
-    })
+    )
 
     // This might succeed if defaultPathAccess is 'allow', but eventually should be 403
     // expect(writeResponse.status).toBe(403)

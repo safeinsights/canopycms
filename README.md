@@ -1862,9 +1862,7 @@ Navigate to your editor URL (e.g. `/edit`), sign in, and select or create a bran
 
 **Creating a branch:** click the branch pill, then "Switch branch…" and "New branch…", and enter a descriptive name (`update-homepage-hero`).
 
-> Branch names are sanitized for use as git branch names and filesystem paths: any character other than letters, numbers, `.`, `_` and `-` is replaced with `-`, so `feature/hero-update` is created as `feature-hero-update`, and the editor displays and uses that sanitized name everywhere.
->
-> Seven names are reserved because they collide with a static top-level API route: `admin`, `assets`, `branches`, `groups`, `permissions`, `users`, `whoami`. Creating one is rejected with a 400 explaining the collision. Matching is exact and case-sensitive, so `Admin` and `admin-docs` are unaffected.
+> The branch is created as `canopycms-<name>`, the namespace CanopyCMS writes on GitHub, and the field shows the name before you create it. Any character other than letters, numbers, `.`, `_` and `-` is replaced with `-`, so `feature/hero-update` is created as `canopycms-feature-hero-update`, and the editor displays and uses that name everywhere. A name starting `settings-` is refused: CanopyCMS keeps its settings branches there.
 
 **Switching branches:** click the branch pill, then "Switch branch…". The base branch is marked with a "Protected" badge. The Branches drawer also shows `syncing`, `sync-failed` and `conflict` badges alongside `Merged` and `PR closed`.
 
