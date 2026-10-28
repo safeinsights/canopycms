@@ -12,6 +12,8 @@ automatic on-mount/on-branch-change fetch:
   (`{ fetched, seq, branch }`) for its out-of-order commit guard (see that file)
 - `useCommentsData` (`useCommentsData.ts`) -- GET /:branch/comments, key
   `canopy:comments:${branch}`
+- `useBranchChangesData` -- GET /:branch/changes, key `canopy:changes:${branch}`;
+  panel open only
 - `useUserMetadata` (`useUserMetadata.ts`) -- key `canopy:user:${userId}`, one per
   badge, seeded from both lists' `users`; `user-metadata-batcher.ts` sends a render's ids as POST /users/batch, 100 per request
 
