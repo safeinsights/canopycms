@@ -3,6 +3,7 @@ import { createReadStream } from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { PassThrough, Readable } from 'node:stream'
 import { promisify } from 'node:util'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -101,8 +102,15 @@ describe('fetchGitHubIntoRemoteGit', () => {
     await git('init', '-q', '--bare', github)
   })
 
-  /** `github`'s `branches` as a fetch would answer with them, bundled less `exclude`. */
-  async function gatewayFor(branches: string[], exclude: string[]): Promise<TransferContext> {
+  /**
+   * `github`'s `branches` as a fetch would answer with them, bundled less `exclude`, the bundle's
+   * bytes as `open` serves them from its file.
+   */
+  async function gatewayFor(
+    branches: string[],
+    exclude: string[],
+    open: (file: string) => Readable | Promise<Readable> = createReadStream,
+  ): Promise<TransferContext> {
     const tips = new Map(
       (await git('--git-dir', github, 'for-each-ref', '--format=%(refname:lstrip=2) %(objectname)'))
         .split('\n')
@@ -125,7 +133,7 @@ describe('fetchGitHubIntoRemoteGit', () => {
       github: () =>
         ({
           fetch: async () => ({ refs, bundleId: 'b' }),
-          openBundle: async () => createReadStream(file),
+          openBundle: async () => open(file),
         }) as unknown as GitHubGateway,
     }
   }
@@ -145,6 +153,71 @@ describe('fetchGitHubIntoRemoteGit', () => {
     )
     expect(await trackingRefs()).toBe('')
     await expect(git('--git-dir', repo, 'cat-file', '-e', tip)).rejects.toThrow()
+  })
+
+  it('refuses a prerequisite that is here but is not a commit', async () => {
+    const base = await commit('base', undefined, github)
+    const tip = await commit('tip', base, github)
+    await git('--git-dir', github, 'update-ref', 'refs/heads/main', tip)
+    await commit('base', undefined, repo)
+    const blob = await git('--git-dir', repo, 'hash-object', '-w', '/dev/null')
+    const asBlob = async (file: string) =>
+      Readable.from([
+        Buffer.from((await fs.readFile(file, 'latin1')).replace(base, blob), 'latin1'),
+      ])
+
+    await expect(
+      fetchGitHubIntoRemoteGit(await gatewayFor(['main'], [base], asBlob)),
+    ).rejects.toThrow(`Refusing the bundle: its prerequisite ${blob} is not a commit here`)
+    expect(await trackingRefs()).toBe('')
+  })
+
+  it('fails, moving no ref, when the bundle ends before its header does', async () => {
+    await git(
+      '--git-dir',
+      github,
+      'update-ref',
+      'refs/heads/main',
+      await commit('tip', undefined, github),
+    )
+    const cut = () => Readable.from([Buffer.from('# v2 git bundle\n')])
+
+    await expect(fetchGitHubIntoRemoteGit(await gatewayFor(['main'], [], cut))).rejects.toThrow(
+      'The bundle ended before its header did',
+    )
+    expect(await trackingRefs()).toBe('')
+  })
+
+  it('stops waiting for a header that never arrives, on abort and on inactivity', async () => {
+    // No git runs while the header is read, so nothing else would end the wait.
+    await git(
+      '--git-dir',
+      github,
+      'update-ref',
+      'refs/heads/main',
+      await commit('tip', undefined, github),
+    )
+    const silent = new PassThrough()
+    const aborted = new AbortController()
+    // Aborted once the bundle is open, so it is the header's wait that the abort ends.
+    const gateway = await gatewayFor(['main'], [], () => {
+      setTimeout(() => aborted.abort(), 50)
+      return silent
+    })
+
+    await expect(fetchGitHubIntoRemoteGit(gateway, aborted.signal)).rejects.toThrow(
+      'Reading the bundle was aborted',
+    )
+    expect(silent.destroyed).toBe(true)
+
+    const idle = {
+      ...(await gatewayFor(['main'], [], () => new PassThrough())),
+      taskTimeoutMs: 100,
+    }
+    await expect(fetchGitHubIntoRemoteGit(idle)).rejects.toThrow(
+      'The bundle sent nothing for 100ms',
+    )
+    expect(await trackingRefs()).toBe('')
   })
 
   it("takes a bundle whose header outgrows a pushed bundle's bound", async () => {

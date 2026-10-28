@@ -353,13 +353,7 @@ async function unbundle(
   const stream = await ctx.github().openBundle(bundleId)
   try {
     const chunks = stream[Symbol.asyncIterator]()
-    const reader = new BundleHeaderReader('skip', FETCH_BUNDLE_HEADER_MAX_BYTES)
-    let read: ReadBundleHeader | null = null
-    while (read === null) {
-      const next = await chunks.next()
-      if (next.done) throw new Error('The bundle ended before its header did')
-      read = reader.push(next.value as Buffer)
-    }
+    const read = await readHeader(stream, chunks, ctx.taskTimeoutMs, signal)
     const missing = await missingCommits(ctx, gitDir, read.header.prerequisites, signal)
     if (missing.length > 0) {
       throw new Error(`Refusing the bundle: its prerequisite ${missing[0]} is not a commit here`)
@@ -383,6 +377,40 @@ async function unbundle(
     })
   } finally {
     stream.destroy()
+  }
+}
+
+/**
+ * Read the header of the fetch bundle `stream`, bounded as git is (worker/git-process.ts): the
+ * stream is destroyed when `signal` aborts or nothing arrives for `inactivityTimeoutMs`, since no
+ * git runs yet to be stopped.
+ */
+async function readHeader(
+  stream: Readable,
+  chunks: AsyncIterator<unknown>,
+  inactivityTimeoutMs: number,
+  signal?: AbortSignal,
+): Promise<ReadBundleHeader> {
+  signal?.throwIfAborted()
+  let timer: NodeJS.Timeout | undefined
+  const onAbort = () => stream.destroy(new Error('Reading the bundle was aborted'))
+  signal?.addEventListener('abort', onAbort, { once: true })
+  try {
+    const reader = new BundleHeaderReader('skip', FETCH_BUNDLE_HEADER_MAX_BYTES)
+    for (;;) {
+      clearTimeout(timer)
+      timer = setTimeout(
+        () => stream.destroy(new Error(`The bundle sent nothing for ${inactivityTimeoutMs}ms`)),
+        inactivityTimeoutMs,
+      )
+      const next = await chunks.next()
+      if (next.done) throw new Error('The bundle ended before its header did')
+      const read = reader.push(next.value as Buffer)
+      if (read !== null) return read
+    }
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', onAbort)
   }
 }
 
