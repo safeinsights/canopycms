@@ -75,6 +75,22 @@ describe('EntryChangesDrawer', () => {
     expect(within(inserted as HTMLElement).getByText('Added:')).toBeTruthy()
   })
 
+  it('shows a text it couldn’t mark whole on each side, saying so', async () => {
+    const many = (word: string) =>
+      Array.from({ length: 10_000 }, (_, i) => `${word}${i}`).join('\n')
+    renderDrawer({
+      subject: { ...subject, fields: [{ name: 'notes', type: 'markdown', label: 'Notes' }] },
+      state: loaded(sides({ notes: many('a') }, { notes: many('b') })),
+    })
+    const card = within(await waitFor(drawer)).getByTestId('entry-change-card')
+    expect(textOf(within(card).getByTestId('entry-change-unmarked'))).toBe(
+      'Too many changes to highlight.',
+    )
+    expect(card.querySelector('ins, del')).toBeNull()
+    expect(textOf(card)).toContain('a9999')
+    expect(textOf(card)).toContain('b9999')
+  })
+
   it('names a reference by title, or as an unknown entry by id', async () => {
     renderDrawer({
       state: loaded(sides({ author: 'aaaaaaaaaaaa' }, { author: 'bbbbbbbbbbbb' })),

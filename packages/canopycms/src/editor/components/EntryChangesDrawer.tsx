@@ -333,6 +333,11 @@ const ChangeCard: React.FC<{ change: EntryChange; wholeEntry: Side | undefined }
         <SideColumn label="After" change={change} side="after" />
       </SimpleGrid>
     )}
+    {change.tooLargeToMark && (
+      <Text size="xs" c="dimmed" mt="xs" data-testid="entry-change-unmarked">
+        Too many changes to highlight.
+      </Text>
+    )}
   </Paper>
 )
 

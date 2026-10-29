@@ -325,8 +325,44 @@ describe('textDiff', () => {
     ]
     for (const [before, after] of pairs) {
       const diff = textDiff(before, after)
+      if (!diff) throw new Error('no diff')
       expect(side(diff, 'before')).toBe(before)
       expect(side(diff, 'after')).toBe(after)
     }
+  })
+
+  it('gives up on a 10,000-line body that changed throughout, within its timeout', () => {
+    const lines = (word: string) =>
+      Array.from({ length: 10_000 }, (_, i) => `${word} ${i} ${(i * 7919) % 10_007}`).join('\n')
+    const started = Date.now()
+    expect(textDiff(lines('before'), lines('after'), true)).toBeUndefined()
+    expect(Date.now() - started).toBeLessThan(1000)
+  })
+
+  it('marks a change it gave up on, which then carries no text diff', () => {
+    const many = (word: string) =>
+      Array.from({ length: 10_000 }, (_, i) => `${word}${i}`).join('\n')
+    const started = Date.now()
+    const { changes } = computeEntryDiff({
+      fields,
+      before: side({ title: 'Hello' }, many('a')),
+      after: side({ title: 'Hello' }, many('b')),
+    })
+    expect(Date.now() - started).toBeLessThan(1000)
+    expect(changes).toEqual([expect.objectContaining({ path: ['Body'], tooLargeToMark: true })])
+    expect(changes[0].text).toBeUndefined()
+  })
+})
+
+describe('computeEntryDiff on long lists', () => {
+  it('matches 10,000 reordered items quickly, marking only the one that moved', () => {
+    const team = Array.from({ length: 10_000 }, (_, i) => ({ name: `Person ${i}` }))
+    const before = side({ team })
+    const items = before.data.team as unknown[]
+    const after = { ...before, data: { ...before.data, team: [...items.slice(1), items[0]] } }
+    const started = Date.now()
+    const { changes } = computeEntryDiff({ fields, before, after })
+    expect(Date.now() - started).toBeLessThan(1000)
+    expect(summary(changes)).toEqual([['moved', 'Team › Person 0']])
   })
 })

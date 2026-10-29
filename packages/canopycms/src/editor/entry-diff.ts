@@ -62,6 +62,8 @@ export interface EntryChange {
   before?: DisplayValue
   after?: DisplayValue
   text?: TextDiff
+  /** The text differs too much to mark within the time allowed: show both sides whole. */
+  tooLargeToMark?: true
 }
 
 export interface EntryDiff {
@@ -89,6 +91,12 @@ interface At {
 const SHORT_TEXT = 200
 /** Unchanged lines kept on each side of a change in a line diff. */
 const CONTEXT_LINES = 2
+/**
+ * How long one text change's diffing may take, across every jsdiff call it makes, before it is
+ * shown unmarked instead: jsdiff's run time grows with the square of the edits, and it runs on
+ * the editor's main thread.
+ */
+const DIFF_TIMEOUT_MS = 300
 const OTHER_FIELDS_LABEL = 'Other fields'
 const LONG_TEXT_TYPES = new Set(['markdown', 'mdx', 'code'])
 
@@ -311,7 +319,9 @@ class Walker {
     if (kind !== 'removed') change.after = this.display(field, after)
     // Text only: a reference's id or a date's ISO string is a value, shown whole.
     if (change.before?.kind === 'text' && change.after?.kind === 'text') {
-      change.text = textDiff(change.before.text, change.after.text, !!change.after.long)
+      const text = textDiff(change.before.text, change.after.text, !!change.after.long)
+      if (text) change.text = text
+      else change.tooLargeToMark = true
     }
     this.changes.push(change)
   }
@@ -422,25 +432,31 @@ class Walker {
 const asRecord = (value: unknown): Record<string, unknown> | undefined =>
   isPlainRecord(value) ? value : undefined
 
-/** The keys on a longest common subsequence of `a` and `b`, two orders of the same keys. */
+/**
+ * The keys on a longest common subsequence of `a` and `b`, two orders of the same distinct keys.
+ * With distinct keys that is a longest increasing run of `b`'s positions read in `a`'s order,
+ * found in O(n log n) by patience sorting, so a list of thousands of items stays quick.
+ */
 const longestCommonRun = (a: readonly string[], b: readonly string[]): Set<string> => {
-  const table: number[][] = Array.from({ length: a.length + 1 }, () =>
-    new Array<number>(b.length + 1).fill(0),
-  )
-  for (let i = a.length - 1; i >= 0; i--) {
-    for (let j = b.length - 1; j >= 0; j--) {
-      table[i][j] =
-        a[i] === b[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1])
+  const position = new Map(b.map((key, i) => [key, i]))
+  const seq = a.map((key) => position.get(key) ?? -1)
+  // tails[n]: the index in `seq` of the smallest last value of an increasing run of length n+1.
+  const tails: number[] = []
+  const previous = new Array<number>(seq.length).fill(-1)
+  for (let i = 0; i < seq.length; i++) {
+    let lo = 0
+    let hi = tails.length
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if (seq[tails[mid]] < seq[i]) lo = mid + 1
+      else hi = mid
     }
+    if (lo > 0) previous[i] = tails[lo - 1]
+    tails[lo] = i
   }
   const out = new Set<string>()
-  for (let i = 0, j = 0; i < a.length && j < b.length; ) {
-    if (a[i] === b[j]) {
-      out.add(a[i])
-      i++
-      j++
-    } else if (table[i + 1][j] >= table[i][j + 1]) i++
-    else j++
+  for (let i = tails.length > 0 ? tails[tails.length - 1] : -1; i >= 0; i = previous[i]) {
+    out.add(a[i])
   }
   return out
 }
@@ -464,19 +480,32 @@ const splitLines = (value: string): string[] => {
  * of unchanged lines cut to {@link CONTEXT_LINES} beside each change. Words are diffed with
  * whitespace as tokens (`diffWordsWithSpace`): `diffWords` gives an unchanged run the new
  * text's spacing, so one side read back from its parts would not be the text it was.
+ * Undefined when the diffing outruns {@link DIFF_TIMEOUT_MS}.
  * @internal Exported for tests.
  */
-export function textDiff(before: string, after: string, long = false): TextDiff {
+export function textDiff(
+  before: string,
+  after: string,
+  long = false,
+  timeoutMs = DIFF_TIMEOUT_MS,
+): TextDiff | undefined {
+  const deadline = Date.now() + timeoutMs
+  // jsdiff answers undefined once its timeout passes; at least 1ms, since 0 means none.
+  const timeout = () => ({ timeout: Math.max(1, deadline - Date.now()) })
   const short =
     !long &&
     !before.includes('\n') &&
     !after.includes('\n') &&
     before.length <= SHORT_TEXT &&
     after.length <= SHORT_TEXT
-  if (short) return { mode: 'words', parts: toParts(diffWordsWithSpace(before, after)) }
+  if (short) {
+    const words = diffWordsWithSpace(before, after, timeout())
+    return words && { mode: 'words', parts: toParts(words) }
+  }
 
   const lines: DiffLine[] = []
-  const changes = diffLines(before, after)
+  const changes = diffLines(before, after, timeout())
+  if (!changes) return undefined
   for (let i = 0; i < changes.length; i++) {
     const change = changes[i]
     if (!change.added && !change.removed) {
@@ -494,7 +523,9 @@ export function textDiff(before: string, after: string, long = false): TextDiff 
     if (change.removed && next?.added) i++
     const paired = Math.min(removed.length, added.length)
     for (let n = 0; n < paired; n++) {
-      const words = toParts(diffWordsWithSpace(removed[n], added[n]))
+      const changed = diffWordsWithSpace(removed[n], added[n], timeout())
+      if (!changed) return undefined
+      const words = toParts(changed)
       lines.push({ kind: 'removed', parts: words.filter((p) => !p.added) })
       lines.push({ kind: 'added', parts: words.filter((p) => !p.removed) })
     }
