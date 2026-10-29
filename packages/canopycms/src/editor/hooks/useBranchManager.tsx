@@ -332,18 +332,21 @@ function mergePendingBranches(
 }
 
 /**
- * The listed branch `name` opens, in the order the server resolves a `?branch=`: its full name,
- * then its short name. The sanitized form in between catches a deep link carrying a name's raw,
- * unsanitized form ("feature/x" for the persisted "feature-x").
+ * The listed branch `name` opens, in the order the server resolves a `?branch=`: the base or
+ * active branch (`defaultBranch`) by its full name, then a namespace branch by its short name,
+ * then any branch by its full name. Last, the sanitized form catches a deep link carrying a
+ * name's raw, unsanitized form ("feature/x" for the persisted "feature-x"). A branch outside the
+ * namespace lists its full name as its short name, so only a namespace branch matches the second.
  */
-export function resolveListedBranch<B extends Pick<BranchListItem, 'name' | 'shortName'>>(
-  branches: readonly B[],
-  name: string,
-): B | undefined {
+export function resolveListedBranch<
+  B extends Pick<BranchListItem, 'name' | 'shortName' | 'isProtected'>,
+>(branches: readonly B[], name: string, defaultBranch?: string): B | undefined {
+  const byName = branches.find((b) => b.name === name)
+  if (byName && (byName.isProtected || name === defaultBranch)) return byName
   return (
-    branches.find((b) => b.name === name) ??
-    branches.find((b) => b.name === sanitizeBranchName(name)) ??
-    branches.find((b) => b.shortName === name)
+    branches.find((b) => b.shortName === name && b.name !== name) ??
+    byName ??
+    branches.find((b) => b.name === sanitizeBranchName(name))
   )
 }
 
@@ -578,7 +581,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     // eslint-disable-next-line react-hooks/exhaustive-deps -- options is a new object every Editor.tsx render; only setBusy (a stable setState) matters here
   }, [branchesIsValidating, options.setBusy])
 
-  const currentBranch = resolveListedBranch(branches, branchName)
+  const currentBranch = resolveListedBranch(branches, branchName, branchesData?.defaultBranch)
   const currentBranchName = currentBranch?.name
 
   const branchSummaries = useMemo(() => {
@@ -664,7 +667,8 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   // A deep link can carry a short name or the raw form of a listed name; the actions key, look
   // up and send the listed name, resolved the way `currentBranch` resolves it.
   const listedName = (name: string): string =>
-    resolveListedBranch(latest.current.branches, name)?.name ?? sanitizeBranchName(name)
+    resolveListedBranch(latest.current.branches, name, latest.current.branchesData?.defaultBranch)
+      ?.name ?? sanitizeBranchName(name)
 
   const pullRequestOf = (name: string): BranchPullRequest => {
     const b = latest.current.branches.find((x) => x.name === name)

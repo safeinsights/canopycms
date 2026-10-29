@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   branchActionOutcomeUnknown,
   CREATED_BRANCH_GRACE_MS,
+  resolveListedBranch,
   useBranchManager,
   UseBranchManagerOptions,
   withdrawPullRequestBullet,
@@ -582,6 +583,37 @@ describe('useBranchManager', () => {
       { branch: 'canopycms/local/spring' },
       expect.anything(),
     )
+  })
+
+  describe('resolveListedBranch', () => {
+    const listed = (name: string, shortName: string, isProtected = false) => ({
+      name,
+      shortName,
+      isProtected,
+    })
+    const outsideX = listed('x', 'x')
+    const namespaceX = listed('canopycms/prod/x', 'x')
+
+    it('opens the namespace branch a short name names before an outside branch of that name', () => {
+      expect(resolveListedBranch([outsideX, namespaceX], 'x')).toBe(namespaceX)
+      expect(resolveListedBranch([namespaceX, outsideX], 'x')).toBe(namespaceX)
+      expect(resolveListedBranch([outsideX, namespaceX], 'canopycms/prod/x')).toBe(namespaceX)
+    })
+
+    it('opens the base or active branch by its full name before any short name', () => {
+      const base = listed('main', 'main', true)
+      const active = listed('staging', 'staging')
+      const namespaceMain = listed('canopycms/prod/main', 'main')
+      const namespaceStaging = listed('canopycms/prod/staging', 'staging')
+      const branches = [namespaceMain, namespaceStaging, base, active]
+      expect(resolveListedBranch(branches, 'main', 'staging')).toBe(base)
+      expect(resolveListedBranch(branches, 'staging', 'staging')).toBe(active)
+    })
+
+    it('falls back to the sanitized form of a raw name', () => {
+      const sanitized = listed('feature-x', 'feature-x')
+      expect(resolveListedBranch([sanitized], 'feature/x')).toBe(sanitized)
+    })
   })
 
   it('leaves a deleted namespace branch opened by its short name', async () => {
