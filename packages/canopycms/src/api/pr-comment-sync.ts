@@ -8,7 +8,7 @@ import { getTaskQueueDir } from '../task-queue/task-queue-config'
 import { withLock } from '../utils/async-mutex'
 import { getErrorMessage } from '../utils/error'
 
-/** A PR the comment summary is still worth updating on: one exists and is not merged or closed. */
+/** A PR whose body blocks are still worth updating: one exists and is not merged or closed. */
 function openPullRequest(context: BranchContext): number | undefined {
   const { pullRequestNumber, pullRequestState, status } = context.branch
   if (!pullRequestNumber || status === 'archived') return undefined
@@ -17,23 +17,24 @@ function openPullRequest(context: BranchContext): number | undefined {
     : pullRequestNumber
 }
 
-/** How long a comment request waits on GitHub for its summary update, lock wait included. */
+/** How long a request waits on GitHub for its PR body update, lock wait included. */
 const DIRECT_SYNC_TIMEOUT_MS = 10_000
 
 /**
- * Brings the PR's editor-comment summary up to date after a comment is added, replied to or
- * resolved. Best-effort: a failure is logged and never fails the comment request.
+ * Brings both of the PR body's blocks, the editor-comment summary and the review block, up to
+ * date after a comment is added, replied to or resolved, or a review is given or withdrawn.
+ * Best-effort: a failure is logged and never fails the request.
  *
- * Direct path: read the PR body, replace the block, write it back, within
- * DIRECT_SYNC_TIMEOUT_MS so a slow or rate-limited GitHub never holds the comment request.
+ * Direct path: read the PR body, replace the blocks, write it back, within
+ * DIRECT_SYNC_TIMEOUT_MS so a slow or rate-limited GitHub never holds the request.
  * GitHub's PR update takes no expected version; the per-branch lock (prBodyLockKey) only
  * orders this process's writers (docs/concurrency.md).
  *
  * Queued path: one pending task per branch and PR, rendered by the worker from comments.json
- * when it runs, so a burst of comments costs one update. The comment was written before this
- * call and a pending task reads comments.json only after it leaves pending, so its run carries
- * the change this call skipped; a task already running doesn't count, so a later change gets
- * a run of its own.
+ * and branch.json when it runs, so a burst of changes costs one update. The change was written
+ * before this call and a pending task reads those files only after it leaves pending, so its
+ * run carries the change this call skipped; a task already running doesn't count, so a later
+ * change gets a run of its own.
  */
 export async function syncPrComments(ctx: ApiContext, context: BranchContext): Promise<void> {
   const prNumber = openPullRequest(context)
@@ -55,6 +56,7 @@ export async function syncPrComments(ctx: ApiContext, context: BranchContext): P
               branch,
               editorUrl,
               body: pr.body,
+              warn: (message) => console.warn(`CanopyCMS: ${message}`),
             })
             if (body !== undefined)
               await githubService.updatePullRequest(prNumber, { body }, signal)
@@ -79,7 +81,7 @@ export async function syncPrComments(ctx: ApiContext, context: BranchContext): P
     })
   } catch (err) {
     console.warn(
-      `CanopyCMS: Could not update the editor comments on PR #${prNumber} for ${branch}:`,
+      `CanopyCMS: Could not update the editor comments or review state on PR #${prNumber} for ${branch}:`,
       isApiTimeoutError(err)
         ? `GitHub did not answer within ${DIRECT_SYNC_TIMEOUT_MS / 1000} s`
         : getErrorMessage(err),

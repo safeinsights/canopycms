@@ -107,6 +107,28 @@ describe('readBranchMetadataFile', () => {
     })
   })
 
+  it('reads a review, and drops a malformed one rather than failing the read', async () => {
+    const review = {
+      state: 'approved',
+      by: { userId: 'rev1', name: 'Rae' },
+      at: '2026-10-28T14:05:00Z',
+    }
+    await writeFile({ schemaVersion: 1, version: 1, branch: { ...fullBranch, review } })
+    expect((await readBranchMetadataFile(branchRoot))?.branch.review).toEqual(review)
+
+    for (const bad of [
+      { ...review, state: 'rejected' },
+      { ...review, by: 'rev1' },
+      { state: 'approved', by: { userId: 'rev1' } },
+      'approved',
+    ]) {
+      await writeFile({ schemaVersion: 1, version: 1, branch: { ...fullBranch, review: bad } })
+      const read = await readBranchMetadataFile(branchRoot)
+      expect(read?.branch.name).toBe('feature-a')
+      expect(read?.branch.review).toBeUndefined()
+    }
+  })
+
   it('raises BranchMetadataCorruptError for invalid JSON, saying so in plain words', async () => {
     await writeRaw('{ not json')
     const err = await readCorrupt()

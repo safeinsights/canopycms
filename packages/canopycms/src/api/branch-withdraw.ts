@@ -7,6 +7,7 @@ import { getBranchMetadataFileManager } from '../branch-metadata'
 import { defineEndpoint } from './route-builder'
 import { canPerformWorkflowAction, getBranchProtection } from '../authorization'
 import { syncConvertToDraft } from './github-sync'
+import { syncPrComments } from './pr-comment-sync'
 
 const withdrawBranchHandler = async (
   gc: { branchContext: BranchContext },
@@ -71,11 +72,17 @@ const withdrawBranchHandler = async (
     branch: {
       name: branchContext.branch.name,
       status: 'editing',
+      // A verdict covers one submit; the next review starts blank.
+      review: undefined,
       ...(wasClosed
         ? { pullRequestState: undefined, pullRequestNumber: undefined, pullRequestUrl: undefined }
         : {}),
     },
   })
+
+  // The PR body still says "Approved" until it is re-rendered from the cleared review.
+  // Best-effort: syncPrComments logs its failures and never throws.
+  await syncPrComments(ctx, branchContext)
 
   return {
     ok: true,
