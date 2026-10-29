@@ -6,6 +6,7 @@ import {
   displayBranchName,
   requestSegments,
   resolveListedBranch,
+  unlistedSegment,
 } from './branch-names'
 
 const listed = (name: string, shortName: string, isProtected = false) => ({
@@ -53,12 +54,12 @@ describe('resolveListedBranch', () => {
   })
 
   it('opens by the exact form only the branch with that full name', () => {
-    expect(resolveListedBranch([outsideX, namespaceX], 'refs/heads/x')).toBe(outsideX)
-    expect(resolveListedBranch([outsideX, namespaceX], 'refs/heads/canopycms/prod/x')).toBe(
-      namespaceX,
-    )
-    // Never a short name.
-    expect(resolveListedBranch([namespaceX], 'refs/heads/x')).toBeUndefined()
+    expect(resolveListedBranch([outsideX, namespaceX], '~x')).toBe(outsideX)
+    expect(resolveListedBranch([outsideX, namespaceX], '~canopycms~prod~x')).toBe(namespaceX)
+    // Never a short name, nor a full name, nor a malformed exact form.
+    expect(resolveListedBranch([namespaceX], '~x')).toBeUndefined()
+    expect(resolveListedBranch([outsideX, namespaceX], '~canopycms/prod/x')).toBeUndefined()
+    expect(resolveListedBranch([outsideX, namespaceX], '~~x')).toBeUndefined()
   })
 
   it('falls back to the sanitized form of a raw name', () => {
@@ -91,7 +92,7 @@ describe('branchUrlName', () => {
     const outsideX = listed('x', 'x')
     const namespaceX = listed('canopycms/prod/x', 'x')
     const branches = [outsideX, namespaceX]
-    expect(branchUrlName(branches, outsideX)).toBe('refs/heads/x')
+    expect(branchUrlName(branches, outsideX)).toBe('~x')
     expect(branchUrlName(branches, namespaceX)).toBe('x')
     for (const b of branches) {
       expect(resolveListedBranch(branches, branchUrlName(branches, b))).toBe(b)
@@ -113,10 +114,19 @@ describe('requestSegments', () => {
     const outsideX = listed('x', 'x')
     const base = listed('main', 'main', true)
     expect([...requestSegments([namespaceX, outsideX, base])]).toEqual([
-      ['canopycms/prod/x', 'refs/heads/canopycms/prod/x'],
-      ['x', 'refs/heads/x'],
-      ['main', 'refs/heads/main'],
+      ['canopycms/prod/x', '~canopycms~prod~x'],
+      ['x', '~x'],
+      ['main', '~main'],
     ])
+  })
+})
+
+describe('unlistedSegment', () => {
+  it('sends a name with no `/` as given, and any other by its exact form', () => {
+    expect(unlistedSegment('spring')).toBe('spring')
+    expect(unlistedSegment('main')).toBe('main')
+    expect(unlistedSegment('feature/x')).toBe('~feature~x')
+    expect(unlistedSegment('canopycms/prod/spring')).toBe('~canopycms~prod~spring')
   })
 })
 
@@ -128,7 +138,7 @@ describe('branchAddress', () => {
     const branches = [outsideX, namespaceX, unshadowed]
     expect(branchAddress(branches, namespaceX)).toBe('canopycms/prod/x')
     expect(branchAddress(branches, unshadowed)).toBe('feature/y')
-    expect(branchAddress(branches, outsideX)).toBe('refs/heads/x')
+    expect(branchAddress(branches, outsideX)).toBe('~x')
     for (const b of branches) {
       expect(resolveListedBranch(branches, branchAddress(branches, b))).toBe(b)
     }

@@ -7,6 +7,7 @@ import { SWRConfig } from 'swr'
 import { defineCanopyConfig, type EntrySchema } from '../config'
 import { CanopyEditorPage } from './CanopyEditorPage'
 import { mockConsole, type MockConsole } from '../test-utils/console-spy'
+import { exactBranchSegment } from '../paths/validation'
 
 vi.mock('@mantine/modals', () => ({
   ModalsProvider: ({ children }: { children: React.ReactNode }) => children,
@@ -25,7 +26,7 @@ vi.mock('./PreviewFrame', () => ({
 /** The deployment's base, which only the server knows; the bundle never names it. */
 const SERVER_DEFAULT = 'tier-base'
 /** The segment requests name it by once it is listed: the exact form. */
-const SERVER_DEFAULT_SEGMENT = encodeURIComponent(`refs/heads/${SERVER_DEFAULT}`)
+const SERVER_DEFAULT_SEGMENT = encodeURIComponent(exactBranchSegment(SERVER_DEFAULT))
 
 const schema: EntrySchema = [{ name: 'title', type: 'string', label: 'Title', isTitle: true }]
 

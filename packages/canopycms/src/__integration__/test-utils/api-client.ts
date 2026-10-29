@@ -6,6 +6,7 @@
 import type { CanopyRequest } from '../../http/types'
 import { BranchWorkspaceManager } from '../../branch-workspace'
 import { resolveBranchParam } from '../../branch-param'
+import { exactBranchName } from '../../paths/validation'
 import { createCanopyRequestHandler } from '../../http/handler'
 import { createTestServices } from '../../config-test'
 import type { CreateCanopyServicesOptions } from '../../services'
@@ -69,12 +70,13 @@ export async function createApiClient(options: ApiClientOptions) {
             // Internal groups do NOT come from this branch — they're read from
             // the settings workspace via resolveCanopyUser/getSettingsBranchRoot.
             const baseBranch = services.config.defaultBaseBranch ?? 'main'
-            if (branchName !== baseBranch) {
+            const named = exactBranchName(branchName) ?? branchName
+            if (named !== baseBranch) {
               return null
             }
             const manager = new BranchWorkspaceManager(services.config)
             context = await manager.openOrCreateBranch({
-              branchName,
+              branchName: named,
               mode: services.config.mode,
               createdBy: 'canopycms-system',
             })

@@ -204,9 +204,7 @@ describe('Show changes', () => {
     const summary = await screen.findByTestId('entry-changes-summary')
     await waitFor(() => expect(summary.textContent).toBe('1 field changed since main'))
     const dialog = screen.getByRole('dialog', { name: 'Changes to Hello' })
-    expect(
-      requested(fetch, `/refs%2Fheads%2Fmain/changes/content/posts/hello?id=${hello.contentId}`),
-    ).toBe(true)
+    expect(requested(fetch, `/~main/changes/content/posts/hello?id=${hello.contentId}`)).toBe(true)
     expect(within(dialog).queryByTestId('entry-changes-unsaved')).toBeNull()
 
     await userEvent.keyboard('{Escape}')
@@ -253,14 +251,14 @@ describe('Show changes', () => {
     await screen.findByTestId('entry-changes-summary')
     await userEvent.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    const entryReads = calls('/refs%2Fheads%2Fmain/changes/content/posts/hello')
-    const listReads = calls('/refs%2Fheads%2Fmain/changes')
+    const entryReads = calls('/~main/changes/content/posts/hello')
+    const listReads = calls('/~main/changes')
 
     await userEvent.type(titleInput(), ' edited')
     await userEvent.click(screen.getByTestId('save-button'))
-    await waitFor(() => expect(calls('/refs%2Fheads%2Fmain/changes')).toBeGreaterThan(listReads))
+    await waitFor(() => expect(calls('/~main/changes')).toBeGreaterThan(listReads))
     await new Promise((resolve) => setTimeout(resolve, 50))
-    expect(calls('/refs%2Fheads%2Fmain/changes/content/posts/hello')).toBe(entryReads)
+    expect(calls('/~main/changes/content/posts/hello')).toBe(entryReads)
   })
 
   it('returns focus to the rail’s Content button when the deleted entry’s row is gone', async () => {
@@ -312,7 +310,7 @@ describe('Show changes', () => {
     const fetch = stubApi([])
     renderEditor()
     await waitFor(() => expect(titleInput().value).toBe('Loaded title'))
-    await waitFor(() => expect(requested(fetch, '/refs%2Fheads%2Fmain/changes')).toBe(true))
+    await waitFor(() => expect(requested(fetch, '/~main/changes')).toBe(true))
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(screen.queryByTestId('entry-show-changes')).toBeNull()
     // Its slot is held, unseen, so the header doesn't shift between entries.

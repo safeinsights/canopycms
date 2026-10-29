@@ -13,7 +13,7 @@ import { createApiClient } from '../test-utils/api-client'
 import { branchRef } from '../test-utils/branch-names'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
 import { BranchWorkspaceManager, loadBranchContext } from '../../branch-workspace'
-import { requestSegments } from '../../editor/branch-names'
+import { requestSegments, unlistedSegment } from '../../editor/branch-names'
 import type { CanopyConfig } from '../../config'
 import type { TestUserRole } from '../test-utils/multi-user'
 
@@ -35,7 +35,7 @@ async function editorClient(config: CanopyConfig, role: TestUserRole) {
     authPlugin: createMockAuthPlugin(role),
     schema: BLOG_SCHEMA,
     handlerBranchContext: true,
-    branchSegment: (branch) => segments.get(branch) ?? branch,
+    branchSegment: (branch) => segments.get(branch) ?? unlistedSegment(branch),
   })
   const loadListing = async () => {
     const listing = await client.branches.list()

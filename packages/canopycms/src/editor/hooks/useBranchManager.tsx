@@ -18,12 +18,14 @@ import { BRANCHES_KEY, fetchBranches, useBranchesData, type BranchesData } from 
 // node:fs/promises + node:path at the top level (path RESOLUTION helpers),
 // which breaks adopters' production `next build` of the editor bundle.
 // paths/branch-name.ts is the dependency-free home of sanitizeBranchName.
-import { EXACT_BRANCH_PREFIX, exactBranchName, sanitizeBranchName } from '../../paths/branch-name'
+import { sanitizeBranchName } from '../../paths/branch-name'
+import { exactBranchName, exactBranchSegment } from '../../paths/validation'
 import {
   branchAddress,
   branchUrlName,
   displayBranchName,
   requestSegments,
+  unlistedSegment,
   resolveListedBranch,
 } from '../branch-names'
 import { RetryToastMessage } from '../components/RetryToastMessage'
@@ -340,12 +342,12 @@ function mergePendingBranches(
 
 /**
  * What a request sends for `name`, a full name the listing no longer holds: the exact form when a
- * listed short name is `name`, which would otherwise open that namespace branch in its place.
+ * listed short name is `name`, which would open that namespace branch instead, else as unlisted.
  */
 function unlistedName(listed: readonly BranchListItem[], name: string): string {
   return listed.some((b) => b.name !== name && displayBranchName(b) === name)
-    ? `${EXACT_BRANCH_PREFIX}${name}`
-    : name
+    ? exactBranchSegment(name)
+    : unlistedSegment(name)
 }
 
 /**
@@ -519,7 +521,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const currentBranchName = currentBranch?.name
 
   // A listed branch by `requestSegments`; the open branch, once the listing drops it, as
-  // `unlistedName` does; any other name as given, which dev base/active auto-create needs.
+  // `unlistedName` does; any other name by the client's own lookup (`unlistedSegment`).
   const segments = useMemo(() => {
     const table = requestSegments(branches)
     if (resolved && branchName && !table.has(branchName)) {

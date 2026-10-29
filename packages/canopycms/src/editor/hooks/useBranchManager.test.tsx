@@ -1839,18 +1839,18 @@ describe('useBranchManager', () => {
       }
 
       it('opens each by the name its card hands an action, and writes a URL that opens it', async () => {
-        const opened = await loaded('refs/heads/spring')
+        const opened = await loaded('~spring')
         expect(opened.result.current.currentBranch?.name).toBe('spring')
-        await waitFor(() => expect(writtenBranches()).toEqual(['refs/heads/spring']))
+        await waitFor(() => expect(writtenBranches()).toEqual(['~spring']))
         opened.unmount()
 
         const other = await loaded('canopycms/local/spring')
         expect(other.result.current.currentBranch?.name).toBe('canopycms/local/spring')
-        await waitFor(() => expect(writtenBranches()).toEqual(['refs/heads/spring', 'spring']))
+        await waitFor(() => expect(writtenBranches()).toEqual(['~spring', 'spring']))
       })
 
       it.each([
-        ['the outside branch', 'refs/heads/spring', 'spring'],
+        ['the outside branch', '~spring', 'spring'],
         ['the namespace branch', 'canopycms/local/spring', 'canopycms/local/spring'],
       ])('sends every action on %s under its own name', async (_label, address, sent) => {
         const ok = { ok: true, status: 200 } as const
@@ -1882,7 +1882,7 @@ describe('useBranchManager', () => {
         expect(result.current.currentBranch?.name).toBe('canopycms/local/spring')
 
         await act(async () => {
-          await result.current.handleDelete('refs/heads/spring')
+          await result.current.handleDelete('~spring')
         })
 
         expect(mockClient.branches.delete).toHaveBeenCalledWith({ branch: 'spring' })
@@ -1891,11 +1891,11 @@ describe('useBranchManager', () => {
 
       it('leaves the outside branch when it is the one open and deleted', async () => {
         mockClient.branches.delete.mockResolvedValue({ ok: true, status: 200 })
-        const { result } = await loaded('refs/heads/spring')
+        const { result } = await loaded('~spring')
         expect(result.current.currentBranch?.name).toBe('spring')
 
         await act(async () => {
-          await result.current.handleDelete('refs/heads/spring')
+          await result.current.handleDelete('~spring')
         })
 
         expect(result.current.branchName).toBe('main')
@@ -1925,7 +1925,7 @@ describe('useBranchManager', () => {
 
       it('keeps the outside branch, and the name its drafts are keyed by, as the shadow comes and goes', async () => {
         listBoth()
-        const { result, given } = await tracked('refs/heads/spring')
+        const { result, given } = await tracked('~spring')
         expect(result.current.currentBranch?.name).toBe('spring')
 
         listOnly(outside)
@@ -1962,7 +1962,7 @@ describe('useBranchManager', () => {
 
         let deleting: Promise<void> | undefined
         act(() => {
-          deleting = result.current.handleDelete('refs/heads/spring')
+          deleting = result.current.handleDelete('~spring')
         })
         await waitFor(() => expect(confirm).toBeDefined())
         listOnly(spring)
@@ -1972,7 +1972,7 @@ describe('useBranchManager', () => {
           await deleting
         })
 
-        expect(mockClient.branches.delete).toHaveBeenCalledWith({ branch: 'refs/heads/spring' })
+        expect(mockClient.branches.delete).toHaveBeenCalledWith({ branch: '~spring' })
       })
     })
 

@@ -1841,7 +1841,7 @@ describe('a branch outside the namespace whose name a namespace branch takes as 
   }
 
   it.each([
-    ['outside', outside, 'refs/heads/spring'],
+    ['outside', outside, '~spring'],
     ['namespace', namespaced, 'canopycms/prod/spring'],
   ])(
     "hands every action on the %s branch's card a name that opens that branch",

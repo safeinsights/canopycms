@@ -64,8 +64,8 @@ export interface ApiClientOptions {
 
   /**
    * Maps a branch name to the `/:branch` segment its requests carry. The editor maps each
-   * listed branch to its exact form (`refs/heads/<name>`), which the server resolves to that
-   * branch alone, whatever the base or active branch is. @internal
+   * listed branch to its exact form (`~canopycms~prod~spring`, `exactBranchSegment`), which the
+   * server resolves to that branch alone, whatever the base or active branch is. @internal
    */
   branchSegment?: (branch: string) => string
 }

@@ -8,8 +8,12 @@ import {
   isValidContentId,
   parseContentId,
   parseBranchName,
+  parseBranchRef,
   parseCreatedBranchName,
   parseSlug,
+  exactBranchName,
+  exactBranchSegment,
+  isExactBranchForm,
 } from './validation'
 
 describe('path validation utilities', () => {
@@ -359,11 +363,21 @@ describe('path validation utilities', () => {
       }
     })
 
-    it('measures a name in the exact form without its refs/heads/ prefix', () => {
-      expect(parseBranchName(`refs/heads/${'a'.repeat(250)}`).ok).toBe(true)
-      const over = parseBranchName(`refs/heads/${'a'.repeat(251)}`)
-      expect(over.ok).toBe(false)
-      if (!over.ok) expect(over.error).toContain('too long')
+    it('measures a name in the exact form by the name it decodes to', () => {
+      const longest = `${'a/'.repeat(124)}ab`
+      expect(longest).toHaveLength(250)
+      expect(parseBranchName(exactBranchSegment(longest)).ok).toBe(true)
+      expect(parseBranchName(exactBranchSegment(`${longest}c`)).ok).toBe(false)
+      expect(exactBranchName(exactBranchSegment(`${longest}c`))).toBeNull()
+    })
+
+    it('accepts a well-formed exact form, and nothing else holding "~"', () => {
+      for (const param of ['~spring', '~canopycms~prod~spring', '~feature~x']) {
+        expect(parseBranchName(param)).toEqual({ ok: true, name: param })
+      }
+      for (const param of ['~', '~~spring', '~spring~', '~a~~b', '~a/b', '~-x', '~a..b', 'a~b']) {
+        expect(parseBranchName(param).ok).toBe(false)
+      }
     })
 
     it('accepts branch names at max length', () => {
@@ -508,6 +522,46 @@ describe('path validation utilities', () => {
   })
 })
 
+describe('the exact branch form', () => {
+  it.each([
+    ['canopycms/prod/spring', '~canopycms~prod~spring'],
+    ['spring', '~spring'],
+    ['release/v2.0', '~release~v2.0'],
+  ])('writes %s as %s, and reads it back', (fullName, exact) => {
+    expect(exactBranchSegment(fullName)).toBe(exact)
+    expect(exactBranchName(exact)).toBe(fullName)
+    expect(isExactBranchForm(exact)).toBe(true)
+  })
+
+  it('carries no character encodeURIComponent changes', () => {
+    const exact = exactBranchSegment('canopycms/prod/spring')
+    expect(encodeURIComponent(exact)).toBe(exact)
+    expect(decodeURIComponent(exact)).toBe(exact)
+  })
+
+  it.each([
+    ['a name that does not start with "~"', 'spring'],
+    ['a full name with "/"', 'canopycms/prod/spring'],
+    ['an empty name', '~'],
+    ['an empty first part ("~~")', '~~spring'],
+    ['an empty part inside', '~canopycms~~spring'],
+    ['an empty last part', '~spring~'],
+    ['a "/" inside the form', '~canopycms/prod~spring'],
+    ['a name git refuses', '~a..b'],
+    ['a name with a leading "-"', '~-x'],
+    ['a name ending ".lock"', '~x.lock'],
+    ['a name too long', exactBranchSegment('a'.repeat(251))],
+  ])('reads no name from %s', (_label, param) => {
+    expect(exactBranchName(param)).toBeNull()
+  })
+
+  it('refuses "~" in a branch\'s own name, so no ref is in the exact form', () => {
+    expect(parseBranchRef('~spring').ok).toBe(false)
+    expect(parseBranchRef('a~b').ok).toBe(false)
+    expect(parseBranchRef('canopycms/prod/spring').ok).toBe(true)
+  })
+})
+
 describe('parseCreatedBranchName', () => {
   it.each([
     ['spring', '', 'spring'],
@@ -530,6 +584,7 @@ describe('parseCreatedBranchName', () => {
 
   it.each([
     ['a typed name git refuses', 'a..b', '', /cannot contain "\.\."/],
+    ['a typed exact form', '~spring', 'canopycms/prod/', /invalid characters/],
     [
       'a name the namespace makes too long',
       'a'.repeat(236),

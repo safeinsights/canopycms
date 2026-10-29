@@ -99,7 +99,7 @@ const stubApi = (
     const url =
       typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
     if (url.endsWith('/whoami')) return Promise.resolve(okJson({ userId: 'user-1', groups }))
-    if (/\/(?:refs%2Fheads%2F)?main\/comments$/.test(url)) {
+    if (/\/~?main\/comments$/.test(url)) {
       return Promise.resolve(okJson({ threads, users: [{ id: 'author-1', name: 'Ada Lovelace' }] }))
     }
     if (url.endsWith('/users/batch')) {
@@ -1213,7 +1213,7 @@ describe('a collection write with no answer', () => {
       }
       if (init?.method === 'POST' && url.endsWith('/schema/collections')) return gatewayPage()
       const response = await answerOthers(input, init)
-      if (!/\/(?:refs%2Fheads%2F)?feature\/schema/.test(url) || url.includes('/schema/')) {
+      if (!/\/~?feature\/schema/.test(url) || url.includes('/schema/')) {
         return response
       }
       const body = await response.json()
@@ -1236,9 +1236,7 @@ describe('a collection write with no answer', () => {
     fireEvent.click(await screen.findByTestId('manage-branches-menu-item'))
     fireEvent.click(await screen.findByTestId('switch-to-branch-button-feature'))
     await waitFor(() =>
-      expect(
-        fetchMock.mock.calls.some(([u]) => urlOf(u).includes('/refs%2Fheads%2Ffeature/schema')),
-      ).toBe(true),
+      expect(fetchMock.mock.calls.some(([u]) => urlOf(u).includes('/~feature/schema'))).toBe(true),
     )
     await openNavigator()
     await screen.findByTestId('collection-menu-notes')

@@ -394,7 +394,10 @@ describe('createContentReader', () => {
     expect(page.path).toBe('/pages/home?branch=feature%2Ffoo')
   })
 
-  it('creates the branch workspace when missing', async () => {
+  it.each([
+    ['the default branch', undefined],
+    ['the default branch by its exact form', '~main'],
+  ])('creates the branch workspace when missing, for %s', async (_label, branch) => {
     const root = await tmpDir()
     // Mock process.cwd() to isolate test from parent git repo
     const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(root)
@@ -451,9 +454,10 @@ describe('createContentReader', () => {
       const doc = await reader.read<{ hero: { title: string } }>({
         entryPath: unsafeAsLogicalPath('content/pages'),
         slug: unsafeAsSlug('home'),
+        branch,
         user: ANONYMOUS_USER,
       })
-      expect(doc.path).toBe('/pages/home?branch=main')
+      expect(doc.path).toBe(`/pages/home?branch=${branch ?? 'main'}`)
       expect(doc.data.hero.title).toBe('Welcome')
 
       // In dev mode, workspace is at .canopy-dev/content-branches/main
@@ -587,6 +591,14 @@ describe('createContentReader', () => {
       })
       expect(await fs.readdir(baseRoot)).toEqual(['canopycms-local-spring'])
       expect(await fs.readFile(branchJson, 'utf-8')).toBe(before)
+    })
+
+    it('reads a malformed exact form as NOT_FOUND with allowCreateBranch, provisioning nothing', async () => {
+      const root = await tmpDir()
+      const reader = await readerFor(root, { allowCreateBranch: true })
+
+      await expect(readPage(reader, '~~spring')).rejects.toMatchObject({ code: 'NOT_FOUND' })
+      expect(await fs.readdir(root)).toEqual([])
     })
 
     it('reads as NOT_FOUND when a getBranchContext resolver returns null, even with allowCreateBranch', async () => {

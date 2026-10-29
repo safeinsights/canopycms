@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import type { CanopyConfig } from './config'
-import { BranchPathError, isSettingsBranchName, parseBranchName, resolveBranchPath } from './paths'
+import { BranchPathError, isSettingsBranchName, parseBranchRef, resolveBranchPath } from './paths'
 import { buildInitialBranchMetadata, loadBranchContext } from './branch-metadata'
 import { BRANCH_META_DIR, BRANCH_META_FILE, readBranchMetadataFile } from './branch-metadata-file'
 import { shortNameOf } from './branch-param'
@@ -115,7 +115,7 @@ export class BranchWorkspaceManager {
       throw new BranchPathError('Settings branches are not content branches')
     }
     // The name reaches git and branch.json as given; only the directory is sanitized.
-    const named = parseBranchName(options.branchName)
+    const named = parseBranchRef(options.branchName)
     if (!named.ok) throw new BranchPathError(named.error)
     const { branchRoot, baseRoot } = resolveBranchPath(options)
     const paths: BranchPaths = {

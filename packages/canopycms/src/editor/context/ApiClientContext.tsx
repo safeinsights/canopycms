@@ -9,6 +9,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import { createApiClient } from '../../api'
 import { joinUrlPrefix } from '../../utils/url-prefix'
+import { unlistedSegment } from '../branch-names'
 import type { OperatingMode } from '../../operating-mode/types'
 
 export type ApiClient = ReturnType<typeof createApiClient>
@@ -42,7 +43,7 @@ type BranchSegments = ReadonlyMap<string, string>
 function createSegmentTable() {
   let segments: BranchSegments = new Map()
   return {
-    lookup: (branch: string): string => segments.get(branch) ?? branch,
+    lookup: (branch: string): string => segments.get(branch) ?? unlistedSegment(branch),
     replace: (next: BranchSegments): void => {
       segments = next
     },
@@ -132,9 +133,9 @@ export function useOnEditorModeMismatch(listener: () => void): void {
 
 /**
  * Tells the provider's own client the `/:branch` segment each listed branch's requests carry
- * (name to segment); a name not in `segments` goes as given. Set during render, not in an effect:
- * a data hook fetches in a layout effect, before any effect here would run. Outside a provider it
- * does nothing, and an injected `client` never reads the table.
+ * (name to segment); a name not in `segments` goes as `unlistedSegment` sends it. Set during
+ * render, not in an effect: a data hook fetches in a layout effect, before any effect here would
+ * run. Outside a provider it does nothing, and an injected `client` never reads the table.
  */
 export function useBranchSegments(segments: BranchSegments): void {
   const set = useContext(BranchSegmentsContext)

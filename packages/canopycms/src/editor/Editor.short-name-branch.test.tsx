@@ -18,6 +18,7 @@ import { ApiClientProvider } from './context'
 import { RESERVED_GROUPS } from '../authorization/helpers'
 import { mockConsole } from '../test-utils/console-spy'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../paths/test-utils'
+import { exactBranchSegment } from '../paths/validation'
 
 vi.mock('@mantine/modals', () => ({
   ModalsProvider: ({ children }: { children: React.ReactNode }) => children,
@@ -79,7 +80,7 @@ const urlOf = (input: RequestInfo | URL) =>
   typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
 
 /** The API path a listed branch's requests take: the exact form of its full name. */
-const wire = (name: string) => `/api/canopycms/${encodeURIComponent(`refs/heads/${name}`)}`
+const wire = (name: string) => `/api/canopycms/${encodeURIComponent(exactBranchSegment(name))}`
 
 const changesNote = {
   id: 'note-1',
@@ -374,7 +375,7 @@ describe('the editor on a namespace branch named by its short name', () => {
     const card = await screen.findByTestId(`branch-list-item-${SPRING}`)
     expect(within(card).getByText('spring')).toBeTruthy()
     expect(screen.queryByText(SPRING)).toBeNull()
-    expect(screen.queryByText(`refs/heads/${SPRING}`)).toBeNull()
+    expect(screen.queryByText(exactBranchSegment(SPRING))).toBeNull()
   })
 
   it('sends a branch outside the namespace exactly, under its full name', async () => {
@@ -707,7 +708,7 @@ describe('the editor on a namespace branch named by its short name', () => {
 })
 
 describe('the editor beside a branch outside the namespace that its short name takes', () => {
-  const EXACT = 'refs/heads/spring'
+  const EXACT = '~spring'
   const both = () => [
     listed('main', 'editing'),
     listed(SPRING, 'editing'),
@@ -820,4 +821,64 @@ describe('the editor beside a branch outside the namespace that its short name t
 
     expect(entriesReads(fetchMock)).toEqual([`/api/canopycms/${encodeURIComponent(EXACT)}/entries`])
   })
+})
+
+describe('the request paths the editor builds', () => {
+  it.each([
+    ['a namespace branch opened by its short name', 'spring', SPRING],
+    ['a branch outside the namespace whose name holds a "/"', OUTSIDE, OUTSIDE],
+    ['an outside branch a namespace branch shadows', '~spring', 'spring'],
+    ['the base branch', 'main', 'main'],
+  ])(
+    'carry no %%2F for %s, before the listing, after it and in a save',
+    async (_l, opened, full) => {
+      let releaseListing = () => {}
+      const holdListing = new Promise<void>((resolve) => {
+        releaseListing = resolve
+      })
+      window.history.replaceState({}, '', `/?branch=${encodeURIComponent(opened)}`)
+      const inner = stubApi({ status: 'editing', userId: 'author-1' })
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (
+          !urlOf(input).endsWith('/api/canopycms/branches') ||
+          (init?.method ?? 'GET') !== 'GET'
+        ) {
+          return inner(input, init)
+        }
+        await holdListing
+        return okJson({
+          branches: [
+            listed('main', 'editing'),
+            listed(SPRING, 'editing'),
+            listed(OUTSIDE, 'editing'),
+            listed('spring', 'editing'),
+          ],
+          defaultBranch: 'main',
+          users: [],
+        })
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      const paths = () =>
+        fetchMock.mock.calls.map(([input]) => new URL(urlOf(input), 'http://x').pathname)
+      renderEditor(opened)
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      })
+      const beforeListing = paths().filter((p) => p !== '/api/canopycms/branches')
+
+      releaseListing()
+      expect((await titleBox()).value).toBe('hello title')
+      fireEvent.change(await titleBox(), { target: { value: 'Edited' } })
+      const save = await screen.findByTestId('save-button')
+      await waitFor(() => expect(save.getAttribute('aria-disabled')).toBeNull())
+      fireEvent.click(save)
+      await waitFor(() =>
+        expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(true),
+      )
+
+      expect(paths()).toContain(`${wire(full)}/content/content/posts/hello`)
+      expect(paths().filter((p) => /%2f/i.test(p))).toEqual([])
+      expect(beforeListing.filter((p) => /%2f/i.test(p))).toEqual([])
+    },
+  )
 })
