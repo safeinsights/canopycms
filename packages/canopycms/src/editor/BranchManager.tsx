@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 
 import {
   ActionIcon,
@@ -669,12 +669,26 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   const [creating, setCreating] = useState(false)
   // The server's reason for refusing a name, shown while that name is still what is typed.
   const [refused, setRefused] = useState<{ typed: string; reason: string } | null>(null)
+  const nameInputRef = useRef<HTMLInputElement>(null)
+  // Set by a refusal: the name field takes focus once it is enabled again, so its error is read.
+  const focusNameRef = useRef(false)
+  useEffect(() => {
+    if (creating || !focusNameRef.current) return
+    focusNameRef.current = false
+    nameInputRef.current?.focus()
+  }, [creating, refused])
   // Read synchronously: state would not yet show a first click to a second one in the same tick.
   const creatingRef = useRef(false)
 
   // The server's own rules, so the field says what will be created, or why nothing can be.
   const typedBranchName = newBranchName.trim()
   const createdBranchName = typedBranchName ? parseCreatedBranchName(typedBranchName) : null
+  const nameError =
+    createdBranchName?.ok === false
+      ? createdBranchName.error
+      : refused?.typed === typedBranchName
+        ? refused.reason
+        : undefined
 
   const handleCreate = async () => {
     if (creatingRef.current || !createdBranchName?.ok) return
@@ -689,9 +703,11 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
       })
       if (created === false) return
       if (typeof created === 'object') {
+        focusNameRef.current = true
         setRefused({ typed: typedBranchName, reason: created.refusal })
         return
       }
+      setRefused(null)
       setNewBranchName('')
       setNewBranchTitle('')
       setNewBranchDescription('')
@@ -738,7 +754,10 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
             variant="light"
             size="sm"
             fullWidth
-            onClick={() => setShowCreateForm(!showCreateForm)}
+            onClick={() => {
+              if (showCreateForm) setRefused(null)
+              setShowCreateForm(!showCreateForm)
+            }}
             disabled={creating}
             data-testid="create-branch-button"
           >
@@ -753,23 +772,20 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                   placeholder="spring-update"
                   // Below the input, so a preview that wraps never moves the field being typed in.
                   inputWrapperOrder={['label', 'input', 'description', 'error']}
+                  // Only when sanitizing changed what was typed, and never beside an error.
                   description={
-                    // Only when sanitizing changed what was typed.
-                    createdBranchName?.ok && createdBranchName.shortName !== typedBranchName
+                    !nameError &&
+                    createdBranchName?.ok &&
+                    createdBranchName.shortName !== typedBranchName
                       ? `Will be named ${createdBranchName.shortName}`
                       : undefined
                   }
-                  error={
-                    createdBranchName?.ok === false
-                      ? createdBranchName.error
-                      : refused?.typed === typedBranchName
-                        ? refused.reason
-                        : undefined
-                  }
+                  error={nameError}
                   value={newBranchName}
                   onChange={(e) => setNewBranchName(e.target.value)}
                   required
                   disabled={creating}
+                  ref={nameInputRef}
                   data-autofocus={startCreating || undefined}
                   data-testid="branch-name-input"
                 />
