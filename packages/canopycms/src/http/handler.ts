@@ -17,7 +17,7 @@ import { BRANCH_METADATA_CORRUPT_MESSAGE } from '../branch-metadata-error'
 import { resolveCanopyUser } from '../resolve-canopy-user'
 import { authResultToCanopyUser } from '../user'
 import { isAdmin } from '../authorization'
-import { isSettingsBranchName } from '../paths/branch-name'
+import { exactBranchName, isSettingsBranchName } from '../paths/branch-name'
 import { clientOperatingStrategy, operatingStrategy } from '../operating-mode'
 import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from '../utils/error'
 // canopyLogError, not console.error: this is shared code and not guaranteed to
@@ -116,9 +116,10 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
     // content branch would let any request clone a content-history copy that a
     // submit pushes under the settings name, which settings provisioning then refuses,
     // leaving settings unavailable.
-    // Not found, like any branch the caller cannot resolve, even a workspace left on disk.
+    // Not found, like any branch the caller cannot resolve, even a workspace left on disk. The
+    // exact form (`refs/heads/<name>`) names the same branch, so it is refused by that name.
     getBranchContext: (branch, opts) =>
-      isSettingsBranchName(branch, settingsBranch)
+      isSettingsBranchName(exactBranchName(branch) ?? branch, settingsBranch)
         ? Promise.resolve(null)
         : timeRequestPhase('branchContext', () => getBranchContext(branch, opts)),
     authPlugin: options.authPlugin,

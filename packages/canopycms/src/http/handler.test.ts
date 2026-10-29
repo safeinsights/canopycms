@@ -1007,10 +1007,11 @@ describe('buildContext: the settings branch is never a content branch', () => {
     const handler = createCanopyRequestHandler({ services, authPlugin: createMockAuthPlugin() })
     vi.mocked(BranchWorkspaceManager).mockClear()
     vi.mocked(loadBranchContext).mockClear()
+    resolveBranchParam.mockClear()
     const response = await handler(
       createMockRequest({
         method: 'GET',
-        url: `http://localhost:3000/api/canopycms/${branch}/status`,
+        url: `http://localhost:3000/api/canopycms/${encodeURIComponent(branch)}/status`,
       }),
       [branch, 'status'],
     )
@@ -1023,7 +1024,8 @@ describe('buildContext: the settings branch is never a content branch', () => {
       )
       .map(([opts]) => (opts as { branchName: string }).branchName)
     const loaded = vi.mocked(loadBranchContext).mock.calls.map(([opts]) => opts.branchName)
-    return { response, created, loaded }
+    const resolved = resolveBranchParam.mock.calls.map(([param]) => param as string)
+    return { response, created, loaded, resolved }
   }
 
   it('answers 404 for the deployment-namespaced settings branch, provisioning and loading nothing', async () => {
@@ -1052,6 +1054,22 @@ describe('buildContext: the settings branch is never a content branch', () => {
     expect(response.status).toBe(404)
     expect(created).not.toContain('canopycms-settings-other')
     expect(loaded).not.toContain('canopycms-settings-other')
+  })
+
+  it.each([
+    ['the deployment-namespaced settings branch', 'canopycms-settings-acme'],
+    ["an adopter's configured settings branch", 'site-settings'],
+    ["another deployment's settings branch", 'canopycms-settings-other'],
+  ])('answers 404 for %s by its exact form, resolving nothing', async (_label, name) => {
+    const exact = `refs/heads/${name}`
+    const { response, created, resolved } = await request(exact, (config) => {
+      config.deploymentName = 'acme'
+      config.settingsBranch = 'site-settings'
+    })
+
+    expect(response.status).toBe(404)
+    expect(created).not.toContain(name)
+    expect(resolved).not.toContain(exact)
   })
 
   it('records the base branch it provisions on every request (so the spies above can see a call)', async () => {
