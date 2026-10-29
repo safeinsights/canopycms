@@ -410,6 +410,29 @@ describe('textDiff', () => {
   })
 })
 
+describe('computeEntryDiff across an entry type change', () => {
+  it('reports the type, then maps each side’s fields', () => {
+    const typed: FieldConfig[] = [
+      { name: 'title', type: 'string', label: 'Title' },
+      { name: 'summary', type: 'string', label: 'Summary' },
+      { name: 'rating', type: 'string', label: 'Rating' },
+    ]
+    const { changes, formattingOnly } = computeEntryDiff({
+      fields: typed,
+      before: { format: 'json', entryType: 'blog-post', data: { title: 'Hi', rating: '5' } },
+      after: { format: 'json', entryType: 'landing_page', data: { title: 'Hi', summary: 'New' } },
+    })
+    expect(formattingOnly).toBe(false)
+    expect(summary(changes)).toEqual([
+      ['changed', 'Entry type'],
+      ['added', 'Summary'],
+      ['removed', 'Rating'],
+    ])
+    expect(changes[0].before).toMatchObject({ kind: 'text', text: 'Blog post' })
+    expect(changes[0].after).toMatchObject({ kind: 'text', text: 'Landing page' })
+  })
+})
+
 describe('computeEntryDiff on long lists', () => {
   it('matches 10,000 reordered items quickly, marking only the one that moved', () => {
     const team = Array.from({ length: 10_000 }, (_, i) => ({ name: `Person ${i}` }))
@@ -418,7 +441,8 @@ describe('computeEntryDiff on long lists', () => {
     const after = { ...before, data: { ...before.data, team: [...items.slice(1), items[0]] } }
     const started = Date.now()
     const { changes } = computeEntryDiff({ fields, before, after })
-    // ~40ms here; the quadratic table this replaced took ~1s.
+    // ~40ms here; the (n+1)² table this replaced took ~1s. This catches that table; it does not
+    // distinguish n log n from n².
     expect(Date.now() - started).toBeLessThan(400)
     expect(summary(changes)).toEqual([['moved', 'Team › Person 0']])
   })
@@ -491,7 +515,8 @@ describe('computeEntryDiff, round 2', () => {
 
   it('still marks a one-word title change after a large body has spent the budget', () => {
     const advance = freezeClock()
-    afterDiff.lines = () => advance(1000)
+    // Past the 300 ms line deadline, short of the 1,000 ms word one.
+    afterDiff.lines = () => advance(500)
     const bodyFirst: FieldConfig[] = [markdown('body'), { name: 'title', type: 'string' }]
     const body = (word: string) => Array.from({ length: 200 }, (_, i) => `${word} ${i}`).join('\n')
     const entry = (title: string, word: string) => ({
@@ -515,6 +540,35 @@ describe('computeEntryDiff, round 2', () => {
         { value: 'there', added: true },
       ],
     })
+  })
+
+  it('gives short word diffs a second, later deadline, past which they too are shown unmarked', () => {
+    const advance = freezeClock()
+    const spread: FieldConfig[] = [
+      { name: 'a', type: 'string' },
+      markdown('body'),
+      { name: 'b', type: 'string' },
+      { name: 'c', type: 'string' },
+    ]
+    const entry = (word: string) => ({
+      format: 'json' as const,
+      entryType: 'page',
+      data: { a: `${word} a`, body: `${word}\nx`, b: `${word} b`, c: `${word} c` },
+    })
+    // The clock passes the 300 ms line deadline after a's word diff, the 1,000 ms one after b's.
+    let words = 0
+    afterDiff.words = () => {
+      if (++words === 1) advance(500)
+      if (words === 2) advance(600)
+    }
+    const { changes } = computeEntryDiff({
+      fields: spread,
+      before: entry('old'),
+      after: entry('new'),
+    })
+    expect(changes.map((c) => c.path[0])).toEqual(['A', 'Body', 'B', 'C'])
+    expect(changes.map((c) => !!c.tooLargeToMark)).toEqual([false, true, false, true])
+    expect(changes[2].text?.mode).toBe('words')
   })
 
   it('stops changed line pairs at the deadline', () => {

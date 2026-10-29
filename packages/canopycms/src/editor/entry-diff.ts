@@ -106,12 +106,18 @@ const SHORT_TEXT = 200
 /** Unchanged lines kept on each side of a change in a line diff. */
 const CONTEXT_LINES = 2
 /**
- * How long one entry's text diffing may take in all, on the editor's main thread, where jsdiff's
- * run time grows with the square of the edits. The deadline is checked before each jsdiff call,
- * and each call is given only the time left; past it, every text change left is shown unmarked.
- * Short word diffs are exempt: they cost well under a millisecond.
+ * How long one entry's line and long-text diffing may take in all, on the editor's main thread,
+ * where jsdiff's run time grows with the square of the edits. The deadline is checked before each
+ * jsdiff call, and each call is given only the time left; past it, every such change left is
+ * shown unmarked.
  */
 const DIFF_TIMEOUT_MS = 300
+/**
+ * The absolute deadline for short word diffs, measured from the start of the entry. They cost
+ * about a millisecond at most for prose, a few for 200 characters of punctuation, so they get a
+ * longer budget rather than none; past it they too are shown unmarked.
+ */
+const SHORT_DIFF_TIMEOUT_MS = 1000
 const OTHER_FIELDS_LABEL = 'Other fields'
 const LONG_TEXT_TYPES = new Set(['markdown', 'mdx', 'code'])
 
@@ -235,8 +241,10 @@ class Walker {
 
   constructor(
     private readonly referenceTitle: ((id: string) => string | undefined) | undefined,
-    /** The `Date.now()` past which no more text is diffed. */
+    /** The `Date.now()` past which no more line or long-text diffs start. */
     private readonly deadline: number,
+    /** The `Date.now()` past which no more short word diffs run. */
+    private readonly wordDeadline: number,
   ) {}
 
   /** `value` of `field`, as the drawer shows it. */
@@ -411,6 +419,7 @@ class Walker {
         markableText(change.after) ?? afterText,
         long,
         this.deadline,
+        this.wordDeadline,
       )
       if (text) change.text = text
       else change.tooLargeToMark = true
@@ -422,7 +431,13 @@ class Walker {
       change.after.alt !== undefined &&
       change.before.alt !== change.after.alt
     ) {
-      const alt = textDiff(change.before.alt, change.after.alt, false, this.deadline)
+      const alt = textDiff(
+        change.before.alt,
+        change.after.alt,
+        false,
+        this.deadline,
+        this.wordDeadline,
+      )
       if (alt) change.altText = alt
     }
     this.changes.push(change)
@@ -631,8 +646,8 @@ const splitLines = (value: string): string[] => {
  * of unchanged lines cut to {@link CONTEXT_LINES} beside each change. Words are diffed with
  * whitespace as tokens (`diffWordsWithSpace`): `diffWords` gives an unchanged run the new
  * text's spacing, so one side read back from its parts would not be the text it was.
- * Undefined once `deadline` (a `Date.now()`) passes: no line diff starts after it. Short word
- * diffs ignore it.
+ * Undefined once `deadline` (a `Date.now()`) passes: no line diff starts after it. A short word
+ * diff runs until the later `wordDeadline`.
  * @internal Exported for tests.
  */
 export function textDiff(
@@ -640,6 +655,7 @@ export function textDiff(
   after: string,
   long = false,
   deadline = Date.now() + DIFF_TIMEOUT_MS,
+  wordDeadline = Date.now() + SHORT_DIFF_TIMEOUT_MS,
 ): TextDiff | undefined {
   // jsdiff restarts its clock on each call, so each is given only what is left of the budget.
   const timeLeft = (): { timeout: number } | undefined => {
@@ -656,7 +672,11 @@ export function textDiff(
     !after.includes('\n') &&
     before.length <= SHORT_TEXT &&
     after.length <= SHORT_TEXT
-  if (short) return { mode: 'words', parts: toParts(diffWordsWithSpace(before, after)) }
+  if (short) {
+    return Date.now() < wordDeadline
+      ? { mode: 'words', parts: toParts(diffWordsWithSpace(before, after)) }
+      : undefined
+  }
 
   const rows: DiffRow[] = []
   const budget = timeLeft()
@@ -734,8 +754,13 @@ export function computeEntryDiff({
   after,
   referenceTitle,
 }: EntryDiffInput): EntryDiff {
-  // One budget for the whole entry: see DIFF_TIMEOUT_MS.
-  const walker = new Walker(referenceTitle, Date.now() + DIFF_TIMEOUT_MS)
+  // One budget for the whole entry: see DIFF_TIMEOUT_MS and SHORT_DIFF_TIMEOUT_MS.
+  const started = Date.now()
+  const walker = new Walker(
+    referenceTitle,
+    started + DIFF_TIMEOUT_MS,
+    started + SHORT_DIFF_TIMEOUT_MS,
+  )
   const root: At = { path: [], key: '' }
   if (before && after && before.entryType !== after.entryType) {
     walker.value(

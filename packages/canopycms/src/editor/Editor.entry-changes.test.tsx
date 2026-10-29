@@ -165,9 +165,13 @@ const stubApi = (changed: string[], entryChange?: { status: number; error: strin
   return fetch
 }
 
-const renderEditor = () =>
+const renderEditor = (
+  swr: { dedupingInterval: number; focusThrottleInterval?: number } = {
+    dedupingInterval: 2000,
+  },
+) =>
   render(
-    <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 2000 }}>
+    <SWRConfig value={{ provider: () => new Map(), ...swr }}>
       <ApiClientProvider>
         <Editor
           entries={[hello]}
@@ -254,6 +258,51 @@ describe('Show changes', () => {
     await waitFor(() => expect(calls('/main/changes')).toBeGreaterThan(listReads))
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(calls('/main/changes/content/posts/hello')).toBe(entryReads)
+  })
+
+  it('returns focus to the rail’s Content button when the deleted entry’s row is gone', async () => {
+    const fetch = stubApi([])
+    const answered = fetch.getMockImplementation()!
+    let deleted = [{ status: 'deleted', logicalPath: 'content/posts/gone' }]
+    fetch.mockImplementation((input, init) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (new URL(url, 'http://localhost').pathname.endsWith('/main/changes')) {
+        return Promise.resolve(
+          okJson({
+            base: 'main',
+            entries: deleted.map((e) => ({
+              ...e,
+              contentId: 'zzz999ZZZ999',
+              collectionPath: 'content/posts',
+              entryType: 'post',
+              title: 'Gone',
+            })),
+            collections: [],
+            hiddenChanges: false,
+          }),
+        )
+      }
+      return answered(input, init)
+    })
+    renderEditor({ dedupingInterval: 0, focusThrottleInterval: 0 })
+    await waitFor(() => expect(titleInput().value).toBe('Loaded title'))
+    const toggle = await screen.findByTestId('content-panel-toggle')
+    if (toggle.getAttribute('aria-expanded') !== 'true') await userEvent.click(toggle)
+    await userEvent.click(await screen.findByRole('radio', { name: /^Changed/ }))
+    const row = await screen.findByTestId('entry-nav-deleted-entry')
+    await userEvent.click(row)
+    const dialog = await screen.findByRole('dialog', { name: 'Changes to Gone' })
+
+    // The list reloads without the entry, and its row goes with it.
+    deleted = []
+    window.dispatchEvent(new Event('focus'))
+    await waitFor(() => expect(row.isConnected).toBe(false))
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(dialog.isConnected).toBe(false))
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByTestId('content-panel-toggle')),
+    )
   })
 
   it('isn’t offered on an entry the branch hasn’t changed', async () => {
