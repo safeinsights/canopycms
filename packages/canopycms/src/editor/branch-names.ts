@@ -16,18 +16,20 @@ export function displayBranchName(branch: Named): string {
 }
 
 /**
- * The listed branch `name` opens, in the order the server resolves a `?branch=`: the base or
- * active branch (`defaultBranch`) by its full name, then a namespace branch by its short name,
- * then any branch by its full name. A branch outside the namespace lists its full name as its
- * short name, so only a namespace branch matches the second.
+ * The listed branch `name` opens, in the order the server resolves a `?branch=`: the active branch
+ * (`defaultBranch`) by its full name, then a namespace branch by its short name, then any branch
+ * by its full name. The server lists no namespace branch under the base's or active branch's name
+ * as its short name (`shortNameOf`), so the base needs no step of its own, and a branch outside
+ * the namespace lists its full name as its short name, so only a namespace branch matches the
+ * second.
  */
-function resolveExactly<B extends Named & Pick<BranchListItem, 'isProtected'>>(
+function resolveExactly<B extends Named>(
   branches: readonly B[],
   name: string,
   defaultBranch?: string,
 ): B | undefined {
   const byName = branches.find((b) => b.name === name)
-  if (byName && (byName.isProtected || name === defaultBranch)) return byName
+  if (byName && name === defaultBranch) return byName
   return branches.find((b) => b.shortName === name && b.name !== name) ?? byName
 }
 
@@ -37,7 +39,7 @@ function resolveExactly<B extends Named & Pick<BranchListItem, 'isProtected'>>(
  * persisted "feature-x"). A sanitized match counts only when its own name resolves back to it:
  * the server refuses the raw form, and a shadowed branch would open a different one.
  */
-export function resolveListedBranch<B extends Named & Pick<BranchListItem, 'isProtected'>>(
+export function resolveListedBranch<B extends Named>(
   branches: readonly B[],
   name: string,
   defaultBranch?: string,
@@ -54,7 +56,7 @@ export function resolveListedBranch<B extends Named & Pick<BranchListItem, 'isPr
  * The `?branch=` value for `branch`: its short name when that opens the same branch, else its
  * full name, so a URL never opens a different branch than the one shown.
  */
-export function branchUrlName<B extends Named & Pick<BranchListItem, 'isProtected'>>(
+export function branchUrlName<B extends Named>(
   branches: readonly B[],
   branch: B,
   defaultBranch?: string,

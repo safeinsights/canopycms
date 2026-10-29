@@ -25,14 +25,24 @@ describe('resolveListedBranch', () => {
     expect(resolveListedBranch([outsideX, namespaceX], 'canopycms/prod/x')).toBe(namespaceX)
   })
 
-  it('opens the base or active branch by its full name before any short name', () => {
-    const base = listed('main', 'main', true)
+  it('opens the active branch by its full name before any short name', () => {
     const active = listed('staging', 'staging')
-    const namespaceMain = listed('canopycms/prod/main', 'main')
     const namespaceStaging = listed('canopycms/prod/staging', 'staging')
-    const branches = [namespaceMain, namespaceStaging, base, active]
-    expect(resolveListedBranch(branches, 'main', 'staging')).toBe(base)
-    expect(resolveListedBranch(branches, 'staging', 'staging')).toBe(active)
+    expect(resolveListedBranch([namespaceStaging, active], 'staging', 'staging')).toBe(active)
+  })
+
+  it('opens the base by its full name, which the server lists no namespace branch under', () => {
+    const base = listed('main', 'main', true)
+    // The short name `shortNameOf` gives a namespace branch named after the base.
+    const namespaceMain = listed('canopycms/prod/main', 'canopycms/prod/main')
+    expect(resolveListedBranch([namespaceMain, base], 'main', 'staging')).toBe(base)
+  })
+
+  it('opens a namespace branch before a protected outside branch that is neither base nor active', () => {
+    // An old base: protected, but not the branch the server resolves first.
+    const oldBase = listed('x', 'x', true)
+    expect(resolveListedBranch([oldBase, namespaceX], 'x', 'main')).toBe(namespaceX)
+    expect(branchUrlName([oldBase, namespaceX], namespaceX, 'main')).toBe('x')
   })
 
   it('falls back to the sanitized form of a raw name', () => {
@@ -62,9 +72,9 @@ describe('branchUrlName', () => {
   })
 
   it('carries the full name when the short name opens another branch', () => {
-    const base = listed('main', 'main', true)
+    const active = listed('main', 'main', true)
     const shadowed = listed('canopycms/prod/main', 'main')
-    expect(branchUrlName([base, shadowed], shadowed)).toBe('canopycms/prod/main')
-    expect(branchUrlName([base, shadowed], base)).toBe('main')
+    expect(branchUrlName([active, shadowed], shadowed, 'main')).toBe('canopycms/prod/main')
+    expect(branchUrlName([active, shadowed], active, 'main')).toBe('main')
   })
 })
