@@ -81,6 +81,7 @@ import {
 import { useBranchActions } from './hooks/useBranchActions'
 import { useBranchChangesData, useEntryChangeData } from './hooks/useBranchChangesData'
 import type { EntryChangesSubject } from './components/EntryChangesDrawer'
+import { LazyEntryChangesDrawer } from './components/LazyEntryChangesDrawer'
 import type { BranchChangeEntry } from '../api/branch-changes'
 import type { UnsavedSummary } from './hooks/useDraftManager'
 import type { StampedEntry } from '../stamp-on-publish'
@@ -244,11 +245,6 @@ export interface EditorProps {
 const EMPTY_SCHEMA: EntrySchema = []
 const CONTENT_PANEL_ID = 'canopy-content-panel'
 const EMPTY_VALUE: FormValue = {}
-
-// Loaded on first open, so the diff model and jsdiff stay out of the editor's first chunk.
-const EntryChangesDrawer = React.lazy(() =>
-  import('./components/EntryChangesDrawer').then((m) => ({ default: m.EntryChangesDrawer })),
-)
 
 /**
  * High-level editor wrapper that wires entry navigation, form rendering,
@@ -1667,13 +1663,18 @@ const EditorContent: React.FC<EditorProps> = ({
   // "Show changes": the entry compared stays set after a close, so the closing drawer keeps it.
   const [changesSubject, setChangesSubject] = useState<EntryChangesSubject>()
   const [changesOpen, setChangesOpen] = useState(false)
+  // Its comparison stays keyed until the close transition ends, so the closing drawer keeps it.
+  const [changesShown, setChangesShown] = useState(false)
   const changesOpenerRef = useRef<HTMLElement | null>(null)
   const showChangesRef = useRef<HTMLButtonElement>(null)
-  useEffect(() => setChangesOpen(false), [branchNameState])
+  useEffect(() => {
+    setChangesOpen(false)
+    setChangesShown(false)
+  }, [branchNameState])
   const entryChange = useEntryChangeData(
     apiClient,
     branchNameState,
-    changesOpen && changesSubject
+    (changesOpen || changesShown) && changesSubject
       ? {
           logicalPath: changesSubject.logicalPath,
           from: changesSubject.from,
@@ -1721,6 +1722,7 @@ const EditorContent: React.FC<EditorProps> = ({
       }),
     })
     setChangesOpen(true)
+    setChangesShown(true)
   }
   // The header's Show changes button, else the entry menu's trigger, once a save leaves the entry
   // unchanged or a deleted entry's row goes with its panel.
@@ -2573,23 +2575,20 @@ const EditorContent: React.FC<EditorProps> = ({
                 />
               </BranchesDrawer>
               {changesSubject && (
-                <React.Suspense fallback={null}>
-                  <EntryChangesDrawer
-                    opened={changesOpen}
-                    onClose={() => setChangesOpen(false)}
-                    returnFocusTo={changesReturnTarget}
-                    base={
-                      branchChanges.data?.base ?? currentBranch?.baseBranch ?? 'the base branch'
-                    }
-                    subject={{
-                      ...changesSubject,
-                      unsavedEdits:
-                        changesSubject.logicalPath === currentEntry?.path && isSelectedDirty(),
-                    }}
-                    state={entryChange}
-                    referenceTitle={referenceTitle}
-                  />
-                </React.Suspense>
+                <LazyEntryChangesDrawer
+                  opened={changesOpen}
+                  onClose={() => setChangesOpen(false)}
+                  onExited={() => setChangesShown(false)}
+                  returnFocusTo={changesReturnTarget}
+                  base={branchChanges.data?.base ?? currentBranch?.baseBranch ?? 'the base branch'}
+                  subject={{
+                    ...changesSubject,
+                    unsavedEdits:
+                      changesSubject.logicalPath === currentEntry?.path && isSelectedDirty(),
+                  }}
+                  state={entryChange}
+                  referenceTitle={referenceTitle}
+                />
               )}
               {branchNameState && (
                 <CommentsPanel

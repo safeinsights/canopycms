@@ -69,6 +69,8 @@ export interface EntryChangesSubject {
 export interface EntryChangesDrawerProps {
   opened: boolean
   onClose: () => void
+  /** The close transition has finished. */
+  onExited?: () => void
   /** Names the element that takes focus after the drawer closes. */
   returnFocusTo?: () => HTMLElement | null
   /** The base branch's name, for the copy. */
@@ -470,22 +472,33 @@ export const EntryChangesView: React.FC<Omit<EntryChangesDrawerProps, 'opened' |
   )
 }
 
-/** A right-hand drawer, so the form and preview stay in view beside it. */
+/**
+ * A modal right-hand drawer, as the Branches, Comments and Media drawers are: it traps focus,
+ * and the form and preview wait behind its backdrop.
+ */
 export const EntryChangesDrawer: React.FC<EntryChangesDrawerProps> = ({
   opened,
   onClose,
+  onExited,
   returnFocusTo,
   ...view
-}) => (
-  <OverlayDrawer
-    opened={opened}
-    onClose={onClose}
-    position="right"
-    size={720}
-    title={`Changes to ${view.subject.title}`}
-    data-testid="entry-changes-drawer"
-    {...focusReturnProps(returnFocusTo)}
-  >
-    <EntryChangesView {...view} />
-  </OverlayDrawer>
-)
+}) => {
+  const focusReturn = focusReturnProps(returnFocusTo)
+  return (
+    <OverlayDrawer
+      opened={opened}
+      onClose={onClose}
+      position="right"
+      size={720}
+      title={`Changes to ${view.subject.title}`}
+      data-testid="entry-changes-drawer"
+      {...focusReturn}
+      onExitTransitionEnd={() => {
+        focusReturn.onExitTransitionEnd?.()
+        onExited?.()
+      }}
+    >
+      <EntryChangesView {...view} />
+    </OverlayDrawer>
+  )
+}

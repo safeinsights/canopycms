@@ -2,8 +2,11 @@ import { getErrorMessage, sanitizeErrorMessage } from '../../utils/error'
 
 /** Where in the editor an error was caught, for the log line and the copied details. */
 export interface EditorErrorContext {
-  /** `editor` for the crash screen, `field` for a field boundary, `rich-text` for MDXEditor. */
-  boundary: 'editor' | 'field' | 'rich-text'
+  /**
+   * `editor` for the crash screen, `field` for a field boundary, `rich-text` for MDXEditor,
+   * `changes` for the "Show changes" drawer.
+   */
+  boundary: 'editor' | 'field' | 'rich-text' | 'changes'
   /** The field's canopy path, for a field or rich-text boundary. */
   fieldPath?: string
   /** React's component stack, when React supplied one. */

@@ -197,6 +197,10 @@ describe('Show changes', () => {
     expect(within(dialog).queryByTestId('entry-changes-unsaved')).toBeNull()
 
     await userEvent.keyboard('{Escape}')
+    // Through the close transition the drawer keeps what it showed, with no skeleton.
+    expect(dialog.isConnected).toBe(true)
+    expect(within(dialog).queryByTestId('entry-changes-loading')).toBeNull()
+    expect(within(dialog).getByTestId('entry-changes-summary')).toBeTruthy()
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await waitFor(() => expect(document.activeElement).toBe(button))
   })
