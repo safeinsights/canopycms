@@ -316,6 +316,44 @@ describe('the editor on a namespace branch named by its short name', () => {
     expect(urlBranch()).toBe(OUTSIDE)
   })
 
+  it('sends a namespace branch the active branch shadows under its full name', async () => {
+    window.history.replaceState({}, '', `/?branch=${encodeURIComponent(SPRING)}`)
+    const inner = stubApi({ status: 'editing', userId: 'author-1' })
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+      urlOf(input).endsWith('/api/canopycms/branches') && (init?.method ?? 'GET') === 'GET'
+        ? okJson({
+            branches: [
+              listed('main', 'editing'),
+              listed(SPRING, 'editing'),
+              listed('spring', 'editing'),
+            ],
+            defaultBranch: 'spring',
+            users: [],
+          })
+        : inner(input, init),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    renderEditor(SPRING)
+    await waitFor(async () => expect((await titleBox()).value).toBe('hello title'))
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+    fireEvent.change(await titleBox(), { target: { value: 'Edited' } })
+
+    const saveAll = await screen.findByTestId('save-all-button')
+    await waitFor(() => expect(saveAll.getAttribute('aria-disabled')).toBeNull())
+    fireEvent.click(saveAll)
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(true),
+    )
+    const put = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT')
+    expect(new URL(urlOf(put![0]), 'http://x').pathname).toBe(
+      `/api/canopycms/${encodeURIComponent(SPRING)}/content/content/posts/hello`,
+    )
+    expect(urlBranch()).toBe(SPRING)
+  })
+
   it('shows the short name on the pill and the drawer card, and the full name of an outside branch', async () => {
     window.history.replaceState({}, '', '/?branch=spring')
     stubApi({ status: 'editing', userId: 'author-1' })
@@ -352,6 +390,7 @@ describe('the editor on a namespace branch named by its short name', () => {
     const fetchMock = stubApi({ status: 'editing', userId: 'author-1' })
     renderEditor('spring')
     expect((await titleBox()).value).toBe('hello title')
+    const pushState = vi.spyOn(window.history, 'pushState')
     await openBranchesDrawer()
     fireEvent.click(await screen.findByTestId('create-branch-button'))
     fireEvent.change(await screen.findByTestId('branch-name-input'), {
@@ -367,6 +406,10 @@ describe('the editor on a namespace branch named by its short name', () => {
       }),
     )
     await waitFor(() => expect(urlBranch()).toBe('summer'))
+    // The listing may not hold it yet, so the push itself carries the short name.
+    expect(
+      pushState.mock.calls.map(([, , url]) => new URL(String(url)).searchParams.get('branch')),
+    ).toEqual(['summer'])
     expect(
       fetchMock.mock.calls.some(([input]) => urlOf(input).endsWith('/api/canopycms/summer/schema')),
     ).toBe(true)
