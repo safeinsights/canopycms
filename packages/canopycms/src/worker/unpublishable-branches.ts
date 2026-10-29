@@ -8,15 +8,18 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import { BranchMetadataCorruptError, BranchMetadataFileManager } from '../branch-metadata'
+import { branchNamespaceProblem } from '../operating-mode/branch-namespace'
 import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
 import type {
   UnpublishableBranch,
   UnpublishableBranchReason,
   UnpublishableBranchesReport,
+  WorkerStatusReport,
 } from '../types'
 import { isNodeError } from '../utils/error'
 import {
   MAX_BRANCH_NAME_LENGTH,
+  MAX_PROTECTED_BRANCHES,
   legacyBranchProblem,
   publishesBranch,
   type BranchPolicyDescription,
@@ -161,14 +164,53 @@ function carriedReport(value: unknown): UnpublishableBranchesReport | undefined 
 export async function readCarriedUnpublishableBranches(
   taskDir: string,
 ): Promise<UnpublishableBranchesReport | undefined> {
+  const parsed = await readStatusObject(taskDir)
+  if (parsed === undefined || !('unpublishableBranches' in parsed)) return undefined
+  return carriedReport(parsed.unpublishableBranches)
+}
+
+/**
+ * The gateway's namespace and protected names from the status file a previous worker process
+ * left, so branch creation, which waits for the namespace, keeps working across a restart until
+ * the first sync asks the gateway again. The Lambda can write the status file, so they are carried
+ * only in the shape git sync writes: a namespace `branchNamespaceProblem` takes, and at most one
+ * more name than `protectedBranches` holds, each exact and no longer than a branch name. Tolerant:
+ * anything else carries nothing.
+ */
+export async function readCarriedGatewayPolicy(
+  taskDir: string,
+): Promise<Pick<WorkerStatusReport, 'gatewayBranchNamespace' | 'gatewayProtectedBranches'>> {
+  const parsed = await readStatusObject(taskDir)
+  if (parsed === undefined || !('gatewayBranchNamespace' in parsed)) return {}
+  const namespace = parsed.gatewayBranchNamespace
+  if (typeof namespace !== 'string' || branchNamespaceProblem(namespace) !== null) return {}
+  const names = 'gatewayProtectedBranches' in parsed ? parsed.gatewayProtectedBranches : undefined
+  return isExactNameList(names)
+    ? { gatewayBranchNamespace: namespace, gatewayProtectedBranches: names }
+    : { gatewayBranchNamespace: namespace }
+}
+
+function isExactNameList(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= MAX_PROTECTED_BRANCHES + 1 &&
+    value.every(
+      (name: unknown) =>
+        typeof name === 'string' &&
+        name.length > 0 &&
+        name.length <= MAX_BRANCH_NAME_LENGTH &&
+        !name.includes('*'),
+    )
+  )
+}
+
+/** The status file's top-level object, or undefined when it is missing, unreadable or not one. */
+async function readStatusObject(taskDir: string): Promise<object | undefined> {
   try {
     const parsed: unknown = JSON.parse(
       await fs.readFile(path.join(taskDir, WORKER_STATUS_FILE), 'utf-8'),
     )
-    if (typeof parsed !== 'object' || parsed === null || !('unpublishableBranches' in parsed)) {
-      return undefined
-    }
-    return carriedReport(parsed.unpublishableBranches)
+    return typeof parsed === 'object' && parsed !== null ? parsed : undefined
   } catch {
     return undefined
   }

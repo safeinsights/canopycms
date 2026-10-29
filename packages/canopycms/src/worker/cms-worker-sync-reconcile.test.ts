@@ -368,6 +368,16 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
       expect((await firstSnapshot()).unpublishableBranches).toBeUndefined()
     })
 
+    it("carries the gateway's namespace and protected names into a restarted worker's first snapshot", async () => {
+      await makeWorker({ protectedBranches: ['release'] }).syncGit()
+
+      const snapshot = await firstSnapshot()
+      expect(snapshot.gatewayBranchNamespace).toBe('canopycms/prod/')
+      expect(snapshot.gatewayProtectedBranches).toEqual(['release', 'main'])
+      // Written to the file too, which is what branch creation reads.
+      expect((await readStatus()).gatewayBranchNamespace).toBe('canopycms/prod/')
+    })
+
     it('leaves the last report standing while the gateway answers from a failed boot', async () => {
       await giveWorkspace('old-unprefixed')
       const worker = makeWorker()

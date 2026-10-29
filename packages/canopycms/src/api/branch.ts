@@ -343,6 +343,18 @@ export const createBranchHandler = async (
     }
     const { workerStatus } = await readWorkerStatus(getTaskQueueDir(config))
     const gatewayNamespace = workerStatus?.gatewayBranchNamespace
+    // A worker that predates the namespace never reports one, and its rebase loop renames a
+    // namespace branch to its directory, which no request then resolves. Where branches publish
+    // through the worker, creation waits for the report.
+    if (gatewayNamespace === undefined && strategy.supportsPullRequests()) {
+      return {
+        ok: false,
+        status: 503,
+        error:
+          'Branches cannot be created yet: the CMS worker has not reported its branch namespace. ' +
+          'Ask an administrator to deploy or upgrade the worker (canopycms-cdk), then try again.',
+      }
+    }
     if (gatewayNamespace !== undefined && gatewayNamespace !== namespace) {
       return {
         ok: false,
