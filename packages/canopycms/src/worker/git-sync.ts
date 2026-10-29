@@ -70,9 +70,9 @@ import type { WorkerContext } from './worker-context'
  * (`reconcileTrackedBranches`, which holds the base branch while schema-gate.ts
  * says the serving editor lacks a schema the incoming content names), push this
  * deployment's own settings
- * branch, fast-forward the base branch's workspace, rebase every branch that is
- * behind it (rebase.ts), then sweep old tasks and expired trashed branch
- * directories.
+ * branch, fast-forward the base branch's workspace, ask the gateway for its branch policy,
+ * rebase every branch that is behind it (rebase.ts), then sweep old tasks and expired trashed
+ * branch directories.
  *
  * One ordering is load-bearing and nothing enforces it: `runRebaseCycle` MUST
  * follow `reconcileTrackedBranches`. Branch clones fetch the base tip from
@@ -679,27 +679,39 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     const baseRefresh = await refreshBaseBranchWorkspace(ctx)
 
     if (stoppedForDrain(ctx, 'the rebase cycle')) return
-    const rebaseSummary = await runRebaseCycle(ctx)
-    if (stoppedForDrain(ctx, 'the cleanup sweeps')) return
-
-    await cleanupOldTasks(ctx.taskDir, undefined, ctx.log)
-
-    // For System health: the namespace it compares with the one the CMS creates branches in, the
-    // names creation refuses, and the branches the gateway would refuse to publish, read after the
-    // rebase cycle, which archives merged branches. A gateway that cannot answer, or answers with
-    // no namespace (a failed boot), leaves the last values standing; a fatal error, or a branches
-    // directory or branch.json that cannot be read, leaves the last report.
+    // The gateway's policy, which the rebase loop needs to tell its own namespace and what the
+    // gateway would refuse to publish. A gateway that cannot answer, or answers with no namespace
+    // (a failed boot), gives none.
     let health: GitHubGatewayHealth | undefined
     try {
       health = await ctx.github().health(ctx.shutdownSignal())
     } catch (err) {
       workerLogWarn(`Could not read the GitHub gateway's branch policy: ${getErrorMessage(err)}`)
     }
-    if (health && health.branchPolicy.namespace !== '') {
-      const { branchPolicy } = health
+    const branchPolicy =
+      health && health.branchPolicy.namespace !== '' ? health.branchPolicy : undefined
+    // The namespace System health compares with the one the CMS creates branches in, and the
+    // names creation refuses. Written at once, as the catch below writes on a failure: branch
+    // creation waits for the namespace (api/branch.ts), so it must not wait on the rest of the
+    // cycle succeeding. Without a policy the last values stand.
+    if (branchPolicy) {
       const report = ctx.ensureStatusReport()
       report.gatewayBranchNamespace = branchPolicy.namespace
       report.gatewayProtectedBranches = branchPolicy.configured.filter((n) => !n.includes('*'))
+      await writeWorkerStatus(ctx.taskDir, report).catch((writeErr) =>
+        workerLogError('Failed to write worker status:', getErrorMessage(writeErr)),
+      )
+    }
+    const rebaseSummary = await runRebaseCycle(ctx, branchPolicy)
+    if (stoppedForDrain(ctx, 'the cleanup sweeps')) return
+
+    await cleanupOldTasks(ctx.taskDir, undefined, ctx.log)
+
+    // For System health: the branches the gateway would refuse to publish, read after the rebase
+    // cycle, which archives merged branches and restores renamed ones. Without a policy, a fatal
+    // error, or a branches directory or branch.json that cannot be read, the last report stands.
+    if (health && branchPolicy) {
+      const report = ctx.ensureStatusReport()
       if (health.fatalError === null) {
         try {
           const unpublishable = await findUnpublishableBranches(ctx, branchPolicy)

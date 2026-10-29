@@ -342,6 +342,8 @@ function UnpublishableBranchesAlert({
               (CANOPYCMS_LEGACY_BRANCHES on the GitHub gateway), and takes a protected one out of
               protectedBranches, or makes another branch GitHub&apos;s default. Otherwise, an editor
               re-enters its changes by hand in a new branch, which is created inside the namespace.
+              A branch named like one inside the namespace with dashes for its slashes needs
+              neither: an older worker renamed it, and the next git sync restores its name.
             </Text>
             <BranchRefs branches={listable} />
           </>

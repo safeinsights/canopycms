@@ -3300,27 +3300,31 @@ describe('CmsWorker sync-pr-comments', () => {
     return { task: await getTask(taskDir, id), get, update }
   }
 
-  it.each([
-    ['outside the namespace', {}],
-    ['a legacy branch, which the gateway still pushes', { legacyBranches: ['developer-branch'] }],
-  ])(
-    'updates nothing for a pull request whose head is %s: the gateway withholds its body',
-    async (_label, workerOptions) => {
-      await seedBranch({ pullRequestNumber: 7 })
-      await new CommentStore(branchPath).addComment({
-        userId: 'u1',
-        text: 'A note',
-        type: 'branch',
-      })
+  it('updates nothing for a pull request whose head is outside the namespace: the gateway withholds its body', async () => {
+    await seedBranch({ pullRequestNumber: 7 })
+    await new CommentStore(branchPath).addComment({ userId: 'u1', text: 'A note', type: 'branch' })
 
-      const { task, get, update } = await run({ headRef: 'developer-branch' }, {}, workerOptions)
+    const { task, get, update } = await run({ headRef: 'developer-branch' })
 
-      expect(get).toHaveBeenCalled()
-      expect(task?.status).toBe('completed')
-      expect(task?.result).toEqual({ updated: false, skipped: 'body-withheld' })
-      expect(update).not.toHaveBeenCalled()
-    },
-  )
+    expect(get).toHaveBeenCalled()
+    expect(task?.status).toBe('completed')
+    expect(task?.result).toEqual({ updated: false, skipped: 'body-withheld' })
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it("updates the blocks of a legacy branch's pull request, as the gateway answers its body", async () => {
+    await seedBranch({ pullRequestNumber: 7 })
+    await new CommentStore(branchPath).addComment({ userId: 'u1', text: 'A note', type: 'branch' })
+
+    const { task, update } = await run(
+      { headRef: 'developer-branch' },
+      {},
+      { legacyBranches: ['developer-branch'] },
+    )
+
+    expect(task?.result).toEqual({ updated: true })
+    expect(update.mock.calls[0]![0].body).toContain('**1 unresolved editor comment thread**')
+  })
 
   it("re-renders the PR's comment block from comments.json and leaves sync status alone", async () => {
     await seedBranch({ pullRequestNumber: 7, syncStatus: 'sync-failed', syncFailureReason: 'old' })

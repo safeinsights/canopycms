@@ -9,7 +9,7 @@ import {
 } from '../branch-metadata'
 import { extractIdFromFilename } from '../content-id-index'
 import { invalidateBranchContentCaches } from '../content-index-generation'
-import { isSettingsBranchName } from '../paths/branch-name'
+import { isSettingsBranchName, sanitizeBranchName } from '../paths/branch-name'
 import { normalizeFilesystemPath } from '../paths/normalize'
 import { ROOT_COLLECTION_ID, type ContentId } from '../paths/types'
 import type { ConflictStatus, PullRequestState } from '../types'
@@ -20,6 +20,7 @@ import {
   type ProvisionedWorkspaceHold,
 } from './provisioned-workspace'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
+import { escapeForLog } from '../utils/escape-text'
 import { isCanopyInternalPath, isRebaseInProgress } from '../utils/git'
 import {
   TRACKED_CANOPY_STATE_FIX,
@@ -34,6 +35,7 @@ import {
   readPublishedSha,
   reconcilePendingRewrite,
 } from './history-rewrite'
+import type { BranchPolicyDescription } from './branch-policy'
 import { workerLog, workerLogWarn } from './log'
 import {
   SHARED_REPO_STATUS_ARGS,
@@ -485,9 +487,10 @@ async function carryForwardRewrittenHistory(
     branchRef: string
     publishedSha: string | null
     preRebaseHead: string
+    gatewayPolicy: BranchPolicyDescription | undefined
   },
 ): Promise<void> {
-  const { branchPath, branchDir, branchRef, publishedSha, preRebaseHead } = args
+  const { branchPath, branchDir, branchRef, publishedSha, preRebaseHead, gatewayPolicy } = args
   if (publishedSha !== null) {
     if (publishedSha === preRebaseHead) {
       // ARMING GUARD: remote.git holds EXACTLY what this clone just rebased
@@ -518,7 +521,7 @@ async function carryForwardRewrittenHistory(
         return
       }
       if (await forcePublishToLocalRemote(ctx, branchPath, branchRef, publishedSha)) {
-        await enqueueGitHubPush(ctx, branchRef)
+        await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
       }
     } else {
       const divergence =
@@ -580,7 +583,10 @@ type BranchRebaseOutcome =
  * that branch's cross-host content-write lock and runs a series of git
  * subprocesses against a shared filesystem.
  */
-export async function runRebaseCycle(ctx: RebaseContext): Promise<RebaseSummary> {
+export async function runRebaseCycle(
+  ctx: RebaseContext,
+  gatewayPolicy?: BranchPolicyDescription,
+): Promise<RebaseSummary> {
   const rebased: string[] = []
   const skippedDirty: string[] = []
   const skippedLocked: string[] = []
@@ -640,7 +646,7 @@ export async function runRebaseCycle(ctx: RebaseContext): Promise<RebaseSummary>
       workerLogWarn(`  Skipping ${branchDir}: settings branch, never a content workspace`)
       continue
     }
-    const outcome = await holdAndRebaseOneBranch(ctx, branchDir, branchPath)
+    const outcome = await holdAndRebaseOneBranch(ctx, branchDir, branchPath, gatewayPolicy)
     if (outcome.kind === 'rebased') rebased.push(branchDir)
     else if (outcome.kind === 'skippedDirty') skippedDirty.push(branchDir)
     else if (outcome.kind === 'skippedLocked') skippedLocked.push(branchDir)
@@ -656,6 +662,62 @@ export async function runRebaseCycle(ctx: RebaseContext): Promise<RebaseSummary>
 }
 
 /**
+ * The ref a branch clone's HEAD names, or null for a detached or unreadable one. Read from the
+ * file rather than through git, so it runs before `assertSharedRepoConfig` vets the clone.
+ */
+async function readCloneRef(branchPath: string): Promise<string | null> {
+  try {
+    const head = (await fs.readFile(path.join(branchPath, '.git', 'HEAD'), 'utf-8')).trim()
+    return head.startsWith('ref: refs/heads/') ? head.slice('ref: refs/heads/'.length) : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Restore `name` to the clone's own ref when a worker that predates the namespace renamed a
+ * namespace branch to its directory (`canopycms-prod-x` for `canopycms/prod/x`), which no request
+ * resolves. Only when the ref is in `namespace` and the directory is that ref sanitized, so the
+ * ref is the name the branch was created with. Runs for every status, so a branch in review heals
+ * too. Resolves the metadata the rest of the cycle reads; a branch left alone, or a write that
+ * fails, keeps `metaFile`.
+ */
+async function restoreRenamedBranch(
+  ctx: RebaseContext,
+  branchDir: string,
+  branchPath: string,
+  metaFile: BranchMetadataFile | null,
+  namespace: string | undefined,
+): Promise<BranchMetadataFile | null> {
+  // A name already in the namespace was never renamed; one that differs from the ref shares its
+  // key with another branch, which this does not decide.
+  if (metaFile === null || namespace === undefined || metaFile.branch.name.startsWith(namespace)) {
+    return metaFile
+  }
+  const staleName = metaFile.branch.name
+  const ref = await readCloneRef(branchPath)
+  if (ref === null || !ref.startsWith(namespace) || sanitizeBranchName(ref) !== branchDir) {
+    return metaFile
+  }
+  try {
+    const restored = await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update(
+      (existing) => (existing?.branch.name === staleName ? { branch: { name: ref } } : null),
+      { keepUpdatedAt: true },
+    )
+    if (restored === null) return BranchMetadataFileManager.loadOnly(branchPath)
+    workerLog(
+      `  ${branchDir}: restored its name ${escapeForLog(ref)} from ${escapeForLog(staleName)}`,
+    )
+    return restored
+  } catch (err) {
+    workerLogWarn(
+      `  ${branchDir}: could not restore its name ${escapeForLog(ref)}: ${getErrorMessage(err)}`,
+    )
+    return metaFile
+  }
+}
+
+/**
  * {@link rebaseOneBranch} under the branch's provisioning lock, so no git step races a clone of
  * this directory. A branch whose lock is held elsewhere is `skippedLocked` and retried next cycle;
  * one with no `branch.json` is skipped. Lock order: provisioning, then the
@@ -666,6 +728,7 @@ async function holdAndRebaseOneBranch(
   ctx: RebaseContext,
   branchDir: string,
   branchPath: string,
+  gatewayPolicy: BranchPolicyDescription | undefined,
 ): Promise<BranchRebaseOutcome> {
   let hold: ProvisionedWorkspaceHold
   try {
@@ -684,7 +747,7 @@ async function holdAndRebaseOneBranch(
   // repairBranchDirResidue (git-sync.ts) quarantines and logs at the cycle's start.
   if (hold.kind === 'not-provisioned') return { kind: 'none' }
   try {
-    return await rebaseOneBranch(ctx, branchDir, branchPath, hold.isCompromised)
+    return await rebaseOneBranch(ctx, branchDir, branchPath, hold.isCompromised, gatewayPolicy)
   } finally {
     await releaseProvisionedWorkspace(hold.release, branchDir)
   }
@@ -707,13 +770,21 @@ async function rebaseOneBranch(
   branchDir: string,
   branchPath: string,
   isProvisioningLockCompromised: () => boolean,
+  gatewayPolicy: BranchPolicyDescription | undefined,
 ): Promise<BranchRebaseOutcome> {
   // Read only by the catch below. See the `rebased` rider on
   // BranchRebaseOutcome.
   let didRebase = false
 
   try {
-    const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
+    // Restored first: everything below this cycle compares `name`.
+    const metaFile = await restoreRenamedBranch(
+      ctx,
+      branchDir,
+      branchPath,
+      await BranchMetadataFileManager.loadOnly(branchPath),
+      gatewayPolicy?.namespace,
+    )
     const branchStatus = metaFile?.branch.status
 
     // Skip branches that must not be mutated:
@@ -911,6 +982,7 @@ async function rebaseOneBranch(
           branchRef,
           headSha: (await branchGit.revparse(['HEAD'])).trim(),
           marker: metaFile.branch.historyRewrittenFrom,
+          gatewayPolicy,
         })
       }
 
@@ -1072,6 +1144,7 @@ async function rebaseOneBranch(
         branchRef,
         publishedSha,
         preRebaseHead,
+        gatewayPolicy,
       })
 
       return { kind: 'rebased' }

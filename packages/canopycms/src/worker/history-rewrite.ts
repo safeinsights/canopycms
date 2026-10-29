@@ -3,8 +3,10 @@ import path from 'node:path'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
 import { sanitizeBranchName } from '../paths/branch-name'
 import { getErrorMessage, redactCredentials } from '../utils/error'
+import { escapeForLog } from '../utils/escape-text'
 import { isStaleLeaseRejection } from '../utils/git'
 import { enqueueTask, listTasks } from '../task-queue/cms-task-queue'
+import { publishesBranch, type BranchPolicyDescription } from './branch-policy'
 import { pinnedReceivePack, sharedRepoGit } from './shared-repo-git'
 import { workerLog, workerLogWarn } from './log'
 import type { WorkerContext } from './worker-context'
@@ -188,13 +190,25 @@ export async function forcePublishToLocalRemote(
  *
  * Deliberately NOT skipped when a marker is already set: inferring "a task must
  * already be queued" from the marker starves this hop whenever a task was lost,
- * failed permanently, or was never written. Duplicate push tasks are bounded by
- * base-branch advances and are idempotent.
+ * failed permanently, or was never written. Skipped instead when `gatewayPolicy`,
+ * the gateway's own description, says it would refuse the branch: the marker
+ * clears only on a push that lands, so such a task would fail permanently on
+ * every cycle, and System health's unpublishable alert already names the branch.
+ * Without a description every hop is queued. So while a marker stands, at most
+ * one push task is in flight and one is added per sync cycle, only for a failure
+ * the policy does not predict; the tasks are idempotent.
  */
 export async function enqueueGitHubPush(
   ctx: Pick<HistoryRewriteContext, 'taskDir'>,
   branchRef: string,
+  gatewayPolicy: BranchPolicyDescription | undefined,
 ): Promise<void> {
+  if (gatewayPolicy && !publishesBranch(gatewayPolicy, branchRef)) {
+    workerLog(
+      `  Not queueing a GitHub push for ${escapeForLog(branchRef)}: the GitHub gateway would refuse it`,
+    )
+    return
+  }
   try {
     // Dedupe against tasks actually in flight rather than against the
     // marker: a branch whose GitHub push keeps failing would otherwise
@@ -231,9 +245,10 @@ export async function reconcilePendingRewrite(
     branchRef: string
     headSha: string
     marker: string
+    gatewayPolicy: BranchPolicyDescription | undefined
   },
 ): Promise<void> {
-  const { branchPath, branchDir, branchRef, headSha, marker } = options
+  const { branchPath, branchDir, branchRef, headSha, marker, gatewayPolicy } = options
   const publishedSha = await readPublishedSha(ctx, branchRef)
 
   if (publishedSha === null) {
@@ -245,14 +260,14 @@ export async function reconcilePendingRewrite(
   if (publishedSha === headSha) {
     // remote.git already carries the rewrite; only the GitHub hop is left
     // (a crash between the push and the queue, or a task that was lost).
-    await enqueueGitHubPush(ctx, branchRef)
+    await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
     return
   }
   if (publishedSha === marker) {
     // The publish into remote.git never landed -- a crash right after the
     // marker was written, or a lease refused by a concurrent submit.
     if (await forcePublishToLocalRemote(ctx, branchPath, branchRef, marker)) {
-      await enqueueGitHubPush(ctx, branchRef)
+      await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
     }
     return
   }

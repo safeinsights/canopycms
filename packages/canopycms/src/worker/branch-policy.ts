@@ -77,6 +77,12 @@ const outsideNamespaceWhy = (namespace: string) =>
   'it edits in that namespace; a branch made before it reaches GitHub only once ' +
   'legacyBranches lists it.'
 
+const outsideNamespaceDeleteWhy = (namespace: string) =>
+  `it is outside this deployment's branch namespace (names starting ${namespace}), and is ` +
+  'neither its settings branch nor on its legacyBranches list, so the branch stays on GitHub. ' +
+  'To delete it there, add it to legacyBranches, retry this task in System health, then remove ' +
+  'the entry.'
+
 /**
  * Why the policy refuses to push `branch`, for `reason`, in `namespace`.
  * @internal Exported for tests.
@@ -290,8 +296,8 @@ export type DefaultBranchReader = () => Promise<string | null>
  * would let an allow-list admit more. The protected set wins inside the namespace too. The
  * namespace comes from the gateway's own configuration, never a request. The base and settings
  * branches must lie outside it, by name and by workspace directory, and not be named after part of
- * it; a legacy entry inside it is refused as pointless, and one named after part of it as
- * blocking it.
+ * it, since git then holds no branch in it; a legacy entry inside it is refused as pointless, and
+ * one named after part of it as blocking it.
  *
  * Settings branches are pushed plainly or not at all: no lease, no deletion, no pull request.
  * One is a name with the reserved prefix or this deployment's settings branch. Only this
@@ -399,14 +405,19 @@ export class BranchPolicy {
     }
   }
 
-  /** Whether `branch` is in the namespace itself, not merely writable as settings or legacy. */
-  namespaceHolds(branch: string): boolean {
-    return branch.startsWith(this.namespace)
-  }
-
   /** Whether the gateway may write `branch` at all: the namespace, the settings branch, the list. */
   inNamespace(branch: string): boolean {
-    return this.namespaceHolds(branch) || branch === this.settingsBranch || this.legacy.has(branch)
+    return (
+      branch.startsWith(this.namespace) || branch === this.settingsBranch || this.legacy.has(branch)
+    )
+  }
+
+  /**
+   * Whether the gateway opens and updates a pull request from `head`, protection aside: a branch it
+   * writes that is not a settings branch. `isProtected`, which may read GitHub, judges the rest.
+   */
+  takesPullRequestFrom(head: string): boolean {
+    return !this.isSettings(head) && this.inNamespace(head)
   }
 
   /**
@@ -476,7 +487,7 @@ export class BranchPolicy {
         'delete',
         branch,
         'outside-namespace',
-        `${deleting(branch)}: ${outsideNamespaceWhy(this.namespace)}`,
+        `${deleting(branch)}: ${outsideNamespaceDeleteWhy(this.namespace)}`,
       )
     }
   }
@@ -520,7 +531,7 @@ export class BranchPolicy {
         `${refusing}: ${PROTECTED_WHY}`,
       )
     }
-    if (!this.inNamespace(head)) {
+    if (!this.takesPullRequestFrom(head)) {
       throw new GatewayRefusalError(
         'pull-request',
         head,

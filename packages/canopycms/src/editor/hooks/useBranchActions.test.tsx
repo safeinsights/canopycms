@@ -157,6 +157,27 @@ describe('useBranchActions', () => {
     expect(mockSetBranchName).not.toHaveBeenCalled()
   })
 
+  it('does not switch branch when the name given opens the branch already open', async () => {
+    // A shadowed outside branch `spring` is open; its card hands the exact form, and `spring`
+    // itself would open the namespace branch.
+    const sameBranch = (next: string, branch: string) =>
+      (next === 'refs/heads/spring' ? 'spring' : `canopycms/local/${next}`) === branch
+    const { result } = renderHook(
+      () => useBranchActions({ ...defaultOptions, branchName: 'spring', sameBranch }),
+      { wrapper },
+    )
+
+    await act(async () => {
+      await result.current.handleBranchChange('refs/heads/spring')
+    })
+    expect(mockSetBranchName).not.toHaveBeenCalled()
+
+    await act(async () => {
+      await result.current.handleBranchChange('spring')
+    })
+    expect(mockSetBranchName).toHaveBeenCalledWith('spring')
+  })
+
   it('does not switch branch when user cancels', async () => {
     const { modals } = await import('@mantine/modals')
     mockGetUnsaved.mockResolvedValue(DIRTY)

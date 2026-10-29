@@ -1177,8 +1177,7 @@ does not know your base branch, and protects it only if it is GitHub's default.
 [branch namespace](#two-deployments-one-repository) the gateway may still write: no `*`,
 nothing in the namespace or that it sits under (`canopycms/prod`). **Before upgrading, or
 changing the template,** list every open branch outside it; System health names any you missed.
-Drop each once merged or deleted. Such a branch's pull request shows its comments and review
-state as of its last submit.
+Drop each once merged or deleted.
 
 **`clerkOrganizationsAsGroups`** (default `true`) sets whether the worker maps Clerk Organizations to
 groups; it, not the plugin's `useOrganizationsAsGroups`, governs a deployment, so keep them equal. Set
@@ -1391,8 +1390,8 @@ already request through the task queue.
 The gateway writes only branches in its namespace (`branchNamespace`, `canopycms/prod/` by
 default), its settings branch and `legacyBranches`, never the base branch, GitHub's default
 branch or a `protectedBranches` match. It acts only on pull requests from those heads in this
-repository, and returns a body only for a namespace head. There it can push any of the
-repository's commits, force-push, delete and open pull requests, which run your workflows. So:
+repository, and reads no other's body. There it can push any of the repository's commits,
+force-push, delete and open pull requests, which run your workflows. So:
 
 - keep secrets a workflow could leak in an environment with required reviewers, never in
   repository or organization secrets, which reach every branch. Set its deployment branches to
@@ -1456,6 +1455,9 @@ the worker. What it means for you, and what you can do:
   `Syncing git...` lines the [worker-down alarm](#worker-down-alarm) counts, so the alarm detects
   faults, not compromise. The gateway's log (the `{instance_id}-gateway` stream), which the worker
   cannot write, records what reached GitHub: read it when GitHub shows a change nobody made.
+- **Pull requests people open from namespace or legacy branches.** The CMS Lambda alone, through
+  the task queue, can draft, close, retitle or rewrite one. Using such a branch opts in;
+  merging still takes a person.
 - **Other unix sockets** on the host that `ec2-user` can connect to are levers the worker keeps.
   Install nothing on the instance that listens on one.
 - **A root process opening a path the worker can write** could be steered into overwriting any

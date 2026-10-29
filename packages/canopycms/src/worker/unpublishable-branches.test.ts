@@ -9,10 +9,15 @@ import { BRANCH_META_DIR, BRANCH_META_FILE } from '../branch-metadata-file'
 import { sanitizeBranchName } from '../paths/branch-name'
 import type { BranchStatus } from '../types'
 import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
-import { MAX_BRANCH_NAME_LENGTH, type BranchPolicyDescription } from './branch-policy'
+import {
+  MAX_BRANCH_NAME_LENGTH,
+  MAX_PROTECTED_BRANCHES,
+  type BranchPolicyDescription,
+} from './branch-policy'
 import {
   MAX_UNPUBLISHABLE_LISTED,
   findUnpublishableBranches,
+  readCarriedGatewayPolicy,
   readCarriedUnpublishableBranches,
 } from './unpublishable-branches'
 
@@ -236,5 +241,57 @@ describe('readCarriedUnpublishableBranches', () => {
       at: AT,
     })
     expect(Object.keys(carried ?? {}).sort()).toEqual(['at', 'branches', 'count'])
+  })
+})
+
+describe('readCarriedGatewayPolicy', () => {
+  /** The gateway fields a previous worker left, as the status file holds them. */
+  async function carry(fields: Record<string, unknown>) {
+    await fs.writeFile(
+      path.join(root, WORKER_STATUS_FILE),
+      JSON.stringify({ version: 1, ...fields }),
+    )
+    return readCarriedGatewayPolicy(root)
+  }
+
+  it('carries the namespace and exact names a sync records', async () => {
+    const fields = {
+      gatewayBranchNamespace: 'canopycms/prod/',
+      gatewayProtectedBranches: ['release', 'main'],
+    }
+
+    expect(await carry(fields)).toEqual(fields)
+  })
+
+  it('carries nothing from a file that holds no namespace, or none at all', async () => {
+    expect(await carry({ gatewayProtectedBranches: ['main'] })).toEqual({})
+    await fs.rm(path.join(root, WORKER_STATUS_FILE))
+    expect(await readCarriedGatewayPolicy(root)).toEqual({})
+  })
+
+  it.each([
+    ['a namespace that does not end with "/"', 'canopycms-prod-'],
+    ['a namespace that is not a string', 7],
+    ['a namespace longer than a branch name can be', `${'a'.repeat(MAX_BRANCH_NAME_LENGTH)}/`],
+  ])('carries nothing for %s', async (_label, namespace) => {
+    expect(
+      await carry({ gatewayBranchNamespace: namespace, gatewayProtectedBranches: ['main'] }),
+    ).toEqual({})
+  })
+
+  it.each([
+    ['a glob', ['main', 'release-*']],
+    ['a name that is not a string', ['main', 7]],
+    ['an empty name', ['']],
+    ['a name longer than a branch name can be', ['a'.repeat(MAX_BRANCH_NAME_LENGTH + 1)]],
+    [
+      'more names than a policy describes',
+      Array.from({ length: MAX_PROTECTED_BRANCHES + 2 }, (_, i) => `b${i}`),
+    ],
+    ['a list that is not one', 'main'],
+  ])('carries the namespace without protected names holding %s', async (_label, names) => {
+    expect(
+      await carry({ gatewayBranchNamespace: 'canopycms/prod/', gatewayProtectedBranches: names }),
+    ).toEqual({ gatewayBranchNamespace: 'canopycms/prod/' })
   })
 })

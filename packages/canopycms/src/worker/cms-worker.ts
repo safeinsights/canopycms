@@ -34,7 +34,10 @@ import {
 import { CANOPYCMS_VERSION } from '../version'
 import { workerLog, workerLogWarn, workerLogError } from './log'
 import { DEFAULT_SCHEMA_HOLD_MAX_MS, readCarriedBaseHold } from './schema-gate'
-import { readCarriedUnpublishableBranches } from './unpublishable-branches'
+import {
+  readCarriedGatewayPolicy,
+  readCarriedUnpublishableBranches,
+} from './unpublishable-branches'
 import type { WorkerContext } from './worker-context'
 import {
   SharedRepoRefusalError,
@@ -49,6 +52,7 @@ import {
   pushBranchToGitHub,
   updateBranchMetadata,
 } from './task-runner'
+import type { BranchPolicyDescription } from './branch-policy'
 import { pollMergeState, runRebaseCycle, type RebaseSummary } from './rebase'
 import {
   cleanupTrashedBranchDirs,
@@ -373,14 +377,21 @@ function lockWorkerTaskDir(
 /**
  * The fields a new status snapshot carries from the previous file: `lastFatalError` and
  * `lastShutdown` (task-queue/worker-status.ts), the schema gate's hold, so its bound keeps
- * counting from the first worker that saw each schema missing, and the unpublishable branches,
- * which System health keeps showing until a sync can ask the gateway again.
+ * counting from the first worker that saw each schema missing, and the unpublishable branches and
+ * the gateway's namespace and protected names, which System health and branch creation keep
+ * using until a sync can ask the gateway again.
  */
-async function readCarriedFields(
-  taskDir: string,
-): Promise<
-  Pick<WorkerStatusReport, 'lastFatalError' | 'lastShutdown' | 'baseHold' | 'unpublishableBranches'>
-> {
+type CarriedFields = Pick<
+  WorkerStatusReport,
+  | 'lastFatalError'
+  | 'lastShutdown'
+  | 'baseHold'
+  | 'unpublishableBranches'
+  | 'gatewayBranchNamespace'
+  | 'gatewayProtectedBranches'
+>
+
+async function readCarriedFields(taskDir: string): Promise<CarriedFields> {
   const { lastFatalError, lastShutdown } = await readCarriedOverStatus(taskDir)
   const baseHold = await readCarriedBaseHold(taskDir)
   const unpublishableBranches = await readCarriedUnpublishableBranches(taskDir)
@@ -389,6 +400,7 @@ async function readCarriedFields(
     ...(lastShutdown ? { lastShutdown } : {}),
     ...(baseHold ? { baseHold } : {}),
     ...(unpublishableBranches ? { unpublishableBranches } : {}),
+    ...(await readCarriedGatewayPolicy(taskDir)),
   }
 }
 
@@ -425,8 +437,7 @@ export async function recordWorkerStartupFailure(options: {
         workerLogError('Worker lock lost while recording a startup failure:', getErrorMessage(err)),
     })
     const now = new Date().toISOString()
-    const { lastFatalError, lastShutdown, baseHold, unpublishableBranches } =
-      await readCarriedFields(taskDir)
+    const { lastFatalError, ...carried } = await readCarriedFields(taskDir)
     if (
       lastFatalError &&
       options.keepRecordedFatal &&
@@ -440,9 +451,7 @@ export async function recordWorkerStartupFailure(options: {
       workerVersion: CANOPYCMS_VERSION,
       startedAt: now,
       updatedAt: now,
-      ...(lastShutdown ? { lastShutdown } : {}),
-      ...(baseHold ? { baseHold } : {}),
-      ...(unpublishableBranches ? { unpublishableBranches } : {}),
+      ...carried,
       lastFatalError: {
         // [REDACT] Served to the browser by the admin panel and the API's not-ready answer.
         message: redactCredentials(getErrorMessage(options.error)),
@@ -665,12 +674,8 @@ export class CmsWorker {
     // `lastShutdown` describes the last worker that ran until this worker's own
     // stop() replaces it.
     try {
-      const { lastFatalError, lastShutdown, baseHold, unpublishableBranches } =
-        await readCarriedFields(this.taskDir)
-      const report = this.ensureStatusReport()
-      if (lastShutdown) report.lastShutdown = lastShutdown
-      if (baseHold) report.baseHold = baseHold
-      if (unpublishableBranches) report.unpublishableBranches = unpublishableBranches
+      const { lastFatalError, ...carried } = await readCarriedFields(this.taskDir)
+      const report = Object.assign(this.ensureStatusReport(), carried)
       await writeWorkerStatus(this.taskDir, {
         ...report,
         ...(lastFatalError ? { lastFatalError } : {}),
@@ -1643,8 +1648,10 @@ export class CmsWorker {
   // apps/test-app/app/api/e2e-test/rebase/route.ts drives it from an e2e
   // fixture route. Do not delete it as unused.
 
-  private async rebaseActiveBranches(): Promise<RebaseSummary> {
-    return runRebaseCycle(this.ctx())
+  private async rebaseActiveBranches(
+    gatewayPolicy?: BranchPolicyDescription,
+  ): Promise<RebaseSummary> {
+    return runRebaseCycle(this.ctx(), gatewayPolicy)
   }
 
   // --- Git-sync cluster (worker/git-sync.ts) -----------------------------

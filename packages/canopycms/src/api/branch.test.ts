@@ -779,6 +779,35 @@ describe('branch api', () => {
         mockReadWorkerStatus.mockResolvedValue({ workerStatus: null })
         expect((await create('summer')).status).toBe(200)
       })
+
+      describe('in prod, where branches publish through the worker', () => {
+        const prodCtx = () =>
+          ctxWith({ mode: 'prod', defaultBaseBranch: 'main', deploymentName: 'prod' })
+
+        it.each([
+          ['no status file', { workerStatus: null }],
+          ['a status file from a worker that reports no namespace', { workerStatus: {} }],
+        ])('refuses with a 503 naming the worker upgrade for %s', async (_label, status) => {
+          mockReadWorkerStatus.mockResolvedValue(status)
+          const res = await create('spring', prodCtx())
+          expect(res.status).toBe(503)
+          expect(res.error).toBe(
+            "Branches cannot be created yet: the CMS worker has not reported the GitHub gateway's " +
+              'branch namespace. Ask an administrator to check that the worker (canopycms-cdk) ' +
+              'runs this release and that its git sync reaches the gateway, then try again.',
+          )
+          expect(res.code).toBeUndefined()
+        })
+
+        it('creates once the worker reports the namespace the CMS creates in', async () => {
+          mockReadWorkerStatus.mockResolvedValue({
+            workerStatus: { gatewayBranchNamespace: 'canopycms/prod/' },
+          })
+          const res = await create('spring', prodCtx())
+          expect(res.status).toBe(200)
+          expect(res.data?.branch.name).toBe('canopycms/prod/spring')
+        })
+      })
     })
   })
 

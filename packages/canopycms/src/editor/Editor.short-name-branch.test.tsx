@@ -682,3 +682,117 @@ describe('the editor on a namespace branch named by its short name', () => {
     expect(await screen.findByText('Please tighten the intro.')).toBeTruthy()
   })
 })
+
+describe('the editor beside a branch outside the namespace that its short name takes', () => {
+  const EXACT = 'refs/heads/spring'
+  const both = () => [
+    listed('main', 'editing'),
+    listed(SPRING, 'editing'),
+    listed('spring', 'editing'),
+  ]
+  const stubListing = (listing: () => ReturnType<typeof listed>[]) => {
+    const inner = stubApi({ status: 'editing', userId: 'author-1' })
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+      urlOf(input).endsWith('/api/canopycms/branches') && (init?.method ?? 'GET') === 'GET'
+        ? okJson({ branches: listing(), defaultBranch: 'main', users: [] })
+        : inner(input, init),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+  const entriesReads = (fetchMock: ReturnType<typeof stubListing>) =>
+    fetchMock.mock.calls
+      .map(([input]) => new URL(urlOf(input), 'http://x').pathname)
+      .filter((path) => path.endsWith('/entries'))
+
+  it('reopens the outside branch when Back reaches an entry naming it exactly', async () => {
+    window.history.replaceState({}, '', `/?branch=${encodeURIComponent(SPRING)}`)
+    const fetchMock = stubListing(both)
+    renderEditor(SPRING)
+    expect((await titleBox()).value).toBe('hello title')
+    await waitFor(() => expect(entriesReads(fetchMock)).toContain('/api/canopycms/spring/entries'))
+    fetchMock.mockClear()
+
+    window.history.replaceState(window.history.state, '', `/?branch=${encodeURIComponent(EXACT)}`)
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+
+    await waitFor(() =>
+      expect(entriesReads(fetchMock)).toContain(
+        `/api/canopycms/${encodeURIComponent(EXACT)}/entries`,
+      ),
+    )
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+    expect(urlBranch()).toBe(EXACT)
+    expect(entriesReads(fetchMock)).not.toContain('/api/canopycms/spring/entries')
+  })
+
+  it('sends a review action from the header to the open outside branch, and shows its note', async () => {
+    autoConfirm()
+    window.history.replaceState({}, '', `/?branch=${encodeURIComponent(EXACT)}`)
+    const inner = stubApi({ status: 'editing', userId: 'reviewer-1' })
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+      urlOf(input).endsWith('/api/canopycms/branches') && (init?.method ?? 'GET') === 'GET'
+        ? okJson({
+            branches: [
+              listed('main', 'editing'),
+              listed(SPRING, 'editing'),
+              listed('spring', 'approved'),
+            ],
+            defaultBranch: 'main',
+            users: [],
+          })
+        : inner(input, init),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    renderEditor(EXACT)
+    await waitFor(async () => expect((await titleBox()).value).toBe('hello title'))
+    const requestChanges = await waitFor(() => {
+      const button = screen.getByRole('button', { name: 'Request changes' })
+      expect(button.getAttribute('aria-disabled')).toBeNull()
+      return button
+    })
+
+    fireEvent.click(requestChanges)
+
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          urlOf(input).endsWith(`/api/canopycms/${encodeURIComponent(EXACT)}/request-changes`),
+        ),
+      ).toBe(true),
+    )
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        urlOf(input).endsWith('/api/canopycms/spring/request-changes'),
+      ),
+    ).toBe(false)
+    await openBranchesDrawer()
+    expect(await screen.findByText('Please tighten the intro.')).toBeTruthy()
+  })
+
+  it('keeps asking for the open outside branch exactly once the listing drops it', async () => {
+    let listing = both
+    window.history.replaceState({}, '', `/?branch=${encodeURIComponent(EXACT)}`)
+    const fetchMock = stubListing(() => listing())
+    renderEditor(EXACT)
+    expect((await titleBox()).value).toBe('hello title')
+    listing = () => [listed('main', 'editing'), listed(SPRING, 'editing')]
+    const refresh = async () => {
+      fireEvent.click(screen.getByTestId('branch-dropdown-button'))
+      fireEvent.click(await screen.findByTestId('refresh-branch-menu-item'))
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      })
+    }
+    await refresh()
+    fetchMock.mockClear()
+
+    await refresh()
+
+    expect(entriesReads(fetchMock)).toEqual([`/api/canopycms/${encodeURIComponent(EXACT)}/entries`])
+  })
+})

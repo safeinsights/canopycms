@@ -41,7 +41,9 @@ export async function readWorkerStatus(
     return { workerStatus: null, statusReadError: getErrorMessage(err) }
   }
   try {
-    // Written only by the CMS worker daemon, never from request input: cast, not validated.
+    // Cast, not validated. The CMS Lambda can write this file too, since it mounts the same EFS,
+    // but every caller of this reader runs in the Lambda, so a forged file misleads only the
+    // Lambda itself and the System health it serves.
     return { workerStatus: JSON.parse(content) as WorkerStatusReport }
   } catch (err) {
     return { workerStatus: null, statusReadError: getErrorMessage(err) }

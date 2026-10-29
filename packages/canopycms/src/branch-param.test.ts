@@ -59,6 +59,22 @@ describe('resolveBranchParam', () => {
     expect(await resolved('legacy-update')).toBeNull()
   })
 
+  it('opens a branch outside the namespace that a short name shadows only by its exact form', async () => {
+    await workspace('canopycms/local/spring')
+    await workspace('spring')
+    expect(await resolved('spring')).toBe('canopycms/local/spring')
+    expect(await resolved('canopycms/local/spring')).toBe('canopycms/local/spring')
+    expect(await resolved('refs/heads/spring')).toBe('spring')
+    expect(await resolved('refs/heads/canopycms/local/spring')).toBe('canopycms/local/spring')
+  })
+
+  it('never resolves the exact form by a short name, or by a key that is not the name', async () => {
+    await workspace('canopycms/local/summer')
+    await workspace('canopycms-local-autumn')
+    expect(await resolved('refs/heads/summer')).toBeNull()
+    expect(await resolved('refs/heads/canopycms/local/autumn')).toBeNull()
+  })
+
   it('refuses a workspace whose stored name is not the ref its key was built from', async () => {
     // `canopycms-local-spring` is the key of `canopycms/local/spring`, and of this name too.
     await workspace('canopycms-local-spring')

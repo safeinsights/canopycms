@@ -23,6 +23,11 @@ export interface UseBranchActionsOptions {
   onBranchSwitch?: (branch: string) => void
   /** What `?branch=` carries for a branch (its short name); defaults to the name as given. */
   urlBranchName?: (branch: string) => string
+  /**
+   * Whether `next`, the name a card or history entry gives, opens `branchName`, so a change to it
+   * is no switch; defaults to equality.
+   */
+  sameBranch?: (next: string, branchName: string) => boolean
   /** The current user; a create the server never answered adopts only a listed branch they made. */
   userId?: string
 }
@@ -115,7 +120,8 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
     next: string | null,
     change: { push?: boolean; superseded?: () => boolean } = {},
   ) => {
-    if (!next || next === options.branchName) return
+    if (!next || (options.sameBranch?.(next, options.branchName) ?? next === options.branchName))
+      return
 
     const confirmed = await confirmIfDirty('Switch branches anyway?')
     if (!confirmed) throw new Error('User cancelled branch switch')

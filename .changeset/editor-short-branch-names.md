@@ -17,7 +17,8 @@ panel and the toasts. The editor's `?branch=` carries the short name too, as do 
 page link, and its API requests go to `/spring/entries` rather than
 `/canopycms%2Fprod%2Fspring/entries`; an old link with the full name still opens the branch, and
 the editor rewrites it to the short name. A branch outside the namespace keeps its full name
-everywhere, and System health keeps the full ref and workspace directory. Drafts saved in a
+everywhere, except that one named like a namespace branch's short name is linked and requested as
+`refs/heads/<name>`; System health keeps the full ref and workspace directory. Drafts saved in a
 browser stay with the branch, whichever name opened it.
 
 The New branch field says "Will be named …" only when sanitizing changed what was typed, and shows

@@ -50,6 +50,18 @@ export function branchShortName(name: string, namespace: string | null): string 
 }
 
 /**
+ * What a request or link puts before a branch's full name to name that branch and no other. A
+ * branch outside the namespace named `spring` and the namespace branch `canopycms/prod/spring`
+ * both answer to `spring`, which opens the namespace one; `refs/heads/spring` opens the other.
+ */
+export const EXACT_BRANCH_PREFIX = 'refs/heads/'
+
+/** The full name `param` names exactly (`EXACT_BRANCH_PREFIX`), or null for any other form. */
+export function exactBranchName(param: string): string | null {
+  return param.startsWith(EXACT_BRANCH_PREFIX) ? param.slice(EXACT_BRANCH_PREFIX.length) : null
+}
+
+/**
  * Whether `branchName` is a settings branch, never a content branch: the reserved prefix, or the
  * configured name (which need not carry it). Compared sanitized, the form git and disk use.
  */

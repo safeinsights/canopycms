@@ -36,6 +36,7 @@ import { simpleGit, type SimpleGit } from 'simple-git'
 import { BranchMetadataFileManager } from '../branch-metadata'
 import { listTasks } from '../task-queue/cms-task-queue'
 import { initTestRepo, mockConsole } from '../test-utils'
+import type { BranchPolicyDescription } from './branch-policy'
 import { CmsWorker } from './cms-worker'
 
 const BASE_BRANCH = 'main'
@@ -173,8 +174,13 @@ const makeWorker = (workspacePath: string) =>
     baseBranch: BASE_BRANCH,
   })
 
-const runRebase = (worker: CmsWorker): Promise<void> =>
-  (worker as unknown as { rebaseActiveBranches(): Promise<void> }).rebaseActiveBranches()
+/** Invoke the private rebaseActiveBranches() method, given the gateway's policy as git sync is. */
+const runRebase = (worker: CmsWorker, gatewayPolicy?: BranchPolicyDescription): Promise<void> =>
+  (
+    worker as unknown as {
+      rebaseActiveBranches(policy?: BranchPolicyDescription): Promise<void>
+    }
+  ).rebaseActiveBranches(gatewayPolicy)
 
 const writeMeta = async (
   branchPath: string,
@@ -397,6 +403,94 @@ describe('CmsWorker.rebaseActiveBranches() publishes rewritten history', () => {
     const meta = await readMeta(setup.branchPath)
     expect(meta?.historyRewrittenFrom).toBeUndefined()
     expect(await queuedPushBranches(setup.workspacePath)).toEqual([])
+  })
+})
+
+describe('CmsWorker.rebaseActiveBranches() and a branch the GitHub gateway would refuse', () => {
+  let tmpDir: string
+  let consoleSpy: ReturnType<typeof mockConsole>
+
+  /** A gateway whose namespace holds none of these branches, listing `legacy`. */
+  const policy = (legacy: string[] = []): BranchPolicyDescription => ({
+    configured: [BASE_BRANCH],
+    githubDefault: BASE_BRANCH,
+    namespace: 'canopycms/prod/',
+    legacy,
+    settingsBranch: 'canopycms-settings-prod',
+  })
+
+  const skipLines = () =>
+    consoleSpy.all().log.filter((line) => line.includes('Not queueing a GitHub push'))
+
+  beforeEach(async () => {
+    consoleSpy = mockConsole()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-rebase-refused-'))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  /** remote.git already carries the rewrite, with the marker set: the self-heal's queue step. */
+  const markedAndPublished = async (branchName: string) => {
+    const setup = await createPublishSetup(tmpDir, branchName)
+    await setup.commitToBranch({ 'entry.md': 'v1\n' }, 'editor work')
+    await setup.submit()
+    const published = await setup.remoteSha(`refs/heads/${branchName}`)
+    await setup.branchGit.raw(['commit', '--amend', '-m', 'editor work (rewritten)'])
+    await setup.branchGit.raw(['push', '--force', 'origin', `${branchName}:${branchName}`])
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      historyRewrittenFrom: published,
+    })
+    return { setup, published }
+  }
+
+  it('queues no push from the self-heal, cycle after cycle, logging each skip once', async () => {
+    const { setup, published } = await markedAndPublished('feature-unlisted')
+
+    await runRebase(makeWorker(setup.workspacePath), policy())
+    expect(skipLines()).toHaveLength(1)
+    await runRebase(makeWorker(setup.workspacePath), policy())
+
+    expect(await queuedPushBranches(setup.workspacePath)).toEqual([])
+    expect(skipLines()).toHaveLength(2)
+    expect(consoleSpy.all().warn.some((line) => line.includes('Not queueing'))).toBe(false)
+    // The marker stands, so listing the branch later lets the hop through.
+    expect((await readMeta(setup.branchPath))?.historyRewrittenFrom).toBe(published)
+  })
+
+  it('queues the push once the gateway lists the branch', async () => {
+    const { setup } = await markedAndPublished('feature-listed')
+
+    await runRebase(makeWorker(setup.workspacePath), policy(['feature-listed']))
+
+    expect(await queuedPushBranches(setup.workspacePath)).toEqual(['feature-listed'])
+    expect(skipLines()).toEqual([])
+  })
+
+  it('queues the push when the gateway has not described its policy', async () => {
+    const { setup } = await markedAndPublished('feature-no-policy')
+
+    await runRebase(makeWorker(setup.workspacePath))
+
+    expect(await queuedPushBranches(setup.workspacePath)).toEqual(['feature-no-policy'])
+  })
+
+  it('publishes a rebase into remote.git and marks it, but queues no push', async () => {
+    const setup = await createPublishSetup(tmpDir, 'feature-rebased')
+    await setup.commitToBranch({ 'entry.md': 'v1\n' }, 'editor work')
+    await setup.submit()
+    const published = await setup.remoteSha('refs/heads/feature-rebased')
+    await setup.advanceBase({ 'base2.txt': 'moved on\n' })
+    await writeMeta(setup.branchPath, setup.contentBranchesPath)
+
+    await runRebase(makeWorker(setup.workspacePath), policy())
+
+    const rebasedTip = (await setup.branchGit.revparse(['HEAD'])).trim()
+    expect(await setup.remoteSha('refs/heads/feature-rebased')).toBe(rebasedTip)
+    expect((await readMeta(setup.branchPath))?.historyRewrittenFrom).toBe(published)
+    expect(await queuedPushBranches(setup.workspacePath)).toEqual([])
+    expect(skipLines()).toHaveLength(1)
   })
 })
 

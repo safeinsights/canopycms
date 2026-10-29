@@ -1912,7 +1912,9 @@ export class GitManager {
 
   /**
    * Repo-relative paths whose working-tree content differs from commit `rev`, with `T` (a type
-   * change) reported as `M`. Inside a sparse clone's cone only.
+   * change) reported as `M`. A sparse clone leaves a path outside its cone unchecked out, marked
+   * skip-worktree, and git reads that path's index entry in place of the missing file: it is never
+   * reported deleted, and differs from `rev` only as the index does.
    *
    * `diff-index`, not `git diff`: the porcelain refreshes the index and writes it back under
    * `index.lock`, which would fail a concurrent writer's own git step. `diff-index` writes

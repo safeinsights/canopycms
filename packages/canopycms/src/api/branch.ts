@@ -301,7 +301,8 @@ export const TOP_LEVEL_ROUTE_SEGMENTS: readonly string[] = [
  * The names of the branches outside `namespace` a URL can reach, which neither a new branch's
  * short name nor its ref may take, since the base and active branches resolve first and a short
  * name would shadow the rest (branch-param.ts): the base, the configured active branch, every
- * workspace outside the namespace, and every exact name the GitHub gateway protects. Namespace
+ * workspace outside the namespace, and the exact names the GitHub gateway protects as the last git
+ * sync recorded them in worker-status.json. Namespace
  * workspaces are left out, so a creator's retry of a create that already landed reaches the key
  * check's idempotent answer instead of a refusal.
  */
@@ -343,6 +344,20 @@ export const createBranchHandler = async (
     }
     const { workerStatus } = await readWorkerStatus(getTaskQueueDir(config))
     const gatewayNamespace = workerStatus?.gatewayBranchNamespace
+    // The worker reports the namespace once a git sync reads one from the gateway's health
+    // (worker/git-sync.ts). A worker that predates the namespace never reports one, and its rebase
+    // loop renames a namespace branch to its directory, which no request then resolves. Where
+    // branches publish through the worker, creation waits for the report.
+    if (gatewayNamespace === undefined && strategy.supportsPullRequests()) {
+      return {
+        ok: false,
+        status: 503,
+        error:
+          "Branches cannot be created yet: the CMS worker has not reported the GitHub gateway's " +
+          'branch namespace. Ask an administrator to check that the worker (canopycms-cdk) runs ' +
+          'this release and that its git sync reaches the gateway, then try again.',
+      }
+    }
     if (gatewayNamespace !== undefined && gatewayNamespace !== namespace) {
       return {
         ok: false,

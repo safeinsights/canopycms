@@ -1817,3 +1817,71 @@ describe('BranchManager', () => {
     })
   })
 })
+
+describe('a branch outside the namespace whose name a namespace branch takes as its short name', () => {
+  const outside: BranchSummary = {
+    name: 'spring',
+    shortName: 'spring',
+    status: 'editing',
+    submitBlocked: false,
+  }
+  const namespaced: BranchSummary = { ...outside, name: 'canopycms/prod/spring' }
+  const reviewerAdmin = {
+    userId: 'reviewer',
+    groups: [RESERVED_GROUPS.ADMINS, RESERVED_GROUPS.REVIEWERS],
+  }
+
+  /** Click `testId`, from the card's "…" menu when the card does not show it. */
+  const choose = async (testId: string, name: string) => {
+    if (!screen.queryByTestId(testId)) {
+      await userEvent.click(screen.getByTestId(`branch-actions-menu-${name}`))
+      await screen.findByRole('menu')
+    }
+    await userEvent.click(screen.getByTestId(testId))
+  }
+
+  it.each([
+    ['outside', outside, 'refs/heads/spring'],
+    ['namespace', namespaced, 'canopycms/prod/spring'],
+  ])(
+    "hands every action on the %s branch's card a name that opens that branch",
+    async (_label, branch, address) => {
+      const props = {
+        onSelect: vi.fn(),
+        onSubmit: vi.fn(),
+        onDelete: vi.fn(),
+        onWithdraw: vi.fn(),
+        onApprove: vi.fn(),
+        onRequestChanges: vi.fn(),
+      }
+      const editing = renderBranchManager({
+        branches: [outside, namespaced],
+        user: reviewerAdmin,
+        mode: 'prod',
+        ...props,
+      })
+      await choose(`switch-to-branch-button-${branch.name}`, branch.name)
+      await choose(`submit-branch-button-${branch.name}`, branch.name)
+      await choose(`delete-branch-button-${branch.name}`, branch.name)
+      editing.unmount()
+
+      const submitted = (b: BranchSummary) => ({ ...b, status: 'submitted', createdBy: 'author' })
+      renderBranchManager({
+        branches: [submitted(outside), submitted(namespaced)],
+        user: reviewerAdmin,
+        mode: 'prod',
+        ...props,
+      })
+      await choose(`withdraw-branch-button-${branch.name}`, branch.name)
+      await choose(`approve-branch-button-${branch.name}`, branch.name)
+      await choose(`request-changes-branch-button-${branch.name}`, branch.name)
+
+      const calls = Object.fromEntries(
+        Object.entries(props).map(([prop, handler]) => [prop, handler.mock.calls]),
+      )
+      expect(calls).toEqual(
+        Object.fromEntries(Object.keys(props).map((prop) => [prop, [[address]]])),
+      )
+    },
+  )
+})
