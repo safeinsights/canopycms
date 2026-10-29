@@ -6,7 +6,7 @@
 import React from 'react'
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { SWRConfig } from 'swr'
 import { MantineProvider } from '@mantine/core'
 import { modals } from '@mantine/modals'
@@ -16,6 +16,7 @@ import type { EditorEntry } from './Editor'
 import { Editor } from './Editor'
 import { ApiClientProvider } from './context'
 import { RESERVED_GROUPS } from '../authorization/helpers'
+import { mockConsole } from '../test-utils/console-spy'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../paths/test-utils'
 
 vi.mock('@mantine/modals', () => ({
@@ -99,6 +100,7 @@ const stubApi = (options: {
   userId: string
   holdSaves?: Promise<void>
   holdListing?: Promise<void>
+  listingFails?: boolean
 }) => {
   let changesRequested = false
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -117,6 +119,12 @@ const stubApi = (options: {
     }
     if (url.endsWith('/api/canopycms/branches')) {
       await options.holdListing
+      if (options.listingFails) {
+        return new Response(JSON.stringify({ ok: false, status: 500, error: 'Listing failed' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
       return okJson({
         branches: [
           listed('main', 'editing'),
@@ -592,6 +600,31 @@ describe('the editor on a namespace branch named by its short name', () => {
     expect(`${window.location.pathname}${window.location.search}`).toBe(entryOnSpring)
     expect(within(screen.getByTestId('branch-dropdown-button')).getByText('spring')).toBeTruthy()
     expect((await titleBox()).value).toBe('Drafted on spring')
+  })
+
+  it('stays on its branch when a Back comes while it has no listing', async () => {
+    const consoleSpy = mockConsole()
+    onTestFinished(() => consoleSpy.restore())
+    window.history.replaceState({}, '', '/?branch=main')
+    stubApi({ status: 'editing', userId: 'author-1', listingFails: true })
+    renderEditor('main')
+    await waitFor(async () => expect((await titleBox()).value).toBe('hello title'))
+    const setItem = vi.spyOn(Storage.prototype, 'setItem')
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockClear()
+
+    window.history.replaceState(window.history.state, '', '/?branch=spring')
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+
+    expect(setItem.mock.calls.map(([key]) => key)).not.toContain('canopycms:drafts:spring')
+    expect(urlBranch()).toBe('main')
+    expect(fetchMock.mock.calls.some(([input]) => urlOf(input).includes('/spring/'))).toBe(false)
+    expect(consoleSpy).toHaveErrored(/Listing failed/)
   })
 
   it('holds a Submit from the branches drawer while Save all runs', async () => {

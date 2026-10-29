@@ -711,17 +711,20 @@ const EditorContent: React.FC<EditorProps> = ({
     urlBranchName,
     userId: userContext?.userId,
   })
-  // Only a Back or Forward calls this: it switches to the listed name, replacing the entry it arrived at.
+  // Only a Back or Forward calls this: it switches to the listed name, replacing the entry it arrived
+  // at. With no listing, the name is unchecked and could be either form, so the move is refused.
   switchBranchRef.current = async (branch, superseded) => {
     const listed = listedBranch(branch)
-    if (branches.length > 0 && !listed) {
-      notifications.show({
-        message: `Branch “${branch}” no longer exists or you can no longer open it, so you're still on “${branchLabel}”.`,
-        color: 'yellow',
-      })
+    if (!listed) {
+      if (branches.length > 0) {
+        notifications.show({
+          message: `Branch “${branch}” no longer exists or you can no longer open it, so you're still on “${branchLabel}”.`,
+          color: 'yellow',
+        })
+      }
       throw new Error(`Branch ${branch} is not listed`)
     }
-    await handleBranchChange(listed?.name ?? branch, { push: false, superseded })
+    await handleBranchChange(listed.name, { push: false, superseded })
   }
 
   // 5. Comment system (depends on branchNameState)
