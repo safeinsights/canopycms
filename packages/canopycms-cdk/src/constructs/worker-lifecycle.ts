@@ -126,3 +126,10 @@ export function workerContractShortfall(
  * it, so the alarm misfires if the worker's text drifts from this one.
  */
 export const WORKER_SYNC_LOG_PHRASE = 'Syncing git...'
+
+/**
+ * The text of the line `syncGit()` logs when a git-sync cycle has run to its end. The
+ * sync-failing alarm alarms when cycles start ({@link WORKER_SYNC_LOG_PHRASE}) and none logs
+ * this, so it misfires if the worker's text drifts from this one.
+ */
+export const WORKER_SYNC_DONE_LOG_PHRASE = 'Git sync complete'
