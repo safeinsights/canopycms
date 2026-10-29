@@ -1900,6 +1900,80 @@ describe('useBranchManager', () => {
 
         expect(result.current.branchName).toBe('main')
       })
+
+      const listOnly = (...branches: BranchListItem[]) =>
+        mockClient.branches.list.mockResolvedValue({
+          ok: true,
+          status: 200,
+          data: { branches: [mockBranches[0], ...branches], defaultBranch: 'main', users: [] },
+        })
+
+      /** The hook, and every `branchName` it has given since the listing first resolved it. */
+      const tracked = async (initialBranch: string) => {
+        const given: string[] = []
+        const hook = renderHook(
+          () => {
+            const manager = useBranchManager({ ...defaultOptions, initialBranch })
+            if (manager.currentBranch) given.push(manager.branchName)
+            return manager
+          },
+          { wrapper },
+        )
+        await waitFor(() => expect(hook.result.current.currentBranch).toBeDefined())
+        return { ...hook, given }
+      }
+
+      it('keeps the outside branch, and the name its drafts are keyed by, as the shadow comes and goes', async () => {
+        listBoth()
+        const { result, given } = await tracked('refs/heads/spring')
+        expect(result.current.currentBranch?.name).toBe('spring')
+
+        listOnly(outside)
+        await act(() => result.current.loadBranches())
+        listBoth()
+        await act(() => result.current.loadBranches())
+
+        expect(result.current.currentBranch?.name).toBe('spring')
+        expect(new Set(given)).toEqual(new Set(['spring']))
+      })
+
+      it('stays on the outside branch when a later listing gives its name to a namespace branch', async () => {
+        listOnly(outside)
+        const { result, given } = await tracked('spring')
+        expect(result.current.currentBranch?.name).toBe('spring')
+
+        listBoth()
+        await act(() => result.current.loadBranches())
+
+        expect(result.current.branches).toHaveLength(3)
+        expect(result.current.currentBranch?.name).toBe('spring')
+        expect(new Set(given)).toEqual(new Set(['spring']))
+      })
+
+      it('sends an action in the exact form once the listing drops its branch under the dialog', async () => {
+        const { modals } = await import('@mantine/modals')
+        let confirm: (() => void) | undefined
+        vi.mocked(modals.openConfirmModal).mockImplementation((options) => {
+          confirm = options.onConfirm
+          return 'mock-modal-id'
+        })
+        mockClient.branches.delete.mockResolvedValue({ ok: true, status: 200 })
+        const { result } = await loaded('main')
+
+        let deleting: Promise<void> | undefined
+        act(() => {
+          deleting = result.current.handleDelete('refs/heads/spring')
+        })
+        await waitFor(() => expect(confirm).toBeDefined())
+        listOnly(spring)
+        await act(() => result.current.loadBranches())
+        await act(async () => {
+          confirm?.()
+          await deleting
+        })
+
+        expect(mockClient.branches.delete).toHaveBeenCalledWith({ branch: 'refs/heads/spring' })
+      })
     })
 
     it('opens no branch for a raw name that a namespace branch shadows, and writes no URL', async () => {

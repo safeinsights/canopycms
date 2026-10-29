@@ -80,7 +80,7 @@ import {
   useSchemaManager,
 } from './hooks'
 import { useBranchActions } from './hooks/useBranchActions'
-import { displayBranchName } from './branch-names'
+import { branchAddress, displayBranchName } from './branch-names'
 import { useBranchChangesData, useEntryChangeData } from './hooks/useBranchChangesData'
 import type { EntryChangesSubject } from './components/EntryChangesDrawer'
 import { LazyEntryChangesDrawer } from './components/LazyEntryChangesDrawer'
@@ -148,7 +148,6 @@ import { findFieldTarget, focusFieldTarget } from './field-target'
 import { UndoToastMessage } from './components/UndoToastMessage'
 import { getNotificationDuration } from './utils/env'
 import { MayHaveLandedError } from './unanswered'
-import { sanitizeBranchName } from '../paths/branch-name'
 
 export interface EditorEntry {
   path: LogicalPath // Logical path (no IDs/extensions)
@@ -418,8 +417,9 @@ const EditorContent: React.FC<EditorProps> = ({
     branches,
     branchSummaries,
     currentBranch,
+    currentAddress,
     listedBranch,
-    listedName,
+    namesBranch,
     urlBranchName,
     branchesLoadFailed,
     branchesLoaded,
@@ -545,7 +545,7 @@ const EditorContent: React.FC<EditorProps> = ({
     branchBarState,
     switchBranch: (branch, superseded) => switchBranchRef.current(branch, superseded),
     // A short name in the URL is no switch to another branch.
-    sameBranch: (a, b) => listedName(a) === listedName(b),
+    sameBranch: namesBranch,
     urlBranchName,
     onContentRefresh: (branch) => reloadChangesRef.current(branch),
     // To the entry menu, which names the entry opened; a dialog keeps focus.
@@ -709,10 +709,12 @@ const EditorContent: React.FC<EditorProps> = ({
     onReloadBranches: () => loadBranches(),
     onBranchCreated: addCreatedBranch,
     urlBranchName,
+    sameBranch: namesBranch,
     userId: userContext?.userId,
   })
-  // Only a Back or Forward calls this: it switches to the listed name, replacing the entry it arrived
-  // at. With no listing, the name is unchecked and could be either form, so the move is refused.
+  // Only a Back or Forward calls this: it switches to the listed branch, by an address that opens
+  // it alone, replacing the entry it arrived at. With no listing, the name is unchecked and could
+  // be either form, so the move is refused.
   switchBranchRef.current = async (branch, superseded) => {
     const listed = listedBranch(branch)
     if (!listed) {
@@ -724,7 +726,7 @@ const EditorContent: React.FC<EditorProps> = ({
       }
       throw new Error(`Branch ${branch} is not listed`)
     }
-    await handleBranchChange(listed.name, { push: false, superseded })
+    await handleBranchChange(branchAddress(branches, listed), { push: false, superseded })
   }
 
   // 5. Comment system (depends on branchNameState)
@@ -755,8 +757,7 @@ const EditorContent: React.FC<EditorProps> = ({
   })
 
   reloadCommentsRef.current = (branch) => {
-    if (sanitizeBranchName(branch) === sanitizeBranchName(currentBranch?.name ?? branchNameState))
-      void loadComments(branch)
+    if (branch === branchNameState) void loadComments(branchNameState)
   }
 
   const {
@@ -2343,22 +2344,22 @@ const EditorContent: React.FC<EditorProps> = ({
               entryListFailed={entriesLoadFailed && entriesState.length === 0}
               onSubmit={(returnFocusTo) => {
                 if (branchNameState && !isSaveAllRunning()) {
-                  handleSubmit(branchNameState, returnFocusTo).catch(console.error)
+                  handleSubmit(currentAddress, returnFocusTo).catch(console.error)
                 }
               }}
               onWithdraw={(returnFocusTo) => {
                 if (branchNameState && !isSaveAllRunning()) {
-                  handleWithdraw(branchNameState, returnFocusTo).catch(console.error)
+                  handleWithdraw(currentAddress, returnFocusTo).catch(console.error)
                 }
               }}
               onApprove={(returnFocusTo) => {
                 if (branchNameState && !isSaveAllRunning()) {
-                  handleApprove(branchNameState, returnFocusTo).catch(console.error)
+                  handleApprove(currentAddress, returnFocusTo).catch(console.error)
                 }
               }}
               onRequestChanges={(returnFocusTo) => {
                 if (branchNameState && !isSaveAllRunning()) {
-                  handleRequestChanges(branchNameState, returnFocusTo).catch(console.error)
+                  handleRequestChanges(currentAddress, returnFocusTo).catch(console.error)
                 }
               }}
             />
@@ -2648,19 +2649,19 @@ const EditorContent: React.FC<EditorProps> = ({
                   onCreate={handleCreateBranch}
                   // A Save all mid-run on the open branch would be submitted partway through.
                   onSubmit={(name) => {
-                    if (name === branchNameState && isSaveAllRunning()) return
+                    if (namesBranch(name, branchNameState) && isSaveAllRunning()) return
                     handleSubmit(name).catch((err) => console.error(err))
                   }}
                   onWithdraw={(name) => {
-                    if (name === branchNameState && isSaveAllRunning()) return
+                    if (namesBranch(name, branchNameState) && isSaveAllRunning()) return
                     handleWithdraw(name).catch((err) => console.error(err))
                   }}
                   onApprove={(name) => {
-                    if (name === branchNameState && isSaveAllRunning()) return
+                    if (namesBranch(name, branchNameState) && isSaveAllRunning()) return
                     handleApprove(name).catch((err) => console.error(err))
                   }}
                   onRequestChanges={(name) => {
-                    if (name === branchNameState && isSaveAllRunning()) return
+                    if (namesBranch(name, branchNameState) && isSaveAllRunning()) return
                     handleRequestChanges(name).catch((err) => console.error(err))
                   }}
                   onDelete={(name) => {

@@ -18,7 +18,7 @@ import { BRANCHES_KEY, fetchBranches, useBranchesData, type BranchesData } from 
 // node:fs/promises + node:path at the top level (path RESOLUTION helpers),
 // which breaks adopters' production `next build` of the editor bundle.
 // paths/branch-name.ts is the dependency-free home of sanitizeBranchName.
-import { sanitizeBranchName } from '../../paths/branch-name'
+import { EXACT_BRANCH_PREFIX, exactBranchName, sanitizeBranchName } from '../../paths/branch-name'
 import {
   branchAddress,
   branchUrlName,
@@ -338,6 +338,16 @@ function mergePendingBranches(
 }
 
 /**
+ * What a request sends for `name`, a full name the listing no longer holds: the exact form when a
+ * listed short name is `name`, which would otherwise open that namespace branch in its place.
+ */
+function unlistedName(listed: readonly BranchListItem[], name: string): string {
+  return listed.some((b) => b.name !== name && displayBranchName(b) === name)
+    ? `${EXACT_BRANCH_PREFIX}${name}`
+    : name
+}
+
+/**
  * Applies one received listing to the pending branches: drops those it arrived
  * past the grace window for, and takes the listing's copy of the rest. Written
  * so a listing with no arrival time (NaN) drops nothing.
@@ -435,16 +445,25 @@ export interface UseBranchManagerOptions {
 }
 
 export interface UseBranchManagerReturn {
+  /**
+   * The listed full name of the open branch, which keys everything stored or fetched per branch.
+   * Until a listing resolves the name it arrived by, that name as given.
+   */
   branchName: string
+  /** Opens the branch `name` names, a URL value or card address, resolved once a listing holds it. */
   setBranchName: (name: string) => void
   branches: BranchListItem[]
   branchSummaries: BranchSummary[]
   currentBranch: BranchListItem | undefined
-  /** The listed branch `name` opens, resolved as `currentBranch` is. */
+  /** What the open branch's own actions hand `handleSubmit` and the rest (`branchAddress`). */
+  currentAddress: string
+  /** The listed branch `name`, a URL value or card address, opens. */
   listedBranch: (name: string) => BranchListItem | undefined
   /** The full name of the listed branch `name` opens, else `name` sanitized. */
   listedName: (name: string) => string
-  /** What `?branch=` carries for the branch `name` opens, else `name`. */
+  /** Whether `name`, a URL value or card address, opens `branch`, a `branchName` this gave. */
+  namesBranch: (name: string, branch: string) => boolean
+  /** What `?branch=` carries for the branch `name`, a full name or its exact form, names, else `name`. */
   urlBranchName: (name: string) => string
   /** The listing failed and nothing earlier stands in for it. */
   branchesLoadFailed: boolean
@@ -474,7 +493,13 @@ export interface UseBranchManagerReturn {
 export function useBranchManager(options: UseBranchManagerOptions): UseBranchManagerReturn {
   const apiClient = useApiClient()
   const { cache, mutate: globalMutate } = useSWRConfig()
-  const [branchName, setBranchName] = useState<string>(options.initialBranch)
+  // The open branch. Once `exact`, `name` is the listed branch's full name, matched only by that
+  // name: a listing that changes which branch a short name opens never moves it. Until then
+  // `name` is what a URL, link, history entry or card gave, which `resolveListedBranch` resolves
+  // once a listing holds it.
+  const [open, setOpen] = useState({ name: options.initialBranch, exact: false })
+  const setBranchName = useCallback((name: string) => setOpen({ name, exact: false }), [])
+  const openExactly = useCallback((name: string) => setOpen({ name, exact: true }), [])
   const {
     data: branchesData,
     error: branchesError,
@@ -486,11 +511,21 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     [branchesData, pendingBranches],
   )
 
-  // Requests name a branch by the form its URL does.
-  const segments = useMemo(
-    () => new Map(branches.map((b) => [b.name, branchUrlName(branches, b)])),
-    [branches],
-  )
+  const arriving = open.exact ? undefined : resolveListedBranch(branches, open.name)
+  const branchName = arriving?.name ?? open.name
+  const resolved = open.exact || !!arriving
+  const currentBranch = open.exact ? branches.find((b) => b.name === open.name) : arriving
+  const currentBranchName = currentBranch?.name
+
+  // Requests name a branch by the form its URL does, and the open branch, once the listing drops
+  // it, as `unlistedName` does.
+  const segments = useMemo(() => {
+    const table = new Map(branches.map((b) => [b.name, branchUrlName(branches, b)]))
+    if (resolved && branchName && !table.has(branchName)) {
+      table.set(branchName, unlistedName(branches, branchName))
+    }
+    return table
+  }, [branches, resolved, branchName])
   useBranchSegments(segments)
 
   const addCreatedBranch = useCallback((branch: BranchListItem) => {
@@ -534,10 +569,8 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
 
   // Adopt the server's default branch once data arrives, if nothing pinned one.
   useEffect(() => {
-    if (!branchName && branchesData?.defaultBranch) {
-      setBranchName(branchesData.defaultBranch)
-    }
-  }, [branchesData, branchName])
+    if (!branchName && branchesData?.defaultBranch) openExactly(branchesData.defaultBranch)
+  }, [branchesData, branchName, openExactly])
 
   // One toast, replaced on each failure (a shown id ignores `show`); sticky because the editor
   // cannot function without the branch list.
@@ -582,16 +615,11 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     // eslint-disable-next-line react-hooks/exhaustive-deps -- options is a new object every Editor.tsx render; only setBusy (a stable setState) matters here
   }, [branchesIsValidating, options.setBusy])
 
-  const currentBranch = resolveListedBranch(branches, branchName)
-  const currentBranchName = currentBranch?.name
-  // The listed name, unless another branch's short name shadows it (`branchAddress`).
-  const currentAddress = currentBranch ? branchAddress(branches, currentBranch) : undefined
-
-  // A link names a branch by its short name or a raw form; the state takes the listed name, so
-  // the URL (replaced below) and everything keyed per branch see one name for one branch.
+  // Resolved once, as it arrives: from here the full name is the branch, and drafts, comments and
+  // everything else keyed per branch see one name for it.
   useEffect(() => {
-    if (currentAddress && currentAddress !== branchName) setBranchName(currentAddress)
-  }, [currentAddress, branchName])
+    if (!open.exact && arriving) openExactly(arriving.name)
+  }, [open, arriving, openExactly])
 
   const branchSummaries = useMemo(() => {
     return branches.map((b) => {
@@ -671,14 +699,31 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
 
   // The confirm dialogs' handlers run long after the render that opened them, so they read
   // these at confirm time rather than from that render's closure.
-  const latest = useRef({ branchName, branches, branchesData })
-  latest.current = { branchName, branches, branchesData }
+  const latest = useRef({ branchName, resolved, branches, branchesData })
+  latest.current = { branchName, resolved, branches, branchesData }
 
-  // A deep link can carry a short name or the raw form of a listed name; the actions key, look
-  // up and send the listed name, resolved the way `currentBranch` resolves it.
+  // A card, deep link or URL can carry a short name, an exact form or the raw form of a listed
+  // name; the actions resolve it once, the way an arriving name resolves, then key, look up and
+  // send the listed name.
   const listedBranch = (name: string): BranchListItem | undefined =>
     resolveListedBranch(latest.current.branches, name)
   const listedName = (name: string): string => listedBranch(name)?.name ?? sanitizeBranchName(name)
+
+  // What an action sends for `name`, resolved when it was asked for: the listing can drop the
+  // branch while its dialog is open.
+  const sendName = (name: string): string => {
+    const listed = latest.current.branches
+    return listed.some((b) => b.name === name) ? name : unlistedName(listed, name)
+  }
+
+  // The listed name of the open branch: the state itself once resolved.
+  const openListedName = (): string =>
+    latest.current.resolved ? latest.current.branchName : listedName(latest.current.branchName)
+
+  const namesBranch = (name: string, branch: string): boolean => {
+    const found = listedBranch(name)
+    return found ? found.name === branch : sanitizeBranchName(name) === sanitizeBranchName(branch)
+  }
 
   // What a dialog or toast calls the listed branch `name`; the keys, lookups and requests keep `name`.
   const shownName = (name: string): string => {
@@ -686,10 +731,12 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     return found ? displayBranchName(found) : name
   }
 
-  // The `?branch=` value for `name`: the listed branch's URL form, else `name` as given.
+  // The `?branch=` value for `name`, a full name or a card's address: the URL form of the branch
+  // listed by that full name, else `name` as given.
   const urlBranchName = (name: string): string => {
     const listed = latest.current.branches
-    const found = resolveListedBranch(listed, name)
+    const full = exactBranchName(name) ?? name
+    const found = listed.find((b) => b.name === full)
     return found ? branchUrlName(listed, found) : name
   }
 
@@ -889,7 +936,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
       // Drafts belong to the open branch, so only its submit can leave edits behind. Without
       // that check the dialog opens in this same tick.
       const checking =
-        branchNameToSubmit === listedName(latest.current.branchName)
+        branchNameToSubmit === openListedName()
           ? options.getUnsaved?.().catch((err: unknown) => {
               console.error(err)
               return undefined
@@ -917,13 +964,13 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
             options.setBusy(true)
             try {
               const result = await apiClient.workflow.submit(
-                { branch: branchNameToSubmit },
+                { branch: sendName(branchNameToSubmit) },
                 // The PR body links back here; the server checks the host (editor-url.ts).
                 { editorUrl: `${window.location.origin}${window.location.pathname}` },
               )
               if (!result.ok) throw actionError(result, 'Failed to submit branch')
               const stamped = result.data?.stamped
-              if (stamped && branchNameToSubmit === listedName(latest.current.branchName)) {
+              if (stamped && branchNameToSubmit === openListedName()) {
                 options.onStamped?.(stamped)
               }
               notifications.show({
@@ -967,7 +1014,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               options.setBusy(true)
               try {
                 const result = await apiClient.workflow.withdraw({
-                  branch: branchNameToWithdraw,
+                  branch: sendName(branchNameToWithdraw),
                 })
                 if (!result.ok) throw actionError(result, 'Failed to withdraw branch')
                 notifications.show({ message: 'Branch withdrawn', color: 'blue' })
@@ -1006,7 +1053,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               options.setBusy(true)
               try {
                 const result = await apiClient.workflow.approve({
-                  branch: branchNameToApprove,
+                  branch: sendName(branchNameToApprove),
                 })
                 if (!result.ok) throw actionError(result, 'Failed to approve branch', true)
                 notifications.hide(reviewFailureId('approve', branchNameToApprove))
@@ -1054,7 +1101,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               options.setBusy(true)
               try {
                 const result = await apiClient.workflow.requestChanges(
-                  { branch: branchNameForChanges },
+                  { branch: sendName(branchNameForChanges) },
                   { note: note.trim() || undefined },
                 )
                 if (!result.ok) throw actionError(result, 'Failed to request changes', true)
@@ -1102,9 +1149,9 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   }
 
   /**
-   * After a delete: drop it from the created-branch overlay, and leave it if it is open. Matched
-   * the way `listedName` resolves the open name, against the listing from before the delete
-   * (`listedBefore`), since the deleted branch is no longer listed to resolve against.
+   * After a delete: drop it from the created-branch overlay, and leave it if it is open. A name
+   * still unresolved is resolved against the listing from before the delete (`listedBefore`),
+   * since the deleted branch is no longer listed to resolve against.
    */
   const leaveDeletedBranch = (
     deleted: string,
@@ -1112,12 +1159,14 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     fresh: BranchesData | undefined,
   ) => {
     forgetCreatedBranch(deleted)
-    const open = latest.current.branchName
-    const openName = resolveListedBranch(listedBefore, open)?.name ?? sanitizeBranchName(open)
-    if (openName === deleted) {
+    const { branchName: openName, resolved: openResolved } = latest.current
+    const openListed = openResolved
+      ? openName
+      : (resolveListedBranch(listedBefore, openName)?.name ?? sanitizeBranchName(openName))
+    if (openListed === deleted) {
       // Nothing is left to keep, so no unsaved-changes prompt. With no default known yet, the
       // empty name lets the default-branch adoption effect pick it.
-      setBranchName(fresh?.defaultBranch ?? latest.current.branchesData?.defaultBranch ?? '')
+      openExactly(fresh?.defaultBranch ?? latest.current.branchesData?.defaultBranch ?? '')
     }
   }
 
@@ -1136,7 +1185,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               options.setBusy(true)
               try {
                 const result = await apiClient.branches.delete({
-                  branch: branchNameToDelete,
+                  branch: sendName(branchNameToDelete),
                 })
                 // The API's own 404: the branch is already gone, by an earlier unanswered delete or
                 // another user's.
@@ -1215,10 +1264,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     const url = new URL(window.location.href)
     const named = url.searchParams.get('branch')
     if (named === shownBranch) return
-    if (popped && named !== null) {
-      const { branches: listed, branchName: current } = latest.current
-      if (resolveListedBranch(listed, named)?.name !== current) return
-    }
+    if (popped && named !== null && listedBranch(named)?.name !== latest.current.branchName) return
     url.searchParams.set('branch', shownBranch)
     writeEditorUrl(url.toString(), false)
   }, [shownBranch, historyMoves])
@@ -1229,8 +1275,10 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     branches,
     branchSummaries,
     currentBranch,
+    currentAddress: currentBranch ? branchAddress(branches, currentBranch) : branchName,
     listedBranch,
     listedName,
+    namesBranch,
     urlBranchName,
     branchesLoadFailed: !!branchesError && !branchesData,
     branchesLoaded: !!branchesData,

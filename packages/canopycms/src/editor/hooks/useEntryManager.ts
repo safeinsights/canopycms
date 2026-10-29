@@ -93,11 +93,11 @@ export interface UseEntryManagerOptions {
    */
   switchBranch?: (branch: string, superseded: () => boolean) => Promise<void>
   /**
-   * Whether two names open one branch, as a short name and its full name do. A change of
-   * `branchName` between two such names is no switch: the open entry stays. Defaults to comparing
-   * sanitized forms.
+   * Whether `url`, a `?branch=` value, opens the branch `branchName` names, as a short name opens
+   * its namespace branch. A change of `branchName` from a branch whose URL form opens the next one
+   * is no switch: the open entry stays. Defaults to comparing sanitized forms.
    */
-  sameBranch?: (a: string, b: string) => boolean
+  sameBranch?: (url: string, branchName: string) => boolean
   /** What `?branch=` carries for a branch (its short name); defaults to the name as given. */
   urlBranchName?: (branch: string) => string
   /** Called when a Back or Forward has opened another entry. */
@@ -818,11 +818,16 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   // Clear selection when branch changes (reactive pattern). Data loading
   // itself is handled below by the SWR-backed fetch -- this effect only
   // owns the "clear stale selection" side effect.
-  const shownBranchRef = useRef(options.branchName)
+  // The shown branch's URL form, refreshed while it stays shown: a full name can be another
+  // branch's short name, and only the URL form says which branch it is against a later listing.
+  const shownBranchRef = useRef({ name: options.branchName, url: urlBranchOf(options.branchName) })
+  if (shownBranchRef.current.name === options.branchName) {
+    shownBranchRef.current.url = urlBranchOf(options.branchName)
+  }
   useEffect(() => {
     if (!options.branchName) return
-    const previous = shownBranchRef.current
-    shownBranchRef.current = options.branchName
+    const previous = shownBranchRef.current.url
+    shownBranchRef.current = { name: options.branchName, url: urlBranchOf(options.branchName) }
     // On initial mount, preserve the initial selection from URL
     // On a later switch to another branch, clear selection
     if (isInitialMount.current) {
