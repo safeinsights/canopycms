@@ -347,7 +347,8 @@ export function buildReviewBlock(review: BranchReview | undefined): string {
         : undefined
   let status = 'Not yet reviewed in CanopyCMS.'
   if (review && verdict) {
-    const name = sanitizeDisplayName(personName(review.by.userId, review.by.name))
+    // Cleaned first, so a name that becomes the id once cleaned still counts as none.
+    const name = personName(review.by.userId, sanitizeDisplayName(review.by.name))
     const when = reviewTime(review.at)
     status = `${verdict} in CanopyCMS by ${name ? codeSpan(name) : 'a reviewer'}${when ? ` on ${when}` : ''}.`
   }

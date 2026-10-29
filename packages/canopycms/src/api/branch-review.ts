@@ -69,21 +69,6 @@ const reviewBy = (user: CanopyUser, state: BranchReview['state']): BranchReview 
   at: new Date().toISOString(),
 })
 
-/**
- * Shows the new verdict on the PR. Best-effort: the review is already saved, so a failure is
- * logged and never fails the action.
- */
-const syncReviewToPr = async (ctx: ApiContext, branchContext: BranchContext): Promise<void> => {
-  try {
-    await syncPrComments(ctx, branchContext)
-  } catch (err) {
-    console.warn(
-      `CanopyCMS: Could not show the review of ${branchContext.branch.name} on its pull request:`,
-      getErrorMessage(err),
-    )
-  }
-}
-
 const requestChangesHandler = async (
   gc: { branchContext: BranchContext },
   ctx: ApiContext,
@@ -142,8 +127,8 @@ const requestChangesHandler = async (
   }
 
   // After the save and the note, which the PR body renders from, so one update carries both; the
-  // draft conversion above never writes the body.
-  await syncReviewToPr(ctx, branchContext)
+  // draft conversion above never writes the body. Best-effort: syncPrComments only logs failures.
+  await syncPrComments(ctx, branchContext)
 
   return {
     ok: true,
@@ -214,7 +199,8 @@ const approveBranchHandler = async (
   )
   if (!updated) return approveConflict(found)
 
-  await syncReviewToPr(ctx, branchContext)
+  // Best-effort: syncPrComments only logs failures.
+  await syncPrComments(ctx, branchContext)
 
   return {
     ok: true,

@@ -371,7 +371,7 @@ Named A/B/C/E for continuity with the original analysis
 - **PR body comment and review blocks** (`api/pr-comment-sync.ts`): GitHub's PR update takes no
   expected version. Worker tasks run serially and the direct path holds a per-branch
   in-process lock; two containers, or a human editing the body meanwhile, can lose one
-  write until the next comment change or submit.
+  write until the body's next update.
 
 All are bounded by per-request store lifetimes, throttled backstops, a TTL, and the next
 mutation's bump. None of them cause a write to land in the wrong _file_ — that is

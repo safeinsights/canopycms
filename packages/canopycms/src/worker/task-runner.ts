@@ -539,7 +539,8 @@ export async function executeTask(
       }
       const pr = await ctx.github().getPullRequest(prNumber, signal)
       if (pr.state !== 'open') return { updated: false, skipped: 'not-open' }
-      // A file that cannot be read leaves its block as it is; the other block still updates.
+      // A corrupt file leaves its block as it is and the other block still updates; any other read
+      // error throws, so the task is retried.
       const body = await renderPrCommentsBody({
         branchRoot: branchPath,
         branch,

@@ -318,21 +318,6 @@ describe('branch review api - requestChanges', () => {
     expect(order).toEqual(['save', 'sync'])
   })
 
-  it('still succeeds, and logs, when the pull request body cannot be synced', async () => {
-    const consoleSpy = mockConsole()
-    mockSyncPrComments.mockRejectedValue(new Error('gateway down'))
-    const res = await requestChangesHandler(
-      makeCtx(),
-      admin,
-      { branch: 'feature/x' as BranchName },
-      {},
-    )
-    expect(res.ok).toBe(true)
-    expect(res.status).toBe(200)
-    expect(consoleSpy).toHaveWarned(/Could not show the review of feature\/x.*gateway down/)
-    consoleSpy.restore()
-  })
-
   describe('a status that changed after the guard read the branch', () => {
     it.each([
       ['editing', "This branch is no longer in review: it's back with its editor."],
@@ -620,16 +605,6 @@ describe('branch review api - approveBranch', () => {
       ctx,
       expect.objectContaining({ branchRoot: baseContext.branchRoot }),
     )
-  })
-
-  it('still succeeds, and logs, when the pull request body cannot be synced', async () => {
-    const consoleSpy = mockConsole()
-    mockSyncPrComments.mockRejectedValue(new Error('gateway down'))
-    const res = await approveBranchHandler(makeCtx(), admin, { branch: 'feature/x' as BranchName })
-    expect(res.ok).toBe(true)
-    expect(res.status).toBe(200)
-    expect(consoleSpy).toHaveWarned(/Could not show the review of feature\/x.*gateway down/)
-    consoleSpy.restore()
   })
 
   it.each([

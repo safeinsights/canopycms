@@ -776,7 +776,7 @@ describe('buildReviewBlock', () => {
     ).toContain('Changes requested in CanopyCMS by `Rae Viewer` on 2026-10-28 14:05 UTC.\n')
   })
 
-  it.each([undefined, '', '   ', 'rev_1', '<>()'])(
+  it.each([undefined, '', '   ', 'rev_1', '<>()', '(rev_1)', '<rev_1>'])(
     'writes "a reviewer", never the id, for the name %j',
     (name) => {
       const block = buildReviewBlock({ state: 'approved', by: { userId: 'rev_1', name }, at })
