@@ -353,8 +353,9 @@ export const createBranchHandler = async (
         ok: false,
         status: 503,
         error:
-          'Branches cannot be created yet: the CMS worker has not reported its branch namespace. ' +
-          'Ask an administrator to deploy or upgrade the worker (canopycms-cdk), then try again.',
+          "Branches cannot be created yet: the CMS worker has not reported the GitHub gateway's " +
+          'branch namespace. Ask an administrator to check that the worker (canopycms-cdk) runs ' +
+          'this release and that its git sync reaches the gateway, then try again.',
       }
     }
     if (gatewayNamespace !== undefined && gatewayNamespace !== namespace) {

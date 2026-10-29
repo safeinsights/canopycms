@@ -792,9 +792,9 @@ describe('branch api', () => {
           const res = await create('spring', prodCtx())
           expect(res.status).toBe(503)
           expect(res.error).toBe(
-            'Branches cannot be created yet: the CMS worker has not reported its branch ' +
-              'namespace. Ask an administrator to deploy or upgrade the worker (canopycms-cdk), ' +
-              'then try again.',
+            "Branches cannot be created yet: the CMS worker has not reported the GitHub gateway's " +
+              'branch namespace. Ask an administrator to check that the worker (canopycms-cdk) ' +
+              'runs this release and that its git sync reaches the gateway, then try again.',
           )
           expect(res.code).toBeUndefined()
         })
