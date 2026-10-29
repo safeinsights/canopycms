@@ -27,13 +27,9 @@ export interface UseBranchActionsOptions {
   userId?: string
 }
 
-/** `push: false` for a switch a Back or Forward makes, which arrived at its history entry already. */
-export interface BranchChangeOptions {
-  push?: boolean
-}
-
 export interface UseBranchActionsReturn {
-  handleBranchChange: (branch: string | null, options?: BranchChangeOptions) => Promise<void>
+  /** `push: false` for a switch a Back or Forward makes, which arrived at its history entry already. */
+  handleBranchChange: (branch: string | null, options?: { push?: boolean }) => Promise<void>
   /** True when nothing is unsaved or the user accepted the warning. Run before any in-flight UI. */
   confirmCreate: () => Promise<boolean>
   handleCreateBranch: (branch: {
@@ -109,7 +105,7 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
     })
   }
 
-  const handleBranchChange = async (next: string | null, change: BranchChangeOptions = {}) => {
+  const handleBranchChange = async (next: string | null, change: { push?: boolean } = {}) => {
     if (!next || next === options.branchName) return
 
     const confirmed = await confirmIfDirty('Switch branches anyway?')
