@@ -1056,7 +1056,8 @@ class LocalGitHubGateway implements GitHubGateway {
   /**
    * Pull request `number`'s merge state, for any number, and its body only when its head is a
    * branch of this repository in the namespace itself and not protected: neither a legacy branch,
-   * the settings branch, nor a `protectedBranches` match, whoever opened the pull request. The
+   * the settings branch, nor a `protectedBranches` match, whoever opened the pull request. When
+   * GitHub's default branch cannot be read, the configured protected set alone decides. The
    * number comes from the worker, which a compromised CMS Lambda can steer; the head is GitHub's
    * record.
    */
@@ -1068,10 +1069,22 @@ class LocalGitHubGateway implements GitHubGateway {
       const head = data.head.ref
       // By id, as `assertOwnPullRequest` compares; a deleted fork has no repo. A protected head is
       // one the gateway refuses to update the pull request of, so its body is withheld too.
-      const ours =
-        data.head.repo?.id === data.base.repo.id &&
-        this.policy.namespaceHolds(head) &&
-        !(await this.policy.isProtected(head, () => this.readDefaultBranch(reach, signal)))
+      let ours = data.head.repo?.id === data.base.repo.id && this.policy.namespaceHolds(head)
+      if (ours) {
+        try {
+          ours = !(await this.policy.isProtected(head, () => this.readDefaultBranch(reach, signal)))
+        } catch (err) {
+          // `isProtected` reads GitHub only for a head the configured set (the base branch and
+          // `protectedBranches`) does not cover. The merge poll needs the merge state, so an
+          // unread default branch leaves the body to that set: `updatePullRequest` judges the head
+          // again before writing it.
+          if (signal?.aborted) throw err
+          gatewayLogWarn(
+            `Could not read GitHub's default branch for pull request #${number} ` +
+              `(${redactEgress(getErrorMessage(err))}); judging its head by the configured protected set`,
+          )
+        }
+      }
       return {
         merged: data.merged,
         merged_at: data.merged_at,

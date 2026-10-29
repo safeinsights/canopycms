@@ -486,8 +486,11 @@ describe('pull requests by number', () => {
 })
 
 describe('reading a pull request by number', () => {
-  const read = async (answer: object, options: Partial<LocalGitHubGatewayOptions> = {}) => {
-    const octokit = octokitStub()
+  const read = async (
+    answer: object,
+    options: Partial<LocalGitHubGatewayOptions> = {},
+    octokit = octokitStub(),
+  ) => {
     octokit.pulls.get.mockResolvedValue({
       data: {
         merged: true,
@@ -535,6 +538,39 @@ describe('reading a pull request by number', () => {
         state: 'closed',
         node_id: 'PR_2',
         body: null,
+      })
+    },
+  )
+
+  it("withholds the body of one whose head is GitHub's default branch, inside the namespace", async () => {
+    const octokit = octokitStub()
+    octokit.repos.get.mockResolvedValue({ data: { default_branch: 'canopycms/prod/feature' } })
+
+    expect((await read(pullRequestHead('canopycms/prod/feature'), {}, octokit)).body).toBeNull()
+  })
+
+  it.each([
+    ['in the namespace', pullRequestHead('canopycms/prod/feature'), {}, 'Notes'],
+    [
+      'protected by protectedBranches',
+      pullRequestHead('canopycms/prod/keep-1'),
+      { protectedBranches: ['canopycms/prod/keep-*'] },
+      null,
+    ],
+    ['outside the namespace', pullRequestHead('developer-branch'), {}, null],
+    ['in a fork', pullRequestHead('canopycms/prod/feature', 2002), {}, null],
+  ] as const)(
+    "answers merge state when GitHub's default branch cannot be read, judging a head %s by protectedBranches alone",
+    async (_label, answer, options, body) => {
+      const octokit = octokitStub()
+      octokit.repos.get.mockRejectedValue(await octokitErrorFor(502, { message: 'Bad Gateway' }))
+
+      expect(await read(answer, options, octokit)).toEqual({
+        merged: true,
+        merged_at: '2026-10-29T10:00:00Z',
+        state: 'closed',
+        node_id: 'PR_2',
+        body,
       })
     },
   )
