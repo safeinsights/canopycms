@@ -80,7 +80,7 @@ import {
   useSchemaManager,
 } from './hooks'
 import { useBranchActions } from './hooks/useBranchActions'
-import { displayBranchName, resolveListedBranch } from './branch-names'
+import { displayBranchName } from './branch-names'
 import { useBranchChangesData, useEntryChangeData } from './hooks/useBranchChangesData'
 import type { EntryChangesSubject } from './components/EntryChangesDrawer'
 import { LazyEntryChangesDrawer } from './components/LazyEntryChangesDrawer'
@@ -418,6 +418,7 @@ const EditorContent: React.FC<EditorProps> = ({
     branches,
     branchSummaries,
     currentBranch,
+    listedBranch,
     listedName,
     urlBranchName,
     branchesLoadFailed,
@@ -708,15 +709,17 @@ const EditorContent: React.FC<EditorProps> = ({
     urlBranchName,
     userId: userContext?.userId,
   })
+  // Only a Back or Forward calls this: it switches to the listed name, replacing the entry it arrived at.
   switchBranchRef.current = async (branch) => {
-    if (branches.length > 0 && !resolveListedBranch(branches, branch)) {
+    const listed = listedBranch(branch)
+    if (branches.length > 0 && !listed) {
       notifications.show({
         message: `Branch “${branch}” no longer exists or you can no longer open it, so you're still on “${branchLabel}”.`,
         color: 'yellow',
       })
       throw new Error(`Branch ${branch} is not listed`)
     }
-    await handleBranchChange(branch)
+    await handleBranchChange(listed?.name ?? branch, { push: false })
   }
 
   // 5. Comment system (depends on branchNameState)

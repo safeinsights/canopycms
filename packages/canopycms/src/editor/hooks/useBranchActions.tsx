@@ -27,8 +27,13 @@ export interface UseBranchActionsOptions {
   userId?: string
 }
 
+/** `push: false` for a switch a Back or Forward makes, which arrived at its history entry already. */
+export interface BranchChangeOptions {
+  push?: boolean
+}
+
 export interface UseBranchActionsReturn {
-  handleBranchChange: (branch: string | null) => Promise<void>
+  handleBranchChange: (branch: string | null, options?: BranchChangeOptions) => Promise<void>
   /** True when nothing is unsaved or the user accepted the warning. Run before any in-flight UI. */
   confirmCreate: () => Promise<boolean>
   handleCreateBranch: (branch: {
@@ -60,14 +65,14 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
   const apiClient = useApiClient()
   const [confirmOpen, setConfirmOpen] = useState(false)
 
-  const performBranchSwitch = (next: string, urlName?: string) => {
+  const performBranchSwitch = (next: string, urlName?: string, push = true) => {
     options.setBranchName(next)
 
-    // Its own history entry; a Back onto another branch already shows this URL, so writes nothing.
+    // Its own history entry, unless a Back or Forward made it: that entry's URL is replaced.
     if (typeof window !== 'undefined') {
       const url = new URL(window.location.href)
       url.searchParams.set('branch', urlName ?? options.urlBranchName?.(next) ?? next)
-      writeEditorUrl(url.toString(), true)
+      writeEditorUrl(url.toString(), push)
     }
     options.onBranchSwitch?.(next)
   }
@@ -104,13 +109,13 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
     })
   }
 
-  const handleBranchChange = async (next: string | null) => {
+  const handleBranchChange = async (next: string | null, change: BranchChangeOptions = {}) => {
     if (!next || next === options.branchName) return
 
     const confirmed = await confirmIfDirty('Switch branches anyway?')
     if (!confirmed) throw new Error('User cancelled branch switch')
 
-    performBranchSwitch(next)
+    performBranchSwitch(next, undefined, change.push ?? true)
   }
 
   const confirmCreate = () => confirmIfDirty('Create the new branch anyway?')

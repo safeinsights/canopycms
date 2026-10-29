@@ -815,7 +815,10 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     } else if (!sameBranchRef.current(previous, options.branchName)) {
       const restored = entryAfterBranchChangeRef.current
       entryAfterBranchChangeRef.current = undefined
-      const entry = restored?.branch === options.branchName ? restored.entry : undefined
+      const entry =
+        restored && sameBranchRef.current(restored.branch, options.branchName)
+          ? restored.entry
+          : undefined
       noEntryRequested.current = entry === ''
       setSelectedPath(entry ?? '')
       if (entry !== undefined) {

@@ -435,6 +435,8 @@ export interface UseBranchManagerReturn {
   branches: BranchListItem[]
   branchSummaries: BranchSummary[]
   currentBranch: BranchListItem | undefined
+  /** The listed branch `name` opens, resolved as `currentBranch` is. */
+  listedBranch: (name: string) => BranchListItem | undefined
   /** The full name of the listed branch `name` opens, else `name` sanitized. */
   listedName: (name: string) => string
   /** What `?branch=` carries for the branch `name` opens, else `name`. */
@@ -668,9 +670,9 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
 
   // A deep link can carry a short name or the raw form of a listed name; the actions key, look
   // up and send the listed name, resolved the way `currentBranch` resolves it.
-  const listedName = (name: string): string =>
+  const listedBranch = (name: string): BranchListItem | undefined =>
     resolveListedBranch(latest.current.branches, name, latest.current.branchesData?.defaultBranch)
-      ?.name ?? sanitizeBranchName(name)
+  const listedName = (name: string): string => listedBranch(name)?.name ?? sanitizeBranchName(name)
 
   // What a dialog or toast calls the listed branch `name`; the keys, lookups and requests keep `name`.
   const shownName = (name: string): string => {
@@ -1209,6 +1211,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     branches,
     branchSummaries,
     currentBranch,
+    listedBranch,
     listedName,
     urlBranchName,
     branchesLoadFailed: !!branchesError && !branchesData,

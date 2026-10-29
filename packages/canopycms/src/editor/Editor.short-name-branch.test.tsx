@@ -381,6 +381,45 @@ describe('the editor on a namespace branch named by its short name', () => {
     await waitFor(async () => expect((await titleBox()).value).toBe('Drafted on spring'))
   })
 
+  it('goes Back onto the short name under the full name, touching no other drafts key', async () => {
+    autoConfirm()
+    window.history.replaceState({}, '', '/?branch=spring')
+    stubApi({ status: 'editing', userId: 'author-1' })
+    renderEditor('spring')
+    await waitFor(async () => expect((await titleBox()).value).toBe('hello title'))
+    fireEvent.change(await titleBox(), { target: { value: 'Drafted on spring' } })
+    await waitFor(() =>
+      expect(window.localStorage.getItem(`canopycms:drafts:${SPRING}`)).toContain(
+        'Drafted on spring',
+      ),
+    )
+    await openBranchesDrawer()
+    fireEvent.click(await screen.findByTestId('switch-to-branch-button-main'))
+    await waitFor(() => expect(urlBranch()).toBe('main'))
+    await waitFor(async () => expect((await titleBox()).value).toBe('hello title'))
+    const getItem = vi.spyOn(Storage.prototype, 'getItem')
+    const setItem = vi.spyOn(Storage.prototype, 'setItem')
+
+    window.history.replaceState(
+      window.history.state,
+      '',
+      `/?branch=spring&entry=${encodeURIComponent(hello.path)}`,
+    )
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+
+    await waitFor(async () => expect((await titleBox()).value).toBe('Drafted on spring'))
+    expect(urlBranch()).toBe('spring')
+    expect(getItem.mock.calls.map(([key]) => key)).not.toContain('canopycms:drafts:spring')
+    const emptied = setItem.mock.calls.filter(
+      ([key, value]) =>
+        key === `canopycms:drafts:${SPRING}` &&
+        Object.keys((JSON.parse(value) as { drafts: object }).drafts).length === 0,
+    )
+    expect(emptied).toEqual([])
+  })
+
   it('holds a Submit from the branches drawer while Save all runs', async () => {
     autoConfirm()
     let release!: () => void
