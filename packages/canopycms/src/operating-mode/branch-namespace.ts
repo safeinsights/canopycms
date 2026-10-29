@@ -65,6 +65,15 @@ export function branchNamespaceProblem(namespace: string): string | null {
 }
 
 /**
+ * The branch names git cannot hold beside any branch in `namespace`: each path it runs through
+ * (`canopycms` and `canopycms/prod` for `canopycms/prod/`), since no ref lives under a branch.
+ */
+export function namespaceAncestors(namespace: string): string[] {
+  const parts = namespace.split('/').filter(Boolean)
+  return parts.map((_, i) => parts.slice(0, i + 1).join('/'))
+}
+
+/**
  * The namespace `template` names for `deploymentName`, or why it cannot be one. Throws, naming
  * `source`, for a template with a placeholder other than `{deployment}` or a namespace
  * {@link branchNamespaceProblem} refuses.

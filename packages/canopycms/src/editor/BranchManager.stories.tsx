@@ -305,7 +305,7 @@ async function typeBranchName(text: string): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
-/** The New branch form, empty: the field says the canopycms- prefix is added. */
+/** The New branch form, empty. */
 export const NewBranchForm: Story = {
   args: { ...Default.args, startCreating: true },
 }

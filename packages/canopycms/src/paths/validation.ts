@@ -1,6 +1,6 @@
 /** Security-focused validation for content paths, IDs, branch names and slugs. */
 
-import { CMS_BRANCH_PREFIX, RESERVED_SETTINGS_BRANCH_PREFIX, cmsBranchName } from './branch-name'
+import { sanitizeBranchName } from './branch-name'
 import { normalizeFilesystemPath, hasTraversalSequence } from './normalize'
 import type { LogicalPath, PhysicalPath, ContentId, BranchName, Slug } from './types'
 
@@ -239,33 +239,37 @@ export function parseBranchName(
 }
 
 /**
- * The branch an editor's typed name creates (`cmsBranchName`), or why it cannot: the rules
- * `createBranchHandler` applies and the editor checks as the name is typed.
+ * The branch an editor's typed name creates in `namespace`, or why it cannot: the typed name
+ * sanitized, so it holds no `/`, is the short name, and the ref is the namespace followed by it.
+ * `createBranchHandler` passes its resolved namespace; the editor, which is never told one, passes
+ * none and checks the typed name alone, so its length limit is the looser one.
  */
 export function parseCreatedBranchName(
   typed: string,
-): { ok: true; name: BranchName } | { ok: false; error: string } {
+  namespace = '',
+): { ok: true; name: BranchName; shortName: string } | { ok: false; error: string } {
   const valid = parseBranchName(typed)
   if (!valid.ok) return valid
-  const created = cmsBranchName(typed)
-  // Every name with no letter, digit, '.' or '_' would otherwise share the one branch "canopycms-".
-  if (created === CMS_BRANCH_PREFIX) {
+  if (namespace !== '' && typed.startsWith(namespace)) {
+    return {
+      ok: false,
+      error: `Type only the branch's own name, without "${namespace}" in front: CanopyCMS adds it`,
+    }
+  }
+  // Without a leading '-' or '.', which the `/:branch` segment refuses (`parseBranchName`).
+  const shortName = sanitizeBranchName(typed).replace(/^[-.]+/, '')
+  if (shortName === '') {
     return { ok: false, error: 'Branch name needs at least one letter or digit' }
   }
-  if (created.length > MAX_BRANCH_NAME_LENGTH) {
+  const ref = `${namespace}${shortName}`
+  if (ref.length > MAX_BRANCH_NAME_LENGTH) {
     return {
       ok: false,
-      error: `Branch name too long: with "${CMS_BRANCH_PREFIX}" in front it is over ${MAX_BRANCH_NAME_LENGTH} characters`,
+      error: `Branch name too long (max ${MAX_BRANCH_NAME_LENGTH - namespace.length} characters)`,
     }
   }
-  if (created.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX)) {
-    const reserved = RESERVED_SETTINGS_BRANCH_PREFIX.slice(CMS_BRANCH_PREFIX.length)
-    return {
-      ok: false,
-      error: `"${created}" is reserved for CanopyCMS settings: choose a name that does not start with "${reserved}" or "${RESERVED_SETTINGS_BRANCH_PREFIX}"`,
-    }
-  }
-  return parseBranchName(created)
+  const parsed = parseBranchName(ref)
+  return parsed.ok ? { ok: true, name: parsed.name, shortName } : parsed
 }
 
 /** Validate a collection or entry slug and cast it to Slug. */

@@ -1863,7 +1863,7 @@ Navigate to your editor URL (e.g. `/edit`), sign in, and select or create a bran
 
 **Creating a branch:** click the branch pill, then "Switch branch…" and "New branch…", and enter a descriptive name (`update-homepage-hero`).
 
-> The branch is created as `canopycms-<name>`, the namespace CanopyCMS writes on GitHub, and the field shows the name before you create it. Any character other than letters, numbers, `.`, `_` and `-` is replaced with `-`, so `feature/hero-update` is created as `canopycms-feature-hero-update`, and the editor displays and uses that name everywhere. A name starting `settings-` is refused: CanopyCMS keeps its settings branches there.
+> On GitHub the branch is named with the deployment's branch namespace in front (`canopycms/prod/update-homepage-hero` by default), and its pull request links carry the name you typed. Any character other than letters, numbers, `.`, `_` and `-` is replaced with `-`, so `feature/hero-update` becomes `feature-hero-update`; the field shows the name before you create it. A name another branch already has, such as the base branch's, is refused.
 
 **Switching branches:** click the branch pill, then "Switch branch…". The base branch is marked with a "Protected" badge. The Branches drawer also shows `syncing`, `sync-failed` and `conflict` badges alongside `Merged` and `PR closed`.
 

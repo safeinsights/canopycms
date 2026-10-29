@@ -28,6 +28,8 @@ import {
   GatewayRefusalError,
   MAX_BRANCH_NAME_LENGTH,
   branchNameProblem,
+  namespaceBlockedMessage,
+  branchInsideMessage,
   type PushPolicyRefusal,
 } from './branch-policy'
 import { gatewayLog, gatewayLogError, gatewayLogWarn, redactEgress } from './gateway-egress'
@@ -1113,6 +1115,28 @@ export class MirrorSession {
         }),
       (reason, message) => new RefusedPushError(branch, reason, undefined, message),
     )
+    // The mirror's heads are GitHub's as of this session's fetch.
+    if (branch.startsWith(options.policy.namespace)) {
+      const heads = await this.heads()
+      const blocker = options.policy.namespaceBlocker(heads)
+      if (blocker !== null) {
+        throw new RefusedPushError(
+          branch,
+          'invalid',
+          undefined,
+          namespaceBlockedMessage(branch, blocker),
+        )
+      }
+      const inside = [...heads.keys()].find((name) => name.startsWith(`${branch}/`))
+      if (inside !== undefined) {
+        throw new RefusedPushError(
+          branch,
+          'invalid',
+          undefined,
+          branchInsideMessage(branch, inside),
+        )
+      }
+    }
     options.onPushing?.()
     const status = await this.githubBound(
       credential,

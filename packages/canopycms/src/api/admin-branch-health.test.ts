@@ -69,24 +69,25 @@ describe('admin branch-health api', () => {
     await fs.mkdir(path.join(branchesRoot, dirName), { recursive: true })
   }
 
-  /**
-   * A branch directory with a REAL git clone checked out on `branchName`
-   * (which may differ from `dirName`, e.g. a slash-named branch living in a
-   * sanitized dir) plus corrupt metadata -- for MEDIUM-3's
-   * resolveRepairedBranchName coverage.
-   */
-  const createCorruptBranchWithGit = async (dirName: string, branchName: string) => {
-    const branchDir = path.join(branchesRoot, dirName)
+  /** A git clone in `branchDir` with `branchName` checked out, the name repair records. */
+  const cloneOn = async (branchDir: string, branchName: string) => {
     await fs.mkdir(branchDir, { recursive: true })
     const git = await initTestRepo(branchDir)
     await git.checkoutLocalBranch(branchName)
     await fs.writeFile(path.join(branchDir, '.gitkeep'), '')
     await git.add(['.'])
     await git.commit('initial commit')
+    return git
+  }
 
-    const metaDir = path.join(branchDir, '.canopy-meta')
-    await fs.mkdir(metaDir, { recursive: true })
-    await fs.writeFile(path.join(metaDir, 'branch.json'), 'not json {{{', 'utf-8')
+  /**
+   * A branch directory with a real git clone checked out on `branchName` (which may differ from
+   * `dirName`, e.g. a slash-named branch living in a sanitized dir) plus corrupt metadata.
+   */
+  const createCorruptBranchWithGit = async (dirName: string, branchName = dirName) => {
+    const git = await cloneOn(path.join(branchesRoot, dirName), branchName)
+    await createCorruptBranch(dirName)
+    return git
   }
 
   const ageDir = async (dirPath: string, ageMs: number) => {
@@ -288,7 +289,7 @@ describe('admin branch-health api', () => {
 
   describe('POST /admin/branch-dirs/:dirName/repair-metadata', () => {
     it('repairs a corrupt branch.json, archiving the original and recreating defaults', async () => {
-      await createCorruptBranch('repair-me')
+      await createCorruptBranchWithGit('repair-me')
 
       const result = await repairHandler(ctx, req, { dirName: 'repair-me' })
 
@@ -296,7 +297,6 @@ describe('admin branch-health api', () => {
       expect(result.data?.archivedAs).toMatch(/^branch\.json\.corrupt-\d{8}T\d{6}Z$/)
       expect(result.data?.branch.status).toBe('editing')
       expect(result.data?.branch.createdBy).toBe(req.user.userId)
-      // (MEDIUM-3) No .git dir in this fixture -- falls back to dirName.
       expect(result.data?.branch.name).toBe('repair-me')
 
       const archivedPath = path.join(
@@ -317,6 +317,7 @@ describe('admin branch-health api', () => {
 
     it('repairs a branch.json that parses but fails the schema, end to end', async () => {
       const shapeBroken = JSON.stringify({ schemaVersion: 1, version: 4, branch: { name: 'x' } })
+      await cloneOn(path.join(branchesRoot, 'shape-broken'), 'shape-broken')
       const metaDir = path.join(branchesRoot, 'shape-broken', '.canopy-meta')
       await fs.mkdir(metaDir, { recursive: true })
       await fs.writeFile(path.join(metaDir, 'branch.json'), shapeBroken, 'utf-8')
@@ -345,7 +346,7 @@ describe('admin branch-health api', () => {
       // other than the repairing admin -- exactly the state save()'s
       // defaults-merge silently drops once branch.json is archived away.
       const branchDir = path.join(branchesRoot, 'was-submitted')
-      await fs.mkdir(branchDir, { recursive: true })
+      await cloneOn(branchDir, 'was-submitted')
       const manager = getBranchMetadataFileManager(branchDir, branchesRoot, { settleMs: 0 })
       await manager.save({
         branch: {
@@ -381,7 +382,7 @@ describe('admin branch-health api', () => {
     })
 
     it('allows repairing the base branch (H3 regression)', async () => {
-      await createCorruptBranch('main')
+      await createCorruptBranchWithGit('main')
       const result = await repairHandler(ctx, req, { dirName: 'main' })
       expect(result.ok).toBe(true)
       expect(result.data?.branch.name).toBe('main')
@@ -418,6 +419,77 @@ describe('admin branch-health api', () => {
       expect(result.data?.branch.name).toBe('feature/foo')
     })
 
+    const expectUntouched = async (dirName: string) => {
+      const metaDir = path.join(branchesRoot, dirName, '.canopy-meta')
+      expect(await fs.readdir(metaDir)).toEqual(['branch.json'])
+      expect(await fs.readFile(path.join(metaDir, 'branch.json'), 'utf-8')).toBe('not json {{{')
+    }
+
+    it('refuses a directory with no git clone, guessing no name and archiving nothing', async () => {
+      await createCorruptBranch('canopycms-prod-spring')
+
+      const result = await repairHandler(ctx, req, { dirName: 'canopycms-prod-spring' })
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(409)
+      expect(result.error).toBe(
+        'Cannot repair this branch: the directory holds no git clone, so the branch it belongs to ' +
+          'is unknown. Check out its branch in the clone, then repair again, or purge the directory.',
+      )
+      await expectUntouched('canopycms-prod-spring')
+    })
+
+    it('refuses a clone with a detached HEAD, guessing no name and archiving nothing', async () => {
+      const git = await createCorruptBranchWithGit('canopycms-prod-spring', 'canopycms/prod/spring')
+      await git.raw(['checkout', '--detach'])
+
+      const result = await repairHandler(ctx, req, { dirName: 'canopycms-prod-spring' })
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(409)
+      expect(result.error).toBe(
+        'Cannot repair this branch: its clone has no branch checked out (a detached HEAD), so the ' +
+          'branch it belongs to is unknown. Check out its branch in the clone, then repair again, ' +
+          'or purge the directory.',
+      )
+      await expectUntouched('canopycms-prod-spring')
+    })
+
+    it('refuses a clone on a branch whose key is not the directory, archiving nothing', async () => {
+      await createCorruptBranchWithGit('canopycms-prod-spring', 'canopycms/prod/autumn')
+
+      const result = await repairHandler(ctx, req, { dirName: 'canopycms-prod-spring' })
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(409)
+      expect(result.error).toBe(
+        'Cannot repair this branch: its clone has "canopycms/prod/autumn" checked out, which is ' +
+          'not the branch this directory holds. Check out its branch in the clone, then repair ' +
+          'again, or purge the directory.',
+      )
+      await expectUntouched('canopycms-prod-spring')
+    })
+
+    it('refuses an invalid .git inside another repository, reading nothing from that one', async () => {
+      // The repository around the workspaces has the very branch the directory's key names.
+      const outer = await initTestRepo(branchesRoot)
+      await outer.checkoutLocalBranch('canopycms/prod/spring')
+      await fs.writeFile(path.join(branchesRoot, '.gitkeep'), '')
+      await outer.add(['.gitkeep'])
+      await outer.commit('outer')
+      await createCorruptBranch('canopycms-prod-spring')
+      await fs.mkdir(path.join(branchesRoot, 'canopycms-prod-spring', '.git'))
+
+      const result = await repairHandler(ctx, req, { dirName: 'canopycms-prod-spring' })
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(409)
+      expect(result.error).toMatch(
+        /^Cannot repair this branch: git could not read the clone's checked-out branch \(/,
+      )
+      await expectUntouched('canopycms-prod-spring')
+    })
+
     it('returns 404 for a nonexistent directory (MEDIUM-1 rider)', async () => {
       const result = await repairHandler(ctx, req, { dirName: 'never-existed' })
       expect(result.ok).toBe(false)
@@ -425,7 +497,7 @@ describe('admin branch-health api', () => {
     })
 
     it('returns 409 on provisioning lock contention against a real held lock (MEDIUM-1)', async () => {
-      await createCorruptBranch('repair-contended')
+      await createCorruptBranchWithGit('repair-contended')
 
       const release = await acquireProvisioningLock(branchesRoot, '.repair-contended.init.lock')
       try {

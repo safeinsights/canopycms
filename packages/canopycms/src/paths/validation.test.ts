@@ -503,27 +503,40 @@ describe('path validation utilities', () => {
 
 describe('parseCreatedBranchName', () => {
   it.each([
-    ['spring', 'canopycms-spring'],
-    ['feature/x', 'canopycms-feature-x'],
-    ['canopycms-spring', 'canopycms-spring'],
-    ['a'.repeat(240), `canopycms-${'a'.repeat(240)}`],
-  ])('creates %s as %s', (typed, created) => {
-    expect(parseCreatedBranchName(typed)).toEqual({ ok: true, name: created })
+    ['spring', '', 'spring'],
+    ['feature/x', 'canopycms/prod/', 'feature-x'],
+    ['Spring-Update', 'canopycms/prod/', 'Spring-Update'],
+    // Sanitizing can leave a leading '-' or '.', which the short name drops.
+    ['@spring', 'canopycms/prod/', 'spring'],
+    ['@.spring', 'canopycms/prod/', 'spring'],
+    ['canopycms', 'canopycms/prod/', 'canopycms'],
+    ['a'.repeat(235), 'canopycms/prod/', 'a'.repeat(235)],
+  ])('creates %s in %j as the short name %s', (typed, namespace, shortName) => {
+    expect(parseCreatedBranchName(typed, namespace)).toEqual({
+      ok: true,
+      name: `${namespace}${shortName}`,
+      shortName,
+    })
   })
 
   it.each([
-    ['a typed name git refuses', 'a..b', /cannot contain "\.\."/],
-    ['a name the prefix makes too long', 'a'.repeat(245), /in front it is over 250 characters/],
-    ['a settings name', 'settings-prod', /is reserved for CanopyCMS settings/],
+    ['a typed name git refuses', 'a..b', '', /cannot contain "\.\."/],
     [
-      'a settings name typed in full',
-      'canopycms-settings-prod',
-      /is reserved for CanopyCMS settings/,
+      'a name the namespace makes too long',
+      'a'.repeat(236),
+      'canopycms/prod/',
+      /too long \(max 235 characters\)/,
     ],
-    ['a name with no letter or digit', '日本', /at least one letter or digit/],
-    ['punctuation only', '%%', /at least one letter or digit/],
-  ])('refuses %s', (_label, typed, why) => {
-    const result = parseCreatedBranchName(typed)
+    [
+      'a name typed with the namespace',
+      'canopycms/prod/x',
+      'canopycms/prod/',
+      /without "canopycms\/prod\/"/,
+    ],
+    ['a name with no letter or digit', '日本', '', /at least one letter or digit/],
+    ['punctuation only', '%%', 'canopycms/prod/', /at least one letter or digit/],
+  ])('refuses %s', (_label, typed, namespace, why) => {
+    const result = parseCreatedBranchName(typed, namespace)
     expect(result.ok).toBe(false)
     expect(result.ok ? '' : result.error).toMatch(why)
   })

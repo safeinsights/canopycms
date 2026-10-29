@@ -5,6 +5,7 @@
 
 import type { CanopyRequest } from '../../http/types'
 import { BranchWorkspaceManager } from '../../branch-workspace'
+import { resolveBranchParam } from '../../branch-param'
 import { createCanopyRequestHandler } from '../../http/handler'
 import { createTestServices } from '../../config-test'
 import type { CreateCanopyServicesOptions } from '../../services'
@@ -51,10 +52,7 @@ export async function createApiClient(options: ApiClientOptions) {
     services,
     authPlugin: options.authPlugin,
     getBranchContext: async (branchName: string, opts?: { loadSchema?: boolean }) => {
-      if (!services.registry) {
-        throw new Error('Branch registry not available in dev mode')
-      }
-      let context = await services.registry.get(branchName)
+      let context = await resolveBranchParam(branchName, services.config)
       if (!context) {
         // Mirror the production default getBranchContext: auto-provision the
         // base/active workspace on first request, same as http/handler.ts's

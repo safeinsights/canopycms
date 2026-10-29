@@ -242,7 +242,7 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
     })
   }
 
-  const makeWorker = (extra: { branchNamespace?: string } = {}) => {
+  const makeWorker = (extra: { branchNamespace?: string; protectedBranches?: string[] } = {}) => {
     const worker = new CmsWorker({
       workspacePath,
       githubOwner: 'test-owner',
@@ -278,6 +278,12 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
       await makeWorker({ branchNamespace: 'editor-production/' }).syncGit()
 
       expect((await readStatus()).gatewayBranchNamespace).toBe('editor-production/')
+    })
+
+    it('records the exact names the gateway protects, which branch creation refuses', async () => {
+      await makeWorker({ protectedBranches: ['release', 'deploy-*'] }).syncGit()
+
+      expect((await readStatus()).gatewayProtectedBranches).toEqual(['release', 'main'])
     })
   })
 

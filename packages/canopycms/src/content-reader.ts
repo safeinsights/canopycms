@@ -1,4 +1,5 @@
-import { loadBranchContext, loadOrCreateBranchContext } from './branch-workspace'
+import { loadOrCreateBranchContext } from './branch-workspace'
+import { resolveBranchParam } from './branch-param'
 import { SchemaUnavailableError } from './schema/schema-unavailable-error'
 import { ContentStore, ContentStoreError, type ReferenceTargetAccess } from './content-store'
 import {
@@ -161,8 +162,17 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       return resolved
     }
 
+    // An existing branch resolves first, so a short name reads its namespace branch; only a
+    // name that resolves to none is provisioned.
+    const existing = await resolveBranchParam(branchName, services.config, {
+      basePathOverride,
+    }).catch((err: unknown) => {
+      if (namesNoWorkspace(err)) return null
+      throw err
+    })
+    if (existing) return existing
     if (allowCreateBranch) {
-      return loadOrCreateBranchContext({
+      const context = await loadOrCreateBranchContext({
         config: services.config,
         branchName,
         mode: operatingMode,
@@ -170,18 +180,10 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
         createdBy,
         remoteUrl: services.config.defaultRemoteUrl,
       })
+      // A workspace already at this name's key that holds another branch is that branch's.
+      if (context.branch.name === branchName) return context
     }
-
-    const existing = await loadBranchContext({
-      branchName,
-      mode: operatingMode,
-      basePathOverride,
-    }).catch((err: unknown) => {
-      if (namesNoWorkspace(err)) return null
-      throw err
-    })
-    if (!existing) throw new ContentStoreError(`Branch not found: ${branchName}`, 'NOT_FOUND')
-    return existing
+    throw new ContentStoreError(`Branch not found: ${branchName}`, 'NOT_FOUND')
   }
 
   const resolveStore = async (branchName: string) => {

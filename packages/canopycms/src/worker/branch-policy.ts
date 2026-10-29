@@ -6,6 +6,7 @@
 import {
   DEFAULT_BRANCH_NAMESPACE_TEMPLATE,
   branchNamespaceProblem,
+  namespaceAncestors,
   resolveBranchNamespaceTemplate,
 } from '../operating-mode/branch-namespace'
 import { RESERVED_SETTINGS_BRANCH_PREFIX, sanitizeBranchName } from '../paths/branch-name'
@@ -103,6 +104,24 @@ export function pushRefusalMessage(
     case 'outside-namespace':
       return `${refusing}: ${outsideNamespaceWhy(namespace)}`
   }
+}
+
+/** Why the gateway refuses to push `branch`, in the namespace, while GitHub has `blocker`. */
+export function namespaceBlockedMessage(branch: string, blocker: string): string {
+  return (
+    `Refusing to push ${JSON.stringify(branch)} to GitHub: GitHub has a branch named ` +
+    `${JSON.stringify(blocker)}, which is part of this deployment's branch namespace, and git ` +
+    'cannot hold a branch inside another. Rename or delete that branch on GitHub.'
+  )
+}
+
+/** Why a push of `branch` is refused while GitHub has `inside`, a branch inside it. */
+export function branchInsideMessage(branch: string, inside: string): string {
+  return (
+    `Refusing to push ${JSON.stringify(branch)} to GitHub: GitHub has a branch named ` +
+    `${JSON.stringify(inside)} inside it, and git cannot hold both. Rename or delete that ` +
+    'branch on GitHub.'
+  )
 }
 
 /**
@@ -372,6 +391,14 @@ export class BranchPolicy {
     return (
       branch.startsWith(this.namespace) || branch === this.settingsBranch || this.legacy.has(branch)
     )
+  }
+
+  /**
+   * The branch among `branches` named after part of the namespace, or null. While one exists git
+   * holds no branch in the namespace, so the gateway refuses a push into it rather than send it.
+   */
+  namespaceBlocker(branches: { has(name: string): boolean }): string | null {
+    return namespaceAncestors(this.namespace).find((name) => branches.has(name)) ?? null
   }
 
   /** Whether `branch` is protected; GitHub's default is read only when nothing else matches. */

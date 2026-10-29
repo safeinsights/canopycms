@@ -12,6 +12,7 @@ import { BLOG_SCHEMA } from '../fixtures/schemas'
 import type { BranchListItemResponse, BranchListResponse } from '../../api/branch'
 import type { EntriesResponse } from '../../api/entries'
 import type { ApiResponse } from '../../api/types'
+import { branchRef } from '../test-utils/branch-names'
 
 describe('API Editing Workflow Integration', () => {
   let workspace: TestWorkspace
@@ -51,12 +52,12 @@ describe('API Editing Workflow Integration', () => {
     expect(createResponse.status).toBe(200)
     expect(createResponse.ok).toBe(true)
     const createData = await createResponse.json<BranchListItemResponse>()
-    expect(createData.data?.branch.name).toBe('canopycms-feature-new-post')
+    expect(createData.data?.branch.name).toBe(branchRef('feature-new-post'))
     expect(createData.data?.branch.status).toBe('editing')
 
     // STEP 2: Write content via API (path-based routing)
     const writeResponse = await editorClient.put(
-      '/api/canopycms/canopycms-feature-new-post/content/posts/hello-world',
+      '/api/canopycms/feature-new-post/content/posts/hello-world',
       {
         format: 'mdx',
         data: {
@@ -77,7 +78,7 @@ describe('API Editing Workflow Integration', () => {
 
     // STEP 3: Read content back via API to verify
     const readResponse = await editorClient.get(
-      '/api/canopycms/canopycms-feature-new-post/content/posts/hello-world',
+      '/api/canopycms/feature-new-post/content/posts/hello-world',
     )
 
     if (readResponse.status !== 200) {
@@ -97,9 +98,7 @@ describe('API Editing Workflow Integration', () => {
     expect(content.data?.body?.trim()).toBe('This is my first post!')
 
     // STEP 4: List entries via API
-    const entriesResponse = await editorClient.get(
-      '/api/canopycms/canopycms-feature-new-post/entries',
-    )
+    const entriesResponse = await editorClient.get('/api/canopycms/feature-new-post/entries')
 
     expect(entriesResponse.status).toBe(200)
     const entries = await entriesResponse.json<EntriesResponse>()
@@ -107,9 +106,7 @@ describe('API Editing Workflow Integration', () => {
     expect(entries.data?.entries.length).toBeGreaterThan(0)
 
     // STEP 5: Get branch status via API
-    const statusResponse = await editorClient.get(
-      '/api/canopycms/canopycms-feature-new-post/status',
-    )
+    const statusResponse = await editorClient.get('/api/canopycms/feature-new-post/status')
 
     expect(statusResponse.status).toBe(200)
     const status = await statusResponse.json<BranchListItemResponse>()
@@ -119,36 +116,29 @@ describe('API Editing Workflow Integration', () => {
   it('enforces permissions at API level', async () => {
     // STEP 1: Admin creates a branch
     const createResponse = await adminClient.post('/api/canopycms/branches', {
-      branch: 'canopycms-admin-only-branch',
+      branch: 'admin-only-branch',
       title: 'Admin Only',
     })
 
     expect(createResponse.status).toBe(200)
 
     // STEP 2: Admin restricts branch access
-    const patchResponse = await adminClient.patch(
-      '/api/canopycms/canopycms-admin-only-branch/access',
-      {
-        allowedUsers: ['test-admin'],
-        allowedGroups: [],
-        managerOrAdminAllowed: true,
-      },
-    )
+    const patchResponse = await adminClient.patch('/api/canopycms/admin-only-branch/access', {
+      allowedUsers: ['test-admin'],
+      allowedGroups: [],
+      managerOrAdminAllowed: true,
+    })
 
     expect(patchResponse.status).toBe(200)
 
     // STEP 3: Regular editor tries to access - should be denied
-    const editorAccessResponse = await editorClient.get(
-      '/api/canopycms/canopycms-admin-only-branch/status',
-    )
+    const editorAccessResponse = await editorClient.get('/api/canopycms/admin-only-branch/status')
 
     expect(editorAccessResponse.status).toBe(403)
     expect(editorAccessResponse.ok).toBe(false)
 
     // STEP 4: Admin can still access
-    const adminAccessResponse = await adminClient.get(
-      '/api/canopycms/canopycms-admin-only-branch/status',
-    )
+    const adminAccessResponse = await adminClient.get('/api/canopycms/admin-only-branch/status')
 
     expect(adminAccessResponse.status).toBe(200)
     expect(adminAccessResponse.ok).toBe(true)
@@ -158,11 +148,11 @@ describe('API Editing Workflow Integration', () => {
     // Both users create branches simultaneously
     const [adminBranchResponse, editorBranchResponse] = await Promise.all([
       adminClient.post('/api/canopycms/branches', {
-        branch: 'canopycms-admin-feature',
+        branch: 'admin-feature',
         title: 'Admin Feature',
       }),
       editorClient.post('/api/canopycms/branches', {
-        branch: 'canopycms-editor-feature',
+        branch: 'editor-feature',
         title: 'Editor Feature',
       }),
     ])
@@ -172,7 +162,7 @@ describe('API Editing Workflow Integration', () => {
 
     // Both users write content to their own branches (path-based routing)
     const [adminWriteResponse, editorWriteResponse] = await Promise.all([
-      adminClient.put('/api/canopycms/canopycms-admin-feature/content/posts/admin-post', {
+      adminClient.put('/api/canopycms/admin-feature/content/posts/admin-post', {
         format: 'mdx',
         data: {
           title: 'Admin Post',
@@ -182,7 +172,7 @@ describe('API Editing Workflow Integration', () => {
         },
         body: 'Admin content',
       }),
-      editorClient.put('/api/canopycms/canopycms-editor-feature/content/posts/editor-post', {
+      editorClient.put('/api/canopycms/editor-feature/content/posts/editor-post', {
         format: 'mdx',
         data: {
           title: 'Editor Post',
@@ -199,34 +189,31 @@ describe('API Editing Workflow Integration', () => {
 
     // Verify each user can read their own content
     const adminReadResponse = await adminClient.get(
-      '/api/canopycms/canopycms-admin-feature/content/posts/admin-post',
+      '/api/canopycms/admin-feature/content/posts/admin-post',
     )
     expect(adminReadResponse.status).toBe(200)
 
     const editorReadResponse = await editorClient.get(
-      '/api/canopycms/canopycms-editor-feature/content/posts/editor-post',
+      '/api/canopycms/editor-feature/content/posts/editor-post',
     )
     expect(editorReadResponse.status).toBe(200)
 
     // Admin restricts their branch to admin-only
-    const restrictResponse = await adminClient.patch(
-      '/api/canopycms/canopycms-admin-feature/access',
-      {
-        allowedUsers: ['test-admin'],
-        allowedGroups: [],
-        managerOrAdminAllowed: true,
-      },
-    )
+    const restrictResponse = await adminClient.patch('/api/canopycms/admin-feature/access', {
+      allowedUsers: ['test-admin'],
+      allowedGroups: [],
+      managerOrAdminAllowed: true,
+    })
     expect(restrictResponse.status).toBe(200)
 
     // Cross-branch access with ACL
     const adminReadEditorResponse = await adminClient.get(
-      '/api/canopycms/canopycms-editor-feature/content/posts/editor-post',
+      '/api/canopycms/editor-feature/content/posts/editor-post',
     )
     expect(adminReadEditorResponse.status).toBe(200) // Admin can access everything
 
     const editorReadAdminResponse = await editorClient.get(
-      '/api/canopycms/canopycms-admin-feature/content/posts/admin-post',
+      '/api/canopycms/admin-feature/content/posts/admin-post',
     )
     expect(editorReadAdminResponse.status).toBe(403) // Editor cannot access restricted admin branch
   })
@@ -234,12 +221,12 @@ describe('API Editing Workflow Integration', () => {
   it('lists branches via API with proper filtering', async () => {
     // Create multiple branches
     await adminClient.post('/api/canopycms/branches', {
-      branch: 'canopycms-public-branch',
+      branch: 'public-branch',
       title: 'Public Branch',
     })
 
     await editorClient.post('/api/canopycms/branches', {
-      branch: 'canopycms-editor-branch',
+      branch: 'editor-branch',
       title: 'Editor Branch',
     })
 
@@ -253,7 +240,7 @@ describe('API Editing Workflow Integration', () => {
     const editorListResponse = await editorClient.get('/api/canopycms/branches')
     expect(editorListResponse.status).toBe(200)
     const editorBranches = await editorListResponse.json<BranchListResponse>()
-    expect(editorBranches.data?.branches.some((b) => b.name === 'canopycms-editor-branch')).toBe(
+    expect(editorBranches.data?.branches.some((b) => b.name === branchRef('editor-branch'))).toBe(
       true,
     )
   })

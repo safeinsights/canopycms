@@ -47,19 +47,16 @@ describe('Conflict Resolution Integration', () => {
       title: 'Conflict Test',
     })
 
-    await editor1Client.put(
-      '/api/canopycms/canopycms-feature-conflict-test/content/posts/shared-post',
-      {
-        format: 'mdx',
-        data: {
-          title: 'Shared Post',
-          author: 'Editor 1',
-          date: '2024-01-01',
-          tags: ['test'],
-        },
-        body: 'Original content from Editor 1',
+    await editor1Client.put('/api/canopycms/feature-conflict-test/content/posts/shared-post', {
+      format: 'mdx',
+      data: {
+        title: 'Shared Post',
+        author: 'Editor 1',
+        date: '2024-01-01',
+        tags: ['test'],
       },
-    )
+      body: 'Original content from Editor 1',
+    })
 
     // Editor 2 creates a different branch from same base
     await editor2Client.post('/api/canopycms/branches', {
@@ -67,19 +64,16 @@ describe('Conflict Resolution Integration', () => {
       title: 'Conflict Test 2',
     })
 
-    await editor2Client.put(
-      '/api/canopycms/canopycms-feature-conflict-test-2/content/posts/shared-post',
-      {
-        format: 'mdx',
-        data: {
-          title: 'Shared Post',
-          author: 'Editor 2',
-          date: '2024-01-01',
-          tags: ['test'],
-        },
-        body: 'Different content from Editor 2',
+    await editor2Client.put('/api/canopycms/feature-conflict-test-2/content/posts/shared-post', {
+      format: 'mdx',
+      data: {
+        title: 'Shared Post',
+        author: 'Editor 2',
+        date: '2024-01-01',
+        tags: ['test'],
       },
-    )
+      body: 'Different content from Editor 2',
+    })
 
     // Both approve and publish
     // When merging, there should be a conflict
@@ -95,7 +89,7 @@ describe('Conflict Resolution Integration', () => {
 
     // Two editors write different files simultaneously
     const [response1, response2] = await Promise.all([
-      editor1Client.put('/api/canopycms/canopycms-feature-concurrent-edits/content/posts/post-1', {
+      editor1Client.put('/api/canopycms/feature-concurrent-edits/content/posts/post-1', {
         format: 'mdx',
         data: {
           title: 'Post 1',
@@ -105,7 +99,7 @@ describe('Conflict Resolution Integration', () => {
         },
         body: 'Content 1',
       }),
-      editor1Client.put('/api/canopycms/canopycms-feature-concurrent-edits/content/posts/post-2', {
+      editor1Client.put('/api/canopycms/feature-concurrent-edits/content/posts/post-2', {
         format: 'mdx',
         data: {
           title: 'Post 2',
@@ -122,10 +116,10 @@ describe('Conflict Resolution Integration', () => {
 
     // Both files should exist
     const read1 = await editor1Client.get(
-      '/api/canopycms/canopycms-feature-concurrent-edits/content/posts/post-1',
+      '/api/canopycms/feature-concurrent-edits/content/posts/post-1',
     )
     const read2 = await editor1Client.get(
-      '/api/canopycms/canopycms-feature-concurrent-edits/content/posts/post-2',
+      '/api/canopycms/feature-concurrent-edits/content/posts/post-2',
     )
 
     expect(read1.status).toBe(200)
@@ -140,7 +134,7 @@ describe('Conflict Resolution Integration', () => {
     })
 
     const write1 = await editor1Client.put(
-      '/api/canopycms/canopycms-feature-uncommitted-test/content/posts/test-post',
+      '/api/canopycms/feature-uncommitted-test/content/posts/test-post',
       {
         format: 'mdx',
         data: {
@@ -159,7 +153,7 @@ describe('Conflict Resolution Integration', () => {
 
     // Write again to the same file, carrying the version the first write returned
     const write2 = await editor1Client.put(
-      '/api/canopycms/canopycms-feature-uncommitted-test/content/posts/test-post',
+      '/api/canopycms/feature-uncommitted-test/content/posts/test-post',
       {
         expectedVersion: write1Version,
         format: 'mdx',
@@ -177,7 +171,7 @@ describe('Conflict Resolution Integration', () => {
 
     // Verify second version is persisted
     const read = await editor1Client.get(
-      '/api/canopycms/canopycms-feature-uncommitted-test/content/posts/test-post',
+      '/api/canopycms/feature-uncommitted-test/content/posts/test-post',
     )
     expect(read.status).toBe(200)
     const content = await read.json<
@@ -199,7 +193,7 @@ describe('Conflict Resolution Integration', () => {
 
     // Write valid content
     const writeResponse = await editor1Client.put(
-      '/api/canopycms/canopycms-feature-git-error-test/content/posts/test-post',
+      '/api/canopycms/feature-git-error-test/content/posts/test-post',
       {
         format: 'mdx',
         data: {
@@ -216,7 +210,7 @@ describe('Conflict Resolution Integration', () => {
 
     // Try to write to invalid collection (should fail gracefully)
     const invalidWrite = await editor1Client.put(
-      '/api/canopycms/canopycms-feature-git-error-test/content/invalid-collection/test',
+      '/api/canopycms/feature-git-error-test/content/invalid-collection/test',
       {
         collection: 'invalid-collection',
         slug: 'test',
@@ -233,7 +227,7 @@ describe('Conflict Resolution Integration', () => {
 
     // Original content should still be accessible
     const read = await editor1Client.get(
-      '/api/canopycms/canopycms-feature-git-error-test/content/posts/test-post',
+      '/api/canopycms/feature-git-error-test/content/posts/test-post',
     )
     expect(read.status).toBe(200)
   })
@@ -246,24 +240,19 @@ describe('Conflict Resolution Integration', () => {
     })
 
     // Write content
-    await editor1Client.put(
-      '/api/canopycms/canopycms-feature-stale-state/content/posts/test-post',
-      {
-        format: 'mdx',
-        data: {
-          title: 'Test Post',
-          author: 'Editor',
-          date: '2024-01-01',
-          tags: ['test'],
-        },
-        body: 'Original content',
+    await editor1Client.put('/api/canopycms/feature-stale-state/content/posts/test-post', {
+      format: 'mdx',
+      data: {
+        title: 'Test Post',
+        author: 'Editor',
+        date: '2024-01-01',
+        tags: ['test'],
       },
-    )
+      body: 'Original content',
+    })
 
     // Get branch status
-    const statusResponse = await editor1Client.get(
-      '/api/canopycms/canopycms-feature-stale-state/status',
-    )
+    const statusResponse = await editor1Client.get('/api/canopycms/feature-stale-state/status')
     expect(statusResponse.status).toBe(200)
     const status = await statusResponse.json<BranchListItemResponse>()
 

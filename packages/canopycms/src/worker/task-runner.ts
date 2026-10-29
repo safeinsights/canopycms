@@ -369,7 +369,7 @@ export async function executeTask(
         {
           head: branch,
           base: optionalString(payload, 'baseBranch', ctx.baseBranch),
-          title: optionalString(payload, 'title', `Submit ${branch}`),
+          title: optionalString(payload, 'title', `Submit ${editorBranchOf(payload, branch)}`),
           body: optionalString(payload, 'body', ''),
         },
         signal,
@@ -384,7 +384,7 @@ export async function executeTask(
       await ctx.github().updatePullRequest(
         prNumber,
         {
-          title: optionalString(payload, 'title', `Submit ${branch}`),
+          title: optionalString(payload, 'title', `Submit ${editorBranchOf(payload, branch)}`),
           body: optionalString(payload, 'body', ''),
         },
         signal,
@@ -425,7 +425,7 @@ export async function executeTask(
       const body = mergeSectionIntoBody
         ? await refreshCommentsBlock({
             branchRoot: ctx.branchWorkspacePath(branch),
-            branch,
+            branch: editorBranchOf(payload, branch),
             editorUrl: typeof payload.editorUrl === 'string' ? payload.editorUrl : undefined,
             section: queuedBody,
             warn: workerLogWarn,
@@ -437,7 +437,7 @@ export async function executeTask(
           {
             head: branch,
             base,
-            title: optionalString(payload, 'title', `Submit ${branch}`),
+            title: optionalString(payload, 'title', `Submit ${editorBranchOf(payload, branch)}`),
             body,
             // Content submits (api/github-sync.ts) set both.
             markReadyIfDraft: payload.markReadyIfDraft === true,
@@ -543,7 +543,7 @@ export async function executeTask(
       // error throws, so the task is retried.
       const body = await renderPrCommentsBody({
         branchRoot: branchPath,
-        branch,
+        branch: editorBranchOf(payload, branch),
         editorUrl,
         body: pr.body,
         warn: workerLogWarn,
@@ -559,6 +559,14 @@ export async function executeTask(
 }
 
 /**
+ * The name links and a fallback title give the branch: the short name the API queued
+ * (branch-param.ts), else the ref, which the editor resolves too.
+ */
+function editorBranchOf(payload: Record<string, unknown>, branch: string): string {
+  return optionalString(payload, 'editorBranch', branch)
+}
+
+/**
  * The branch whose metadata records a task's outcome, or null when none does. A
  * delete-remote-branch task names a branch already deleted here, so a workspace under that
  * name is leftover or a newer branch's that reused the name.
@@ -569,7 +577,18 @@ function metadataBranchOf(task: Task): string | null {
 }
 
 /**
- * Update branch metadata after successful task completion.
+ * Logs an outcome write skipped because `branch`'s workspace has no branch.json whose `name` is
+ * `branch`: none at all, or another branch's that shares its key.
+ */
+function noMetadataToRecord(branch: string, what: string): void {
+  workerLogWarn(`Not recording the ${what} for ${branch}: its workspace has no branch.json for it`)
+}
+
+/**
+ * Update branch metadata after successful task completion. Like every outcome write here, it
+ * updates only a branch.json whose `name` is the task's ref: a workspace without one is not a
+ * branch whose name could be recorded, and one naming another ref is that branch's
+ * (`noMetadataToRecord`).
  */
 export async function updateBranchMetadata(
   ctx: TaskRunnerContext,
@@ -588,32 +607,34 @@ export async function updateBranchMetadata(
 
   try {
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
-    const updates: Record<string, unknown> = {
-      name: branch,
-      syncStatus: 'synced',
-      // save()'s merge only overwrites keys present in this update, so a prior
-      // syncFailureReason would survive this successful sync forever unless
-      // cleared explicitly (same pattern as rebaseFailure elsewhere).
-      syncFailureReason: undefined,
-    }
-    if (result.prUrl) updates.pullRequestUrl = result.prUrl
-    if (result.prNumber) {
-      updates.pullRequestNumber = result.prNumber
-      // As soon as the PR exists the field reads 'open', rather than staying
-      // absent until the next poll cycle observes it. Exception: the git-sync
-      // loop may have archived this branch (PR merged/closed) while the task
-      // was in flight, and a late completion must not downgrade that terminal
-      // state back to 'open'.
-      const current = await BranchMetadataFileManager.loadOnly(branchPath)
-      const terminal =
-        current?.branch.status === 'archived' ||
-        current?.branch.pullRequestState === 'merged' ||
-        current?.branch.pullRequestState === 'closed'
-      if (!terminal) {
-        updates.pullRequestState = 'open'
+    const saved = await meta.update((existing) => {
+      if (existing?.branch.name !== branch) return null
+      const updates: Record<string, unknown> = {
+        syncStatus: 'synced',
+        // save()'s merge only overwrites keys present in this update, so a prior
+        // syncFailureReason would survive this successful sync forever unless
+        // cleared explicitly (same pattern as rebaseFailure elsewhere).
+        syncFailureReason: undefined,
       }
-    }
-    await meta.save({ branch: updates })
+      if (result.prUrl) updates.pullRequestUrl = result.prUrl
+      if (result.prNumber) {
+        updates.pullRequestNumber = result.prNumber
+        // As soon as the PR exists the field reads 'open', rather than staying
+        // absent until the next poll cycle observes it. Exception: the git-sync
+        // loop may have archived this branch (PR merged/closed) while the task
+        // was in flight, and a late completion must not downgrade that terminal
+        // state back to 'open'.
+        const terminal =
+          existing.branch.status === 'archived' ||
+          existing.branch.pullRequestState === 'merged' ||
+          existing.branch.pullRequestState === 'closed'
+        if (!terminal) {
+          updates.pullRequestState = 'open'
+        }
+      }
+      return { branch: updates }
+    })
+    if (saved === null) noMetadataToRecord(branch, `${task.action} outcome`)
   } catch (err) {
     workerLogError(
       `Failed to update metadata for ${branch}:`,
@@ -650,7 +671,7 @@ async function updateBranchMetadataOnFailure(
 
   try {
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
-    const failed = { name: branch, syncStatus: 'sync-failed', syncFailureReason: error } as const
+    const failed = { syncStatus: 'sync-failed', syncFailureReason: error } as const
     const submittedAt = task.payload.submittedAt
     const unlocked =
       options.unlock &&
@@ -664,11 +685,18 @@ async function updateBranchMetadataOnFailure(
           },
         },
         (existing) =>
-          existing?.branch.status === 'submitted' &&
+          existing?.branch.name === branch &&
+          existing.branch.status === 'submitted' &&
           existing.branch.pullRequestNumber === undefined &&
           existing.branch.submittedAt === submittedAt,
       )) !== null
-    if (!unlocked) await meta.save({ branch: failed })
+    if (!unlocked) {
+      const saved = await meta.saveIf(
+        { branch: failed },
+        (existing) => existing?.branch.name === branch,
+      )
+      if (saved === null) noMetadataToRecord(branch, `${task.action} failure`)
+    }
   } catch (err) {
     workerLogError(
       `Failed to update failure metadata for ${branch}:`,
@@ -840,9 +868,11 @@ async function recordPushedToGitHub(
     return
   }
   try {
-    await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).save({
-      branch: { name: branch, pushedToGitHubAt: new Date().toISOString() },
-    })
+    const saved = await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).saveIf(
+      { branch: { pushedToGitHubAt: new Date().toISOString() } },
+      (existing) => existing?.branch.name === branch,
+    )
+    if (saved === null) noMetadataToRecord(branch, 'GitHub push')
   } catch (err) {
     workerLogError(`Failed to record the GitHub push for ${branch}:`, getErrorMessage(err))
   }

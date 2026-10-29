@@ -27,8 +27,8 @@ export function sanitizeBranchName(branchName: string): SanitizedBranchName {
  * site -- so every consumer of the namespace agrees on the exact string:
  * worker/git-sync.ts's `pushSettingsBranches` never pushes a
  * `canopycms-settings-*` branch this deployment doesn't own, and
- * paths/validation.ts's `parseCreatedBranchName` refuses a typed branch name
- * whose created name falls in this namespace.
+ * operating-mode/branch-namespace.ts refuses a branch namespace whose branches
+ * could fall in it.
  *
  * The WHOLE prefix is reserved, not just this deployment's own settings branch:
  * two deployments can share one GitHub repo, and a content branch landing on
@@ -38,14 +38,15 @@ export function sanitizeBranchName(branchName: string): SanitizedBranchName {
  */
 export const RESERVED_SETTINGS_BRANCH_PREFIX = 'canopycms-settings-'
 
-/** The prefix `cmsBranchName` gives the branches editors create. */
-export const CMS_BRANCH_PREFIX = 'canopycms-'
-
-/** The branch a typed name creates, which the editor previews: sanitized, with `CMS_BRANCH_PREFIX`. */
-export function cmsBranchName(typed: string): SanitizedBranchName {
-  const sanitized = sanitizeBranchName(typed)
-  if (sanitized.startsWith(CMS_BRANCH_PREFIX)) return sanitized
-  return sanitizeBranchName(`${CMS_BRANCH_PREFIX}${sanitized}`)
+/**
+ * Branch `name`'s short name: the part after `namespace` for a branch in it, the full name for
+ * any other. The server rebuilds the ref from it (branch-param.ts's `resolveBranchParam`); the
+ * editor is never told the namespace.
+ */
+export function branchShortName(name: string, namespace: string | null): string {
+  return namespace !== null && name.startsWith(namespace) && name.length > namespace.length
+    ? name.slice(namespace.length)
+    : name
 }
 
 /**

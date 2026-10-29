@@ -597,6 +597,28 @@ describe('branch status api', () => {
       consoleSpy.restore()
     })
 
+    it('quotes a namespace branch by its short name when GitHub finds no commits', async () => {
+      const consoleSpy = mockConsole()
+      const ctx = directCtx(vi.fn().mockRejectedValue(await noCommitsBetweenError()))
+      ctx.getBranchContext = vi
+        .fn()
+        .mockResolvedValue(
+          createMockBranchContext({ branchName: 'canopycms/prod/spring', createdBy: 'u1' }),
+        )
+
+      const res = await submitBranchForMerge(
+        ctx,
+        { user },
+        { branch: 'spring' as BranchName },
+        undefined,
+      )
+
+      expect(res.error).toBe(
+        'Nothing to submit yet: "spring" has no saved changes compared with "main". Save your edits, then submit.',
+      )
+      consoleSpy.restore()
+    })
+
     it('records the reason when a direct PR call fails otherwise', async () => {
       const consoleSpy = mockConsole()
       const ctx = directCtx(

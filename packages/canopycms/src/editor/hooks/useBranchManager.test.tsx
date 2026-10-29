@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   branchActionOutcomeUnknown,
   CREATED_BRANCH_GRACE_MS,
+  resolveListedBranch,
   useBranchManager,
   UseBranchManagerOptions,
   withdrawPullRequestBullet,
@@ -16,6 +17,7 @@ import {
 import type { BranchListItem } from '../../api/branch'
 import { BRANCHES_KEY } from './useBranchesData'
 import type { BranchMetadata } from '../../types'
+import type { CommentThread } from '../../comment-store'
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import { unsafeAsContentId } from '../../paths/test-utils'
 import {
@@ -533,8 +535,119 @@ describe('useBranchManager', () => {
       expect(result.current.branches).toHaveLength(2)
     })
 
-    expect(result.current.branchName).toBe('feature/x')
     expect(result.current.currentBranch).toEqual(sanitizedBranch)
+    await waitFor(() => expect(result.current.branchName).toBe('feature-x'))
+  })
+
+  it('opens a namespace branch named by its short name, unlocked and acting on its full name', async () => {
+    const spring: BranchListItem = {
+      ...mockBranches[1],
+      name: 'canopycms/local/spring',
+      shortName: 'spring',
+      status: 'editing',
+      writeBlocked: false,
+      submitBlocked: false,
+      isProtected: false,
+    }
+    mockClient.branches.list.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { branches: [mockBranches[0], spring], users: [] },
+    })
+    mockClient.workflow.submit.mockResolvedValueOnce({ ok: true, status: 200 })
+    const thread: CommentThread = {
+      id: 't1',
+      comments: [],
+      resolved: false,
+      createdAt: '2024-01-01',
+      type: 'branch',
+      authorId: 'user1',
+    }
+
+    const { result } = renderHook(
+      () => useBranchManager({ ...defaultOptions, initialBranch: 'spring', comments: [thread] }),
+      { wrapper },
+    )
+    await waitFor(() => expect(result.current.branches).toHaveLength(2))
+
+    expect(result.current.currentBranch?.name).toBe('canopycms/local/spring')
+    expect(result.current.currentBranch?.writeBlocked).toBe(false)
+    await waitFor(() => expect(result.current.branchName).toBe('canopycms/local/spring'))
+    expect(
+      result.current.branchSummaries.find((b) => b.name === 'canopycms/local/spring')?.commentCount,
+    ).toBe(1)
+
+    await act(async () => {
+      await result.current.handleSubmit('spring')
+    })
+    expect(mockClient.workflow.submit).toHaveBeenCalledWith(
+      { branch: 'canopycms/local/spring' },
+      expect.anything(),
+    )
+  })
+
+  describe('resolveListedBranch', () => {
+    const listed = (name: string, shortName: string, isProtected = false) => ({
+      name,
+      shortName,
+      isProtected,
+    })
+    const outsideX = listed('x', 'x')
+    const namespaceX = listed('canopycms/prod/x', 'x')
+
+    it('opens the namespace branch a short name names before an outside branch of that name', () => {
+      expect(resolveListedBranch([outsideX, namespaceX], 'x')).toBe(namespaceX)
+      expect(resolveListedBranch([namespaceX, outsideX], 'x')).toBe(namespaceX)
+      expect(resolveListedBranch([outsideX, namespaceX], 'canopycms/prod/x')).toBe(namespaceX)
+    })
+
+    it('opens the base or active branch by its full name before any short name', () => {
+      const base = listed('main', 'main', true)
+      const active = listed('staging', 'staging')
+      const namespaceMain = listed('canopycms/prod/main', 'main')
+      const namespaceStaging = listed('canopycms/prod/staging', 'staging')
+      const branches = [namespaceMain, namespaceStaging, base, active]
+      expect(resolveListedBranch(branches, 'main', 'staging')).toBe(base)
+      expect(resolveListedBranch(branches, 'staging', 'staging')).toBe(active)
+    })
+
+    it('falls back to the sanitized form of a raw name', () => {
+      const sanitized = listed('feature-x', 'feature-x')
+      expect(resolveListedBranch([sanitized], 'feature/x')).toBe(sanitized)
+    })
+  })
+
+  it('leaves a deleted namespace branch opened by its short name', async () => {
+    const spring: BranchListItem = {
+      ...mockBranches[1],
+      name: 'canopycms/local/spring',
+      shortName: 'spring',
+      status: 'editing',
+    }
+    mockClient.branches.list
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { branches: [mockBranches[0], spring], defaultBranch: 'main', users: [] },
+      })
+      .mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { branches: [mockBranches[0]], defaultBranch: 'main', users: [] },
+      })
+    mockClient.branches.delete.mockResolvedValueOnce({ ok: true, status: 200 })
+    const { result } = renderHook(
+      () => useBranchManager({ ...defaultOptions, initialBranch: 'spring' }),
+      { wrapper },
+    )
+    await waitFor(() => expect(result.current.currentBranch?.name).toBe('canopycms/local/spring'))
+
+    await act(async () => {
+      await result.current.handleDelete('spring')
+    })
+
+    expect(mockClient.branches.delete).toHaveBeenCalledWith({ branch: 'canopycms/local/spring' })
+    expect(result.current.branchName).toBe('main')
   })
 
   describe('branches created this session', () => {

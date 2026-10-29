@@ -3,7 +3,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
-import { BranchPage, findProtectedBranch } from '../fixtures/branch-page'
+import { BranchPage, branchRef, findProtectedBranch } from '../fixtures/branch-page'
 import { switchUser, installE2EFlag } from '../fixtures/test-users'
 import { resetWorkspace, ensureMainBranch, createBranchViaAPI } from '../fixtures/test-workspace'
 import {
@@ -89,7 +89,8 @@ test.describe('Branch Degradation', () => {
     // deterministic in both environments rather than accidentally
     // corrupting -- and then asserting against -- the one branch every
     // other spec's fixtures depend on.
-    const healthyBranchName = `canopycms-b10-healthy-${Date.now()}`
+    const healthyBranchName = `b10-healthy-${Date.now()}`
+    const healthyRef = branchRef(healthyBranchName)
     const createRes = await createBranchViaAPI(BASE_URL, healthyBranchName, 'admin')
     expect(createRes.ok).toBe(true)
 
@@ -117,11 +118,11 @@ test.describe('Branch Degradation', () => {
         // The corrupt directory is quarantined out of the registry scan...
         expect(names).not.toContain(protectedBranch.name)
         // ...but the rest of the registry keeps serving.
-        expect(names).toContain(healthyBranchName)
+        expect(names).toContain(healthyRef)
       })
 
       await test.step('the editor still loads a healthy branch', async () => {
-        await page.goto(`/edit?branch=${healthyBranchName}`)
+        await page.goto(`/edit?branch=${healthyRef}`)
         await editorPage.waitForReady()
       })
     } finally {

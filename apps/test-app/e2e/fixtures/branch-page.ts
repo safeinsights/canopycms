@@ -1,11 +1,30 @@
 import { type Page, type Locator, expect } from '@playwright/test'
 import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from './timeouts'
-// Isomorphic/dependency-free module (see its own doc comment) -- safe to
+// Isomorphic/dependency-free modules (see their own doc comments) -- safe to
 // import directly in test code, same convention test-workspace.ts already
 // uses for other package internals (e.g. resource-generation.ts).
-import { cmsBranchName } from '../../../../packages/canopycms/src/paths/branch-name'
+import { sanitizeBranchName } from '../../../../packages/canopycms/src/paths/branch-name'
+import { parseCreatedBranchName } from '../../../../packages/canopycms/src/paths/validation'
 
-export { cmsBranchName }
+/** The branch namespace the test app's dev mode gives every branch an editor creates. */
+const BRANCH_NAMESPACE = 'canopycms/local/'
+
+/** The short name CanopyCMS gives a typed branch name: the part after the namespace. */
+export function branchShort(typed: string): string {
+  const parsed = parseCreatedBranchName(typed)
+  if (!parsed.ok) throw new Error(`Not a creatable branch name "${typed}": ${parsed.error}`)
+  return parsed.shortName
+}
+
+/** The ref (git branch, `branch.name`, UI label and testid key) of the branch created from `typed`. */
+export function branchRef(typed: string): string {
+  return `${BRANCH_NAMESPACE}${branchShort(typed)}`
+}
+
+/** The workspace directory name under `.canopy-dev/content-branches/` of the branch created from `typed`. */
+export function branchKey(typed: string): string {
+  return sanitizeBranchName(branchRef(typed))
+}
 
 /**
  * A branch list entry as returned by GET /api/canopycms/branches.
@@ -115,7 +134,7 @@ export class BranchPage {
   /**
    * Create a new branch with the given name and optional metadata.
    *
-   * @param name - Branch name (required)
+   * @param name - Branch name as typed; the branch is created at `branchRef(name)` (required)
    * @param title - Branch title (optional)
    * @param description - Branch description (optional)
    */
@@ -147,7 +166,7 @@ export class BranchPage {
   /**
    * Get a locator for a specific branch list item.
    *
-   * @param branchName - The name of the branch
+   * @param branchName - The branch's ref (`branchRef(typed)`); every locator below keys on the ref
    * @returns Locator for the branch list item
    */
   getBranchListItem(branchName: string): Locator {

@@ -885,6 +885,36 @@ export class GitManager {
   }
 
   /**
+   * The branches inside `branch` (`<branch>/…`) that a bare mirror holds as local heads or in
+   * GitHub's tracking namespace, which git cannot hold beside `branch` itself. `for-each-ref`
+   * matches a pattern up to a slash, so the pattern `<branch>` lists them. Throws, as
+   * {@link bareRemoteHasBranch} does, when the mirror is unreadable.
+   */
+  static async bareRemoteBranchesInside(remotePath: string, branch: string): Promise<string[]> {
+    let output: string
+    try {
+      output = await simpleGit().raw([
+        '--git-dir',
+        remotePath,
+        'for-each-ref',
+        '--format=%(refname)',
+        '--end-of-options',
+        `refs/heads/${branch}`,
+        `${GITHUB_TRACKING_REF_PREFIX}${branch}`,
+      ])
+    } catch (err) {
+      throw new Error(`Cannot inspect remote mirror at ${remotePath}: ${getErrorMessage(err)}`)
+    }
+    const inside = new Set<string>()
+    for (const ref of output.split('\n').map((line) => line.trim())) {
+      for (const prefix of ['refs/heads/', GITHUB_TRACKING_REF_PREFIX]) {
+        if (ref.startsWith(`${prefix}${branch}/`)) inside.add(ref.slice(prefix.length))
+      }
+    }
+    return [...inside].sort()
+  }
+
+  /**
    * Delete `refs/heads/<branch>` from a bare local mirror, if present. A
    * no-op (not an error) when the ref doesn't exist.
    *

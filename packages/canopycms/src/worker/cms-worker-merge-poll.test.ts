@@ -133,6 +133,77 @@ describe('CmsWorker.pollMergeState()', () => {
     expect(meta?.pullRequestUrl).toBe('https://github.com/test-owner/test-repo/pull/42')
   })
 
+  it("keeps the branch's stored name, which its directory is only the sanitized form of", async () => {
+    const { internals, octokit } = makePollWorker()
+    for (const [merged, state] of [
+      [true, 'closed'],
+      [false, 'closed'],
+    ] as const) {
+      const branchPath = await setupBranchMeta('canopycms-prod-spring', {
+        name: 'canopycms/prod/spring',
+        pullRequestNumber: 44,
+        pullRequestState: 'open',
+        status: 'submitted',
+      })
+      octokit.pulls.get.mockResolvedValue(pullRequest({ merged, state }))
+
+      const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
+      await internals.pollMergeState('canopycms-prod-spring', branchPath, metaFile)
+
+      const meta = await readBranchMeta(branchPath)
+      expect(meta?.pullRequestState).toBe(merged ? 'merged' : 'closed')
+      expect(meta?.name).toBe('canopycms/prod/spring')
+    }
+  })
+
+  it('records neither outcome on a branch.json removed since it was read, creating none', async () => {
+    const { internals, octokit } = makePollWorker()
+    for (const [merged, state] of [
+      [true, 'closed'],
+      [false, 'closed'],
+    ] as const) {
+      const branchPath = await setupBranchMeta('feature-removed', {
+        pullRequestNumber: 45,
+        pullRequestState: 'open',
+      })
+      octokit.pulls.get.mockResolvedValue(pullRequest({ merged, state }))
+      const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
+      await fs.rm(path.join(branchPath, '.canopy-meta', 'branch.json'))
+
+      await internals.pollMergeState('feature-removed', branchPath, metaFile)
+
+      expect(await readBranchMeta(branchPath)).toBeUndefined()
+    }
+  })
+
+  it("records neither outcome on another branch's branch.json that took its place", async () => {
+    const { internals, octokit } = makePollWorker()
+    for (const [merged, state] of [
+      [true, 'closed'],
+      [false, 'closed'],
+    ] as const) {
+      const branchPath = await setupBranchMeta('canopycms-prod-spring', {
+        name: 'canopycms/prod/spring',
+        pullRequestNumber: 46,
+        pullRequestState: 'open',
+      })
+      octokit.pulls.get.mockResolvedValue(pullRequest({ merged, state }))
+      const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
+      await setupBranchMeta('canopycms-prod-spring', {
+        name: 'canopycms-prod-spring',
+        pullRequestState: 'open',
+      })
+
+      await internals.pollMergeState('canopycms-prod-spring', branchPath, metaFile)
+
+      expect(await readBranchMeta(branchPath)).toMatchObject({
+        name: 'canopycms-prod-spring',
+        status: 'submitted',
+        pullRequestState: 'open',
+      })
+    }
+  })
+
   it('records closed state without archiving when the PR is closed but not merged', async () => {
     const { internals, octokit } = makePollWorker()
     const branchPath = await setupBranchMeta('feature-closed', {
@@ -242,7 +313,7 @@ describe('CmsWorker.pollMergeState()', () => {
     octokit.pulls.get.mockResolvedValue(pullRequest({ merged: true, state: 'closed' }))
 
     const saveSpy = vi
-      .spyOn(BranchMetadataFileManager.prototype, 'save')
+      .spyOn(BranchMetadataFileManager.prototype, 'saveIf')
       .mockRejectedValueOnce(new Error('simulated EFS write failure'))
 
     const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)

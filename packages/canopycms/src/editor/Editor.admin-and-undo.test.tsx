@@ -195,6 +195,10 @@ const stubApi = (
   return fetchMock
 }
 
+/**
+ * The editor with its dialogs and drawers opening and closing at once: these flows open several
+ * in turn, and waiting out each real-time transition left the longest near the test timeout.
+ */
 const renderEditor = (props: Partial<React.ComponentProps<typeof Editor>> = {}) =>
   render(
     <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 2000 }}>
@@ -205,7 +209,14 @@ const renderEditor = (props: Partial<React.ComponentProps<typeof Editor>> = {}) 
           title="Test Editor"
           branchName="main"
           operatingMode="dev"
-          themeOptions={{}}
+          themeOptions={{
+            themeOverride: {
+              components: {
+                Modal: { defaultProps: { transitionProps: { duration: 0 } } },
+                Drawer: { defaultProps: { transitionProps: { duration: 0 } } },
+              },
+            },
+          }}
           {...props}
         />
       </ApiClientProvider>

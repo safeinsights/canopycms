@@ -10,7 +10,8 @@ import type { CanopyConfig } from '../config'
 import type { BranchContext } from '../types'
 import { recordConfiguredSparseCone } from '../branch-sparse'
 import { recordServedSchemaRegistry } from '../schema-registry-record'
-import { loadBranchContext, BranchWorkspaceManager } from '../branch-workspace'
+import { BranchWorkspaceManager } from '../branch-workspace'
+import { resolveBranchParam } from '../branch-param'
 import { BranchMetadataCorruptError } from '../branch-metadata'
 import { BRANCH_METADATA_CORRUPT_MESSAGE } from '../branch-metadata-error'
 import { resolveCanopyUser } from '../resolve-canopy-user'
@@ -62,10 +63,7 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
   const getBranchContext =
     options.getBranchContext ??
     (async (branch: string, opts?: { loadSchema?: boolean }): Promise<BranchContext | null> => {
-      const existing = await loadBranchContext({
-        branchName: branch,
-        mode: operatingMode,
-      })
+      const existing = await resolveBranchParam(branch, services.config)
       if (existing) {
         if (opts?.loadSchema) {
           const contentRootName = services.config.contentRoot || 'content'

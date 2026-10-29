@@ -7,7 +7,7 @@ import { useApiClient } from '../context'
 import { requestBranchCreate } from './create-branch-request'
 import type { UnsavedSummary } from './useDraftManager'
 import { writeEditorUrl } from './editor-history'
-import { cmsBranchName } from '../../paths/branch-name'
+import { parseCreatedBranchName } from '../../paths/validation'
 
 export interface UseBranchActionsOptions {
   branchName: string
@@ -133,9 +133,9 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
       const created = outcome.branch
       if (created) options.onBranchCreated(created)
 
-      // The server creates `cmsBranchName` of the typed name ("spring" -> "canopycms-spring"),
-      // which the form already showed; adopt the name it answers with.
-      const createdName = created?.name ?? cmsBranchName(branch.name)
+      // The server adds the namespace, which the editor is never told; its short name resolves too.
+      const typed = parseCreatedBranchName(branch.name)
+      const createdName = created?.name ?? (typed.ok ? typed.shortName : branch.name)
       notifications.show({ message: `Branch "${createdName}" created`, color: 'green' })
 
       performBranchSwitch(createdName)

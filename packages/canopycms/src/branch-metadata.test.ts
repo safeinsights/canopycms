@@ -591,12 +591,11 @@ describe('BranchMetadataFileManager', () => {
   })
 
   describe('buildMergedBranchUpdate', () => {
-    it('produces archived/merged metadata with an ISO mergedAt and the branch name preserved', () => {
+    it('produces archived/merged metadata with an ISO mergedAt, leaving the name alone', () => {
       const now = new Date('2026-01-01T12:00:00.000Z')
-      const update = buildMergedBranchUpdate('feature/x', now)
+      const update = buildMergedBranchUpdate(now)
 
       expect(update).toEqual({
-        name: 'feature/x',
         status: 'archived',
         pullRequestState: 'merged',
         mergedAt: '2026-01-01T12:00:00.000Z',
@@ -607,7 +606,7 @@ describe('BranchMetadataFileManager', () => {
 
     it('defaults `now` to the current time when omitted', () => {
       const before = Date.now()
-      const update = buildMergedBranchUpdate('feature/y')
+      const update = buildMergedBranchUpdate()
       const after = Date.now()
 
       expect(update.mergedAt).toEqual(expect.any(String))

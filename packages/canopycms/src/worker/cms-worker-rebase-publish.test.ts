@@ -399,3 +399,110 @@ describe('CmsWorker.rebaseActiveBranches() publishes rewritten history', () => {
     expect(await queuedPushBranches(setup.workspacePath)).toEqual([])
   })
 })
+
+describe('CmsWorker.rebaseActiveBranches() on a branch.json that changes mid-cycle', () => {
+  let tmpDir: string
+
+  /** Runs `onRebaseCompleted` once, between the rebase and what the cycle records of it. */
+  class RebaseHookWorker extends CmsWorker {
+    onRebaseCompleted?: () => Promise<void>
+
+    protected override async afterRebaseCompletedForTesting(): Promise<void> {
+      const fn = this.onRebaseCompleted
+      this.onRebaseCompleted = undefined
+      if (fn) await fn()
+    }
+  }
+
+  const rebaseWith = async (workspacePath: string, onRebaseCompleted: () => Promise<void>) => {
+    const worker = new RebaseHookWorker({
+      workspacePath,
+      githubOwner: 'test-owner',
+      githubRepo: 'test-repo',
+      githubToken: 'fake-token',
+      baseBranch: BASE_BRANCH,
+    })
+    worker.onRebaseCompleted = onRebaseCompleted
+    await runRebase(worker)
+  }
+
+  const branchJson = (branchPath: string) => path.join(branchPath, '.canopy-meta', 'branch.json')
+  const exists = (file: string) =>
+    fs.stat(file).then(
+      () => true,
+      () => false,
+    )
+
+  beforeEach(async () => {
+    mockConsole()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-rebase-publish-'))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('creates no branch.json for a divergence when it was removed', async () => {
+    const setup = await createPublishSetup(tmpDir, 'feature-removed')
+    await setup.commitToBranch({ 'entry.md': 'editor v1\n' }, 'editor work')
+    await setup.submit()
+    await setup.foreignPushToBranch({ 'reviewer.md': 'reviewer note\n' }, 'reviewer fixup')
+    await setup.advanceBase({ 'base2.txt': 'moved on\n' })
+    await writeMeta(setup.branchPath, setup.contentBranchesPath)
+
+    await rebaseWith(setup.workspacePath, () => fs.rm(branchJson(setup.branchPath)))
+
+    expect(await exists(branchJson(setup.branchPath))).toBe(false)
+  })
+
+  it('creates no branch.json for a history rewrite when it was removed', async () => {
+    const setup = await createPublishSetup(tmpDir, 'feature-removed')
+    await setup.commitToBranch({ 'entry.md': 'editor v1\n' }, 'editor work')
+    await setup.submit()
+    await setup.advanceBase({ 'base2.txt': 'moved on\n' })
+    await writeMeta(setup.branchPath, setup.contentBranchesPath)
+
+    await rebaseWith(setup.workspacePath, () => fs.rm(branchJson(setup.branchPath)))
+
+    expect(await exists(branchJson(setup.branchPath))).toBe(false)
+    // A rewrite with no marker to lease against is never published.
+    expect(await queuedPushBranches(setup.workspacePath)).toEqual([])
+  })
+
+  it("records no divergence on another branch's branch.json that took its place", async () => {
+    const setup = await createPublishSetup(tmpDir, 'feature-replaced')
+    await setup.commitToBranch({ 'entry.md': 'editor v1\n' }, 'editor work')
+    await setup.submit()
+    await setup.foreignPushToBranch({ 'reviewer.md': 'reviewer note\n' }, 'reviewer fixup')
+    await setup.advanceBase({ 'base2.txt': 'moved on\n' })
+    await writeMeta(setup.branchPath, setup.contentBranchesPath)
+    let replaced = ''
+
+    await rebaseWith(setup.workspacePath, async () => {
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, { name: 'feature/replaced' })
+      replaced = await fs.readFile(branchJson(setup.branchPath), 'utf-8')
+    })
+
+    expect(await fs.readFile(branchJson(setup.branchPath), 'utf-8')).toBe(replaced)
+  })
+
+  it("records nothing on another branch's branch.json that took its place", async () => {
+    const setup = await createPublishSetup(tmpDir, 'feature-replaced')
+    await setup.commitToBranch({ 'entry.md': 'editor v1\n' }, 'editor work')
+    await setup.submit()
+    await setup.advanceBase({ 'base2.txt': 'moved on\n' })
+    await writeMeta(setup.branchPath, setup.contentBranchesPath)
+    let replaced = ''
+
+    await rebaseWith(setup.workspacePath, async () => {
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+        name: 'feature/replaced',
+        rebaseFailure: { message: 'earlier', firstAt: 'x', lastAt: 'x' },
+      })
+      replaced = await fs.readFile(branchJson(setup.branchPath), 'utf-8')
+    })
+
+    expect(await fs.readFile(branchJson(setup.branchPath), 'utf-8')).toBe(replaced)
+    expect(await queuedPushBranches(setup.workspacePath)).toEqual([])
+  })
+})
