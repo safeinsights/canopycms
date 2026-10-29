@@ -1849,10 +1849,11 @@ export class CanopyCmsService extends Construct {
       })
 
       // A period with a cycle start is 1 when no cycle completed in it and 0 when one did; a
-      // period with no start has no data point at all (IF drops it), and missing data keeps the
-      // alarm's state. So a worker that is down neither pages here (the down alarm owns that
-      // case, and one outage pages once) nor sends a false recovery while this is in alarm.
-      // Thirty-minute periods hold a start whenever cycles start less than 30 minutes apart,
+      // period with no start has no data point at all (IF drops it). CloudWatch judges the two
+      // most recent real points, reaching back past such gaps within its evaluation range, and
+      // `ignore` keeps the state when fewer remain. So a worker that is down neither pages here
+      // (the down alarm owns that case, and one outage pages once) nor reads as recovered.
+      // Every 30-minute window holds a start whenever cycles start less than 30 minutes apart,
       // which is where the down alarm takes over: cycles start the sync interval after the last
       // one ends, so a slow failing cycle or a longer interval cannot leave a gap between the
       // two. Two in a row, an hour or more, keeps a short GitHub incident from paging. The

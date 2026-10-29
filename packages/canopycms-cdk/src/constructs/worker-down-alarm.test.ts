@@ -148,7 +148,6 @@ describe('the sync-failing alarm', () => {
       Metrics: Array<{
         Id: string
         Expression?: string
-        Period?: number
         ReturnData?: boolean
         MetricStat?: { Metric: { MetricName: string }; Period: number; Stat: string }
       }>
@@ -158,7 +157,7 @@ describe('the sync-failing alarm', () => {
       ComparisonOperator: 'GreaterThanOrEqualToThreshold',
       EvaluationPeriods: 2,
       DatapointsToAlarm: 2,
-      // A period with no start has no data point; it must keep the state, not read as recovery.
+      // A period with no start has no data point, and must not read as a recovery.
       TreatMissingData: 'ignore',
       AlarmActions: [{ Ref: expect.stringMatching(/Alerts/) }],
       OKActions: [{ Ref: expect.stringMatching(/Alerts/) }],
