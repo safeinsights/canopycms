@@ -133,8 +133,8 @@ export function useOnEditorModeMismatch(listener: () => void): void {
 /**
  * Tells the provider's own client the `/:branch` segment each listed branch's requests carry
  * (name to segment); a name not in `segments` goes as given. Set during render, not in an effect:
- * a data hook fetches in a layout effect, before any effect here would run. No-op outside a
- * provider, and with an injected `client`, which keeps its own paths.
+ * a data hook fetches in a layout effect, before any effect here would run. Outside a provider it
+ * does nothing; an injected `client` never reads the table, so its requests send names as given.
  */
 export function useBranchSegments(segments: BranchSegments): void {
   const set = useContext(BranchSegmentsContext)
