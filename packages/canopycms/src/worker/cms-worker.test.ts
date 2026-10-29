@@ -570,6 +570,38 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     expect(body).not.toContain('No editor comments.')
   })
 
+  it("links a queued submit's comments by the short name the API queued", async () => {
+    const { worker, octokit } = makePrWorker()
+    await setupBranchDir('canopycms/prod/feature-x')
+    await new CommentStore(path.join(contentBranchesPath, 'canopycms-prod-feature-x')).addComment({
+      userId: 'u1',
+      text: 'Check the intro',
+      type: 'branch',
+    })
+    octokit.pulls.list.mockResolvedValue({ data: [] })
+    octokit.pulls.create.mockResolvedValue({
+      data: { number: 9, html_url: 'https://github.com/test-owner/test-repo/pull/9' },
+    })
+
+    await enqueueTask(taskDir, {
+      action: 'push-and-create-or-update-pr',
+      payload: {
+        branch: 'canopycms/prod/feature-x',
+        editorBranch: 'feature-x',
+        body: buildPrSection({ changedPaths: ['a.md'], branch: 'feature-x' }),
+        mergeSectionIntoBody: true,
+        editorUrl: 'https://cms.example.org/edit',
+      },
+    })
+    await worker.processTaskQueue()
+
+    const created = octokit.pulls.create.mock.calls[0]![0]
+    expect(created.title).toBe('Submit feature-x')
+    expect(created.body).toContain(
+      '- Branch — `Check the intro` ([open in editor](https://cms.example.org/edit?branch=feature-x))',
+    )
+  })
+
   it('recovers an orphaned PR instead of creating a duplicate, and records its number', async () => {
     // Simulates the GIT-H1 crash scenario: PR #77 already exists on GitHub
     // from a prior attempt, but branch metadata never got pullRequestNumber

@@ -118,6 +118,17 @@ describe('syncPrComments, direct path', () => {
     )
   })
 
+  it("links a namespace branch by its short name, the editor URL's form", async () => {
+    await addThread('Hi')
+    const service = github()
+
+    await syncPrComments(directCtx(service), branchWithPr({ name: 'canopycms/prod/spring' }))
+
+    expect(service.updatePullRequest.mock.calls[0]![1].body).toContain(
+      '(https://cms.example.org/edit?branch=spring&entry=',
+    )
+  })
+
   it('writes nothing when the block is unchanged or missing', async () => {
     for (const body of [submittedBody, 'A body a human rewrote', null]) {
       const service = github(body)
@@ -228,6 +239,19 @@ describe('syncPrComments, queued path', () => {
           editorBranch: 'feature/y',
         },
       ],
+    ])
+  })
+
+  it('queues a namespace branch with its short name for the links', async () => {
+    await syncPrComments(queuedCtx(), branchWithPr({ name: 'canopycms/prod/spring' }))
+
+    expect((await pending()).map((t) => t.payload)).toEqual([
+      {
+        branch: 'canopycms/prod/spring',
+        pullRequestNumber: 7,
+        editorUrl: 'https://cms.example.org/edit',
+        editorBranch: 'spring',
+      },
     ])
   })
 
