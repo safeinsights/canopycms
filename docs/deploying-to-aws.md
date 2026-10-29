@@ -1355,12 +1355,10 @@ and the gateway reads them at boot with the instance role. The Lambda's `environ
 should carry nothing you would mind reading in the output of
 `aws lambda get-function-configuration`.
 
-The Lambda holds no secrets **because nothing has built that path yet**, not because the
-path cannot exist. It runs in `PRIVATE_ISOLATED` subnets, and a VPC endpoint reaches an AWS
-service from there with no internet route — `CanopyCmsService` already adds a gateway
-endpoint for S3 for exactly that reason. Secrets Manager needs the _interface_ variety
-rather than the free gateway one, so it carries an hourly and per-GB charge: a cost
-argument, not an impossibility argument.
+The Lambda holds no secrets **because nothing has built that path yet**, not because the path
+cannot exist: from its `PRIVATE_ISOLATED` subnets a VPC endpoint reaches Secrets Manager, but
+that is the _interface_ kind, with an hourly and per-GB charge, not the free gateway kind
+`CanopyCmsService` adds for S3.
 
 The instance role is correspondingly narrow: EFS mount and write through the shared access
 point, Secrets Manager reads for its specific secrets, SSM core (the Session Manager channel,
@@ -1403,17 +1401,23 @@ in this repository, and reads its body only if the head is in the namespace. The
 force-push or delete with any commit in your repository, and open pull requests, which run your
 `push` and `pull_request` workflows. So:
 
-- keep secrets from workflows on those branches (`branches-ignore: ['canopycms/prod/**']`;
-  GitHub's `*` stops at `/`), give workflows read-only `permissions:`, and keep deployment
-  secrets in environments with required reviewers;
+- keep secrets from workflows on those branches. `branches-ignore` filters a `push` by its
+  branch: list your namespace (`canopycms/prod/**`; GitHub's `*` stops at `/`) and each legacy
+  branch. For `pull_request` and `pull_request_target` it filters the base, so guard jobs using
+  secrets with `if: ${{ !startsWith(github.head_ref, 'canopycms/prod/') }}` plus the legacy
+  names, or give those workflows no secrets;
+- give workflows read-only `permissions:`, and keep deployment secrets in environments with
+  required reviewers;
 - never check out a pull request's head in `pull_request_target`;
 - use a fine-grained token or an App **without** the workflows permission, which is what stops a
   push from adding or changing a workflow file.
 
 **Optionally, GitHub rulesets**, which hold even against a compromised gateway: one on every branch
-but your namespace (`canopycms/prod/**`) and legacy branches, restricting creations, updates and
-deletions and blocking force pushes, bypassed by whoever else pushes there. Protect the base
-branch, and any a cutover will make it, with one requiring a pull request. On a throwaway branch,
+but your namespace (`canopycms/prod/**`), settings branch (`canopycms-settings-prod`) and legacy
+branches, restricting creations, updates and deletions and blocking force pushes, bypassed by
+whoever else pushes there. On a shared repository, also exempt each other deployment's namespace
+and settings branch, or make its GitHub App a bypass actor. Protect the base branch, and any a
+cutover will make it, with one requiring a pull request. On a throwaway branch,
 confirm the credential cannot bypass them: a direct push and a force push must both be rejected.
 A repository admin's classic token bypasses classic branch protection unless "Do not allow
 bypassing the above settings" is on.
@@ -1468,9 +1472,9 @@ the worker. What it means for you, and what you can do:
 
 CloudFront reaches the Lambda Function URL through an Origin Access Control (OAC) with SigV4 signing (`SigningBehavior: always`), so the Function URL rejects any request that isn't signed by this distribution — a direct hit to the Function URL is refused.
 
-This has one consequence adopters don't need to think about, but that's worth knowing if you see unexplained 403s: **CloudFront signs origin requests but never hashes the request body.** For any request that carries a body (POST/PUT/PATCH — saves, publishes, permission/group updates), the _viewer_ request must already include an `x-amz-content-sha256` header containing the lowercase-hex SHA-256 digest of the exact payload. If that header is missing, Lambda's signature verification fails the payload check and responds 403, even though the request reached CloudFront correctly.
+Worth knowing if you see unexplained 403s: **CloudFront signs origin requests but never hashes the request body.** For any request that carries a body (POST/PUT/PATCH — saves, publishes, permission/group updates), the _viewer_ request must already include an `x-amz-content-sha256` header containing the lowercase-hex SHA-256 digest of the exact payload. If that header is missing, Lambda's signature verification fails the payload check and responds 403, even though the request reached CloudFront correctly.
 
-CanopyCMS's generated API client (`packages/canopycms/src/api/client.ts`, via the shared `computeContentSha256Hex` helper in `packages/canopycms/src/api/request-body-hash.ts`) computes and attaches this header automatically for every JSON request body, using WebCrypto (`crypto.subtle.digest`). GET/DELETE requests without a body are unaffected. The header is a no-op on non-AWS deployments (it's just an extra header nothing enforces), so this doesn't need to be conditionally enabled per environment.
+CanopyCMS's generated API client (`packages/canopycms/src/api/client.ts`, via the shared `computeContentSha256Hex` helper in `packages/canopycms/src/api/request-body-hash.ts`) computes and attaches this header automatically for every JSON request body, using WebCrypto (`crypto.subtle.digest`). GET/DELETE requests without a body are unaffected. Off AWS, nothing enforces the header.
 
 **Next.js Server Actions 403 here.** Their POSTs carry a body without that header, so don't rely on Server Actions in the CMS build (safeinsights/canopycms#759). `@clerk/nextjs`'s provider runs one before every `setActive`, and when it fails, sign-in hangs. The editor skips it; `router.refresh()`, which Clerk runs next, still clears Next's router cache. If your CMS build renders Clerk components outside the editor, mount `useSkipClerkSetActiveAction()` as the [Clerk package README](../packages/canopycms-auth-clerk/README.md#clerk-components-on-your-own-pages) shows. This is verified from source, not yet observed live.
 
