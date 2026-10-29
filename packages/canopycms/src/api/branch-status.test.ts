@@ -247,6 +247,44 @@ describe('branch status api', () => {
     expect(saved).toHaveProperty('review', undefined)
   })
 
+  describe('the stored review', () => {
+    const review = {
+      state: 'changes-requested' as const,
+      by: { userId: 'rev1' },
+      at: '2026-10-28T14:05:00.000Z',
+    }
+    const user: CanopyUser = { type: 'authenticated', userId: 'u1', groups: [] }
+    const params = { branch: 'feature/x' as BranchName }
+
+    it('is cleared in a save of its own before the PR is written, then in the status save', async () => {
+      mockMetadataUpdate.mockClear()
+      const ctx = makeCtx(true)
+      ctx.getBranchContext = vi.fn().mockResolvedValue({
+        ...baseContext,
+        branch: { ...baseContext.branch, review },
+      })
+
+      const res = await submitBranchForMerge(ctx, { user }, params, undefined)
+
+      expect(res.ok).toBe(true)
+      expect(mockMetadataUpdate).toHaveBeenCalledTimes(2)
+      expect(mockMetadataUpdate).toHaveBeenNthCalledWith(1, {
+        branch: { name: 'feature/x', review: undefined },
+      })
+      expect(mockMetadataUpdate.mock.calls[1]![0].branch.status).toBe('submitted')
+    })
+
+    it('costs no extra save when there is none to clear', async () => {
+      mockMetadataUpdate.mockClear()
+
+      const res = await submitBranchForMerge(makeCtx(true), { user }, params, undefined)
+
+      expect(res.ok).toBe(true)
+      expect(mockMetadataUpdate).toHaveBeenCalledTimes(1)
+      expect(mockMetadataUpdate.mock.calls[0]![0].branch.status).toBe('submitted')
+    })
+  })
+
   it('never writes the conflict record, leaving it for the reviewer', async () => {
     mockMetadataUpdate.mockClear()
 
@@ -552,12 +590,8 @@ describe('branch status api', () => {
 
       expect(res).toMatchObject({ ok: false, status: 400 })
       expect(res.error).toMatch(/^Nothing to submit yet: "feature\/x"/)
-      // The verdict is cleared before the PR is written, then the push is recorded.
-      expect(mockMetadataUpdate).toHaveBeenCalledTimes(2)
-      expect(mockMetadataUpdate).toHaveBeenNthCalledWith(1, {
-        branch: { name: 'feature/x', review: undefined },
-      })
-      expect(mockMetadataUpdate).toHaveBeenLastCalledWith({
+      expect(mockMetadataUpdate).toHaveBeenCalledTimes(1)
+      expect(mockMetadataUpdate).toHaveBeenCalledWith({
         branch: { name: 'feature/x', pushedToGitHubAt: expect.any(String) },
       })
       consoleSpy.restore()
@@ -594,7 +628,7 @@ describe('branch status api', () => {
       const res = await submitBranchForMerge(makeCtx(true), { user }, params, undefined)
 
       expect(res.ok).toBe(true)
-      const saved = mockMetadataUpdate.mock.calls.at(-1)?.[0].branch
+      const saved = mockMetadataUpdate.mock.calls[0]?.[0].branch
       expect(saved.submittedAt).toEqual(expect.any(String))
       expect(saved).toHaveProperty('syncFailureReason', undefined)
       expect(saved).not.toHaveProperty('pushedToGitHubAt')

@@ -524,7 +524,7 @@ export function buildPrSection(input: PrSectionInput): string {
     input.branch,
     input.editorUrl,
   )
-  // A submit clears the verdict, so a new section is never reviewed.
+  // A submit clears the stored review, so a new section starts unreviewed.
   const reviewBlock = buildReviewBlock(undefined)
   const size = (l: SectionLayout) =>
     renderPrSection(input, l, block, reviewBlock).length - block.length

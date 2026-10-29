@@ -8,7 +8,6 @@ import { defineEndpoint } from './route-builder'
 import { canPerformWorkflowAction, getBranchProtection } from '../authorization'
 import { syncConvertToDraft } from './github-sync'
 import { syncPrComments } from './pr-comment-sync'
-import { getErrorMessage } from '../utils/error'
 
 const withdrawBranchHandler = async (
   gc: { branchContext: BranchContext },
@@ -82,15 +81,8 @@ const withdrawBranchHandler = async (
   })
 
   // The PR body still says "Approved" until it is re-rendered from the cleared review.
-  // Best-effort: the withdraw is saved, so a failure is logged and never fails it.
-  try {
-    await syncPrComments(ctx, branchContext)
-  } catch (err) {
-    console.warn(
-      `CanopyCMS: Could not clear the review of ${branchContext.branch.name} on its pull request:`,
-      getErrorMessage(err),
-    )
-  }
+  // Best-effort: syncPrComments logs its failures and never throws.
+  await syncPrComments(ctx, branchContext)
 
   return {
     ok: true,

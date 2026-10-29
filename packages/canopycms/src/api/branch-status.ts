@@ -205,7 +205,9 @@ const submitBranchForMergeHandler = async (
   // comment sync between that write and the status save below renders the PR body from disk and
   // would otherwise put the last round's verdict back on the new body.
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
-  await meta.save({ branch: { name: branchContext.branch.name, review: undefined } })
+  if (branchContext.branch.review) {
+    await meta.save({ branch: { name: branchContext.branch.name, review: undefined } })
+  }
 
   // Create or update PR (sync via githubService, or async via task queue)
   const submittedAt = new Date().toISOString()

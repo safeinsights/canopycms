@@ -151,6 +151,62 @@ describe('renderPrCommentsBody', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('editor comments'))
   })
 
+  it('isolates a comments.json that parses but has no threads object', async () => {
+    await seedBranch('approved', approved)
+    await fs.mkdir(path.join(branchRoot, '.canopy-meta'), { recursive: true })
+    await fs.writeFile(path.join(branchRoot, '.canopy-meta', 'comments.json'), '{"threads":null}')
+    const warn = vi.fn()
+
+    const body = (await render(submittedBody, warn))!
+
+    expect(body).toContain('Approved in CanopyCMS by `Rae Viewer`')
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('editor comments'))
+  })
+
+  it('isolates a branch.json that fails its schema', async () => {
+    await addComment()
+    await fs.mkdir(path.join(branchRoot, '.canopy-meta'), { recursive: true })
+    await fs.writeFile(path.join(branchRoot, '.canopy-meta', 'branch.json'), '{}')
+    const warn = vi.fn()
+
+    const body = (await render(withApprovedBody(), warn))!
+
+    expect(body).toContain('**1 unresolved editor comment thread**')
+    expect(body).toContain('Approved in CanopyCMS by `Rae Viewer`')
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('review state'))
+  })
+
+  describe('an IO fault that may pass is thrown, not turned into a warning', () => {
+    const fault = (code: string) => Object.assign(new Error(`${code}: read failed`), { code })
+
+    afterEach(() => vi.restoreAllMocks())
+
+    it.each(['EIO', 'ESTALE', 'EACCES'])('from comments.json (%s)', async (code) => {
+      await seedBranch('approved', approved)
+      vi.spyOn(CommentStore.prototype, 'listThreadsStrict').mockRejectedValue(fault(code))
+      const warn = vi.fn()
+
+      await expect(render(submittedBody, warn)).rejects.toThrow(code)
+      expect(warn).not.toHaveBeenCalled()
+    })
+
+    it.each(['EIO', 'ESTALE', 'EACCES'])('from branch.json (%s)', async (code) => {
+      await seedBranch('approved', approved)
+      const realReadFile = fs.readFile.bind(fs)
+      vi.spyOn(fs, 'readFile').mockImplementation(((file: unknown, ...rest: unknown[]) =>
+        String(file).endsWith('branch.json')
+          ? Promise.reject(fault(code))
+          : (realReadFile as (...a: unknown[]) => Promise<unknown>)(
+              file,
+              ...rest,
+            )) as typeof fs.readFile)
+      const warn = vi.fn()
+
+      await expect(render(submittedBody, warn)).rejects.toThrow(code)
+      expect(warn).not.toHaveBeenCalled()
+    })
+  })
+
   it('drops a malformed review from a body that showed one', async () => {
     await seedBranch('submitted')
     const file = path.join(branchRoot, '.canopy-meta', 'branch.json')

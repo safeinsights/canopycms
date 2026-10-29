@@ -41,17 +41,19 @@ afterEach(async () => {
   await fs.rm(tmp, { recursive: true, force: true })
 })
 
-const makeCtx = () =>
-  createMockApiContext({
-    branchContext: createMockBranchContext({
-      branchName: 'feature/x',
-      createdBy: 'u1',
-      baseRoot: tmp,
-      branchRoot,
-    }),
+const makeCtx = () => {
+  const context = createMockBranchContext({
+    branchName: 'feature/x',
+    createdBy: 'u1',
+    baseRoot: tmp,
+    branchRoot,
+  })
+  return createMockApiContext({
+    branchContext: { ...context, branch: { ...context.branch, review: changesRequested } },
     allowBranchAccess: true,
     services: { config: { defaultBranchAccess: 'allow' } as never },
   })
+}
 
 const run = (ctx = makeCtx()) =>
   submit(

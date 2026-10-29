@@ -175,22 +175,6 @@ describe('branch withdraw api', () => {
     expect(mockSyncPrComments).toHaveBeenCalledWith(ctx, approvedContext)
   })
 
-  it('still succeeds, and logs, when the pull request body cannot be synced', async () => {
-    const consoleSpy = mockConsole()
-    mockSyncPrComments.mockRejectedValue(new Error('gateway down'))
-
-    const res = await withdrawHandler(
-      makeCtx(),
-      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'feature/x' as BranchName },
-    )
-
-    expect(res.ok).toBe(true)
-    expect(res.status).toBe(200)
-    expect(consoleSpy).toHaveWarned(/Could not clear the review of feature\/x.*gateway down/)
-    consoleSpy.restore()
-  })
-
   it('returns 400 when withdrawing an archived branch', async () => {
     const ctx = makeCtx()
     ctx.getBranchContext = vi.fn().mockResolvedValue({

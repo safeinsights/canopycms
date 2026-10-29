@@ -1,7 +1,7 @@
-import { CommentStore } from './comment-store'
+import { CommentStore, CommentsFileMalformedError } from './comment-store'
 import { getErrorMessage } from './utils/error'
 import type { TaskAction } from './task-queue/cms-task-queue'
-import { readBranchMetadataFile } from './branch-metadata-file'
+import { BranchMetadataCorruptError, readBranchMetadataFile } from './branch-metadata-file'
 import {
   buildCommentsBlock,
   buildReviewBlock,
@@ -20,8 +20,9 @@ export const SYNC_PR_COMMENTS_ACTION = 'sync-pr-comments' satisfies TaskAction
  * `body` with its comment summary re-rendered from `branchRoot`'s comments.json and its review
  * block from the review in branch.json as stored, or undefined when there is nothing to write.
  * The two blocks are replaced independently: a body without one still gets the other, and a
- * file that cannot be read leaves its block as it is, with a warning, without stopping the other.
- * A missing branch.json is no failure: it leaves the review block alone.
+ * file that is corrupt leaves its block as it is, with a warning, without stopping the other.
+ * A missing file is no failure. Any other read error, an IO fault that may pass, is thrown so
+ * that the caller retries or fails visibly.
  */
 export async function renderPrCommentsBody(options: {
   branchRoot: string
@@ -38,6 +39,7 @@ export async function renderPrCommentsBody(options: {
       mergeCommentsBlock(next, buildCommentsBlock(threads, options.branch, options.editorUrl)) ??
       next
   } catch (err) {
+    if (!(err instanceof SyntaxError || err instanceof CommentsFileMalformedError)) throw err
     options.warn(
       `Could not read the editor comments of ${options.branch}; the PR keeps its summary: ${getErrorMessage(err)}`,
     )
@@ -46,6 +48,7 @@ export async function renderPrCommentsBody(options: {
     const file = await readBranchMetadataFile(options.branchRoot)
     if (file) next = mergeReviewBlock(next, buildReviewBlock(file.branch.review)) ?? next
   } catch (err) {
+    if (!(err instanceof BranchMetadataCorruptError)) throw err
     options.warn(
       `Could not read the review state of ${options.branch}; the PR keeps its review block: ${getErrorMessage(err)}`,
     )
@@ -62,8 +65,8 @@ export function prBodyLockKey(branchRoot: string): string {
 }
 
 /**
- * A submit's section with its comment and review blocks, both covered, re-rendered from disk,
- * for a queued submit whose blocks were rendered when it was queued: a comment or review since
+ * A submit's section with its comment and review blocks re-rendered from disk, for a queued
+ * submit whose blocks were rendered when it was queued: a comment or review since
  * then, or a sync task that ran while this one waited out a retry, would otherwise be
  * overwritten. The review is the one stored, as in renderPrCommentsBody: a submit clears the
  * last verdict before it writes the PR. A file that cannot be read leaves its block as it was
