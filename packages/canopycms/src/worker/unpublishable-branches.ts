@@ -3,6 +3,7 @@
  * (`publishesBranch`, worker/branch-policy.ts). Read against the gateway's own description each
  * sync, so the list follows a change to `legacyBranches` or `protectedBranches`.
  */
+import type { Dirent } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -36,26 +37,29 @@ function reasonFor(name: string, namespace: string): UnpublishableBranchReason |
 /**
  * The editor branches the gateway that described its policy as `policy` would refuse to push.
  * Each is the `name` its branch.json records, the git ref: the directory holding it is only the
- * ref sanitized, and `cms/prod/x` and a legacy `cms-prod-x` share one. A directory with no
- * branch.json, or a corrupt one, is no branch. Throws when the branches directory or a branch.json
- * cannot be read, so the caller keeps the last report.
+ * ref sanitized, and `cms/prod/x` and a legacy `cms-prod-x` share one. Only a directory can be a
+ * branch: a regular file, such as `branches.json` or a registry write's temp file, or a symlink,
+ * is skipped. A directory with no branch.json, or a corrupt one, is no branch. Throws when the
+ * branches directory or a branch directory's branch.json cannot be read, so the caller keeps the
+ * last report.
  */
 export async function findUnpublishableBranches(
   ctx: Pick<WorkerContext, 'contentBranchesPath' | 'sanitizedBaseBranch'>,
   policy: BranchPolicyDescription,
 ): Promise<Omit<UnpublishableBranchesReport, 'at'>> {
-  let dirs: string[]
+  let entries: Dirent[]
   try {
-    dirs = await fs.readdir(ctx.contentBranchesPath)
+    entries = await fs.readdir(ctx.contentBranchesPath, { withFileTypes: true })
   } catch (err) {
     if (!isNodeError(err) || err.code !== 'ENOENT') throw err
-    dirs = []
+    entries = []
   }
+  const dirs = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name)
   const branches: UnpublishableBranch[] = []
   for (const dir of dirs.sort()) {
-    // The base branch is protected and never published; structural entries, and the `.trash-*`
-    // directories purged branches wait in, are not branches.
-    if (dir.startsWith('.') || dir === 'branches.json' || dir === ctx.sanitizedBaseBranch) continue
+    // The base branch is protected and never published; the `.trash-*` directories purged
+    // branches wait in are not branches.
+    if (dir.startsWith('.') || dir === ctx.sanitizedBaseBranch) continue
     let meta: Awaited<ReturnType<typeof BranchMetadataFileManager.loadOnly>>
     try {
       meta = await BranchMetadataFileManager.loadOnly(path.join(ctx.contentBranchesPath, dir))

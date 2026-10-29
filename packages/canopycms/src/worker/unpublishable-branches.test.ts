@@ -64,6 +64,8 @@ describe('findUnpublishableBranches', () => {
     // A purged branch waiting in the trash, whose name the gateway would refuse.
     await workspace('winter', 'editing', '.trash-x')
     await fs.writeFile(path.join(contentBranchesPath, 'branches.json'), '{}')
+    // A registry write's temp file, waiting for its rename.
+    await fs.writeFile(path.join(contentBranchesPath, 'branches.tmp.json.1.x'), '{}')
     await fs.mkdir(path.join(contentBranchesPath, 'no-metadata'))
     await fs.mkdir(path.join(contentBranchesPath, 'corrupt', BRANCH_META_DIR), { recursive: true })
     await fs.writeFile(
