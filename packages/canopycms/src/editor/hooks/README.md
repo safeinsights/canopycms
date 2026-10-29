@@ -44,8 +44,9 @@ sees its own write, not a still-in-flight automatic load) and then writes the re
 cache with `mutate(key, data, { revalidate: false })`. That keeps the
 bound data hook's reactive `data` in sync without a second request.
 
-`useBranchChangesData` (`canopy:changes:${branch}`) reloads by revalidating (`mutate()`), which
-keeps the last-started read, and drops an older read's late error, which SWR 2.4 shows.
+`useBranchChangesData.ts` (`canopy:changes:${branch}[:${logicalPath}[?from=${from}][#${id}]]`) reloads by revalidating
+(`mutate()`), which keeps the last-started read, and drops an older read's late error, which SWR
+2.4 shows.
 
 `useEntryManager.refreshEntries` additionally guards every commit (from
 both the automatic load and explicit calls) with a shared monotonic

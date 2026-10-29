@@ -352,7 +352,9 @@ const ChangedStory = ({
   view,
   width = 328,
   initialFilter = 'changed',
+  onShowDeletedChanges,
 }: {
+  onShowDeletedChanges?: (entry: BranchChangeEntry, label: string) => void
   /** Without it, the branch is the protected base, which offers no Changed. */
   view?: Omit<BranchChangesView, 'base' | 'onRetry'>
   width?: number
@@ -370,6 +372,7 @@ const ChangedStory = ({
         entryFilter={entryFilter}
         onEntryFilterChange={setEntryFilter}
         branchChanges={view && { base: 'main', onRetry: noop, ...view }}
+        onShowDeletedChanges={onShowDeletedChanges}
       />
     </div>
   )
@@ -378,6 +381,11 @@ const ChangedStory = ({
 /** Changed: markers on each row, the unsaved dot kept, deleted entries beneath. */
 export const Changed: Story = {
   render: () => <ChangedStory view={{ data: changes }} />,
+}
+
+/** Changed where each deleted entry is a button opening its changes. */
+export const ChangedDeletedOpensChanges: Story = {
+  render: () => <ChangedStory view={{ data: changes }} onShowDeletedChanges={noop} />,
 }
 
 /** Changed while the first load runs: skeleton rows, and no count. */

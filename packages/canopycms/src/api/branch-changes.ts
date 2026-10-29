@@ -67,6 +67,52 @@ const CHANGED_MID_READ_ERROR =
   'This branch changed while its changes were being read. Try again in a moment.'
 const READ_FAILED_ERROR = "Couldn't read this branch's changes right now. Try again in a moment."
 
+type BranchGit = ReturnType<ApiContext['services']['createGitManagerFor']>
+
+/** Why a read of a branch against its base can't be trusted: see {@link readWhileSteady}. */
+export type UnsteadyRead = 'syncing' | 'moved'
+
+export type SteadyRead<T> = { steady: true; value: T } | { steady: false; reason: UnsteadyRead }
+
+/**
+ * `read`'s result, taken lock-free, or why it can't be trusted: `syncing` while a rebase is
+ * under way before or after it, since a half-rebased tree reports the base's own changes as
+ * the branch's; `moved` when HEAD moved during it, as a submit's commit does, leaving a mix of
+ * two trees.
+ */
+export const readWhileSteady = async <T>(
+  branchRoot: string,
+  git: BranchGit,
+  read: () => Promise<T>,
+): Promise<SteadyRead<T>> => {
+  if (await isRebaseInProgress(branchRoot)) return { steady: false, reason: 'syncing' }
+  const head = await git.headSha()
+  const value = await read()
+  if (await isRebaseInProgress(branchRoot)) return { steady: false, reason: 'syncing' }
+  if ((await git.headSha()) !== head) return { steady: false, reason: 'moved' }
+  return { steady: true, value }
+}
+
+/** The 409 for a read {@link readWhileSteady} refused, nothing lost. */
+export const unsteadyReadResponse = (reason: UnsteadyRead, base: string): ApiResponse<never> => ({
+  ok: false,
+  status: 409,
+  error: reason === 'syncing' ? SYNCING_ERROR(base) : CHANGED_MID_READ_ERROR,
+})
+
+/** The 503 for a git failure, logged with the branch and base it compared. */
+export const branchReadFailedResponse = (
+  branch: string,
+  base: string,
+  err: unknown,
+): ApiResponse<never> => {
+  canopyLogWarn(
+    `CanopyCMS: could not read what ${branch} changes against ${base}:`,
+    redactCredentials(getErrorMessage(err)),
+  )
+  return { ok: false, status: 503, error: READ_FAILED_ERROR }
+}
+
 type FileStatus = 'A' | 'M' | 'D'
 const FORMATS: readonly ContentFormat[] = ['mdx', 'md', 'json', 'yaml']
 type EntryRef = Extract<RepoPathRef, { kind: 'entry' }>
@@ -108,39 +154,26 @@ const branchChangesHandler = async (
   ) {
     return { ok: true, status: 200, data: empty }
   }
-  // A half-rebased tree would report the base's own changes as this branch's.
-  if (await isRebaseInProgress(branchContext.branchRoot)) {
-    return { ok: false, status: 409, error: SYNCING_ERROR(base) }
-  }
 
   const git = ctx.services.createGitManagerFor(branchContext.branchRoot, {
     baseBranch: branchContext.branch.baseBranch,
   })
-  let changes: Omit<BranchChangesData, 'base'> | 'syncing' | 'moved'
+  let read: SteadyRead<Omit<BranchChangesData, 'base'> | null>
   try {
-    const head = await git.headSha()
-    const mergeBase = await git.mergeBaseWithBase()
-    if (!mergeBase) return { ok: true, status: 200, data: { ...empty, baseUnavailable: true } }
-    changes = await readChanges(ctx, req, branchContext, git, mergeBase)
-    // A rebase or a commit (a submit's) during the read leaves a mix of two trees.
-    if (await isRebaseInProgress(branchContext.branchRoot)) changes = 'syncing'
-    else if ((await git.headSha()) !== head) changes = 'moved'
+    read = await readWhileSteady(branchContext.branchRoot, git, async () => {
+      const mergeBase = await git.mergeBaseWithBase()
+      return mergeBase ? readChanges(ctx, req, branchContext, git, mergeBase) : null
+    })
   } catch (err) {
     if (err instanceof BaseBranchMissingError) {
       return { ok: true, status: 200, data: { ...empty, baseMissing: true } }
     }
-    canopyLogWarn(
-      `CanopyCMS: could not read what ${branchContext.branch.name} changes against ${base}:`,
-      redactCredentials(getErrorMessage(err)),
-    )
-    return { ok: false, status: 503, error: READ_FAILED_ERROR }
+    return branchReadFailedResponse(branchContext.branch.name, base, err)
   }
-  if (changes === 'syncing') return { ok: false, status: 409, error: SYNCING_ERROR(base) }
-  if (changes === 'moved') return { ok: false, status: 409, error: CHANGED_MID_READ_ERROR }
-  return { ok: true, status: 200, data: { base, ...changes } }
+  if (!read.steady) return unsteadyReadResponse(read.reason, base)
+  if (!read.value) return { ok: true, status: 200, data: { ...empty, baseUnavailable: true } }
+  return { ok: true, status: 200, data: { base, ...read.value } }
 }
-
-type BranchGit = ReturnType<ApiContext['services']['createGitManagerFor']>
 
 /** The branch's changes against `mergeBase`, filtered to what `req.user` may read. */
 const readChanges = async (

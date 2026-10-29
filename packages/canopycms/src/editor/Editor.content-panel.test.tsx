@@ -1088,17 +1088,14 @@ describe('changed on this branch', () => {
     expect(changesRequests[0]).toMatch(/\/main\/changes$/)
   })
 
-  it('reads nothing while the panel is closed', async () => {
+  it('reads with the panel closed while an entry is open, so its header can offer Show changes', async () => {
     window.history.replaceState({}, '', `/?entry=${hello.path}`)
     stubWindowWidth(true)
     storeLayout({ contentPanelOpen: false })
-    stubApi()
+    stubApi({ changedEntries: [helloChanged] })
     renderEditor()
-    await waitFor(() =>
-      expect(screen.getByTestId('file-dropdown-button').textContent).toContain('hello'),
-    )
-    await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
-    expect(changesRequests).toEqual([])
+    expect(await screen.findByTestId('entry-show-changes')).toBeTruthy()
+    expect(changesRequests).toEqual(['/api/canopycms/main/changes'])
   })
 
   it('reloads after a save', async () => {
