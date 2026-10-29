@@ -348,8 +348,8 @@ function UnpublishableBranchesAlert({
         {blocking.length > 0 && (
           <>
             <Text size="sm" data-testid="unpublishable-blocking">
-              Rename or delete each of these branches on GitHub: while one exists, no branch in the
-              namespace can be published.
+              Delete each of these branches in the CMS, and by hand on GitHub too if it is there:
+              while one exists, no branch in the namespace can be created or published.
             </Text>
             <BranchRefs branches={blocking} />
           </>

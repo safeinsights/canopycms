@@ -805,7 +805,7 @@ describe('SystemHealthPanel', () => {
       expect(alert.textContent).toContain(new Date(at).toLocaleString())
     })
 
-    it('tells a developer to rename a branch the namespace sits under, which blocks it all', async () => {
+    it('tells an admin to delete a branch the namespace sits under, which blocks it all', async () => {
       mockClient.admin.status.mockResolvedValueOnce(
         mockSuccess(
           statusWithUnpublishable(['spring', { name: 'canopycms<b>', reason: 'blocks-namespace' }]),
@@ -817,7 +817,7 @@ describe('SystemHealthPanel', () => {
       const alert = await screen.findByTestId('unpublishable-branches-alert')
       const blocking = await screen.findByTestId('unpublishable-blocking')
       expect(blocking.textContent).toContain(
-        'Rename or delete each of these branches on GitHub: while one exists, no branch in the namespace can be published.',
+        'Delete each of these branches in the CMS, and by hand on GitHub too if it is there: while one exists, no branch in the namespace can be created or published.',
       )
       expect(blocking.nextElementSibling?.textContent).toBe('canopycms<b>')
       expect(alert.querySelector('b')).toBeNull()
