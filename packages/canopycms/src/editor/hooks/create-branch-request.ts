@@ -2,7 +2,7 @@ import type { BranchListItem, CreateBranchBody } from '../../api/branch'
 import { isCreatorsRecentBranch } from '../../api/branch-create-window'
 import { isApiTimeoutError, isNonApiResponse, type CanopyApiClient } from '../../api/client'
 import { GATEWAY_MAX_TIMEOUT_MS } from '../../api/request-deadline'
-import { cmsBranchName, sanitizeBranchName } from '../../paths/branch-name'
+import { parseCreatedBranchName } from '../../paths/validation'
 
 /**
  * @internal Exported for tests. Past the gateway's limit, so its 504 lands first, and under
@@ -60,18 +60,25 @@ async function settle(
   const listed = await findListedBranch(apiClient, requested)
   if (!listed) return { kind: 'failed', message }
   if (isCreatorsRecentBranch(listed, userId)) return { kind: 'created', branch: listed }
-  return { kind: 'failed', message: `A branch named "${listed.name}" already exists` }
+  return {
+    kind: 'failed',
+    message: `A branch named "${listed.shortName ?? listed.name}" already exists`,
+  }
 }
 
+/** The listed namespace branch (short name not its whole name) that `requested` creates. */
 async function findListedBranch(
   apiClient: Pick<CanopyApiClient, 'branches'>,
   requested: string,
 ): Promise<BranchListItem | undefined> {
-  const name = cmsBranchName(requested)
+  const created = parseCreatedBranchName(requested)
+  if (!created.ok) return undefined
   try {
     const listing = await apiClient.branches.list()
     if (!listing.ok) return undefined
-    return listing.data?.branches.find((branch) => sanitizeBranchName(branch.name) === name)
+    return listing.data?.branches.find(
+      (branch) => branch.shortName !== branch.name && branch.shortName === created.shortName,
+    )
   } catch {
     return undefined
   }

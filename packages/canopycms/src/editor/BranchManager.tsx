@@ -28,7 +28,6 @@ import { BranchAccessList } from './components/BranchAccessList'
 // Import directly from helpers to avoid server-only code in authorization barrel
 import { isAdmin, isLockedOutOfBranch, isReviewer } from '../authorization/helpers'
 import { clientOperatingStrategy } from '../operating-mode/client'
-import { CMS_BRANCH_PREFIX } from '../paths/branch-name'
 import { parseCreatedBranchName } from '../paths/validation'
 import { DestructiveMenuItem } from './components/DestructiveMenuItem'
 import { ReasonedMenuItem } from './components/ReasonedMenuItem'
@@ -744,11 +743,9 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                   // Below the input, so a preview that wraps never moves the field being typed in.
                   inputWrapperOrder={['label', 'input', 'description', 'error']}
                   description={
-                    createdBranchName === null
-                      ? `CanopyCMS adds “${CMS_BRANCH_PREFIX}” to the start of the name.`
-                      : createdBranchName.ok
-                        ? `Will be named ${createdBranchName.name}`
-                        : undefined
+                    createdBranchName?.ok
+                      ? `Will be named ${createdBranchName.shortName}`
+                      : undefined
                   }
                   error={createdBranchName?.ok === false ? createdBranchName.error : undefined}
                   value={newBranchName}

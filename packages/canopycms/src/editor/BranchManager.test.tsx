@@ -841,7 +841,7 @@ describe('BranchManager', () => {
       )
     })
 
-    it('shows below the field the branch a typed name creates, in the canopycms- namespace', async () => {
+    it('shows below the field the short name a typed name creates, and no prefix', async () => {
       renderBranchManager({
         branches: baseBranches,
         onCreate: vi.fn(async () => true),
@@ -850,13 +850,13 @@ describe('BranchManager', () => {
       await userEvent.click(screen.getByRole('button', { name: 'New branch…' }))
       const input = await screen.findByLabelText(/branch name/i)
 
-      const empty = screen.getByText('CanopyCMS adds “canopycms-” to the start of the name.')
-      expect(input.getAttribute('aria-describedby')).toContain(empty.id)
-      // After the input, so a preview that wraps never moves the field being typed in.
-      expect(input.compareDocumentPosition(empty) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      expect(screen.queryByText(/canopycms-/)).toBeNull()
 
       await userEvent.type(input, 'spring/update')
-      expect(screen.getByText('Will be named canopycms-spring-update')).toBeTruthy()
+      const preview = screen.getByText('Will be named spring-update')
+      expect(input.getAttribute('aria-describedby')).toContain(preview.id)
+      // After the input, so a preview that wraps never moves the field being typed in.
+      expect(input.compareDocumentPosition(preview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
       expect(screen.getByTestId('create-branch-submit').hasAttribute('disabled')).toBe(false)
 
       await userEvent.clear(input)
@@ -865,10 +865,9 @@ describe('BranchManager', () => {
     })
 
     it.each([
-      ['settings-prod', /is reserved for CanopyCMS settings/],
       ['spring update', /cannot contain spaces/],
       ['a..b', /cannot contain "\.\."/],
-      ['a'.repeat(245), /with "canopycms-" in front it is over 250 characters/],
+      ['a'.repeat(251), /too long \(max 250 characters\)/],
     ])('says why %s cannot be created, and offers no create', async (typed, why) => {
       const onCreate = vi.fn(async () => true)
       renderBranchManager({ branches: baseBranches, onCreate, mode: 'prod' })
