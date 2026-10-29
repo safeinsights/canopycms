@@ -12,6 +12,7 @@ import { ANONYMOUS_USER } from './user'
 import type { BranchContext } from './types'
 import { ContentStoreError } from './content-store'
 import { resolveBranchPath } from './paths'
+import { buildInitialBranchMetadata } from './branch-metadata'
 import { unsafeAsLogicalPath, unsafeAsSlug } from './paths/test-utils'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-content-reader-'))
@@ -525,6 +526,30 @@ describe('createContentReader', () => {
       })
       await fs.mkdir(baseRoot, { recursive: true })
       await expect(readPage(reader, 'a'.repeat(300))).rejects.toMatchObject({ code: 'NOT_FOUND' })
+    })
+
+    it('finds a namespace branch by its short name, through the one resolver', async () => {
+      const root = await tmpDir()
+      const reader = await readerFor(root)
+      const { branchRoot } = resolveBranchPath({
+        branchName: 'canopycms/local/spring',
+        mode: 'dev',
+        basePathOverride: root,
+      })
+      await fs.mkdir(path.join(branchRoot, '.canopy-meta'), { recursive: true })
+      await fs.writeFile(
+        path.join(branchRoot, '.canopy-meta', 'branch.json'),
+        JSON.stringify(
+          buildInitialBranchMetadata({
+            branch: { name: 'canopycms/local/spring', createdBy: 'u1' },
+          }),
+        ),
+      )
+
+      // The branch is found; only the entry is missing.
+      const err: unknown = await readPage(reader, 'spring').catch((e: unknown) => e)
+      expect(err).toMatchObject({ code: 'NOT_FOUND' })
+      expect((err as Error).message).not.toContain('Branch not found')
     })
 
     it('reads as NOT_FOUND when a getBranchContext resolver returns null, even with allowCreateBranch', async () => {

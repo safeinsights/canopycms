@@ -38,6 +38,13 @@ vi.mock('../branch-workspace', () => {
   }
 })
 
+// The resolver every /:branch segment goes through, spied on and finding nothing.
+const resolveBranchParam = vi.hoisted(() => vi.fn())
+vi.mock('../branch-param', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../branch-param')>()),
+  resolveBranchParam,
+}))
+
 // Mock the permissions loader to avoid file system operations
 vi.mock('../resolve-canopy-user', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../resolve-canopy-user')>()
@@ -149,6 +156,17 @@ describe('createCanopyRequestHandler', () => {
 
     expect(response.status).toBe(200)
     expect(response.body).toHaveProperty('ok', true)
+  })
+
+  it('resolves a /:branch segment through resolveBranchParam, with the live config', async () => {
+    resolveBranchParam.mockResolvedValue(null)
+    const services: any = createMockServices()
+    const handler = createCanopyRequestHandler({ services, authPlugin: createMockAuthPlugin() })
+
+    const response = await handler(createMockRequest(), ['spring', 'status'])
+
+    expect(resolveBranchParam).toHaveBeenCalledWith('spring', services.config)
+    expect(response.status).toBe(404)
   })
 
   it('returns 404 for unknown routes', async () => {

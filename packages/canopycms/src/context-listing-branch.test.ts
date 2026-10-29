@@ -155,6 +155,14 @@ describe('listEntries / buildContentTree with a branch option', () => {
     }
   })
 
+  it('lists a namespace branch requested by its short name', async () => {
+    await addBranch('canopycms/prod/spring', ['kept', 'added'])
+    const { ctx } = await contextFor('prod', 'allow')
+
+    const slugs = (await ctx.listEntries({ branch: 'spring' })).map((e) => e.slug).sort()
+    expect(slugs).toEqual(['added', 'kept'])
+  })
+
   it('lists the requested branch in dev too', async () => {
     await addBranch('feature', ['kept', 'added'])
     const { ctx } = await contextFor('dev', 'allow')
