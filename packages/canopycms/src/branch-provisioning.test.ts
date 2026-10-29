@@ -21,6 +21,8 @@ import {
 import { BranchWorkspaceManager, setProvisioningTestHooks } from './branch-workspace'
 import { BranchRegistry } from './branch-registry'
 import { defineCanopyTestConfig } from './config-test'
+import { operatingStrategy } from './operating-mode'
+import { sanitizeBranchName } from './paths/branch-name'
 import { SettingsWorkspaceManager } from './settings-workspace'
 import { initTestRepo, mockConsole, useLocalGitHubGateway, type MockConsole } from './test-utils'
 import {
@@ -193,6 +195,24 @@ describe('residue that must not be quarantined', () => {
 
     expect((await fs.lstat(finalPath)).ino).toBe(ino)
     expect(await trashDirs(baseRoot)).toEqual([])
+  })
+
+  it('names a branch in the namespace by its short name when it answers busy', async () => {
+    const ref = `${operatingStrategy('prod').getBranchNamespace(config())}young`
+    await makeIncidentResidue(sanitizeBranchName(ref), 10_000)
+
+    await expect(create(ref)).rejects.toMatchObject({
+      name: 'BranchProvisioningBusyError',
+      message: "Branch 'young' is still being set up. Try again in a minute.",
+    })
+  })
+
+  it('names a branch outside the namespace by its full name when it answers busy', async () => {
+    await makeIncidentResidue('feat', 10_000)
+
+    await expect(create('feat')).rejects.toMatchObject({
+      message: "Branch 'feat' is still being set up. Try again in a minute.",
+    })
   })
 
   it('a corrupt branch.json is never moved', async () => {
