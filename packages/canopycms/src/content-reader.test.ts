@@ -569,6 +569,26 @@ describe('createContentReader', () => {
       expect(await fs.readdir(baseRoot)).toEqual(['canopycms-local-spring'])
     })
 
+    it("refuses a name whose key holds another branch's workspace, with allowCreateBranch", async () => {
+      const root = await tmpDir()
+      const reader = await readerFor(root, { allowCreateBranch: true })
+      const baseRoot = await springWorkspace(root)
+      const branchJson = path.join(
+        baseRoot,
+        'canopycms-local-spring',
+        '.canopy-meta',
+        'branch.json',
+      )
+      const before = await fs.readFile(branchJson, 'utf-8')
+
+      await expect(readPage(reader, 'canopycms-local-spring')).rejects.toMatchObject({
+        code: 'NOT_FOUND',
+        message: 'Branch not found: canopycms-local-spring',
+      })
+      expect(await fs.readdir(baseRoot)).toEqual(['canopycms-local-spring'])
+      expect(await fs.readFile(branchJson, 'utf-8')).toBe(before)
+    })
+
     it('reads as NOT_FOUND when a getBranchContext resolver returns null, even with allowCreateBranch', async () => {
       const root = await tmpDir()
       const reader = await readerFor(root, {

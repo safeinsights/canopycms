@@ -172,7 +172,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     })
     if (existing) return existing
     if (allowCreateBranch) {
-      return loadOrCreateBranchContext({
+      const context = await loadOrCreateBranchContext({
         config: services.config,
         branchName,
         mode: operatingMode,
@@ -180,6 +180,8 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
         createdBy,
         remoteUrl: services.config.defaultRemoteUrl,
       })
+      // A workspace already at this name's key that holds another branch is that branch's.
+      if (context.branch.name === branchName) return context
     }
     throw new ContentStoreError(`Branch not found: ${branchName}`, 'NOT_FOUND')
   }
