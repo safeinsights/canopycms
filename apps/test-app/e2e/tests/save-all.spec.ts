@@ -43,15 +43,15 @@ test.describe('Save all', () => {
       })
     })
 
-    await test.step('"2 unsaved" lists the two under Changed, and the open one shows under All', async () => {
+    await test.step('"2 unsaved" lists the two under Unsaved, and the open one shows under All', async () => {
       await editorPage.showUnsavedEntries()
-      await expect(editorPage.changedFilterOption('Changed')).toBeChecked()
+      await expect(editorPage.entryFilterOption('Unsaved')).toBeChecked()
       await expect(editorPage.navigatorItem('Home')).toBeVisible()
       await expect(editorPage.navigatorItem(postSavedTitle)).toBeVisible()
       await expect(editorPage.navigatorItem('Settings')).toHaveCount(0)
 
       await editorPage.showInContentPanel()
-      await expect(editorPage.changedFilterOption('All')).toBeChecked()
+      await expect(editorPage.entryFilterOption('All')).toBeChecked()
       await expect(editorPage.navigatorItem('Settings')).toBeVisible()
       await expect(page.locator(':focus')).toHaveAttribute('data-value', /\/e2e-save-all-/)
       await editorPage.closeContentNavigator()

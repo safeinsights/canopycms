@@ -164,7 +164,7 @@ describe('syncPrComments, direct path', () => {
 
       expect(service.getPullRequest.mock.calls[0]?.[1]).toBeInstanceOf(AbortSignal)
       expect(service.getPullRequest.mock.calls[0]?.[1].aborted).toBe(true)
-      expect(consoleSpy).toHaveWarned(/editor comments on PR #7.*did not answer within 10 s/)
+      expect(consoleSpy).toHaveWarned(/review state on PR #7.*did not answer within 10 s/)
     } finally {
       consoleSpy.restore()
       vi.useRealTimers()
@@ -180,7 +180,7 @@ describe('syncPrComments, direct path', () => {
     await syncPrComments(directCtx(service), branchWithPr())
 
     expect(service.updatePullRequest).not.toHaveBeenCalled()
-    expect(consoleSpy).toHaveWarned(/editor comments on PR #7/)
+    expect(consoleSpy).toHaveWarned(/editor comments of feature\/x/)
     consoleSpy.restore()
   })
 
@@ -192,7 +192,7 @@ describe('syncPrComments, direct path', () => {
 
     await expect(syncPrComments(directCtx(service), branchWithPr())).resolves.toBeUndefined()
 
-    expect(consoleSpy).toHaveWarned(/editor comments on PR #7 for feature\/x.*502/)
+    expect(consoleSpy).toHaveWarned(/review state on PR #7 for feature\/x.*502/)
     consoleSpy.restore()
   })
 })

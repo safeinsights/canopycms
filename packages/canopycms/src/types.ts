@@ -24,6 +24,18 @@ export interface BranchAccessControl {
   managerOrAdminAllowed?: boolean
 }
 
+/**
+ * A reviewer's verdict on the branch as last submitted, shown in the pull request body
+ * (submission-attribution.ts). Set by approve and request-changes, cleared by submit and
+ * withdraw, and never sent to clients: `by` names the reviewer.
+ */
+export interface BranchReview {
+  state: 'approved' | 'changes-requested'
+  by: { userId: CanopyUserId; name?: string }
+  /** ISO timestamp of the verdict. */
+  at: string
+}
+
 export interface BranchMetadata {
   name: string
   title?: string
@@ -111,6 +123,8 @@ export interface BranchMetadata {
   editors?: CanopyUserId[]
   /** The `editors` who saved since the last submit commit; the next one's trailers name them. */
   uncommittedEditors?: CanopyUserId[]
+  /** The reviewer's verdict on the last submit; absent until a reviewer acts. */
+  review?: BranchReview
 }
 
 export interface BranchPaths {

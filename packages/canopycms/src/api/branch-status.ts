@@ -201,6 +201,14 @@ const submitBranchForMergeHandler = async (
     }
   }
 
+  // The verdict covers one submit. It is cleared on disk before the PR is written, because a
+  // comment sync between that write and the status save below renders the PR body from disk and
+  // would otherwise put the last round's verdict back on the new body.
+  const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
+  if (branchContext.branch.review) {
+    await meta.save({ branch: { name: branchContext.branch.name, review: undefined } })
+  }
+
   // Create or update PR (sync via githubService, or async via task queue)
   const submittedAt = new Date().toISOString()
   const editorUrl = submitEditorUrl(ctx, req, body?.editorUrl)
@@ -213,7 +221,6 @@ const submitBranchForMergeHandler = async (
     submittedAt,
   })
 
-  const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
   const pushed = prResult.pushedToGitHub ? { pushedToGitHubAt: submittedAt } : {}
   // GitHub found nothing between the pushed branch and its base, though the diff above found
   // changes: GitHub's base can already hold them, or the diff could not be computed. The branch
@@ -244,6 +251,7 @@ const submitBranchForMergeHandler = async (
       // pre-submit rebase-failure record would otherwise stick as a stale
       // warning through review and archive.
       rebaseFailure: undefined,
+      review: undefined,
     },
   })
 

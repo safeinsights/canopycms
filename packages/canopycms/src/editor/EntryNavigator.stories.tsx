@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react'
 
-import { EntryNavigator } from './EntryNavigator'
+import { EntryNavigator, type BranchChangesView, type EntryFilter } from './EntryNavigator'
+import type { BranchChangeEntry, BranchChangesData } from '../api/branch-changes'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../paths/test-utils'
 
 const meta: Meta<typeof EntryNavigator> = {
@@ -243,16 +244,16 @@ export const DrawerWidth: Story = {
   ),
 }
 
-/** Changed on: only the unsaved entries, under the collections that hold them, and one not listed yet. */
-export const Changed: Story = {
-  render: function ChangedStory() {
-    const [changedOnly, setChangedOnly] = useState(true)
+/** Unsaved on: only the unsaved entries, under the collections that hold them, and one not listed yet. */
+export const Unsaved: Story = {
+  render: function UnsavedStory() {
+    const [entryFilter, setEntryFilter] = useState<EntryFilter>('unsaved')
     return (
       <div style={{ width: 328, height: 360 }}>
         <EntryNavigator
           onSelect={noop}
-          changedOnly={changedOnly}
-          onChangedOnlyChange={setChangedOnly}
+          entryFilter={entryFilter}
+          onEntryFilterChange={setEntryFilter}
           dirtyPaths={new Set(['posts/hello-world', 'home'])}
           unsavedCount={3}
           collections={[
@@ -270,16 +271,16 @@ export const Changed: Story = {
   },
 }
 
-/** Changed on with nothing unsaved: it says so and offers All. */
-export const ChangedNothingUnsaved: Story = {
-  render: function ChangedNothingUnsavedStory() {
-    const [changedOnly, setChangedOnly] = useState(true)
+/** Unsaved on with nothing unsaved: it says so and offers All. */
+export const UnsavedNothingUnsaved: Story = {
+  render: function UnsavedNothingUnsavedStory() {
+    const [entryFilter, setEntryFilter] = useState<EntryFilter>('unsaved')
     return (
       <div style={{ width: 328, height: 240 }}>
         <EntryNavigator
           onSelect={noop}
-          changedOnly={changedOnly}
-          onChangedOnlyChange={setChangedOnly}
+          entryFilter={entryFilter}
+          onEntryFilterChange={setEntryFilter}
           collections={[
             {
               path: unsafeAsLogicalPath('posts'),
@@ -292,4 +293,179 @@ export const ChangedNothingUnsaved: Story = {
       </div>
     )
   },
+}
+
+const changeTree = [
+  {
+    path: unsafeAsLogicalPath('content'),
+    label: 'Content',
+    type: 'collection' as const,
+    entries: [{ path: unsafeAsLogicalPath('content/home'), label: 'Home' }],
+    children: [
+      {
+        path: unsafeAsLogicalPath('content/posts'),
+        label: 'Posts',
+        type: 'collection' as const,
+        entries: [
+          { path: unsafeAsLogicalPath('content/posts/hello-world'), label: 'Hello World' },
+          { path: unsafeAsLogicalPath('content/posts/mermaid-demo'), label: 'Mermaid Demo' },
+          { path: unsafeAsLogicalPath('content/posts/launch'), label: 'Launch day' },
+        ],
+      },
+      {
+        path: unsafeAsLogicalPath('content/docs'),
+        label: 'Docs',
+        type: 'collection' as const,
+        entries: [{ path: unsafeAsLogicalPath('content/docs/setup'), label: 'Setup' }],
+      },
+    ],
+  },
+]
+
+const change = (
+  status: BranchChangeEntry['status'],
+  logicalPath: string,
+  extra: Partial<BranchChangeEntry> = {},
+): BranchChangeEntry => ({
+  status,
+  logicalPath,
+  contentId: 'aB3cD4eF5gH6',
+  collectionPath: logicalPath.slice(0, logicalPath.lastIndexOf('/')),
+  entryType: 'post',
+  ...extra,
+})
+
+const changes: BranchChangesData = {
+  base: 'main',
+  entries: [
+    change('modified', 'content/posts/hello-world'),
+    change('added', 'content/posts/launch'),
+    change('moved', 'content/docs/setup', { previousLogicalPath: 'content/setup' }),
+    change('deleted', 'content/posts/old-faq', { title: 'Old FAQ' }),
+  ],
+  collections: [{ status: 'modified', logicalPath: 'content/docs' }],
+  hiddenChanges: false,
+}
+
+/** The Content panel under Changed, given what the branch changes against its base. */
+const ChangedStory = ({
+  view,
+  width = 328,
+  initialFilter = 'changed',
+  onShowDeletedChanges,
+}: {
+  onShowDeletedChanges?: (entry: BranchChangeEntry, label: string) => void
+  /** Without it, the branch is the protected base, which offers no Changed. */
+  view?: Omit<BranchChangesView, 'base' | 'onRetry'>
+  width?: number
+  initialFilter?: EntryFilter
+}) => {
+  const [entryFilter, setEntryFilter] = useState<EntryFilter>(initialFilter)
+  return (
+    <div style={{ width, height: 420 }}>
+      <EntryNavigator
+        onSelect={noop}
+        collections={changeTree}
+        hiddenRootPath="content"
+        dirtyPaths={new Set(['content/posts/hello-world'])}
+        unsavedCount={1}
+        entryFilter={entryFilter}
+        onEntryFilterChange={setEntryFilter}
+        branchChanges={view && { base: 'main', onRetry: noop, ...view }}
+        onShowDeletedChanges={onShowDeletedChanges}
+      />
+    </div>
+  )
+}
+
+/** Changed: markers on each row, the unsaved dot kept, deleted entries beneath. */
+export const Changed: Story = {
+  render: () => <ChangedStory view={{ data: changes }} />,
+}
+
+/** Changed where each deleted entry is a button opening its changes. */
+export const ChangedDeletedOpensChanges: Story = {
+  render: () => <ChangedStory view={{ data: changes }} onShowDeletedChanges={noop} />,
+}
+
+/** Changed while the first load runs: skeleton rows, and no count. */
+export const ChangedLoading: Story = {
+  render: () => <ChangedStory view={{}} />,
+}
+
+/** Changed with nothing differing from the base. */
+export const ChangedEmpty: Story = {
+  render: () => <ChangedStory view={{ data: { ...changes, entries: [], collections: [] } }} />,
+}
+
+/** Changed whose reload failed, keeping what loaded before. */
+export const ChangedError: Story = {
+  render: () => (
+    <ChangedStory view={{ data: changes, error: { kind: 'failed', message: 'HTTP 500' } }} />
+  ),
+}
+
+/** Changed while the worker syncs the branch with its base (a 409). */
+export const ChangedSyncing: Story = {
+  render: () => <ChangedStory view={{ error: { kind: 'syncing' } }} />,
+}
+
+/** Changed with some changes in entries this user can't read. */
+export const ChangedHidden: Story = {
+  render: () => <ChangedStory view={{ data: { ...changes, hiddenChanges: true } }} />,
+}
+
+/** Changed for a branch that shares no history with its base. */
+export const ChangedBaseUnavailable: Story = {
+  render: () => (
+    <ChangedStory
+      view={{ data: { ...changes, entries: [], collections: [], baseUnavailable: true } }}
+    />
+  ),
+}
+
+/** Changed for an admin: other changed files behind Details. */
+export const ChangedOtherFiles: Story = {
+  render: () => (
+    <ChangedStory view={{ data: { ...changes, otherFiles: ['README.md', 'src/site.ts'] } }} />
+  ),
+}
+
+/** The protected base branch: All and Unsaved only, nothing to compare. */
+export const ProtectedBase: Story = {
+  render: () => <ChangedStory initialFilter="all" />,
+}
+
+/** Changed with rows the tree can't draw: an entry the list doesn't hold yet, the hidden root's settings. */
+export const ChangedNotInTree: Story = {
+  render: () => (
+    <ChangedStory
+      view={{
+        data: {
+          ...changes,
+          entries: [...changes.entries, change('added', 'content/posts/brand-new-post')],
+          collections: [{ status: 'modified', logicalPath: 'content' }],
+        },
+      }}
+    />
+  ),
+}
+
+/** Changed in a 240px panel: counts, markers and the deleted section at their narrowest. */
+export const ChangedNarrow: Story = {
+  render: () => <ChangedStory width={240} view={{ data: changes }} />,
+}
+
+/** Changed with nothing differing yet, while an entry is unsaved. */
+export const ChangedEmptyWithUnsaved: Story = {
+  render: () => <ChangedStory view={{ data: { ...changes, entries: [], collections: [] } }} />,
+}
+
+/** Retry working after a failed reload. */
+export const ChangedRetrying: Story = {
+  render: () => (
+    <ChangedStory
+      view={{ data: changes, error: { kind: 'failed', message: 'HTTP 503' }, retrying: true }}
+    />
+  ),
 }

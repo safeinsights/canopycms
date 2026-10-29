@@ -683,14 +683,14 @@ export class EditorPage {
     return this.page.getByTestId('branch-unsaved-count')
   }
 
-  /** Lists the unsaved entries: "N unsaved" opens the content panel filtered to Changed. */
+  /** Lists the unsaved entries: "N unsaved" opens the content panel filtered to Unsaved. */
   async showUnsavedEntries(): Promise<void> {
     await this.branchUnsavedCount().click()
     await this.contentNavigator.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
   }
 
-  /** The content panel's All / Changed choice, by its label ("All", or "Changed" and its count). */
-  changedFilterOption(label: 'All' | 'Changed'): Locator {
+  /** The content panel's All / Unsaved / Changed choice, by its label and any count after it. */
+  entryFilterOption(label: 'All' | 'Unsaved' | 'Changed'): Locator {
     return this.contentNavigator.getByRole('radio', { name: new RegExp(`^${label}`) })
   }
 

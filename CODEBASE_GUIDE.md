@@ -118,6 +118,8 @@ Route handlers, one file per endpoint namespace:
 - `branch-status.ts` — `/branch-status`: status and submit (`SubmitBranchResponse`)
 - `branch-withdraw.ts` — `/branch-withdraw`: withdraw a PR
 - `branch-review.ts` — `/branch-review`: request changes
+- `branch-changes.ts` — `GET /:branch/changes`
+- `branch-entry-changes.ts` — `GET /:branch/changes/...entryPath`
 - `branch-merge.ts` — `/branch-merge`: merge and clean up
 - `content.ts` — `/content`: read and write; runs entry-link and adopter `validateEntry` validation on write
 - `entries.ts` — `/entries`: entry management; cursor-paginated listing
@@ -132,7 +134,7 @@ Route handlers, one file per endpoint namespace:
 - `admin.ts` — admin status (incl. sharp availability) and task-queue endpoints, and the single `ADMIN_ROUTES` export
 - `admin-branch-health.ts` — admin branch-health scan, purge and repair endpoints; see [ARCHITECTURE.md](ARCHITECTURE.md#admin-observability-and-recovery-api)
 - `github-sync.ts` — `syncSubmitPr` / `syncConvertToDraft` / `syncDeleteRemoteBranch`: direct GitHub call or queued task; see [GitHub Sync](#github-sync-direct-vs-async)
-- `pr-comment-sync.ts` — `syncPrComments`: re-renders a PR's editor-comment summary after a comment change, directly or as one queued task per branch
+- `pr-comment-sync.ts` — `syncPrComments`: re-renders a PR's comment and review blocks, directly or as one queued task per branch
 
 Support files:
 
@@ -437,7 +439,7 @@ array then alphabetical; with it, the comparator replaces that and runs after `e
 
 **Location**: `packages/canopycms/src/content-listing.ts`
 
-- `content-listing.ts` — `listEntries()`, `listCollectionEntries()`, `sortByOrder()`, `withoutUnavailableEntries()`
+- `content-listing.ts` — `listEntries()`, `listCollectionEntries()`, `sortByOrder()`, `withoutUnavailableEntries()`, `entryRefFromRepoPath()`
 
 `ListEntriesItem` carries `pathSegments`, `urlPath`, `slug`, `entryPath`, `entryId`, `collectionId`,
 `updatedAt`, `data` and an optional `schema`. `ListEntriesOptions` takes `extract`, `filter`,
@@ -519,6 +521,7 @@ Top-level components and helpers:
 - `raw-asset-base.ts` — `authenticatedAssetBase`, `readAssetBase`
 - `canopy-path.ts` — field-path spelling (`normalizeCanopyPath`) and `isPathFieldName`
 - `field-breadcrumb.ts` / `field-target.ts` — a field path's label breadcrumb; `findFieldTarget`, `focusFieldTarget`, `revealField`
+- `entry-diff.ts` — `computeEntryDiff`
 - `schema-label.ts` — `schemaLabel`: a field's, group's or template's label, else its humanised name
 - `undo-removal.ts` — `FieldRemoval`, `restoreRemoval`, `openThreadsWithin` — undo for a form Remove or Clear
 - `user-display.ts` — `SYSTEM_USER_LABEL`, `userIdLabel`
@@ -564,7 +567,7 @@ Manager hooks, in `editor/hooks/` — see
 - `useUserContext.tsx` / `useUserMetadata.ts` — current user (`EditorAuthGate` identity, else `whoami`); SWR user metadata, `seedUserProfiles`
 - `useReferenceResolution.ts` — preview value and `isLoading`, for `Editor.tsx`
 - `useEntryLinkResolution.ts` — resolves `entry:ID` patterns in preview data
-- `useBranchesData.ts` / `useEntriesData.ts` / `useCommentsData.ts` — the three SWR hooks; keys in the README
+- `useBranchesData.ts` / `useEntriesData.ts` / `useCommentsData.ts` / `useBranchChangesData.ts` — the SWR hooks; keys in the README
 - `index.ts` — only the nine hooks `Editor.tsx` and `media/MediaLibraryBody.tsx` import
 
 Field components, in `editor/fields/`:
@@ -598,7 +601,7 @@ Components, in `editor/components/`:
 - `UnsavedMark.tsx` — the unsaved dot
 - `EditorRail.tsx` — the rail's buttons and Settings menu
 - `EntryCreateModal.tsx` / `RenameEntryModal.tsx` / `ConfirmDeleteModal.tsx` — entry lifecycle dialogs
-- `BranchesDrawer.tsx` — Branches drawer
+- `BranchesDrawer.tsx` / `EntryChangesDrawer.tsx` — Branches, changes drawers
 - `StagedChangesDrawer.tsx` — unsaved-changes drawer
 - `UserBadge.tsx` — user avatar and name
 - `BranchAccessList.tsx` — a branch card's access list
@@ -687,7 +690,7 @@ All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 
 **Location**: `packages/canopycms/src/`
 
-- `git-manager.ts` — the `simple-git` wrapper: `cloneRepo` / `cloneWorkspace` (`CloneRepoOptions`), `resolveCloneRemoteUrl`, `setSparseCone`, `repoExistsAt`, `gitChildEnv`, `addAllExceptCanopyState()`, `listBaseFiles`, `detectBaseBranch`, `resolveWorkspaceBaseBranch`
+- `git-manager.ts` — the `simple-git` wrapper: `cloneRepo` / `cloneWorkspace` (`CloneRepoOptions`), `resolveCloneRemoteUrl`, `setSparseCone`, `repoExistsAt`, `gitChildEnv`, `addAllExceptCanopyState()`, `listBaseFiles`, `mergeBaseWithBase`, `diffNameStatusAgainst`, `detectBaseBranch`, `resolveWorkspaceBaseBranch`
 - `branch-registry.ts` — branch tracking and listing over a generation-token snapshot cache; quarantines a dir whose metadata will not load
 - `branch-metadata.ts` — `branch.json` persistence under layered concurrency; `baseBranch` immutable; `buildMergedBranchUpdate`, `buildInitialBranchMetadata`; `update` (a computed save), `recordEditor`, `markEditorsCommitted`, `recordBranchEditor`
 - `branch-metadata-file.ts` — schema-checked `branch.json` reads; a deliberate leaf module
@@ -703,7 +706,7 @@ All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 - `github-service.ts` — GitHub API integration: `createOrUpdatePullRequest`, `createCanopyOctokit`, `isRefAlreadyGoneError`, the rate-limit retry predicates
 - `submission-attribution.ts` — sanitized editor identity, `describeEditors`: `Edited-by:` / `Co-authored-by:` commit trailers and the PR body's marker-delimited section
 - `editor-url.ts` — the editor URL PR bodies link to, and its deep links
-- `pr-comments.ts` — the PR body's editor-comment summary, re-rendered from comments.json
+- `pr-comments.ts` — the PR body's comment and review blocks, re-rendered from disk
 
 Key types: `BranchContext` (branch state plus `branchRoot` / `baseRoot`), `BranchMetadata`,
 `BranchPaths`, `SyncStatus` (`synced`, `pending-sync`, `sync-failed`).
