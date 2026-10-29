@@ -1396,31 +1396,30 @@ writes the Lambda can already request through the task queue.
 
 The gateway writes only branches in its namespace (`branchNamespace`, `canopycms/prod/` by
 default), its settings branch and `legacyBranches`, never the base branch, GitHub's default
-branch or a `protectedBranches` match. It acts on a pull request only if its head is one of them
-in this repository, and reads its body only if the head is in the namespace. There it can push,
-force-push or delete with any commit in your repository, and open pull requests, which run your
-`push` and `pull_request` workflows. So:
+branch or a `protectedBranches` match. It acts only on pull requests from those heads in this
+repository, and reads a body only from a namespace head. There it can push any of the
+repository's commits, force-push, delete and open pull requests, which run your workflows. So:
 
-- keep secrets from workflows on those branches. `branches-ignore` filters a `push` by its
-  branch: list your namespace (`canopycms/prod/**`; GitHub's `*` stops at `/`) and each legacy
-  branch. For `pull_request` and `pull_request_target` it filters the base, so guard jobs using
-  secrets with `if: ${{ !startsWith(github.head_ref, 'canopycms/prod/') }}` plus the legacy
-  names, or give those workflows no secrets;
-- give workflows read-only `permissions:`, and keep deployment secrets in environments with
-  required reviewers;
-- never check out a pull request's head in `pull_request_target`;
-- use a fine-grained token or an App **without** the workflows permission, which is what stops a
-  push from adding or changing a workflow file.
+- keep secrets a workflow could leak in an environment, never in repository or organization
+  secrets, which reach every branch. Set its deployment branches to "Selected branches and tags",
+  naming only protected branches the gateway cannot write, such as `main`: GitHub matches these
+  against `GITHUB_REF`, so no run on a namespace or legacy branch, or a pull request's
+  `refs/pull/N/merge`, gets them;
+- `pull_request_target`, `workflow_run`, `issue_comment` and other events GitHub runs on the
+  default branch get that environment, so never check out, build or run pull request code or
+  artifacts in them;
+- give workflows read-only `permissions:`;
+- use a fine-grained token or an App **without** the workflows permission, so a push cannot add
+  or change a workflow file.
 
-**Optionally, GitHub rulesets**, which hold even against a compromised gateway: one on every branch
-but your namespace (`canopycms/prod/**`), settings branch (`canopycms-settings-prod`) and legacy
-branches, restricting creations, updates and deletions and blocking force pushes, bypassed by
-whoever else pushes there. On a shared repository, also exempt each other deployment's namespace
-and settings branch, or make its GitHub App a bypass actor. Protect the base branch, and any a
-cutover will make it, with one requiring a pull request. On a throwaway branch,
-confirm the credential cannot bypass them: a direct push and a force push must both be rejected.
-A repository admin's classic token bypasses classic branch protection unless "Do not allow
-bypassing the above settings" is on.
+**Optionally, GitHub rulesets**, which hold even against a compromised gateway. Give each
+deployment one on every branch but its namespace (`canopycms/prod/**/*`), settings branch
+(`canopycms-settings-prod`) and legacy branches, restricting creations, updates and deletions
+and blocking force pushes, bypassed by every _other_ deployment's GitHub App and whoever else
+pushes there. Rulesets add up, so each App writes only its own exemptions. Give each settings
+branch a ruleset blocking deletions and force pushes; the gateway only fast-forwards it. Protect
+the base branch, and any a cutover will make it, with one requiring a pull request. On a
+throwaway branch, confirm a direct push and a force push with the credential are both rejected.
 
 The worker's host, system git config and image stay trusted.
 
