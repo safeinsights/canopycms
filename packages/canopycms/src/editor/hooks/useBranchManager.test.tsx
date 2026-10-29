@@ -1039,7 +1039,7 @@ describe('useBranchManager', () => {
       expect(options.confirmProps).toEqual(
         expect.objectContaining({ 'data-testid': 'confirm-submit-branch' }),
       )
-      expect(body).toContain('Submit "feature" for review?')
+      expect(body).toContain('Submit “feature” for review?')
       expect(body).toContain('• Create a pull request for review')
       expect(body).not.toContain('Are you sure')
     })
@@ -1057,7 +1057,7 @@ describe('useBranchManager', () => {
       expect(options.labels).toEqual({ confirm: 'Submit anyway', cancel: 'Cancel' })
       expect(body).toContain("2 entries have unsaved changes that won't be submitted")
       expect(body).toContain('Unsaved changes in: "Home", "About".')
-      expect(body).toContain('Submit "feature" for review?')
+      expect(body).toContain('Submit “feature” for review?')
     })
 
     it('checks the open branch opened by its unsanitized name, showing busy meanwhile', async () => {
@@ -1177,8 +1177,8 @@ describe('useBranchManager', () => {
       expect(options.confirmProps).toEqual(
         expect.objectContaining({ 'data-testid': 'confirm-withdraw-branch' }),
       )
-      expect(body).toContain('Withdraw "feature" from review?')
-      expect(body).toContain('• Change the branch status back to "editing"')
+      expect(body).toContain('Withdraw “feature” from review?')
+      expect(body).toContain('• Change the branch status back to “editing”')
       expect(body).not.toContain('Are you sure')
     })
 
@@ -1193,7 +1193,7 @@ describe('useBranchManager', () => {
       const { options, body } = await lastDialog()
       expect(options.title).toBe('Delete branch')
       expect(options.labels).toEqual({ confirm: 'Delete branch', cancel: 'Cancel' })
-      expect(body).toContain('Delete "feature"?')
+      expect(body).toContain('Delete “feature”?')
       expect(body).toContain('This cannot be undone.')
       expect(body).not.toContain('Are you sure')
     })
@@ -2137,7 +2137,7 @@ describe('useBranchManager', () => {
         })
         const text = opened[0].children?.props.children ?? ''
         expect(text).not.toMatch(/pull request/i)
-        expect(text).toContain('• Change the branch status back to "editing"')
+        expect(text).toContain('• Change the branch status back to “editing”')
         act(() => opened[0].onClose?.())
       })
 
@@ -2742,11 +2742,11 @@ describe('useBranchManager', () => {
       const loadedSpring = () => loaded([mockBranches[0], spring])
 
       it.each([
-        ['submit', 'Submit "spring" for review?'],
-        ['withdraw', 'Withdraw "spring" from review?'],
+        ['submit', 'Submit “spring” for review?'],
+        ['withdraw', 'Withdraw “spring” from review?'],
         ['approve', 'Approve "spring"?'],
         ['request changes', 'Send "spring" back to its editor?'],
-        ['delete', 'Delete "spring"?'],
+        ['delete', 'Delete “spring”?'],
       ] as const)('is called by its short name in the %s dialog', async (action, sentence) => {
         const { result } = await loadedSpring()
         const handlers = {

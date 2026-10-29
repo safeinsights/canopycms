@@ -401,7 +401,7 @@ describe('the editor on a namespace branch named by its short name', () => {
 
     await waitFor(() =>
       expect(notifications.show).toHaveBeenCalledWith({
-        message: 'Branch "summer" created',
+        message: 'Branch “summer” created',
         color: 'green',
       }),
     )

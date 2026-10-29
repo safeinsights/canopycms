@@ -156,7 +156,7 @@ const showSubmitConfirmation = (
           </Alert>
         )}
         <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
-          {`Submit "${branchName}" for review?\n\nThis will:\n• Create a pull request for review\n• Change the branch status to "In review"\n• Notify reviewers of pending changes`}
+          {`Submit “${branchName}” for review?\n\nThis will:\n• Create a pull request for review\n• Change the branch status to “In review”\n• Notify reviewers of pending changes`}
         </Text>
       </Stack>
     ),
@@ -199,14 +199,14 @@ const showWithdrawConfirmation = (
 ) => {
   const bullets = [
     withdrawPullRequestBullet(pr),
-    'Change the branch status back to "editing"',
+    'Change the branch status back to “editing”',
     'Remove from review queue',
   ].filter((b): b is string => b !== undefined)
   openConfirm({
     title: EDITOR_ACTIONS.withdrawFromReview,
     children: (
       <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
-        {`Withdraw "${branchName}" from review?\n\nThis will:\n${bullets.map((b) => `• ${b}`).join('\n')}`}
+        {`Withdraw “${branchName}” from review?\n\nThis will:\n${bullets.map((b) => `• ${b}`).join('\n')}`}
       </Text>
     ),
     labels: { confirm: EDITOR_ACTIONS.withdrawFromReview, cancel: 'Cancel' },
@@ -292,7 +292,7 @@ const showDeleteConfirmation = (
     title: 'Delete branch',
     children: (
       <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
-        {`Delete "${branchName}"?\n\nThis will:\n${bullets.map((b) => `• ${b}`).join('\n')}\n\nThis cannot be undone.`}
+        {`Delete “${branchName}”?\n\nThis will:\n${bullets.map((b) => `• ${b}`).join('\n')}\n\nThis cannot be undone.`}
       </Text>
     ),
     labels: { confirm: 'Delete branch', cancel: 'Cancel' },

@@ -155,7 +155,7 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
         : typed.ok
           ? typed.shortName
           : branch.name
-      notifications.show({ message: `Branch "${createdLabel}" created`, color: 'green' })
+      notifications.show({ message: `Branch “${createdLabel}” created`, color: 'green' })
 
       // A listing may not hold it yet, so its own short name stands in for the lookup.
       performBranchSwitch(createdName, created?.shortName)
