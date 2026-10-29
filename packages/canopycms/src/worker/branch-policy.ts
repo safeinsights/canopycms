@@ -560,6 +560,8 @@ export class BranchPolicy {
  * GitHub's default as last read. A test holds the two equal.
  */
 export function publishesBranch(policy: BranchPolicyDescription, branch: string): boolean {
+  // No namespace is the description a gateway that failed to boot answers, and it pushes nothing.
+  if (policy.namespace === '') return false
   const settings =
     branch.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX) || branch === policy.settingsBranch
   const protectedMatch =

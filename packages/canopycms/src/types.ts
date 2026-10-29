@@ -204,10 +204,28 @@ export interface BaseSchemaHold {
   expired?: true
 }
 
-/** Branches the GitHub gateway will not publish, by ref: at most 50 `names`, of `count` in all. */
+/**
+ * Why listing an unpublishable branch in `legacyBranches` would not publish it.
+ * `blocks-namespace`: it is named after part of the namespace, so while it exists git holds no
+ * branch in the namespace. `unlistable`: `legacyBranches` refuses its name.
+ */
+export type UnpublishableBranchReason = 'blocks-namespace' | 'unlistable'
+
+/** A branch the GitHub gateway will not publish, by ref. */
+export interface UnpublishableBranch {
+  name: string
+  /** Absent when a `legacyBranches` entry or a `protectedBranches` change would publish it. */
+  reason?: UnpublishableBranchReason
+}
+
+/**
+ * Branches the GitHub gateway will not publish: at most 50 `branches`, of `count` in all, as of
+ * `at` (ISO).
+ */
 export interface UnpublishableBranchesReport {
-  names: string[]
+  branches: UnpublishableBranch[]
   count: number
+  at: string
 }
 
 /**
@@ -289,7 +307,8 @@ export interface WorkerStatusReport {
   gatewayProtectedBranches?: string[]
   /**
    * Editor branches the GitHub gateway will not publish, as of the last git sync that could ask
-   * it; absent when there are none (worker/unpublishable-branches.ts).
+   * it; absent when there are none (worker/unpublishable-branches.ts). Carried into a restarted
+   * worker's first snapshot.
    */
   unpublishableBranches?: UnpublishableBranchesReport
   /**

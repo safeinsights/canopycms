@@ -6,28 +6,44 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-import { BranchMetadataFileManager } from '../branch-metadata'
-import type { UnpublishableBranchesReport } from '../types'
+import { BranchMetadataCorruptError, BranchMetadataFileManager } from '../branch-metadata'
+import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
+import type {
+  UnpublishableBranch,
+  UnpublishableBranchReason,
+  UnpublishableBranchesReport,
+} from '../types'
 import { isNodeError } from '../utils/error'
-import { publishesBranch, type BranchPolicyDescription } from './branch-policy'
+import { legacyBranchProblem, publishesBranch, type BranchPolicyDescription } from './branch-policy'
 import type { WorkerContext } from './worker-context'
 
 /**
- * The most names a report lists; its `count` says how many there are.
+ * The most branches a report lists; its `count` says how many there are.
  * @internal Exported for tests.
  */
 export const MAX_UNPUBLISHABLE_LISTED = 50
 
 /**
+ * Why a `legacyBranches` entry would not publish `name` in `namespace`, or undefined when one
+ * would. The ancestor test is the `BranchPolicy` constructor's and `namespaceBlocker`'s.
+ */
+function reasonFor(name: string, namespace: string): UnpublishableBranchReason | undefined {
+  if (namespace.startsWith(`${name}/`)) return 'blocks-namespace'
+  if (legacyBranchProblem(name) !== null) return 'unlistable'
+  return undefined
+}
+
+/**
  * The editor branches the gateway that described its policy as `policy` would refuse to push.
  * Each is the `name` its branch.json records, the git ref: the directory holding it is only the
- * ref sanitized, and `cms/prod/x` and a legacy `cms-prod-x` share one. Throws when the branches
- * directory cannot be read, so the caller keeps the last report.
+ * ref sanitized, and `cms/prod/x` and a legacy `cms-prod-x` share one. A directory with no
+ * branch.json, or a corrupt one, is no branch. Throws when the branches directory or a branch.json
+ * cannot be read, so the caller keeps the last report.
  */
 export async function findUnpublishableBranches(
   ctx: Pick<WorkerContext, 'contentBranchesPath' | 'sanitizedBaseBranch'>,
   policy: BranchPolicyDescription,
-): Promise<UnpublishableBranchesReport> {
+): Promise<Omit<UnpublishableBranchesReport, 'at'>> {
   let dirs: string[]
   try {
     dirs = await fs.readdir(ctx.contentBranchesPath)
@@ -35,16 +51,74 @@ export async function findUnpublishableBranches(
     if (!isNodeError(err) || err.code !== 'ENOENT') throw err
     dirs = []
   }
-  const names: string[] = []
+  const branches: UnpublishableBranch[] = []
   for (const dir of dirs.sort()) {
-    // The base branch is protected and never published; structural entries are not branches.
+    // The base branch is protected and never published; structural entries, and the `.trash-*`
+    // directories purged branches wait in, are not branches.
     if (dir.startsWith('.') || dir === 'branches.json' || dir === ctx.sanitizedBaseBranch) continue
-    const meta = await BranchMetadataFileManager.loadOnly(
-      path.join(ctx.contentBranchesPath, dir),
-    ).catch(() => null)
+    let meta: Awaited<ReturnType<typeof BranchMetadataFileManager.loadOnly>>
+    try {
+      meta = await BranchMetadataFileManager.loadOnly(path.join(ctx.contentBranchesPath, dir))
+    } catch (err) {
+      // Corrupt metadata is no branch, and a directory removed since the listing holds none.
+      const notABranch =
+        err instanceof BranchMetadataCorruptError || (isNodeError(err) && err.code === 'ENOENT')
+      if (!notABranch) throw err
+      meta = null
+    }
     const branch = meta?.branch
     if (!branch || branch.status === 'archived') continue
-    if (!publishesBranch(policy, branch.name)) names.push(branch.name)
+    if (publishesBranch(policy, branch.name)) continue
+    const reason = reasonFor(branch.name, policy.namespace)
+    branches.push(reason ? { name: branch.name, reason } : { name: branch.name })
   }
-  return { names: names.slice(0, MAX_UNPUBLISHABLE_LISTED), count: names.length }
+  return { branches: branches.slice(0, MAX_UNPUBLISHABLE_LISTED), count: branches.length }
+}
+
+const REASONS = new Set<string>([
+  'blocks-namespace',
+  'unlistable',
+] satisfies UnpublishableBranchReason[])
+
+function isUnpublishableBranchesReport(value: unknown): value is UnpublishableBranchesReport {
+  if (typeof value !== 'object' || value === null) return false
+  if (!('branches' in value) || !('count' in value) || !('at' in value)) return false
+  const { branches, count, at } = value
+  return (
+    typeof count === 'number' &&
+    typeof at === 'string' &&
+    Array.isArray(branches) &&
+    branches.length <= MAX_UNPUBLISHABLE_LISTED &&
+    branches.every(
+      (entry: unknown) =>
+        typeof entry === 'object' &&
+        entry !== null &&
+        'name' in entry &&
+        typeof entry.name === 'string' &&
+        (!('reason' in entry) || (typeof entry.reason === 'string' && REASONS.has(entry.reason))),
+    )
+  )
+}
+
+/**
+ * The report in the status file a previous worker process left, so a restarted worker shows it
+ * until its first sync can ask the gateway. Tolerant: an unreadable or malformed file carries
+ * nothing.
+ */
+export async function readCarriedUnpublishableBranches(
+  taskDir: string,
+): Promise<UnpublishableBranchesReport | undefined> {
+  try {
+    const parsed: unknown = JSON.parse(
+      await fs.readFile(path.join(taskDir, WORKER_STATUS_FILE), 'utf-8'),
+    )
+    if (typeof parsed !== 'object' || parsed === null || !('unpublishableBranches' in parsed)) {
+      return undefined
+    }
+    return isUnpublishableBranchesReport(parsed.unpublishableBranches)
+      ? parsed.unpublishableBranches
+      : undefined
+  } catch {
+    return undefined
+  }
 }

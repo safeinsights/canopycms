@@ -31,6 +31,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { simpleGit, type SimpleGit } from 'simple-git'
 
 import { getBranchMetadataFileManager } from '../branch-metadata'
+import { BRANCH_META_DIR, BRANCH_META_FILE } from '../branch-metadata-file'
 import { enqueueTask } from '../task-queue/cms-task-queue'
 import { mockConsole, openBareRepo, useLocalGitHubGateway } from '../test-utils'
 import { branchProvisioningLockName, tryAcquireProvisioningLock } from '../utils/provisioning-lock'
@@ -296,11 +297,15 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
       await giveWorkspace('canopycms-prod-fresh', 'canopycms/prod/fresh')
 
       const worker = makeWorker()
+      const before = Date.now()
       await worker.syncGit()
-      expect((await readStatus()).unpublishableBranches).toEqual({
-        names: ['old-unprefixed'],
+      const { unpublishableBranches } = await readStatus()
+      expect(unpublishableBranches).toEqual({
+        branches: [{ name: 'old-unprefixed' }],
         count: 1,
+        at: expect.any(String),
       })
+      expect(Date.parse(unpublishableBranches?.at ?? '')).toBeGreaterThanOrEqual(before - 1000)
 
       await fs.rm(path.join(workspacePath, 'content-branches', 'old-unprefixed'), {
         recursive: true,
@@ -320,10 +325,120 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
       })
       await worker.syncGit()
 
-      expect((await readStatus()).unpublishableBranches).toEqual({
-        names: ['old-unprefixed'],
-        count: 1,
+      expect((await readStatus()).unpublishableBranches?.branches).toEqual([
+        { name: 'old-unprefixed' },
+      ])
+    })
+
+    /** A restarted worker's first snapshot, stopping its start() right after writing it. */
+    const firstSnapshot = async () => {
+      const restarted = makeWorker()
+      const internals = restarted as unknown as {
+        ensureRemoteGit(): Promise<void>
+        ensureStatusReport(): WorkerStatusReport
+      }
+      internals.ensureRemoteGit = async () => {
+        throw new Error('stop after the start snapshot')
+      }
+      await expect(restarted.start()).rejects.toThrow(/stop after the start snapshot/)
+      return internals.ensureStatusReport()
+    }
+
+    it("carries the report into a restarted worker's first snapshot", async () => {
+      await giveWorkspace('old-unprefixed')
+      await makeWorker().syncGit()
+      const reported = (await readStatus()).unpublishableBranches
+
+      expect(reported?.count).toBe(1)
+      expect((await firstSnapshot()).unpublishableBranches).toEqual(reported)
+    })
+
+    it('carries no report the file holds in another shape', async () => {
+      await fs.mkdir(path.dirname(statusPath()), { recursive: true })
+      await fs.writeFile(
+        statusPath(),
+        JSON.stringify({
+          version: 1,
+          startedAt: '2026-10-29T08:00:00.000Z',
+          updatedAt: '2026-10-29T09:00:00.000Z',
+          unpublishableBranches: { names: ['old-unprefixed'], count: 1 },
+        }),
+      )
+
+      expect((await firstSnapshot()).unpublishableBranches).toBeUndefined()
+    })
+
+    it('leaves the last report standing while the gateway answers from a failed boot', async () => {
+      await giveWorkspace('old-unprefixed')
+      const worker = makeWorker()
+      await worker.syncGit()
+      const reported = (await readStatus()).unpublishableBranches
+
+      vi.spyOn(gateway, 'health').mockResolvedValue({
+        ready: false,
+        fatalError: 'the cause',
+        preflight: 'pending',
+        clerkConfigured: false,
+        branchPolicy: {
+          configured: [],
+          githubDefault: null,
+          namespace: '',
+          legacy: [],
+          settingsBranch: null,
+        },
       })
+      await fs.rm(path.join(workspacePath, 'content-branches', 'old-unprefixed'), {
+        recursive: true,
+      })
+      await worker.syncGit()
+
+      expect(reported?.count).toBe(1)
+      const status = await readStatus()
+      expect(status.unpublishableBranches).toEqual(reported)
+      expect(status.gatewayBranchNamespace).toBe('canopycms/prod/')
+    })
+
+    it('leaves the last report standing while the gateway reports a fatal error', async () => {
+      await giveWorkspace('old-unprefixed')
+      const worker = makeWorker()
+      await worker.syncGit()
+      const reported = (await readStatus()).unpublishableBranches
+
+      const health = await gateway.health()
+      vi.spyOn(gateway, 'health').mockResolvedValue({ ...health, fatalError: 'the cause' })
+      await fs.rm(path.join(workspacePath, 'content-branches', 'old-unprefixed'), {
+        recursive: true,
+      })
+      await worker.syncGit()
+
+      expect(reported?.count).toBe(1)
+      expect((await readStatus()).unpublishableBranches).toEqual(reported)
+    })
+
+    it('leaves the last report standing while a branch.json cannot be read', async () => {
+      await giveWorkspace('old-unprefixed')
+      const worker = makeWorker()
+      await worker.syncGit()
+      const reported = (await readStatus()).unpublishableBranches
+
+      // branch.json a directory: reading it fails with EISDIR, which is neither missing nor corrupt.
+      const unreadable = path.join(workspacePath, 'content-branches', 'unreadable')
+      await fs.mkdir(path.join(unreadable, BRANCH_META_DIR, BRANCH_META_FILE), { recursive: true })
+      await fs.rm(path.join(workspacePath, 'content-branches', 'old-unprefixed'), {
+        recursive: true,
+      })
+      const consoleSpy = mockConsole()
+      await worker.syncGit()
+
+      expect(reported?.count).toBe(1)
+      expect((await readStatus()).unpublishableBranches).toEqual(reported)
+      expect(
+        consoleSpy
+          .all()
+          .warn.some((line) =>
+            line.includes('Could not list the branches the gateway will not publish'),
+          ),
+      ).toBe(true)
     })
   })
 

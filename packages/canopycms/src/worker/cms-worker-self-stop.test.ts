@@ -294,7 +294,13 @@ describe('recordWorkerStartupFailure', () => {
     editorRecordedAt: '2026-10-09T08:00:00.000Z',
   }
 
-  it('records a redacted startup failure, carrying the previous shutdown and schema hold', async () => {
+  const unpublishableBranches = {
+    branches: [{ name: 'old-unprefixed' }, { name: 'canopycms', reason: 'blocks-namespace' }],
+    count: 2,
+    at: '2026-10-09T09:25:00.000Z',
+  }
+
+  it('records a redacted startup failure, carrying the previous shutdown, schema hold and unpublishable branches', async () => {
     await fs.mkdir(taskDir, { recursive: true })
     const lastShutdown = {
       reason: 'SIGTERM',
@@ -311,6 +317,7 @@ describe('recordWorkerStartupFailure', () => {
         lastGitSyncAt: '2026-10-09T09:25:00.000Z',
         lastShutdown,
         baseHold,
+        unpublishableBranches,
       }),
     )
 
@@ -328,6 +335,7 @@ describe('recordWorkerStartupFailure', () => {
     expect(status.lastFatalError?.message).not.toContain('ghp_abcdefghijklmnop')
     expect(status.lastShutdown).toEqual(lastShutdown)
     expect(status.baseHold).toEqual(baseHold)
+    expect(status.unpublishableBranches).toEqual(unpublishableBranches)
     expect(status.lastGitSyncAt).toBeUndefined()
     // The API's not-ready answer reads it as the latest attempt's failure.
     expect((await readWorkerStartupFailure(taskDir))?.current).toBe(true)

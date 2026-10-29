@@ -47,7 +47,12 @@ import type { DuplicateContentId } from '../../content-id-index'
 import type { OperatingMode } from '../../operating-mode'
 import type { Task, CorruptTaskFile } from '../../task-queue'
 import type { BranchHealthEntry, DuplicateIdScan } from '../../branch-health'
-import type { BaseRefreshReport, BaseSchemaHold, UnpublishableBranchesReport } from '../../types'
+import type {
+  BaseRefreshReport,
+  BaseSchemaHold,
+  UnpublishableBranch,
+  UnpublishableBranchesReport,
+} from '../../types'
 import { escapeForLog } from '../../utils/escape-text'
 import { branchStatusPresentation } from '../branch-status'
 
@@ -283,10 +288,20 @@ function BranchNamespaceAlert({
   )
 }
 
+/** Branch refs from metadata the CMS Lambda can write, so each is shown escaped. */
+function BranchRefs({ branches }: { branches: UnpublishableBranch[] }) {
+  return (
+    <Group gap={4}>
+      {branches.map((branch, i) => (
+        <Code key={i}>{escapeForLog(branch.name)}</Code>
+      ))}
+    </Group>
+  )
+}
+
 /**
  * Editor branches the GitHub gateway will not publish, by ref, which is what a developer lists
- * (worker/unpublishable-branches.ts). Names come from branch metadata the CMS Lambda can write, so
- * each is shown escaped.
+ * (worker/unpublishable-branches.ts), grouped by what would publish each.
  */
 function UnpublishableBranchesAlert({
   report,
@@ -295,7 +310,10 @@ function UnpublishableBranchesAlert({
   report: UnpublishableBranchesReport
   namespace: string | undefined
 }) {
-  const unlisted = report.count - report.names.length
+  const unlisted = report.count - report.branches.length
+  const listable = report.branches.filter((b) => b.reason === undefined)
+  const blocking = report.branches.filter((b) => b.reason === 'blocks-namespace')
+  const unlistable = report.branches.filter((b) => b.reason === 'unlistable')
   return (
     <Alert
       color="orange"
@@ -313,20 +331,45 @@ function UnpublishableBranchesAlert({
               <Code>{escapeForLog(namespace)}</Code>
             </>
           )}{' '}
-          and legacyBranches does not list it, or an entry in protectedBranches matches it.
+          and legacyBranches does not list it, or it is protected: the base branch, GitHub&apos;s
+          default branch, or a match for an entry in protectedBranches.
         </Text>
-        <Text size="sm">
-          A developer lists each branch from outside the namespace in legacyBranches
-          (CANOPYCMS_LEGACY_BRANCHES on the GitHub gateway). Otherwise, an editor re-enters its
-          changes by hand in a new branch, which is created inside the namespace. A protected branch
-          stays unpublishable unless its protectedBranches entry changes.
+        {listable.length > 0 && (
+          <>
+            <Text size="sm" data-testid="unpublishable-listable">
+              A developer lists each branch from outside the namespace in legacyBranches
+              (CANOPYCMS_LEGACY_BRANCHES on the GitHub gateway). Otherwise, an editor re-enters its
+              changes by hand in a new branch, which is created inside the namespace. A protected
+              branch stays unpublishable while it is protected.
+            </Text>
+            <BranchRefs branches={listable} />
+          </>
+        )}
+        {blocking.length > 0 && (
+          <>
+            <Text size="sm" data-testid="unpublishable-blocking">
+              Rename or delete each of these branches on GitHub: while one exists, no branch in the
+              namespace can be published.
+            </Text>
+            <BranchRefs branches={blocking} />
+          </>
+        )}
+        {unlistable.length > 0 && (
+          <>
+            <Text size="sm" data-testid="unpublishable-unlistable">
+              legacyBranches cannot hold these names, so an editor re-enters each branch&apos;s
+              changes by hand in a new branch, which is created inside the namespace.
+            </Text>
+            <BranchRefs branches={unlistable} />
+          </>
+        )}
+        {unlisted > 0 && <Text size="sm">And {unlisted} more.</Text>}
+        <Text size="xs" c="dimmed">
+          As of{' '}
+          <TooltipDetail detail={absoluteTime(report.at)}>
+            {formatRelativeTime(report.at)}
+          </TooltipDetail>
         </Text>
-        <Group gap={4}>
-          {report.names.map((name) => (
-            <Code key={name}>{escapeForLog(name)}</Code>
-          ))}
-          {unlisted > 0 && <Text size="sm">and {unlisted} more</Text>}
-        </Group>
       </Stack>
     </Alert>
   )
@@ -1105,6 +1148,12 @@ function DuplicateRepairDetails({
       </Text>
     </Stack>
   )
+}
+
+/** The absolute time a relative one's tooltip shows, or `iso` when it does not parse. */
+const absoluteTime = (iso: string): string => {
+  const date = new Date(iso)
+  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString()
 }
 
 /** "2d ago, 1/1/2026, 9:00:00 AM": inside a tooltip, so the absolute date sits beside it. */

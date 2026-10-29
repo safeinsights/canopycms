@@ -12,7 +12,12 @@ import type { AdminStatusData, AdminTasksData } from '../../api/admin'
 import type { Task } from '../../task-queue'
 import type { BranchHealthEntry, DuplicateIdScan } from '../../branch-health'
 import type { BranchHealthData } from '../../api/admin-branch-health'
-import type { BaseRefreshReport, BaseSchemaHold, WorkerStatusReport } from '../../types'
+import type {
+  BaseRefreshReport,
+  BaseSchemaHold,
+  UnpublishableBranch,
+  WorkerStatusReport,
+} from '../../types'
 import { unsafeAsContentId, unsafeAsPhysicalPath } from '../../paths/test-utils'
 import { formatRelativeTime } from '../relative-time'
 
@@ -745,14 +750,20 @@ describe('SystemHealthPanel', () => {
   })
 
   describe('Overview tab: unpublishable branches', () => {
+    const twoHoursAgo = () => new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
     const statusWithUnpublishable = (
-      names: string[],
+      names: (string | UnpublishableBranch)[],
       count = names.length,
       namespace: string | null = 'canopycms/prod/',
+      at = twoHoursAgo(),
     ): AdminStatusData => {
       const status = makeStatusWithSync()
       if (!status.workerStatus) throw new Error('expected a worker status')
-      status.workerStatus.unpublishableBranches = { names, count }
+      status.workerStatus.unpublishableBranches = {
+        branches: names.map((name) => (typeof name === 'string' ? { name } : name)),
+        count,
+        at,
+      }
       if (namespace === null) delete status.workerStatus.gatewayBranchNamespace
       else status.workerStatus.gatewayBranchNamespace = namespace
       return status
@@ -769,12 +780,69 @@ describe('SystemHealthPanel', () => {
       expect(alert.textContent).toContain('2 branches cannot be published')
       expect(alert.textContent).toContain('outside the branch namespace canopycms/prod/')
       expect(alert.textContent).toContain('legacyBranches does not list it')
+      expect(alert.textContent).toContain(
+        "the base branch, GitHub's default branch, or a match for an entry in protectedBranches",
+      )
       expect(alert.textContent).toContain('CANOPYCMS_LEGACY_BRANCHES on the GitHub gateway')
       expect(alert.textContent).toContain('new branch, which is created inside the namespace')
-      expect(alert.textContent).toContain('protectedBranches')
       expect(alert.textContent).toContain('spring')
       expect(alert.textContent).toContain('cms/old/fix-typos')
       expect(alert.textContent).not.toContain('more')
+      expect(screen.queryByTestId('unpublishable-blocking')).toBeNull()
+      expect(screen.queryByTestId('unpublishable-unlistable')).toBeNull()
+    })
+
+    it('says when the report was made, relative, with the absolute time for a tooltip', async () => {
+      const at = twoHoursAgo()
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(statusWithUnpublishable(['spring'], 1, 'canopycms/prod/', at)),
+      )
+
+      renderPanel()
+
+      const alert = await screen.findByTestId('unpublishable-branches-alert')
+      expect(alert.textContent).toContain('As of 2h ago')
+      expect(alert.textContent).toContain(new Date(at).toLocaleString())
+    })
+
+    it('tells a developer to rename a branch the namespace sits under, which blocks it all', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(
+          statusWithUnpublishable(['spring', { name: 'canopycms<b>', reason: 'blocks-namespace' }]),
+        ),
+      )
+
+      renderPanel()
+
+      const alert = await screen.findByTestId('unpublishable-branches-alert')
+      const blocking = await screen.findByTestId('unpublishable-blocking')
+      expect(blocking.textContent).toContain(
+        'Rename or delete each of these branches on GitHub: while one exists, no branch in the namespace can be published.',
+      )
+      expect(blocking.nextElementSibling?.textContent).toBe('canopycms<b>')
+      expect(alert.querySelector('b')).toBeNull()
+      // The plain remedy still covers the other branch, and only it.
+      expect(screen.getByTestId('unpublishable-listable').nextElementSibling?.textContent).toBe(
+        'spring',
+      )
+      expect(screen.queryByTestId('unpublishable-unlistable')).toBeNull()
+    })
+
+    it('tells an editor to re-enter the changes of a branch legacyBranches cannot list', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(statusWithUnpublishable([{ name: 'a,b\u202e', reason: 'unlistable' }])),
+      )
+
+      renderPanel()
+
+      const alert = await screen.findByTestId('unpublishable-branches-alert')
+      const unlistable = await screen.findByTestId('unpublishable-unlistable')
+      expect(unlistable.textContent).toContain('legacyBranches cannot hold these names')
+      expect(unlistable.textContent).toContain('re-enters each branch')
+      expect(unlistable.nextElementSibling?.textContent).toBe('a,b\\u{202e}')
+      // No branch is one a legacyBranches entry would publish.
+      expect(alert.textContent).not.toContain('CANOPYCMS_LEGACY_BRANCHES')
+      expect(screen.queryByTestId('unpublishable-blocking')).toBeNull()
     })
 
     it('still says why when the gateway has not named its namespace', async () => {
@@ -798,7 +866,7 @@ describe('SystemHealthPanel', () => {
 
       const alert = await screen.findByTestId('unpublishable-branches-alert')
       expect(alert.textContent).toContain('51 branches cannot be published')
-      expect(alert.textContent).toContain('and 50 more')
+      expect(alert.textContent).toContain('And 50 more.')
     })
 
     it('shows a hostile branch name or namespace escaped, never as markup or hidden characters', async () => {

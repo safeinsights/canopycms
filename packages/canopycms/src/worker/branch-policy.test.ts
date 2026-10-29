@@ -711,4 +711,15 @@ describe('publishesBranch', () => {
       }
     }
   })
+
+  it('publishes nothing for the description a gateway that failed to boot answers', () => {
+    const failedBoot = {
+      configured: [],
+      githubDefault: null,
+      namespace: '',
+      legacy: [],
+      settingsBranch: null,
+    }
+    for (const name of names) expect(publishesBranch(failedBoot, name), name).toBe(false)
+  })
 })
