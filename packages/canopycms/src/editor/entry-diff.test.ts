@@ -288,7 +288,16 @@ describe('computeEntryDiff', () => {
       text: { mode: 'words' },
     })
     const shown = byPath['Published at'].after
-    expect(shown?.kind === 'date' && shown.text).toMatch(/2026/)
+    expect(shown?.kind === 'date' && shown.text).toBe(
+      new Date('2026-02-03T10:00:00.000Z').toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZoneName: 'short',
+      }),
+    )
     expect(byPath['Status']).toMatchObject({
       before: { kind: 'select', label: 'Draft copy' },
       after: { kind: 'select', label: 'Ready to go' },
