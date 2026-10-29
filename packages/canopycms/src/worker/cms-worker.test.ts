@@ -1041,6 +1041,63 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
       expect(consoleSpy).toHaveWarned('its workspace has no branch.json')
     })
   })
+
+  describe("on a workspace whose branch.json is another branch's that shares its key", () => {
+    const branchDir = () => path.join(contentBranchesPath, 'canopycms-prod-feature-x')
+    const branchJson = () => path.join(branchDir(), '.canopy-meta', 'branch.json')
+    const runTask = async (create: (octokit: PrOctokitStub) => void) => {
+      await fs.mkdir(path.join(branchDir(), '.git'), { recursive: true })
+      // Submitted with this task's submittedAt and no PR, so only its name keeps a failure from
+      // unlocking it.
+      await getBranchMetadataFileManager(branchDir(), contentBranchesPath).save({
+        branch: {
+          name: 'canopycms-prod-feature-x',
+          status: 'submitted',
+          submittedAt: '2026-03-01T00:00:00.000Z',
+          createdBy: 'user-1',
+        },
+      })
+      const before = await fs.readFile(branchJson(), 'utf-8')
+      const { worker, octokit } = makePrWorker()
+      octokit.pulls.list.mockResolvedValue({ data: [] })
+      create(octokit)
+      const id = await enqueueTask(taskDir, {
+        action: 'push-and-create-or-update-pr',
+        payload: {
+          branch: 'canopycms/prod/feature-x',
+          title: 'Submit feature-x',
+          body: '',
+          baseBranch: 'main',
+          submittedAt: '2026-03-01T00:00:00.000Z',
+        },
+      })
+      await worker.processTaskQueue()
+      return { task: await getTask(taskDir, id), before }
+    }
+
+    it('records no success outcome on it', async () => {
+      const { task, before } = await runTask((octokit) =>
+        octokit.pulls.create.mockResolvedValue({
+          data: { number: 9, html_url: 'https://github.com/test-owner/test-repo/pull/9' },
+        }),
+      )
+
+      expect(task?.status).toBe('completed')
+      expect(await fs.readFile(branchJson(), 'utf-8')).toBe(before)
+      expect(consoleSpy).toHaveWarned('its workspace has no branch.json for it')
+    })
+
+    it('records no failure outcome on it, and unlocks nothing', async () => {
+      const error = await noCommitsBetweenError('main', 'canopycms/prod/feature-x')
+      const { task, before } = await runTask((octokit) =>
+        octokit.pulls.create.mockRejectedValue(error),
+      )
+
+      expect(task?.status).toBe('failed')
+      expect(await fs.readFile(branchJson(), 'utf-8')).toBe(before)
+      expect(consoleSpy).toHaveWarned('its workspace has no branch.json for it')
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -1209,6 +1266,24 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     expect(await fixtureHasBranch('canopycms/prod/feature-clean')).toBe(true)
     await expect(fs.stat(path.join(branchPath, '.canopy-meta', 'branch.json'))).rejects.toThrow()
     expect(consoleSpy).toHaveWarned('its workspace has no branch.json')
+  })
+
+  it("records no push on a workspace whose branch.json is another branch's that shares its key", async () => {
+    await seedBranchInRemoteGit('canopycms/prod/feature-clean', 'hello')
+    const branchPath = path.join(contentBranchesPath, 'canopycms-prod-feature-clean')
+    await fs.mkdir(path.join(branchPath, '.git'), { recursive: true })
+    await getBranchMetadataFileManager(branchPath, contentBranchesPath).save({
+      branch: { name: 'canopycms-prod-feature-clean' },
+    })
+
+    await (makePushWorker() as unknown as PushBranchInternals).pushBranchToGitHub(
+      'canopycms/prod/feature-clean',
+    )
+
+    expect(await fixtureHasBranch('canopycms/prod/feature-clean')).toBe(true)
+    const meta = await BranchMetadataFileManager.loadOnly(branchPath)
+    expect(meta?.branch.pushedToGitHubAt).toBeUndefined()
+    expect(consoleSpy).toHaveWarned('its workspace has no branch.json for it')
   })
 
   it("throws PermanentTaskError when remote.git holds an ancestor of GitHub's tip, sending no bundle", async () => {

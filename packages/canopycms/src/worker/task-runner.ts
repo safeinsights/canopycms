@@ -576,15 +576,19 @@ function metadataBranchOf(task: Task): string | null {
   return typeof task.payload.branch === 'string' ? task.payload.branch : null
 }
 
-/** Logs an outcome write skipped because `branch`'s workspace has no branch.json. */
+/**
+ * Logs an outcome write skipped because `branch`'s workspace has no branch.json whose `name` is
+ * `branch`: none at all, or another branch's that shares its key.
+ */
 function noMetadataToRecord(branch: string, what: string): void {
-  workerLogWarn(`Not recording the ${what} for ${branch}: its workspace has no branch.json`)
+  workerLogWarn(`Not recording the ${what} for ${branch}: its workspace has no branch.json for it`)
 }
 
 /**
  * Update branch metadata after successful task completion. Like every outcome write here, it
- * updates an existing branch.json only: a workspace without one is not a branch whose name
- * could be recorded (`noMetadataToRecord`).
+ * updates only a branch.json whose `name` is the task's ref: a workspace without one is not a
+ * branch whose name could be recorded, and one naming another ref is that branch's
+ * (`noMetadataToRecord`).
  */
 export async function updateBranchMetadata(
   ctx: TaskRunnerContext,
@@ -604,7 +608,7 @@ export async function updateBranchMetadata(
   try {
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
     const saved = await meta.update((existing) => {
-      if (!existing) return null
+      if (existing?.branch.name !== branch) return null
       const updates: Record<string, unknown> = {
         syncStatus: 'synced',
         // save()'s merge only overwrites keys present in this update, so a prior
@@ -681,12 +685,16 @@ async function updateBranchMetadataOnFailure(
           },
         },
         (existing) =>
-          existing?.branch.status === 'submitted' &&
+          existing?.branch.name === branch &&
+          existing.branch.status === 'submitted' &&
           existing.branch.pullRequestNumber === undefined &&
           existing.branch.submittedAt === submittedAt,
       )) !== null
     if (!unlocked) {
-      const saved = await meta.saveIf({ branch: failed }, (existing) => existing !== null)
+      const saved = await meta.saveIf(
+        { branch: failed },
+        (existing) => existing?.branch.name === branch,
+      )
       if (saved === null) noMetadataToRecord(branch, `${task.action} failure`)
     }
   } catch (err) {
@@ -862,7 +870,7 @@ async function recordPushedToGitHub(
   try {
     const saved = await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).saveIf(
       { branch: { pushedToGitHubAt: new Date().toISOString() } },
-      (existing) => existing !== null,
+      (existing) => existing?.branch.name === branch,
     )
     if (saved === null) noMetadataToRecord(branch, 'GitHub push')
   } catch (err) {
