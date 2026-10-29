@@ -94,7 +94,12 @@ const changesNote = {
 
 const OUTSIDE = 'feature/x'
 
-const stubApi = (options: { status: string; userId: string; holdSaves?: Promise<void> }) => {
+const stubApi = (options: {
+  status: string
+  userId: string
+  holdSaves?: Promise<void>
+  holdListing?: Promise<void>
+}) => {
   let changesRequested = false
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = urlOf(input)
@@ -111,6 +116,7 @@ const stubApi = (options: { status: string; userId: string; holdSaves?: Promise<
       })
     }
     if (url.endsWith('/api/canopycms/branches')) {
+      await options.holdListing
       return okJson({
         branches: [
           listed('main', 'editing'),
@@ -290,6 +296,42 @@ describe('the editor on a namespace branch named by its short name', () => {
         '/posts/hello?branch=spring',
       ),
     )
+  })
+
+  it('keeps the preview frame on the short name across a refetch of entries that came before the listing', async () => {
+    let release!: () => void
+    const holdListing = new Promise<void>((resolve) => (release = resolve))
+    window.history.replaceState({}, '', `/?branch=${encodeURIComponent(SPRING)}`)
+    const fetchMock = stubApi({ status: 'editing', userId: 'author-1', holdListing })
+    renderEditor(SPRING)
+    expect((await titleBox()).value).toBe('hello title')
+    await waitFor(() =>
+      expect(document.querySelector('iframe')?.getAttribute('src')).toBe(
+        `/posts/hello?branch=${encodeURIComponent(SPRING)}`,
+      ),
+    )
+
+    await act(async () => release())
+    await waitFor(() =>
+      expect(document.querySelector('iframe')?.getAttribute('src')).toBe(
+        '/posts/hello?branch=spring',
+      ),
+    )
+    const frame = document.querySelector('iframe')
+    const entriesReads = () =>
+      fetchMock.mock.calls.filter(([input]) => urlOf(input).includes('/entries')).length
+    const readsBefore = entriesReads()
+    fireEvent.change(await titleBox(), { target: { value: 'Edited' } })
+    const save = await screen.findByTestId('save-button')
+    await waitFor(() => expect(save.getAttribute('aria-disabled')).toBeNull())
+    fireEvent.click(save)
+    await waitFor(() => expect(entriesReads()).toBeGreaterThan(readsBefore))
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+
+    expect(document.querySelector('iframe')).toBe(frame)
+    expect(frame?.getAttribute('src')).toBe('/posts/hello?branch=spring')
   })
 
   it('sends its requests under the short name, with no %2F in a path', async () => {

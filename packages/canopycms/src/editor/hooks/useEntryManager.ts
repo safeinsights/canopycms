@@ -6,7 +6,12 @@ import type { ApiErrorCode } from '../../api/types'
 import type { EditorEntry, EditorCollection } from '../Editor'
 import type { LogicalPath } from '../../paths/types'
 import type { FormValue } from '../FormRenderer'
-import { buildWritePayload, normalizeContentPayload, resolveHomeEntry } from '../editor-utils'
+import {
+  buildWritePayload,
+  normalizeContentPayload,
+  resolveHomeEntry,
+  withPreviewBranch,
+} from '../editor-utils'
 import { isDataOnlyFormat } from '../../utils/format'
 import { withTitleAtPath } from '../../utils/title-field'
 import { getErrorMessage } from '../../utils/error'
@@ -407,10 +412,17 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     return map
   }, [collectionsState])
 
-  const currentEntry = useMemo(
-    () => entriesState.find((e) => e.path === selectedPath),
-    [entriesState, selectedPath],
-  )
+  // The entries keep the URL form of their fetch's time, which the listing can change since; the
+  // frame keys on `src`, so its branch is the current form.
+  const previewBranch = urlBranchOf(options.branchName)
+  const currentEntry = useMemo(() => {
+    const entry = entriesState.find((e) => e.path === selectedPath)
+    const previewSrc =
+      entry?.previewSrc && previewBranch
+        ? withPreviewBranch(entry.previewSrc, previewBranch)
+        : entry?.previewSrc
+    return entry && previewSrc !== entry.previewSrc ? { ...entry, previewSrc } : entry
+  }, [entriesState, selectedPath, previewBranch])
 
   // Slugs already used within the collection currently open in the create
   // modal. Collision is keyed on collectionPath + slug only (not entryType):
