@@ -251,16 +251,39 @@ describe('useBranchActions', () => {
     expect(pushedUrls().some((url) => url.includes('branch=new-branch'))).toBe(true)
   })
 
-  it('reports a failed create without switching or registering a branch', async () => {
+  it("hands the form the server's refusal of a name, with no toast, switching nothing", async () => {
     mockClient.branches.create.mockResolvedValueOnce({
       ok: false,
-      status: 400,
+      status: 409,
+      error: '"new-branch" is already the name of another branch. Choose a different name.',
+    })
+
+    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+
+    let created: unknown
+    await act(async () => {
+      created = await result.current.handleCreateBranch({ name: 'new-branch' })
+    })
+
+    expect(created).toEqual({
+      refusal: '"new-branch" is already the name of another branch. Choose a different name.',
+    })
+    expect(notifications.show).not.toHaveBeenCalled()
+    expect(mockOnBranchCreated).not.toHaveBeenCalled()
+    expect(mockSetBranchName).not.toHaveBeenCalled()
+    expect(mockOnBranchSwitch).not.toHaveBeenCalled()
+  })
+
+  it('toasts a failed create that is no refusal of the name, switching nothing', async () => {
+    mockClient.branches.create.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
       error: 'boom',
     })
 
     const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
 
-    let created: boolean | undefined
+    let created: unknown
     await act(async () => {
       created = await result.current.handleCreateBranch({ name: 'new-branch' })
     })

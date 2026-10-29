@@ -34,6 +34,7 @@ import { ReasonedMenuItem } from './components/ReasonedMenuItem'
 import { RelativeTime } from './components/RelativeTime'
 import { branchStatusPresentation } from './branch-status'
 import { displayBranchName } from './branch-names'
+import type { CreateRefusal } from './hooks/create-branch-request'
 import { CLOSED_PULL_REQUEST_REASON, EDITOR_ACTIONS } from './copy'
 import { isReviewerOfOthersReview } from '../authorization/review-role'
 import { SYSTEM_USER_ID } from '../system-users'
@@ -201,14 +202,15 @@ export interface BranchManagerProps {
   /** Awaited before the spinner starts, so a confirmation it shows never reads as a hung create. `false` abandons the create. */
   onBeforeCreate?: () => Promise<boolean>
   /**
-   * Resolving `false` means the branch was not created, so the form stays open
-   * with the user's values; any other return (including none) closes it.
+   * Resolving `false` means the branch was not created, so the form stays open with the user's
+   * values; `{ refusal }` also shows the server's reason under the name field. Any other return
+   * (including none) closes it.
    */
   onCreate?: (branch: {
     name: string
     title?: string
     description?: string
-  }) => Promise<boolean> | void
+  }) => Promise<boolean | CreateRefusal> | void
   onDelete?: (name: string) => void
   onSubmit?: (name: string) => void
   onWithdraw?: (name: string) => void
@@ -665,6 +667,8 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   const [newBranchDescription, setNewBranchDescription] = useState('')
 
   const [creating, setCreating] = useState(false)
+  // The server's reason for refusing a name, shown while that name is still what is typed.
+  const [refused, setRefused] = useState<{ typed: string; reason: string } | null>(null)
   // Read synchronously: state would not yet show a first click to a second one in the same tick.
   const creatingRef = useRef(false)
 
@@ -684,6 +688,10 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
         description: newBranchDescription.trim() || undefined,
       })
       if (created === false) return
+      if (typeof created === 'object') {
+        setRefused({ typed: typedBranchName, reason: created.refusal })
+        return
+      }
       setNewBranchName('')
       setNewBranchTitle('')
       setNewBranchDescription('')
@@ -746,11 +754,18 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                   // Below the input, so a preview that wraps never moves the field being typed in.
                   inputWrapperOrder={['label', 'input', 'description', 'error']}
                   description={
-                    createdBranchName?.ok
+                    // Only when sanitizing changed what was typed.
+                    createdBranchName?.ok && createdBranchName.shortName !== typedBranchName
                       ? `Will be named ${createdBranchName.shortName}`
                       : undefined
                   }
-                  error={createdBranchName?.ok === false ? createdBranchName.error : undefined}
+                  error={
+                    createdBranchName?.ok === false
+                      ? createdBranchName.error
+                      : refused?.typed === typedBranchName
+                        ? refused.reason
+                        : undefined
+                  }
                   value={newBranchName}
                   onChange={(e) => setNewBranchName(e.target.value)}
                   required

@@ -4,7 +4,7 @@ import { notifications } from '@mantine/notifications'
 import { Text } from '@mantine/core'
 import type { BranchListItem } from '../../api/branch'
 import { useApiClient } from '../context'
-import { requestBranchCreate } from './create-branch-request'
+import { requestBranchCreate, type CreateRefusal } from './create-branch-request'
 import type { UnsavedSummary } from './useDraftManager'
 import { displayBranchName } from '../branch-names'
 import { writeEditorUrl } from './editor-history'
@@ -35,7 +35,7 @@ export interface UseBranchActionsReturn {
     name: string
     title?: string
     description?: string
-  }) => Promise<boolean>
+  }) => Promise<boolean | CreateRefusal>
   /** True while the unsaved-changes confirm is on screen. */
   confirmOpen: boolean
 }
@@ -115,12 +115,15 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
 
   const confirmCreate = () => confirmIfDirty('Create the new branch anyway?')
 
-  /** Resolves true when the branch was created and switched to, false when it was not. */
+  /**
+   * Resolves true when the branch was created and switched to, false when it was not and a toast
+   * says why, or a {@link CreateRefusal} when the server refused the name.
+   */
   const handleCreateBranch = async (branch: {
     name: string
     title?: string
     description?: string
-  }): Promise<boolean> => {
+  }): Promise<boolean | CreateRefusal> => {
     try {
       const outcome = await requestBranchCreate(
         apiClient,
@@ -132,6 +135,7 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
         options.userId,
       )
       if (outcome.kind === 'failed') {
+        if (outcome.refused) return { refusal: outcome.message }
         throw new Error(outcome.message)
       }
 

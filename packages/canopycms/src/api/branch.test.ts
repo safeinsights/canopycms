@@ -607,6 +607,21 @@ describe('branch api', () => {
       expect(res.error).toContain('without "canopycms/local/" in front')
     })
 
+    it.each(['_', '__', '@_'])(
+      'refuses the typed name %s, which holds no letter or digit',
+      async (typed) => {
+        const res = await create(typed)
+        expect(res.status).toBe(400)
+        expect(res.error).toBe('Branch name needs at least one letter or digit')
+      },
+    )
+
+    it('takes a typed name that holds a letter or digit beside an underscore', async () => {
+      const res = await create('a_')
+      expect(res.status).toBe(200)
+      expect(res.data?.branch.name).toBe('canopycms/local/a_')
+    })
+
     it('refuses a typed name the namespace pushes past the length limit, and takes one that fits', async () => {
       const tooLong = await create('a'.repeat(235))
       expect(tooLong.status).toBe(400)
