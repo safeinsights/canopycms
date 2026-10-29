@@ -130,8 +130,8 @@ export async function pollMergeState(
 ): Promise<void> {
   const prNumber = metaFile?.branch.pullRequestNumber
   if (!prNumber) return
-  // Recorded only on the branch.json this poll read: never one created since, nor another
-  // branch's that shares the key.
+  // Recorded only on a branch.json that still names the branch this poll read: never a missing
+  // one, nor another branch's that shares the key.
   const sameBranch = (current: BranchMetadataFile | null) =>
     current?.branch.name === metaFile?.branch.name
 
@@ -504,7 +504,8 @@ async function carryForwardRewrittenHistory(
       // delete that fixup from remote.git and then GitHub. Keying the lease to
       // the pre-rebase tip turns that case into the visible divergence it is.
       //
-      // Order matters: mark, then push, then queue. A crash after any step
+      // Order matters: mark, then push, then queue, and a mark that declines
+      // (no branch.json names this ref) publishes nothing. A crash after any step
       // leaves the marker set with the work unfinished, which
       // reconcilePendingRewrite() completes on a later cycle. Pushing first
       // would leave remote.git rewritten, GitHub stale and nothing recorded --
@@ -1050,7 +1051,7 @@ async function rebaseOneBranch(
           ? `  Rebased ${branchDir} (kept branch version for ${conflictIdsDeduped.length} conflicting file(s))`
           : `  Rebased ${branchDir} successfully`,
       )
-      // Recorded only on the branch.json this cycle read, never one created or replaced since.
+      // Recorded only on a branch.json that still names the branch this cycle read.
       await meta.update((existing) =>
         existing !== null && existing.branch.name === metaFile?.branch.name
           ? {

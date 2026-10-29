@@ -69,7 +69,7 @@ export async function syncSubmitPr(
 ): Promise<GitHubSyncResult> {
   const { githubService } = ctx.services
   const mode = ctx.services.config.mode
-  // Links and the title carry the name the editor's URLs use.
+  // Links and the title carry the short name, which `?branch=` resolves.
   const shortName = shortNameOf(ctx.services.config, context.branch.name)
   const prTitle = context.branch.title || `Submit ${shortName}`
   const threads = await readThreadsOrWarn(context)

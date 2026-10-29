@@ -133,7 +133,7 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
       const created = outcome.branch
       if (created) options.onBranchCreated(created)
 
-      // The server adds the namespace, which the editor never holds; its short name resolves too.
+      // The server adds the namespace, which the editor is never told; its short name resolves too.
       const typed = parseCreatedBranchName(branch.name)
       const createdName = created?.name ?? (typed.ok ? typed.shortName : branch.name)
       notifications.show({ message: `Branch "${createdName}" created`, color: 'green' })

@@ -53,8 +53,9 @@ const log = createDebugLogger({ prefix: 'BranchAPI' })
  */
 export interface BranchListItem extends Omit<BranchMetadata, 'review'> {
   /**
-   * What URLs and the `/:branch` API segment carry for this branch (branch-param.ts): `name` less
-   * the namespace for a branch in it, the full `name` for any other.
+   * What pull request links carry for this branch, which `?branch=` and the `/:branch` segment
+   * accept beside `name` (branch-param.ts's `shortNameOf`): `name` less the namespace for a branch
+   * in it, else the full `name`.
    */
   shortName?: string
   isProtected?: boolean

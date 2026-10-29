@@ -1149,7 +1149,7 @@ describe('branch api', () => {
     expect(unprovisioned.data?.defaultBranch).toBe('feat/x')
   })
 
-  it('lists each branch with the short name its URLs carry', async () => {
+  it('lists each branch with the short name its pull request links carry', async () => {
     const ctx = createMockApiContext({
       services: {
         config: { mode: 'dev', defaultBaseBranch: 'main' } as any,

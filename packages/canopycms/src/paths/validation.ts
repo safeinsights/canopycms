@@ -241,7 +241,7 @@ export function parseBranchName(
 /**
  * The branch an editor's typed name creates in `namespace`, or why it cannot: the typed name
  * sanitized, so it holds no `/`, is the short name, and the ref is the namespace followed by it.
- * `createBranchHandler` passes its resolved namespace; the editor, which never holds one, passes
+ * `createBranchHandler` passes its resolved namespace; the editor, which is never told one, passes
  * none and checks the typed name alone, so its length limit is the looser one.
  */
 export function parseCreatedBranchName(
@@ -256,7 +256,7 @@ export function parseCreatedBranchName(
       error: `Type only the branch's own name, without "${namespace}" in front: CanopyCMS adds it`,
     }
   }
-  // Without a leading '-' or '.', which the `/:branch` segment and git refuse.
+  // Without a leading '-' or '.', which the `/:branch` segment refuses (`parseBranchName`).
   const shortName = sanitizeBranchName(typed).replace(/^[-.]+/, '')
   if (shortName === '') {
     return { ok: false, error: 'Branch name needs at least one letter or digit' }

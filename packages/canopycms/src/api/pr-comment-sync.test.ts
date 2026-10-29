@@ -118,7 +118,7 @@ describe('syncPrComments, direct path', () => {
     )
   })
 
-  it("links a namespace branch by its short name, the editor URL's form", async () => {
+  it('links a namespace branch by its short name, which ?branch= resolves', async () => {
     await addThread('Hi')
     const service = github()
 

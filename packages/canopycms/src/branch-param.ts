@@ -2,7 +2,8 @@
  * The one way a branch named in a request, by a `/:branch` segment or `?branch=`, becomes its
  * workspace. A branch has three names: its ref (`canopycms/prod/spring`), which git and
  * branch.json's `name` hold; its key (`sanitizeBranchName(ref)`), the workspace directory and
- * registry key; and its short name (`spring`, `branchShortName`), which requests carry.
+ * registry key; and its short name (`spring`, `branchShortName`), which pull request links carry
+ * and requests may carry in place of the ref.
  */
 import { loadBranchContext } from './branch-metadata'
 import type { CanopyConfig } from './config'
@@ -42,9 +43,9 @@ function namesBaseOrActive(param: string, config: BranchParamConfig): boolean {
 }
 
 /**
- * The name requests carry for the branch whose ref is `name`: its short name under this CMS's
- * namespace, or the full ref when the short name is the base or active branch's, which the
- * resolver would answer instead.
+ * The name pull request links and messages give the branch whose ref is `name`: its short name
+ * under this CMS's namespace, or the full ref when the short name is the base or active
+ * branch's, which the resolver would answer instead.
  */
 export function shortNameOf(config: BranchParamConfig, name: string): string {
   const short = branchShortName(name, cmsBranchNamespace(config))

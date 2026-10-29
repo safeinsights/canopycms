@@ -2,7 +2,7 @@
 'canopycms': minor
 ---
 
-### New branches are created in the branch namespace, and URLs carry their short names — **behaviour change**
+### New branches are created in the branch namespace, and pull request links carry their short names — **behaviour change**
 
 <!-- migration
 area: Branches
@@ -17,7 +17,7 @@ row: Editors' branches are created in the branch namespace
 request bodies carry, and what a pull request without a title is named after (`Submit
 spring-update`); `?branch=` and the API's `/:branch` segment accept it or the full name. A branch
 outside the namespace is reached by its full name. Creation refuses a short name that another branch already has (the
-base, the active branch, a branch outside the namespace, a name the gateway protects), one equal to
+base, the active branch, a branch outside the namespace, an exact name the gateway protects), one equal to
 an API route (`admin`, `assets`, …), one kept for settings (`canopycms-settings-…` or the settings
 branch), a name typed with the namespace in front, a name the remote holds a branch inside
 (`spring/draft` for `spring`), and any name while the CMS and the gateway resolve different

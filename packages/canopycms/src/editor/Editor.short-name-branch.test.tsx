@@ -1,8 +1,7 @@
 /**
- * The editor opened on a namespace branch by its short name (`?branch=spring`), the form every
- * link the CMS writes carries: it opens that branch unlocked under its listed name, so its
- * drafts, comments and Save all guard are the ones the full name reaches, and actions on it reach
- * it.
+ * The editor opened on a namespace branch by its short name (`?branch=spring`), the form pull
+ * request links carry: it opens that branch unlocked under its listed name, so its drafts,
+ * comments and Save all guard are the ones the full name reaches, and actions on it reach it.
  */
 import React from 'react'
 

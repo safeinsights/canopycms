@@ -39,9 +39,9 @@ export function sanitizeBranchName(branchName: string): SanitizedBranchName {
 export const RESERVED_SETTINGS_BRANCH_PREFIX = 'canopycms-settings-'
 
 /**
- * What URLs and the `/:branch` API segment call branch `name`: the part after `namespace` for a
- * branch in it, the full name for any other. The server rebuilds the ref from it
- * (branch-param.ts's `resolveBranchParam`); the editor never holds the namespace.
+ * Branch `name`'s short name: the part after `namespace` for a branch in it, the full name for
+ * any other. The server rebuilds the ref from it (branch-param.ts's `resolveBranchParam`); the
+ * editor is never told the namespace.
  */
 export function branchShortName(name: string, namespace: string | null): string {
   return namespace !== null && name.startsWith(namespace) && name.length > namespace.length

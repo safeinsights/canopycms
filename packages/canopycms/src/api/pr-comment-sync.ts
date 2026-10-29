@@ -42,7 +42,7 @@ export async function syncPrComments(ctx: ApiContext, context: BranchContext): P
   if (prNumber === undefined) return
   if (!clientOperatingStrategy(ctx.services.config.mode).supportsPullRequests()) return
   const branch = context.branch.name
-  // The name the editor's URLs use, for the body's links.
+  // The short name, which `?branch=` resolves, for the body's links.
   const shortName = shortNameOf(ctx.services.config, branch)
   const editorUrl = ctx.services.config.editorUrl ?? context.branch.editorUrl
 
