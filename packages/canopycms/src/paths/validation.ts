@@ -1,6 +1,6 @@
 /** Security-focused validation for content paths, IDs, branch names and slugs. */
 
-import { sanitizeBranchName } from './branch-name'
+import { exactBranchName, sanitizeBranchName } from './branch-name'
 import { normalizeFilesystemPath, hasTraversalSequence } from './normalize'
 import type { LogicalPath, PhysicalPath, ContentId, BranchName, Slug } from './types'
 
@@ -187,8 +187,9 @@ export function parseBranchName(
     return { ok: false, error: 'Branch name is required' }
   }
 
-  // Length limit (branch names become directory names)
-  if (name.length > MAX_BRANCH_NAME_LENGTH) {
+  // Length limit (branch names become directory names). The exact form's prefix names no part of
+  // the branch, so a name it wraps is measured without it.
+  if ((exactBranchName(name) ?? name).length > MAX_BRANCH_NAME_LENGTH) {
     return { ok: false, error: `Branch name too long (max ${MAX_BRANCH_NAME_LENGTH} characters)` }
   }
 

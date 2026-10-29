@@ -359,6 +359,13 @@ describe('path validation utilities', () => {
       }
     })
 
+    it('measures a name in the exact form without its refs/heads/ prefix', () => {
+      expect(parseBranchName(`refs/heads/${'a'.repeat(250)}`).ok).toBe(true)
+      const over = parseBranchName(`refs/heads/${'a'.repeat(251)}`)
+      expect(over.ok).toBe(false)
+      if (!over.ok) expect(over.error).toContain('too long')
+    })
+
     it('accepts branch names at max length', () => {
       const result = parseBranchName('a'.repeat(250))
       expect(result.ok).toBe(true)
