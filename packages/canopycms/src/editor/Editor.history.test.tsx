@@ -418,7 +418,8 @@ describe('history across entries', () => {
     })
 
     await waitFor(() => expect(isOpen('world')).toBe(true))
-    expect(urlBranch()).toBe('feature/x')
+    await waitFor(() => expect(urlBranch()).toBe('feature-x'))
+    expect(isOpen('world')).toBe(true)
     expect(notifications.show).not.toHaveBeenCalled()
   })
 
@@ -434,7 +435,8 @@ describe('history across entries', () => {
     })
 
     await waitFor(() => expect(isOpen('world')).toBe(true))
-    expect(urlBranch()).toBe('spring')
+    await waitFor(() => expect(urlBranch()).toBe('canopycms/local/spring'))
+    expect(isOpen('world')).toBe(true)
     expect(notifications.show).not.toHaveBeenCalled()
   })
 

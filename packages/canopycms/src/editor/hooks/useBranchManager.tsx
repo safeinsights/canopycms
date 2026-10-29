@@ -584,6 +584,12 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const currentBranch = resolveListedBranch(branches, branchName, branchesData?.defaultBranch)
   const currentBranchName = currentBranch?.name
 
+  // A link names a branch by its short name or a raw form; the state takes the listed name, so
+  // the URL (replaced below) and everything keyed per branch see one name for one branch.
+  useEffect(() => {
+    if (currentBranchName && currentBranchName !== branchName) setBranchName(currentBranchName)
+  }, [currentBranchName, branchName])
+
   const branchSummaries = useMemo(() => {
     return branches.map((b) => {
       const branchComments = b.name === currentBranchName ? options.comments : []

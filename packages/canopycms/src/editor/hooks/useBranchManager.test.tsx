@@ -535,8 +535,8 @@ describe('useBranchManager', () => {
       expect(result.current.branches).toHaveLength(2)
     })
 
-    expect(result.current.branchName).toBe('feature/x')
     expect(result.current.currentBranch).toEqual(sanitizedBranch)
+    await waitFor(() => expect(result.current.branchName).toBe('feature-x'))
   })
 
   it('opens a namespace branch named by its short name, unlocked and acting on its full name', async () => {
@@ -572,6 +572,7 @@ describe('useBranchManager', () => {
 
     expect(result.current.currentBranch?.name).toBe('canopycms/local/spring')
     expect(result.current.currentBranch?.writeBlocked).toBe(false)
+    await waitFor(() => expect(result.current.branchName).toBe('canopycms/local/spring'))
     expect(
       result.current.branchSummaries.find((b) => b.name === 'canopycms/local/spring')?.commentCount,
     ).toBe(1)

@@ -67,6 +67,10 @@ export class EntrySchemaUnavailableError extends Error {
   }
 }
 
+/** A legacy name and its sanitized form are one branch. */
+const sameSanitizedName = (a: string, b: string): boolean =>
+  sanitizeBranchName(a) === sanitizeBranchName(b)
+
 export interface UseEntryManagerOptions {
   initialEntries: EditorEntry[]
   initialSelectedId?: string
@@ -80,6 +84,12 @@ export interface UseEntryManagerOptions {
   branchBarState?: BranchBarStatus['value']
   /** Switches to the branch a Back or Forward reached; rejects when the switch does not happen. */
   switchBranch?: (branch: string) => Promise<void>
+  /**
+   * Whether two names open one branch, as a short name and its full name do. A change of
+   * `branchName` between two such names is no switch: the open entry stays. Defaults to comparing
+   * sanitized forms.
+   */
+  sameBranch?: (a: string, b: string) => boolean
   /** Called when a Back or Forward has opened another entry. */
   onHistoryRestore?: () => void
   /**
@@ -336,6 +346,8 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   // the user switches mid-flight, which is exactly when the check matters).
   const currentBranchRef = useRef(options.branchName)
   currentBranchRef.current = options.branchName
+  const sameBranchRef = useRef(options.sameBranch ?? sameSanitizedName)
+  sameBranchRef.current = options.sameBranch ?? sameSanitizedName
   // Read by the selection check, which runs only when the entries or the selection change.
   const resolvePreviewRouteRef = useRef(options.resolvePreviewRoute)
   resolvePreviewRouteRef.current = options.resolvePreviewRoute
@@ -786,13 +798,16 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   // Clear selection when branch changes (reactive pattern). Data loading
   // itself is handled below by the SWR-backed fetch -- this effect only
   // owns the "clear stale selection" side effect.
+  const shownBranchRef = useRef(options.branchName)
   useEffect(() => {
     if (!options.branchName) return
+    const previous = shownBranchRef.current
+    shownBranchRef.current = options.branchName
     // On initial mount, preserve the initial selection from URL
-    // On subsequent branch changes, clear selection
+    // On a later switch to another branch, clear selection
     if (isInitialMount.current) {
       isInitialMount.current = false
-    } else {
+    } else if (!sameBranchRef.current(previous, options.branchName)) {
       const restored = entryAfterBranchChangeRef.current
       entryAfterBranchChangeRef.current = undefined
       const entry = restored?.branch === options.branchName ? restored.entry : undefined
@@ -995,8 +1010,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       const entry = params.get('entry')
       const branch = params.get('branch')
       const current = currentBranchRef.current
-      // A legacy name and its sanitized form are one branch; a switch would key drafts by the other.
-      if (branch && sanitizeBranchName(branch) !== sanitizeBranchName(current)) {
+      if (branch && !sameBranchRef.current(branch, current)) {
         const move = historyMovesRef.current
         const stay = () => {
           if (move !== historyMovesRef.current) return

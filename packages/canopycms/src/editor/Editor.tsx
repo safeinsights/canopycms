@@ -488,6 +488,10 @@ const EditorContent: React.FC<EditorProps> = ({
   // Set once the changes read exists; it waits on the panel state, declared after the entries.
   const reloadChangesRef = useRef<(branch: string) => void>(() => {})
 
+  // The name a branch is listed by, for telling a short name from a switch to another branch.
+  const listedBranchName = (name: string): string =>
+    resolveListedBranch(branches, name)?.name ?? sanitizeBranchName(name)
+
   // 2. Entry manager (depends on branchNameState, owns selectedPath)
   const {
     selectedPath,
@@ -537,6 +541,7 @@ const EditorContent: React.FC<EditorProps> = ({
     setBusy: setEntriesLoading,
     branchBarState,
     switchBranch: (branch) => switchBranchRef.current(branch),
+    sameBranch: (a, b) => listedBranchName(a) === listedBranchName(b),
     onContentRefresh: (branch) => reloadChangesRef.current(branch),
     // To the entry menu, which names the entry opened; a dialog keeps focus.
     onHistoryRestore: () =>
