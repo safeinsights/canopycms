@@ -533,7 +533,7 @@ Top-level components and helpers:
 - `theme.tsx` — theme, default control sizes
 - `branch-status.ts` — status labels and colours
 - `branch-lock.ts` — `branchBarStatus`, the bar's lock-state table; `describeBranchLock`
-- `branch-names.ts` — `displayBranchName`, `resolveListedBranch`, `branchUrlName`, `branchAddress`
+- `branch-names.ts` — `displayBranchName`, `resolveListedBranch`, `branchUrlName`, `branchAddress`, `requestSegments`
 - `copy.ts` — fixed action verbs
 - `platform.ts` — `modKeyLabel()`, ⌘ or Ctrl
 - `slug.ts` — `slugFromTitle`; `validateEntrySlug`, the one slug validator
@@ -944,6 +944,7 @@ the split.
 - `https-git-server.ts` — `startHttpsGitServer()`
 - `worker-gateway.ts` — `useLocalGitHubGateway()`, `fixtureCredential()`
 - `render-errors.ts` — `silenceReportedRenderErrors()`
+- `branch-wire.ts` — `listedBranchPath()`, `plainBranchPath()`
 - `index.ts` — exports
 
 ## Example App

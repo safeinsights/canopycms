@@ -63,9 +63,9 @@ export interface ApiClientOptions {
   onEditorModeMismatch?: () => void
 
   /**
-   * Maps a branch name to the `/:branch` segment its requests carry. The server resolves a
-   * branch's short name as it does its name, so the editor sends a namespace branch's short name,
-   * with no `%2F`. @internal
+   * Maps a branch name to the `/:branch` segment its requests carry. The editor maps each
+   * listed branch to its exact form (`refs/heads/<name>`), which the server resolves to that
+   * branch alone, whatever the base or active branch is. @internal
    */
   branchSegment?: (branch: string) => string
 }

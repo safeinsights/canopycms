@@ -78,6 +78,9 @@ const listed = (name: string, status: string) => ({
 const urlOf = (input: RequestInfo | URL) =>
   typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
 
+/** The API path a listed branch's requests take: the exact form of its full name. */
+const wire = (name: string) => `/api/canopycms/${encodeURIComponent(`refs/heads/${name}`)}`
+
 const changesNote = {
   id: 'note-1',
   comments: [
@@ -344,31 +347,49 @@ describe('the editor on a namespace branch named by its short name', () => {
     expect(frame?.getAttribute('src')).toBe('/posts/hello?branch=spring')
   })
 
-  it('sends its requests under the short name, with no %2F in a path', async () => {
+  it('sends its requests to the listed branch exactly, and shows and links it by its short name', async () => {
     window.history.replaceState({}, '', '/?branch=spring')
     const fetchMock = stubApi({ status: 'editing', userId: 'author-1' })
     renderEditor('spring')
     expect((await titleBox()).value).toBe('hello title')
+    await waitFor(() =>
+      expect(within(screen.getByTestId('branch-dropdown-button')).getByText('spring')).toBeTruthy(),
+    )
+    fireEvent.change(await titleBox(), { target: { value: 'Edited' } })
+    const save = await screen.findByTestId('save-button')
+    await waitFor(() => expect(save.getAttribute('aria-disabled')).toBeNull())
+    fireEvent.click(save)
 
+    await waitFor(() => {
+      const put = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT')
+      expect(new URL(urlOf(put![0]), 'http://x').pathname).toBe(
+        `${wire(SPRING)}/content/content/posts/hello`,
+      )
+    })
     const paths = fetchMock.mock.calls.map(([input]) => new URL(urlOf(input), 'http://x').pathname)
-    expect(paths).toContain('/api/canopycms/spring/entries')
-    expect(paths).toContain('/api/canopycms/spring/schema')
-    expect(paths.filter((path) => path.includes('%2F'))).toEqual([])
+    expect(paths).toContain(`${wire(SPRING)}/entries`)
+    expect(urlBranch()).toBe('spring')
+    expect(document.querySelector('iframe')?.getAttribute('src')).toBe('/posts/hello?branch=spring')
+    await openBranchesDrawer()
+    const card = await screen.findByTestId(`branch-list-item-${SPRING}`)
+    expect(within(card).getByText('spring')).toBeTruthy()
+    expect(screen.queryByText(SPRING)).toBeNull()
+    expect(screen.queryByText(`refs/heads/${SPRING}`)).toBeNull()
   })
 
-  it('sends a branch outside the namespace under its full name', async () => {
+  it('sends a branch outside the namespace exactly, under its full name', async () => {
     window.history.replaceState({}, '', `/?branch=${encodeURIComponent(OUTSIDE)}`)
     const fetchMock = stubApi({ status: 'editing', userId: 'author-1' })
     renderEditor(OUTSIDE)
     expect((await titleBox()).value).toBe('hello title')
 
     const paths = fetchMock.mock.calls.map(([input]) => new URL(urlOf(input), 'http://x').pathname)
-    expect(paths).toContain('/api/canopycms/feature%2Fx/entries')
+    expect(paths).toContain(`${wire(OUTSIDE)}/entries`)
     expect(paths).not.toContain('/api/canopycms/x/entries')
     expect(urlBranch()).toBe(OUTSIDE)
   })
 
-  it('sends a namespace branch the server lists by its full name under that name', async () => {
+  it('sends a namespace branch the server lists by its full name exactly', async () => {
     window.history.replaceState({}, '', `/?branch=${encodeURIComponent(SPRING)}`)
     const inner = stubApi({ status: 'editing', userId: 'author-1' })
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
@@ -402,7 +423,7 @@ describe('the editor on a namespace branch named by its short name', () => {
     )
     const put = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT')
     expect(new URL(urlOf(put![0]), 'http://x').pathname).toBe(
-      `/api/canopycms/${encodeURIComponent(SPRING)}/content/content/posts/hello`,
+      `${wire(SPRING)}/content/content/posts/hello`,
     )
     expect(urlBranch()).toBe(SPRING)
   })
@@ -464,7 +485,9 @@ describe('the editor on a namespace branch named by its short name', () => {
       pushState.mock.calls.map(([, , url]) => new URL(String(url)).searchParams.get('branch')),
     ).toEqual(['summer'])
     expect(
-      fetchMock.mock.calls.some(([input]) => urlOf(input).endsWith('/api/canopycms/summer/schema')),
+      fetchMock.mock.calls.some(([input]) =>
+        urlOf(input).endsWith(`${wire('canopycms/local/summer')}/schema`),
+      ),
     ).toBe(true)
   })
 
@@ -674,7 +697,7 @@ describe('the editor on a namespace branch named by its short name', () => {
     await waitFor(() =>
       expect(
         fetchMock.mock.calls.some(([input]) =>
-          urlOf(input).endsWith('/api/canopycms/spring/request-changes'),
+          urlOf(input).endsWith(`${wire(SPRING)}/request-changes`),
         ),
       ).toBe(true),
     )
@@ -710,7 +733,7 @@ describe('the editor beside a branch outside the namespace that its short name t
     const fetchMock = stubListing(both)
     renderEditor(SPRING)
     expect((await titleBox()).value).toBe('hello title')
-    await waitFor(() => expect(entriesReads(fetchMock)).toContain('/api/canopycms/spring/entries'))
+    await waitFor(() => expect(entriesReads(fetchMock)).toContain(`${wire(SPRING)}/entries`))
     fetchMock.mockClear()
 
     window.history.replaceState(window.history.state, '', `/?branch=${encodeURIComponent(EXACT)}`)
@@ -727,7 +750,7 @@ describe('the editor beside a branch outside the namespace that its short name t
       await new Promise((resolve) => setTimeout(resolve, 50))
     })
     expect(urlBranch()).toBe(EXACT)
-    expect(entriesReads(fetchMock)).not.toContain('/api/canopycms/spring/entries')
+    expect(entriesReads(fetchMock)).not.toContain(`${wire(SPRING)}/entries`)
   })
 
   it('sends a review action from the header to the open outside branch, and shows its note', async () => {
@@ -766,8 +789,10 @@ describe('the editor beside a branch outside the namespace that its short name t
       ).toBe(true),
     )
     expect(
-      fetchMock.mock.calls.some(([input]) =>
-        urlOf(input).endsWith('/api/canopycms/spring/request-changes'),
+      fetchMock.mock.calls.some(
+        ([input]) =>
+          urlOf(input).endsWith('/api/canopycms/spring/request-changes') ||
+          urlOf(input).endsWith(`${wire(SPRING)}/request-changes`),
       ),
     ).toBe(false)
     await openBranchesDrawer()

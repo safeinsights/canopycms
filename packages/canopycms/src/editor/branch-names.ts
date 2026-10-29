@@ -2,8 +2,8 @@
  * The names an editor sees one branch by. A listed branch has its full name (`name`, the ref
  * `canopycms/prod/spring`), which keys everything the editor stores, and a short name
  * (`shortName`, `spring`; a branch outside the namespace lists its full name), which the person
- * sees and, unless another branch's short name shadows it, the URL carries and requests send
- * (`branchUrlName`).
+ * sees and, unless another branch's short name shadows it, the URL carries (`branchUrlName`).
+ * Requests name a listed branch by the exact form instead (`requestSegments`).
  */
 import type { BranchListItem } from '../api/branch'
 // branch-name, NOT branch or the '../paths' barrel: both pull node:fs into the browser bundle.
@@ -50,8 +50,8 @@ export function resolveListedBranch<B extends Named>(
 }
 
 /**
- * The `?branch=` value for `branch`, which requests send too: its short name when that opens the
- * same branch, else its full name when that does, else the exact form. Only the exact form opens a
+ * The `?branch=` value for `branch`: its short name when that opens the same branch, else its full
+ * name when that does, else the exact form. Only the exact form opens a
  * branch outside the namespace whose name a namespace branch's short name takes.
  */
 export function branchUrlName<B extends Named>(branches: readonly B[], branch: B): string {
@@ -59,6 +59,16 @@ export function branchUrlName<B extends Named>(branches: readonly B[], branch: B
   if (resolveExactly(branches, short) === branch) return short
   if (resolveExactly(branches, branch.name) === branch) return branch.name
   return `${EXACT_BRANCH_PREFIX}${branch.name}`
+}
+
+/**
+ * The `/:branch` segment requests name each listed branch by, keyed by full name: the exact form,
+ * which the server resolves to that branch alone. Any other form it resolves again on every
+ * request, so a dev active-branch change (`git checkout -b spring`) or a branch hidden from the
+ * requester could put a different branch behind the same short name.
+ */
+export function requestSegments<B extends Named>(branches: readonly B[]): Map<string, string> {
+  return new Map(branches.map((b) => [b.name, `${EXACT_BRANCH_PREFIX}${b.name}`]))
 }
 
 /**

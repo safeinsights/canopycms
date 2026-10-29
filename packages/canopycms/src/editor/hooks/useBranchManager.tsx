@@ -23,6 +23,7 @@ import {
   branchAddress,
   branchUrlName,
   displayBranchName,
+  requestSegments,
   resolveListedBranch,
 } from '../branch-names'
 import { RetryToastMessage } from '../components/RetryToastMessage'
@@ -517,10 +518,10 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const currentBranch = open.exact ? branches.find((b) => b.name === open.name) : arriving
   const currentBranchName = currentBranch?.name
 
-  // Requests name a branch by the form its URL does, and the open branch, once the listing drops
-  // it, as `unlistedName` does.
+  // A listed branch by `requestSegments`; the open branch, once the listing drops it, as
+  // `unlistedName` does; any other name as given, which dev base/active auto-create needs.
   const segments = useMemo(() => {
-    const table = new Map(branches.map((b) => [b.name, branchUrlName(branches, b)]))
+    const table = requestSegments(branches)
     if (resolved && branchName && !table.has(branchName)) {
       table.set(branchName, unlistedName(branches, branchName))
     }

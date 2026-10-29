@@ -4,6 +4,7 @@ import {
   branchAddress,
   branchUrlName,
   displayBranchName,
+  requestSegments,
   resolveListedBranch,
 } from './branch-names'
 
@@ -103,6 +104,19 @@ describe('branchUrlName', () => {
     const named = listed('canopycms/prod/main', 'canopycms/prod/main')
     expect(branchUrlName([active, named], named)).toBe('canopycms/prod/main')
     expect(branchUrlName([active, named], active)).toBe('main')
+  })
+})
+
+describe('requestSegments', () => {
+  it('names every listed branch by its exact form, whatever its URL form', () => {
+    const namespaceX = listed('canopycms/prod/x', 'x')
+    const outsideX = listed('x', 'x')
+    const base = listed('main', 'main', true)
+    expect([...requestSegments([namespaceX, outsideX, base])]).toEqual([
+      ['canopycms/prod/x', 'refs/heads/canopycms/prod/x'],
+      ['x', 'refs/heads/x'],
+      ['main', 'refs/heads/main'],
+    ])
   })
 })
 

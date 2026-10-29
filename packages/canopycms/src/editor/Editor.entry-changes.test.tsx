@@ -14,6 +14,7 @@ import type { EditorEntry } from './Editor'
 import { Editor } from './Editor'
 import { ApiClientProvider } from './context'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../paths/test-utils'
+import { plainBranchPath } from '../test-utils/branch-wire'
 
 afterEach(() => {
   cleanup()
@@ -48,7 +49,7 @@ const stubApi = (changed: string[], entryChange?: { status: number; error: strin
   const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url =
       typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
-    const path = new URL(url, 'http://localhost').pathname
+    const path = plainBranchPath(new URL(url, 'http://localhost').pathname)
     if (path.endsWith('/whoami')) return Promise.resolve(okJson({ userId: 'user-1', groups: [] }))
     if (path.endsWith('/main/comments')) return Promise.resolve(okJson({ threads, users: [] }))
     if (path.endsWith('/main/changes')) {
@@ -196,14 +197,16 @@ describe('Show changes', () => {
     await waitFor(() => expect(titleInput().value).toBe('Loaded title'))
     const button = await screen.findByTestId('entry-show-changes')
     expect(button.textContent).toBe('Show changes')
-    expect(requested(fetch, '/main/changes/')).toBe(false)
+    expect(requested(fetch, 'main/changes/')).toBe(false)
 
     await userEvent.click(button)
     // The drawer replaces the skeleton drawer shown while its chunk loads.
     const summary = await screen.findByTestId('entry-changes-summary')
     await waitFor(() => expect(summary.textContent).toBe('1 field changed since main'))
     const dialog = screen.getByRole('dialog', { name: 'Changes to Hello' })
-    expect(requested(fetch, `/main/changes/content/posts/hello?id=${hello.contentId}`)).toBe(true)
+    expect(
+      requested(fetch, `/refs%2Fheads%2Fmain/changes/content/posts/hello?id=${hello.contentId}`),
+    ).toBe(true)
     expect(within(dialog).queryByTestId('entry-changes-unsaved')).toBeNull()
 
     await userEvent.keyboard('{Escape}')
@@ -250,14 +253,14 @@ describe('Show changes', () => {
     await screen.findByTestId('entry-changes-summary')
     await userEvent.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    const entryReads = calls('/main/changes/content/posts/hello')
-    const listReads = calls('/main/changes')
+    const entryReads = calls('/refs%2Fheads%2Fmain/changes/content/posts/hello')
+    const listReads = calls('/refs%2Fheads%2Fmain/changes')
 
     await userEvent.type(titleInput(), ' edited')
     await userEvent.click(screen.getByTestId('save-button'))
-    await waitFor(() => expect(calls('/main/changes')).toBeGreaterThan(listReads))
+    await waitFor(() => expect(calls('/refs%2Fheads%2Fmain/changes')).toBeGreaterThan(listReads))
     await new Promise((resolve) => setTimeout(resolve, 50))
-    expect(calls('/main/changes/content/posts/hello')).toBe(entryReads)
+    expect(calls('/refs%2Fheads%2Fmain/changes/content/posts/hello')).toBe(entryReads)
   })
 
   it('returns focus to the rail’s Content button when the deleted entry’s row is gone', async () => {
@@ -267,7 +270,7 @@ describe('Show changes', () => {
     fetch.mockImplementation((input, init) => {
       const url =
         typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
-      if (new URL(url, 'http://localhost').pathname.endsWith('/main/changes')) {
+      if (new URL(url, 'http://localhost').pathname.endsWith('main/changes')) {
         return Promise.resolve(
           okJson({
             base: 'main',
@@ -309,7 +312,7 @@ describe('Show changes', () => {
     const fetch = stubApi([])
     renderEditor()
     await waitFor(() => expect(titleInput().value).toBe('Loaded title'))
-    await waitFor(() => expect(requested(fetch, '/main/changes')).toBe(true))
+    await waitFor(() => expect(requested(fetch, '/refs%2Fheads%2Fmain/changes')).toBe(true))
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(screen.queryByTestId('entry-show-changes')).toBeNull()
     // Its slot is held, unseen, so the header doesn't shift between entries.
