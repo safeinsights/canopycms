@@ -24,6 +24,8 @@ One word per idea, everywhere. New UI takes the verbs from `EDITOR_ACTIONS` in
 | **Clear**                 | Resetting an optional object field to unset                    | Remove                                      |
 | **Delete**                | Destroying a stored entry, collection, branch or group         | Remove                                      |
 | **Discard changes**       | Throwing away unsaved edits                                    | Discard drafts, Revert                      |
+| **Unsaved**               | Not yet saved                                                  | Changed, Dirty                              |
+| **Changed**               | Different from the base branch                                 | Modified, Diff                              |
 | **entry**, **collection** | A content item, and the folder that holds entries              | file, page, item; folder                    |
 | **file**                  | An item in the media library                                   | asset, media item                           |
 | **Content**               | The panel of collections and entries                           | All entries                                 |

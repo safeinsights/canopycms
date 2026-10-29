@@ -31,7 +31,12 @@ type TreeController = ReturnType<typeof useTree>
 const noop = (): void => {}
 
 import type { ContentFormat, EntrySchema, EntryTypeUnavailable, MdxAllowlist } from '../config'
-import { EntryNavigator, type ContentPanelReveal, type EntryNavCollection } from './EntryNavigator'
+import {
+  EntryNavigator,
+  type ContentPanelReveal,
+  type EntryFilter,
+  type EntryNavCollection,
+} from './EntryNavigator'
 import type { CustomFieldRenderers, FormValue } from './FormRenderer'
 import { FormRenderer } from './FormRenderer'
 import { PreviewPane } from './PreviewPane'
@@ -75,6 +80,7 @@ import {
   useSchemaManager,
 } from './hooks'
 import { useBranchActions } from './hooks/useBranchActions'
+import { useBranchChangesData } from './hooks/useBranchChangesData'
 import type { UnsavedSummary } from './hooks/useDraftManager'
 import type { StampedEntry } from '../stamp-on-publish'
 import {
@@ -474,6 +480,8 @@ const EditorContent: React.FC<EditorProps> = ({
 
   // Set once the branch actions below exist; they depend on the drafts, which depend on the entries.
   const switchBranchRef = useRef<(branch: string) => Promise<void>>(async () => {})
+  // Set once the changes read exists; it waits on the panel state, declared after the entries.
+  const reloadChangesRef = useRef<(branch: string) => void>(() => {})
 
   // 2. Entry manager (depends on branchNameState, owns selectedPath)
   const {
@@ -524,6 +532,7 @@ const EditorContent: React.FC<EditorProps> = ({
     setBusy: setEntriesLoading,
     branchBarState,
     switchBranch: (branch) => switchBranchRef.current(branch),
+    onContentRefresh: (branch) => reloadChangesRef.current(branch),
     // To the entry menu, which names the entry opened; a dialog keeps focus.
     onHistoryRestore: () =>
       requestAnimationFrame(() => {
@@ -1616,7 +1625,7 @@ const EditorContent: React.FC<EditorProps> = ({
           event.preventDefault()
           // Opened under a modal or drawer, it would take the keyboard from the one in use.
           if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
-          setChangedOnly(false)
+          setEntryFilter('all')
           const field = entryFilterRef.current
           if (field && document.activeElement === field) field.select()
           else openNavigator({ transient: true })
@@ -1633,7 +1642,7 @@ const EditorContent: React.FC<EditorProps> = ({
   // Only ever rises: the navigator serves each seq once, and the request is cleared once served.
   const revealSeqRef = useRef(0)
   const revealInContentPanel = (
-    reveal: { kind: 'collection' | 'entry'; path: string } | { kind: 'changed' },
+    reveal: { kind: 'collection' | 'entry'; path: string } | { kind: 'unsaved' },
   ) => {
     openNavigator()
     revealSeqRef.current += 1
@@ -1643,14 +1652,39 @@ const EditorContent: React.FC<EditorProps> = ({
   useEffect(() => {
     if (!contentPanelShown) setContentReveal(undefined)
   }, [contentPanelShown])
-  // The content panel's All / Changed filter. It stays as chosen, emptied by a save or not, except
-  // that Mod+P finds among all entries and another branch has its own unsaved set: both reset it.
-  const [changedOnly, setChangedOnly] = useState(false)
-  useEffect(() => setChangedOnly(false), [branchNameState])
+  // The content panel's All / Unsaved / Changed filter. It stays as chosen, emptied by a save or
+  // not, except that Mod+P finds among all entries and another branch has its own sets: both reset it.
+  const [entryFilter, setEntryFilter] = useState<EntryFilter>('all')
+  useEffect(() => setEntryFilter('all'), [branchNameState])
   const showUnsaved = () => {
-    setChangedOnly(true)
-    revealInContentPanel({ kind: 'changed' })
+    setEntryFilter('unsaved')
+    revealInContentPanel({ kind: 'unsaved' })
   }
+  // What the branch changes against its base, read while the panel shows so Changed has its count.
+  // The protected base has nothing to compare. Changed keeps its place while the branch list loads,
+  // so the control doesn't re-flow then, and reads once the branch is known not to be the base. A
+  // list that failed, or lacks the branch, offers none, so a branch just created can lack Changed
+  // until the list catches up.
+  const changesOffered = branchPending || currentBranch?.isProtected === false
+  const changesAvailable = !!currentBranch && currentBranch.isProtected === false
+  const branchChanges = useBranchChangesData(
+    apiClient,
+    branchNameState,
+    contentPanelShown && changesAvailable,
+  )
+  reloadChangesRef.current = (branch) => {
+    if (branch === branchNameState) void branchChanges.reload()
+  }
+  // Submit, withdraw and a review move the branch's status, which no entries refresh follows.
+  const changesStatusRef = useRef({ branch: branchNameState, status: currentBranch?.status })
+  useEffect(() => {
+    const seen = changesStatusRef.current
+    changesStatusRef.current = { branch: branchNameState, status: currentBranch?.status }
+    if (seen.branch === branchNameState && seen.status && seen.status !== currentBranch?.status) {
+      void branchChanges.reload()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `reload` is fresh each branch; only a status move matters
+  }, [branchNameState, currentBranch?.status])
   const runSaveAll = () => {
     void handleSaveAll()
       .then((result) => {
@@ -2107,8 +2141,20 @@ const EditorContent: React.FC<EditorProps> = ({
           dirtyPaths={dirtyPaths}
           reveal={contentReveal}
           onRevealed={() => setContentReveal(undefined)}
-          changedOnly={changedOnly}
-          onChangedOnlyChange={setChangedOnly}
+          entryFilter={entryFilter === 'changed' && !changesOffered ? 'all' : entryFilter}
+          onEntryFilterChange={setEntryFilter}
+          onShowUnsaved={showUnsaved}
+          branchChanges={
+            changesOffered
+              ? {
+                  base: branchChanges.data?.base ?? currentBranch?.baseBranch ?? 'the base branch',
+                  data: branchChanges.data,
+                  error: branchChanges.error,
+                  onRetry: () => void branchChanges.reload(),
+                  retrying: branchChanges.isValidating,
+                }
+              : undefined
+          }
           unsavedCount={modifiedCount}
           unsavedEntries={editedFiles}
           entryListFailed={entriesLoadFailed && entriesState.length === 0}

@@ -13,7 +13,6 @@ import type { LogicalPath } from './types'
  * @example
  * resolveLogicalPath("content/docs.ABC/api.DEF", schemaItems)
  * // Returns: "content/docs/api"
- * @internal Exported for tests.
  */
 export function resolveLogicalPath(
   physicalPath: string,

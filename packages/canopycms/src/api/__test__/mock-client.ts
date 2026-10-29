@@ -9,6 +9,7 @@ import type { ApiResponse } from '../types'
 import { createLogicalPath, createPhysicalPath } from '../../paths'
 import type { ContentId } from '../../paths'
 import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, CreateBranchBody, UpdateBranchAccessBody } from '../branch'
+import type { BranchChangesResponse } from '../branch-changes'
 import type { BranchMergeResponse, RequestChangesBody, SubmitBranchBody, SubmitBranchResponse } from '../branch-status'
 import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from '../comments'
 import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse, RenameEntryBody, RenameEntryResponse, ValidateReferencesBody, WriteContentBody } from '../content'
@@ -46,6 +47,10 @@ export function createMockApiClient(): MockApiClient {
     create: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"test-branch","status":"editing","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})),
     delete: vi.fn().mockResolvedValue(mockSuccess({"deleted":true})),
     updateAccess: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"test-branch","status":"editing","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})),
+  },
+
+  changes: {
+    list: vi.fn().mockResolvedValue(mockSuccess({"base":"main","entries":[],"collections":[],"hiddenChanges":false})),
   },
 
   workflow: {
@@ -157,6 +162,10 @@ export function mockBranchListItemResponse(): BranchListItemResponse {
 
 export function mockBranchDeleteResponse(): BranchDeleteResponse {
   return mockSuccess({"deleted":true})
+}
+
+export function mockBranchChangesResponse(): BranchChangesResponse {
+  return mockSuccess({"base":"main","entries":[],"collections":[],"hiddenChanges":false})
 }
 
 export function mockBranchMergeResponse(): BranchMergeResponse {
