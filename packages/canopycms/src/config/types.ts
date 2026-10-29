@@ -489,6 +489,7 @@ export interface EntryValidationIssue {
 export interface ValidateEntryInput {
   /** Logical entry path including the content root (e.g. 'content/posts/hello-world'). */
   entryPath: string
+  /** The branch's full name, as git holds it (`canopycms/prod/spring-update`). */
   branch: string
   /**
    * The entry type the save is validated and written as: an existing entry's on-disk type, else

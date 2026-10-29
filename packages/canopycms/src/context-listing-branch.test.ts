@@ -11,21 +11,25 @@ import type { BranchAccessControl, BranchContext } from './types'
 
 /**
  * Branch workspaces keyed by name. `loadOrCreateBranchContext` stands in for provisioning and is
- * spied on, so a test can assert a requested branch never reaches it; `loadBranchContext` answers
- * only for a branch that already exists.
+ * spied on, so a test can assert a requested branch never reaches it; `loadBranchContext`, which
+ * the resolver calls, answers only for a branch that already exists.
  */
 const branches = new Map<string, BranchContext>()
 const provisioned: string[] = []
-vi.mock('./branch-workspace', async () => {
+vi.mock('./branch-workspace', () => ({
+  loadOrCreateBranchContext: async ({ branchName }: { branchName: string }) => {
+    provisioned.push(branchName)
+    const existing = branches.get(branchName)
+    if (!existing) throw new Error(`test fixture has no branch ${branchName}`)
+    return existing
+  },
+}))
+// The loader branch-param.ts's resolver calls.
+vi.mock('./branch-metadata', async (importOriginal) => {
   const { BranchPathError } = await import('./paths')
   const { sanitizeBranchName } = await import('./paths/branch-name')
   return {
-    loadOrCreateBranchContext: async ({ branchName }: { branchName: string }) => {
-      provisioned.push(branchName)
-      const existing = branches.get(branchName)
-      if (!existing) throw new Error(`test fixture has no branch ${branchName}`)
-      return existing
-    },
+    ...(await importOriginal<typeof import('./branch-metadata')>()),
     loadBranchContext: async ({ branchName }: { branchName: string }) => {
       if (branchName.includes('..')) {
         throw new BranchPathError('Branch name cannot contain traversal segments')

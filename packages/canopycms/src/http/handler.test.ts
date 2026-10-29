@@ -112,6 +112,7 @@ const createMockServices = () => ({
   createGitManagerFor: vi.fn(),
   registry: {
     get: vi.fn().mockResolvedValue(null),
+    getByKey: vi.fn().mockResolvedValue(undefined),
     list: vi.fn().mockResolvedValue([]),
   },
   bootstrapAdminIds: new Set<string>(),

@@ -86,8 +86,24 @@ describe('BranchWorkspaceManager', () => {
       createdBy: 'user-1',
       title: 'Foo Feature',
     })
-    expect(context.branch.name).toBe('feature-foo')
+    expect(context.branch.name).toBe('feature/foo')
     expect(context.branchRoot).toContain('.canopy-dev/content-branches/feature-foo')
+  })
+
+  it('refuses a name git would not take as given, before anything is provisioned', async () => {
+    const root = await tmpDir()
+    const manager = new BranchWorkspaceManager(
+      defineCanopyTestConfig({ defaultBaseBranch: 'main', schema: testSchema }),
+    )
+
+    await expect(
+      manager.openOrCreateBranch({
+        branchName: 'feature:foo',
+        mode: 'dev',
+        basePathOverride: root,
+        createdBy: 'user-1',
+      }),
+    ).rejects.toThrow('Branch name contains invalid characters')
   })
 
   it.each([
@@ -163,7 +179,7 @@ describe('BranchWorkspaceManager', () => {
     // Note: Still using .canopycms for now - Phase 2 will migrate to .canopy-meta
     const metaFile = path.join(workspace.branchRoot, '.canopy-meta/branch.json')
     const meta = JSON.parse(await fs.readFile(metaFile, 'utf8'))
-    expect(meta.branch.name).toBe('feature-foo')
+    expect(meta.branch.name).toBe('feature/foo')
     expect(meta.branch.title).toBe('Foo Feature')
     // The fork point is recorded at creation
     expect(meta.branch.baseBranch).toBe('main')
@@ -172,8 +188,8 @@ describe('BranchWorkspaceManager', () => {
 
     // In multi-branch mode, registry can scan subdirectories and find the branch
     const registry = new BranchRegistry(expectedBranchesRoot)
-    const entry = await registry.get('feature-foo')
-    expect(entry?.branch.name).toBe('feature-foo')
+    const entry = await registry.getByKey('feature-foo')
+    expect(entry?.branch.name).toBe('feature/foo')
 
     // The recorded fork point is immutable: re-opening the branch with a
     // different configured base must not move it
@@ -241,7 +257,7 @@ describe('BranchWorkspaceManager', () => {
 
     const git = simpleGit({ baseDir: workspace.branchRoot })
     const status = await git.status()
-    expect(status.current).toBe('feature-foo')
+    expect(status.current).toBe('feature/foo')
     const remotes = await git.getRemotes(true)
     expect(remotes.find((r) => r.name === 'origin')?.refs.fetch).toBe(remotePath)
   })

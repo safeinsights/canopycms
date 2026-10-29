@@ -1,4 +1,5 @@
-import { loadBranchContext, loadOrCreateBranchContext } from './branch-workspace'
+import { loadOrCreateBranchContext } from './branch-workspace'
+import { resolveBranchParam } from './branch-param'
 import { SchemaUnavailableError } from './schema/schema-unavailable-error'
 import { ContentStore, ContentStoreError, type ReferenceTargetAccess } from './content-store'
 import {
@@ -172,9 +173,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       })
     }
 
-    const existing = await loadBranchContext({
-      branchName,
-      mode: operatingMode,
+    const existing = await resolveBranchParam(branchName, services.config, {
       basePathOverride,
     }).catch((err: unknown) => {
       if (namesNoWorkspace(err)) return null
