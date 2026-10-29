@@ -1739,11 +1739,12 @@ const EditorContent: React.FC<EditorProps> = ({
   }
   const changesReturnTarget = () =>
     returnTarget(changesOpenerRef.current.el, changesOpenerRef.current.standIn)
-  // Where a refused comparison can still be looked at: the entry itself, if the branch has it,
-  // and the pull request, for those who review it.
+  // Where a refused comparison can still be looked at: the entry itself, if the branch has it and
+  // it isn't the one open, and the pull request, for those who review it.
   const changesOpenEntry =
     changesSubject &&
     changesSubject.status !== 'deleted' &&
+    changesSubject.logicalPath !== currentEntry?.path &&
     entriesState.some((e) => e.path === changesSubject.logicalPath)
       ? () => {
           setChangesOpen(false)
@@ -2377,9 +2378,7 @@ const EditorContent: React.FC<EditorProps> = ({
                         )
                     : undefined
                 }
-                showChangesPending={
-                  changesRead && !!currentEntry && !branchChanges.data && !branchChanges.error
-                }
+                showChangesPending={changesOffered && !!currentEntry}
                 showChangesRef={showChangesRef}
                 onFileReload={() => handleReload(() => navigatorToggleRef.current)}
                 onFileDiscardDraft={() => handleDiscardFileDraft(() => navigatorToggleRef.current)}

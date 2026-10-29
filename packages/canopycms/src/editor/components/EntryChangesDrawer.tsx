@@ -9,7 +9,6 @@
 import React, { useMemo, useState } from 'react'
 import {
   Alert,
-  Anchor,
   Badge,
   Box,
   Button,
@@ -17,7 +16,6 @@ import {
   List,
   Paper,
   SimpleGrid,
-  Skeleton,
   Stack,
   Text,
   VisuallyHidden,
@@ -29,6 +27,7 @@ import { useMediaQuery } from '@mantine/hooks'
 import {
   IconAlertCircle,
   IconAlertTriangle,
+  IconExternalLink,
   IconArrowsMove,
   IconInfoCircle,
   IconMinus,
@@ -54,6 +53,7 @@ import { editorImageSrc } from '../media/editor-image-src'
 import { formatRelativeTime } from '../relative-time'
 import { OverlayDrawer } from '../shell/OverlayHeader'
 import { focusReturnProps } from '../utils/focus-return'
+import { LoadingCards, LoadingSummary } from './EntryChangesSkeleton'
 
 /** The entry a drawer compares, as the editor knows it. */
 export interface EntryChangesSubject {
@@ -643,29 +643,37 @@ const ChangeCard: React.FC<{ change: EntryChange; wholeEntry: Side | undefined }
   )
 }
 
-const LoadingCards: React.FC = () => (
-  <Stack gap="sm" data-testid="entry-changes-loading" aria-busy="true">
-    <VisuallyHidden>Loading changes…</VisuallyHidden>
-    <Skeleton height={22} width="45%" />
-    {[0, 1, 2].map((i) => (
-      <Skeleton key={i} height={96} radius="sm" />
-    ))}
+/**
+ * The summary's place, a status region from the first render on, so a screen reader hears
+ * "Loading changes…" and then the summary that replaces it, each once.
+ */
+const StatusRegion: React.FC<{ children?: React.ReactNode }> = ({ children }) => (
+  <Stack gap={2} role="status" data-testid="entry-changes-status">
+    {children}
   </Stack>
 )
 
 const REFUSALS = {
   tooLarge: 'This entry is too large to compare here.',
-  notFound: 'This entry isn’t on this branch or its base.',
+  // A path the user can't read answers 404 too, so this never says the entry doesn't exist.
+  notFound: 'This entry can’t be compared here.',
   unreadable: 'This entry couldn’t be read on one side, so it can’t be compared.',
 } as const
 
-/** "3 fields changed since main", "2 fields changed, 1 item moved since main". */
+/**
+ * "3 fields changed since main"; whole list items are counted apart from fields:
+ * "6 fields changed, 2 items added, 1 item moved since main".
+ */
 const changeSummary = (changes: readonly EntryChange[], base: string): string => {
-  const moved = changes.filter((c) => c.kind === 'moved').length
-  const changed = changes.length - moved
+  const items = (kind: EntryChange['kind']) =>
+    changes.filter((c) => c.item && c.kind === kind).length
+  const fields = changes.filter((c) => !c.item).length
   const parts = [
-    ...(changed > 0 ? [`${plural(changed, 'field', 'fields')} changed`] : []),
-    ...(moved > 0 ? [`${plural(moved, 'item', 'items')} moved`] : []),
+    ...(fields > 0 ? [`${plural(fields, 'field', 'fields')} changed`] : []),
+    ...(['added', 'removed', 'moved'] as const).flatMap((kind) => {
+      const count = items(kind)
+      return count > 0 ? [`${plural(count, 'item', 'items')} ${kind}`] : []
+    }),
   ]
   return `${parts.join(', ')} since ${base}`
 }
@@ -696,16 +704,27 @@ export const EntryChangesView: React.FC<
     return (
       <Stack gap="xs" align="flex-start" data-testid={`entry-changes-${refusal}`}>
         <Text size="sm">{REFUSALS[refusal]}</Text>
-        <Group gap="xs">
-          {onOpenEntry && (
-            <Button size="compact-sm" variant="subtle" onClick={onOpenEntry}>
+        <Group gap="md">
+          {/* A 404 may be an entry the branch no longer has; only the PR shows it then. */}
+          {onOpenEntry && refusal !== 'notFound' && (
+            <Button size="compact-sm" variant="subtle" px={0} onClick={onOpenEntry}>
               Open the entry
             </Button>
           )}
           {pullRequestUrl && (
-            <Anchor href={pullRequestUrl} target="_blank" rel="noopener noreferrer" size="sm">
+            <Button
+              component="a"
+              href={pullRequestUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              size="compact-sm"
+              variant="subtle"
+              px={0}
+              rightSection={<IconExternalLink size={14} aria-hidden />}
+            >
               Compare on the pull request
-            </Anchor>
+              <VisuallyHidden component="span"> (opens in a new tab)</VisuallyHidden>
+            </Button>
           )}
         </Group>
       </Stack>
@@ -744,7 +763,12 @@ export const EntryChangesView: React.FC<
   )
 
   if (!data || !diff) {
-    return <Stack gap="sm">{errorNotice || <LoadingCards />}</Stack>
+    return (
+      <Stack gap="sm">
+        <StatusRegion>{!errorNotice && <LoadingSummary />}</StatusRegion>
+        {errorNotice || <LoadingCards />}
+      </Stack>
+    )
   }
 
   const wholeEntry: Side | undefined = !data.before ? 'after' : !data.after ? 'before' : undefined
@@ -763,8 +787,7 @@ export const EntryChangesView: React.FC<
 
   return (
     <Stack gap="sm">
-      {errorNotice}
-      <Stack gap={2}>
+      <StatusRegion>
         {movedFrom && (
           <Text size="sm" style={{ overflowWrap: 'anywhere' }} data-testid="entry-changes-moved">
             Moved from {movedFrom}
@@ -775,7 +798,8 @@ export const EntryChangesView: React.FC<
             {summary}
           </Text>
         )}
-      </Stack>
+      </StatusRegion>
+      {errorNotice}
       {subject.unsavedEdits && (
         <Alert
           variant="light"

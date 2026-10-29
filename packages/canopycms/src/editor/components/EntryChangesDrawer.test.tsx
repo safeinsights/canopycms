@@ -143,8 +143,51 @@ describe('EntryChangesDrawer', () => {
 
   it('shows skeleton cards while loading, saying so to a screen reader', async () => {
     renderDrawer({ state: { ...loaded(sides(null, null)), data: undefined } })
-    const loading = within(await waitFor(drawer)).getByTestId('entry-changes-loading')
-    expect(textOf(loading)).toBe('Loading changes…')
+    const dialog = await waitFor(drawer)
+    expect(within(dialog).getByTestId('entry-changes-loading')).toBeTruthy()
+    const status = within(dialog).getByRole('status')
+    expect(textOf(status)).toBe('Loading changes…')
+  })
+
+  it('announces loading and then the summary from one status region', async () => {
+    const view = (state: EntryChangesDrawerProps['state']) => (
+      <CanopyCMSProvider>
+        <EntryChangesDrawer opened onClose={() => {}} base="main" subject={subject} state={state} />
+      </CanopyCMSProvider>
+    )
+    const { rerender } = render(view({ ...loaded(sides(null, null)), data: undefined }))
+    const status = within(await waitFor(drawer)).getByRole('status')
+    rerender(view(loaded(sides({ title: 'Hello' }, { title: 'Hello there' }))))
+    expect(within(drawer()).getByRole('status')).toBe(status)
+    expect(textOf(status)).toBe('1 field changed since main')
+  })
+
+  it('counts whole items apart from fields', async () => {
+    const team: FieldConfig = {
+      name: 'team',
+      type: 'object',
+      list: true,
+      label: 'Team',
+      fields: [{ name: 'name', type: 'string', label: 'Name' }],
+    }
+    renderDrawer({
+      subject: { ...subject, fields: [...fields, team] },
+      state: loaded(
+        sides(
+          { title: 'Hello', team: [{ name: 'Ada', _key: 'k1' }] },
+          {
+            title: 'Hello',
+            team: [
+              { name: 'Grace', _key: 'k2' },
+              { name: 'Linus', _key: 'k3' },
+            ],
+          },
+        ),
+      ),
+    })
+    expect(textOf(within(await waitFor(drawer)).getByTestId('entry-changes-summary'))).toBe(
+      '2 items added, 1 item removed since main',
+    )
   })
 
   it('shows a 409 in yellow in the server’s words, keeps the last data, and retries', async () => {
@@ -166,7 +209,7 @@ describe('EntryChangesDrawer', () => {
 
   it.each([
     ['tooLarge', 'This entry is too large to compare here.'],
-    ['notFound', 'This entry isn’t on this branch or its base.'],
+    ['notFound', 'This entry can’t be compared here.'],
     ['unreadable', 'This entry couldn’t be read on one side, so it can’t be compared.'],
   ] as const)(
     'gives a %s refusal its own copy, no Retry, and the ways still open',
@@ -183,11 +226,17 @@ describe('EntryChangesDrawer', () => {
       expect(within(dialog).queryByRole('button', { name: 'Retry' })).toBeNull()
       expect(
         within(refusal)
-          .getByRole('link', { name: 'Compare on the pull request' })
+          .getByRole('link', { name: 'Compare on the pull request (opens in a new tab)' })
           .getAttribute('href'),
       ).toBe('https://example.com/pull/7')
-      await userEvent.click(within(refusal).getByRole('button', { name: 'Open the entry' }))
-      expect(onOpenEntry).toHaveBeenCalled()
+      // A 404 may be an entry the branch no longer has, so it offers only the pull request.
+      const open = within(refusal).queryByRole('button', { name: 'Open the entry' })
+      if (kind === 'notFound') {
+        expect(open).toBeNull()
+      } else {
+        await userEvent.click(open as HTMLElement)
+        expect(onOpenEntry).toHaveBeenCalled()
+      }
     },
   )
 

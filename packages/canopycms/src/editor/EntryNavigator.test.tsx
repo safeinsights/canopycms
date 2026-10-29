@@ -2948,7 +2948,7 @@ describe('EntryNavigator - the Changed filter', () => {
     ])
     expect(
       within(deleted).getByRole('button', {
-        name: 'Old FAQ, deleted on this branch. Show changes',
+        name: 'Old FAQ in Guides, deleted on this branch. Show changes',
       }),
     ).toBe(buttons[0])
     await userEvent.click(buttons[0])

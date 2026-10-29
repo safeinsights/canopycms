@@ -69,6 +69,8 @@ export interface EntryChange {
   /** Human labels from the entry down to the change: "Page sections › Hero › Heading". */
   path: string[]
   kind: 'added' | 'removed' | 'changed' | 'moved'
+  /** A whole list item or block added, removed or moved, rather than a field's value. */
+  item?: true
   before?: DisplayValue
   after?: DisplayValue
   text?: TextDiff
@@ -496,6 +498,7 @@ class Walker {
           key: itemAt.key,
           path: itemAt.path,
           kind: 'added',
+          item: true,
           after: item.display(value),
         })
         return
@@ -505,6 +508,7 @@ class Walker {
           key: `${itemAt.key}#moved`,
           path: itemAt.path,
           kind: 'moved',
+          item: true,
           before: { kind: 'position', position: from + 1, of: bItems.length },
           after: { kind: 'position', position: index + 1, of: aItems.length },
         })
@@ -519,6 +523,7 @@ class Walker {
         key: itemAt.key,
         path: itemAt.path,
         kind: 'removed',
+        item: true,
         before: item.display(value),
       })
     })

@@ -39,7 +39,10 @@ export interface EntryHeaderProps {
   navigatorToggleRef?: Ref<HTMLButtonElement>
   /** Opens the open entry's changes against the base; offered only while it has some. */
   onShowChanges?: () => void
-  /** The changes list is still loading, so the Show changes slot is held, unseen. */
+  /**
+   * Hold the Show changes slot, unseen, when there is no `onShowChanges`: while the changes list
+   * loads, or for an entry with no changes, so the header never shifts between them.
+   */
   showChangesPending?: boolean
   showChangesRef?: Ref<HTMLButtonElement>
   /** Replaces the open entry with the server's copy. */
@@ -104,11 +107,13 @@ const ShowChangesButton: React.FC<{ onClick?: () => void; buttonRef?: Ref<HTMLBu
     return (
       <Tooltip
         label={EDITOR_ACTIONS.showChanges}
+        position="bottom"
         events={{ hover: true, focus: true, touch: false }}
         disabled={placeholder}
       >
         <ActionIcon
           ref={placeholder ? undefined : buttonRef}
+          size="md"
           variant="subtle"
           aria-label={EDITOR_ACTIONS.showChanges}
           onClick={onClick}

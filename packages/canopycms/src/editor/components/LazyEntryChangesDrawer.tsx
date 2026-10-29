@@ -13,6 +13,7 @@ import { IconAlertCircle } from '@tabler/icons-react'
 import { OverlayDrawer } from '../shell/OverlayHeader'
 import { focusReturnProps } from '../utils/focus-return'
 import { EditorErrorBoundary } from './EditorErrorBoundary'
+import { LoadingCards, LoadingSummary } from './EntryChangesSkeleton'
 import type { EntryChangesDrawerProps } from './EntryChangesDrawer'
 
 type DrawerModule = { default: React.ComponentType<EntryChangesDrawerProps> }
@@ -85,7 +86,9 @@ export const LazyEntryChangesDrawer: React.FC<LazyEntryChangesDrawerProps> = ({
             data-testid="entry-changes-crashed"
           >
             <Stack gap={4} align="flex-start">
-              <Text size="sm">Changes couldn’t be shown. Reload the page to try again.</Text>
+              <Text size="sm">
+                Changes couldn’t be shown. Close and reopen to try again, or reload the page.
+              </Text>
               <Button size="compact-sm" variant="subtle" onClick={props.onClose}>
                 Close
               </Button>
@@ -94,7 +97,25 @@ export const LazyEntryChangesDrawer: React.FC<LazyEntryChangesDrawerProps> = ({
         </OverlayDrawer>
       )}
     >
-      <Suspense fallback={null}>
+      <Suspense
+        fallback={
+          <OverlayDrawer
+            opened={props.opened}
+            onClose={props.onClose}
+            position="right"
+            size={720}
+            title={`Changes to ${props.subject.title}`}
+            {...focusReturn}
+          >
+            <Stack gap="sm">
+              <Stack gap={2} role="status">
+                <LoadingSummary />
+              </Stack>
+              <LoadingCards />
+            </Stack>
+          </OverlayDrawer>
+        }
+      >
         <Drawer {...props} />
       </Suspense>
     </EditorErrorBoundary>

@@ -43,7 +43,7 @@ const okJson = (data: unknown) =>
   })
 
 /** The API for a branch `main` (not protected) whose changes list `changed`. */
-const stubApi = (changed: string[]) => {
+const stubApi = (changed: string[], entryChange?: { status: number; error: string }) => {
   const threads: unknown[] = []
   const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url =
@@ -64,6 +64,14 @@ const stubApi = (changed: string[]) => {
           })),
           collections: [],
           hiddenChanges: false,
+        }),
+      )
+    }
+    if (path.includes('/main/changes/') && entryChange) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: false, ...entryChange }), {
+          status: entryChange.status,
+          headers: { 'Content-Type': 'application/json' },
         }),
       )
     }
@@ -187,12 +195,10 @@ describe('Show changes', () => {
     expect(requested(fetch, '/main/changes/')).toBe(false)
 
     await userEvent.click(button)
-    const dialog = await screen.findByRole('dialog', { name: 'Changes to Hello' })
-    await waitFor(() =>
-      expect(within(dialog).getByTestId('entry-changes-summary').textContent).toBe(
-        '1 field changed since main',
-      ),
-    )
+    // The drawer replaces the skeleton drawer shown while its chunk loads.
+    const summary = await screen.findByTestId('entry-changes-summary')
+    await waitFor(() => expect(summary.textContent).toBe('1 field changed since main'))
+    const dialog = screen.getByRole('dialog', { name: 'Changes to Hello' })
     expect(requested(fetch, `/main/changes/content/posts/hello?id=${hello.contentId}`)).toBe(true)
     expect(within(dialog).queryByTestId('entry-changes-unsaved')).toBeNull()
 
@@ -211,10 +217,21 @@ describe('Show changes', () => {
     await waitFor(() => expect(titleInput().value).toBe('Loaded title'))
     await userEvent.type(titleInput(), ' edited')
     await userEvent.click(await screen.findByTestId('entry-show-changes'))
-    const dialog = await screen.findByRole('dialog', { name: 'Changes to Hello' })
-    expect((await within(dialog).findByTestId('entry-changes-unsaved')).textContent).toContain(
+    expect((await screen.findByTestId('entry-changes-unsaved')).textContent).toContain(
       'Unsaved edits aren’t included.',
     )
+  })
+
+  it('offers no "Open the entry" for the entry already open', async () => {
+    stubApi(['content/posts/hello'], {
+      status: 413,
+      error: 'This entry is too large to compare here.',
+    })
+    renderEditor()
+    await waitFor(() => expect(titleInput().value).toBe('Loaded title'))
+    await userEvent.click(await screen.findByTestId('entry-show-changes'))
+    const refusal = await screen.findByTestId('entry-changes-tooLarge')
+    expect(within(refusal).queryByRole('button', { name: 'Open the entry' })).toBeNull()
   })
 
   it('fetches nothing for a closed drawer when a save reloads the branch’s changes', async () => {
@@ -226,8 +243,7 @@ describe('Show changes', () => {
     renderEditor()
     await waitFor(() => expect(titleInput().value).toBe('Loaded title'))
     await userEvent.click(await screen.findByTestId('entry-show-changes'))
-    const dialog = await screen.findByRole('dialog', { name: 'Changes to Hello' })
-    await within(dialog).findByTestId('entry-changes-summary')
+    await screen.findByTestId('entry-changes-summary')
     await userEvent.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     const entryReads = calls('/main/changes/content/posts/hello')
@@ -247,5 +263,7 @@ describe('Show changes', () => {
     await waitFor(() => expect(requested(fetch, '/main/changes')).toBe(true))
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(screen.queryByTestId('entry-show-changes')).toBeNull()
+    // Its slot is held, unseen, so the header doesn't shift between entries.
+    expect(screen.getByTestId('entry-show-changes-pending').style.visibility).toBe('hidden')
   })
 })

@@ -1758,6 +1758,19 @@ describe('EntryHeader - Show changes', () => {
     expect(screen.getByTestId('entry-show-changes').textContent).toBe('Show changes')
   })
 
+  it('takes one slot, alike in every state, so the header never shifts', () => {
+    const slot = () =>
+      screen.queryByTestId('entry-show-changes') ?? screen.getByTestId('entry-show-changes-pending')
+    const { rerender } = renderHeader({ showChangesPending: true })
+    const pending = slot().className
+    rerender(<Headers {...defaultProps} showChangesPending onShowChanges={vi.fn()} />)
+    expect(slot().className).toBe(pending)
+    expect(slot().style.visibility).toBe('')
+    rerender(<Headers {...defaultProps} showChangesPending />)
+    expect(slot().className).toBe(pending)
+    expect(slot().style.visibility).toBe('hidden')
+  })
+
   it('holds its slot unseen and unreachable while the changes list loads', () => {
     renderHeader({ showChangesPending: true })
     const held = screen.getByTestId('entry-show-changes-pending')
@@ -1782,6 +1795,8 @@ describe('EntryHeader - Show changes', () => {
     renderHeader({ onShowChanges: vi.fn() })
     const control = screen.getByRole('button', { name: 'Show changes' })
     expect(control.textContent).toBe('')
+    // At least 28px to touch.
+    expect(control.style.getPropertyValue('--ai-size')).toBe('var(--ai-size-md)')
     act(() => control.focus())
     expect((await screen.findByRole('tooltip')).textContent).toBe('Show changes')
   })
