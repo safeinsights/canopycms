@@ -347,6 +347,20 @@ describe('the namespace', () => {
     expect(await tip('refs/heads/developer-branch')).toBeNull()
   })
 
+  it('refuses to push into it while GitHub has a branch named after part of it', async () => {
+    await git('--git-dir', githubPath, 'branch', 'canopycms/prod', 'main')
+    await onMain('canopycms/prod/spring')
+    const github = gateway()
+
+    const caught = await pushVia(github, 'canopycms/prod/spring').catch((err: unknown) => err)
+
+    expect(caught).toBeInstanceOf(RefusedPushError)
+    expect(caught).toMatchObject({
+      message: expect.stringContaining('GitHub has a branch named "canopycms/prod"'),
+    })
+    expect(isPermanentTaskFailure(caught)).toBe(true)
+  })
+
   it('pushes a legacyBranches entry, by its exact name', async () => {
     const sha = await onMain('spring/update')
     const github = gateway({ legacyBranches: ['spring/update'] })
