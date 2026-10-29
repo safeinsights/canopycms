@@ -1390,8 +1390,8 @@ already request through the task queue.
 The gateway writes only branches in its namespace (`branchNamespace`, `canopycms/prod/` by
 default), its settings branch and `legacyBranches`, never the base branch, GitHub's default
 branch or a `protectedBranches` match. It acts only on pull requests from those heads in this
-repository, and returns a body only for a pull request it may update. There it can push any of the
-repository's commits, force-push, delete and open pull requests, which run your workflows. So:
+repository, and reads no other's body. There it can push any of the repository's commits,
+force-push, delete and open pull requests, which run your workflows. So:
 
 - keep secrets a workflow could leak in an environment with required reviewers, never in
   repository or organization secrets, which reach every branch. Set its deployment branches to
@@ -1455,6 +1455,9 @@ the worker. What it means for you, and what you can do:
   `Syncing git...` lines the [worker-down alarm](#worker-down-alarm) counts, so the alarm detects
   faults, not compromise. The gateway's log (the `{instance_id}-gateway` stream), which the worker
   cannot write, records what reached GitHub: read it when GitHub shows a change nobody made.
+- **Pull requests people open from namespace branches.** The CMS Lambda alone, through the task
+  queue, can draft, close, retitle or rewrite one. Choosing a branch CanopyCMS owns opts into that;
+  merging still takes a person.
 - **Other unix sockets** on the host that `ec2-user` can connect to are levers the worker keeps.
   Install nothing on the instance that listens on one.
 - **A root process opening a path the worker can write** could be steered into overwriting any
