@@ -250,10 +250,11 @@ test.describe('Branch State Badges', () => {
     const branchName = `canopycms-merged-badge-${Date.now()}`
 
     await test.step('create, submit, approve, then mark merged', async () => {
-      const createRes = await createBranchViaAPI(BASE_URL, branchName, 'admin')
+      // The editor makes the branch: its creator cannot approve it.
+      const createRes = await createBranchViaAPI(BASE_URL, branchName, 'editor')
       expect(createRes.ok).toBe(true)
-      await saveHomeChangeViaAPI(BASE_URL, branchName, 'admin')
-      const submitRes = await submitBranchViaAPI(BASE_URL, branchName, 'admin')
+      await saveHomeChangeViaAPI(BASE_URL, branchName, 'editor')
+      const submitRes = await submitBranchViaAPI(BASE_URL, branchName, 'editor')
       expect(submitRes.ok).toBe(true)
       const approveRes = await approveBranchViaAPI(BASE_URL, branchName, 'admin')
       expect(approveRes.ok).toBe(true)
@@ -280,10 +281,11 @@ test.describe('Branch State Badges', () => {
     const branchName = `canopycms-approve-flow-${Date.now()}`
 
     await test.step('create, submit, approve via API', async () => {
-      const createRes = await createBranchViaAPI(BASE_URL, branchName, 'admin')
+      // The editor makes the branch: its creator cannot approve it.
+      const createRes = await createBranchViaAPI(BASE_URL, branchName, 'editor')
       expect(createRes.ok).toBe(true)
-      await saveHomeChangeViaAPI(BASE_URL, branchName, 'admin')
-      const submitRes = await submitBranchViaAPI(BASE_URL, branchName, 'admin')
+      await saveHomeChangeViaAPI(BASE_URL, branchName, 'editor')
+      const submitRes = await submitBranchViaAPI(BASE_URL, branchName, 'editor')
       expect(submitRes.ok).toBe(true)
       const approveRes = await approveBranchViaAPI(BASE_URL, branchName, 'admin')
       expect(approveRes.ok).toBe(true)

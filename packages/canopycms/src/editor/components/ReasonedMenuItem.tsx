@@ -6,8 +6,16 @@ import { Menu, Text, type MenuItemProps } from '@mantine/core'
 export interface ReasonedMenuItemProps extends MenuItemProps {
   /** Why the item can't act now. Set, the item is blocked and shows this beneath its label. */
   blockedReason?: string
+  /** False when a neighbouring item already says why, so the reason is not printed twice. */
+  showReason?: boolean
+  /** The reason's element id, which another blocked item that shows no reason can point to. */
+  reasonId?: string
+  /** The id of the element that gives this item's reason, when it is not printed beneath it. */
+  reasonDescribedBy?: string
   onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void
   'data-testid'?: string
+  /** The caller's own description, kept unless a shared reason points elsewhere. */
+  'aria-describedby'?: string
   children: React.ReactNode
 }
 
@@ -18,6 +26,9 @@ export interface ReasonedMenuItemProps extends MenuItemProps {
  */
 export const ReasonedMenuItem: React.FC<ReasonedMenuItemProps> = ({
   blockedReason,
+  showReason = true,
+  reasonId,
+  reasonDescribedBy,
   onClick,
   children,
   color,
@@ -29,6 +40,7 @@ export const ReasonedMenuItem: React.FC<ReasonedMenuItemProps> = ({
     color={blockedReason ? undefined : color}
     c={blockedReason ? 'dimmed' : rest.c}
     aria-disabled={blockedReason ? true : undefined}
+    aria-describedby={(blockedReason && reasonDescribedBy) || rest['aria-describedby']}
     closeMenuOnClick={blockedReason ? false : undefined}
     style={blockedReason ? { ...style, cursor: 'not-allowed' } : style}
     onClick={(event) => {
@@ -40,8 +52,15 @@ export const ReasonedMenuItem: React.FC<ReasonedMenuItemProps> = ({
     }}
   >
     {children}
-    {blockedReason && (
-      <Text size="xs" c="dimmed" component="span" display="block" style={{ whiteSpace: 'normal' }}>
+    {blockedReason && showReason && (
+      <Text
+        id={reasonId}
+        size="xs"
+        c="dimmed"
+        component="span"
+        display="block"
+        style={{ whiteSpace: 'normal' }}
+      >
         {blockedReason}
       </Text>
     )}

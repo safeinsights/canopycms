@@ -109,6 +109,7 @@ const ALL_TASK_ACTIONS = Object.keys({
   'convert-to-draft': true,
   'close-pr': true,
   'delete-remote-branch': true,
+  'sync-pr-comments': true,
 } satisfies Record<TaskAction, true>) as TaskAction[]
 
 type Responses = Record<string, unknown>

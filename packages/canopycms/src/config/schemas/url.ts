@@ -36,3 +36,22 @@ export const previewPrefixSchema = z
     message:
       'editor.previewPrefix must be an absolute http(s) URL or a site-relative path beginning with a single "/", with no query or fragment',
   })
+
+/**
+ * `editorUrl`: the absolute http(s) URL of the page that mounts the Editor, by
+ * `uploadTargetUrlSchema`'s rule plus a scheme and no credentials, since it is written into
+ * pull request bodies as a link.
+ */
+export const editorUrlSchema = z
+  .string()
+  .trim()
+  .refine(
+    (value) => {
+      if (!isHttpUrlOrSameOriginPath(value) || !/^https?:\/\//i.test(value)) return false
+      const url = new URL(value)
+      return !url.username && !url.password
+    },
+    {
+      message: 'editorUrl must be an absolute http(s) URL with no credentials, query or fragment',
+    },
+  )

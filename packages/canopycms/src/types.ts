@@ -49,6 +49,12 @@ export interface BranchMetadata {
    * leaves no PR number. Absent on branches the CMS never pushed there.
    */
   pushedToGitHubAt?: string
+  /**
+   * The latest editor URL a submit took from its request (editor-url.ts); a submit that took
+   * none, or used config.editorUrl, leaves it as it was. A comment change re-renders the PR's
+   * comment summary with config.editorUrl or this, so a commenter never supplies the links.
+   */
+  editorUrl?: string
   /** Sync status for async GitHub operations (used when Lambda has no internet) */
   syncStatus?: SyncStatus
   /** Whether any rebase of this branch kept its version of an entry base also changed */

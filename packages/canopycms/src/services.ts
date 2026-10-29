@@ -15,6 +15,8 @@
  *
  * Module map: ./AGENTS.md.
  */
+import fs from 'node:fs/promises'
+import path from 'node:path'
 import type { CanopyConfig } from './config'
 import type { EntrySchemaRegistry } from './schema/types'
 import { getConfigDefaults } from './config'
@@ -46,12 +48,14 @@ import {
   describeEditors,
   type EditorLookup,
   type SubmissionEditor,
+  MAX_LISTED_ENTRIES,
 } from './submission-attribution'
 import { getBranchMetadataFileManager, recordBranchEditor } from './branch-metadata'
 import { readBranchMetadataFile } from './branch-metadata-file'
 import { getErrorMessage, redactCredentials } from './utils/error'
 import { withContentWriteLock } from './utils/content-write-lock'
 import { ContentStore } from './content-store'
+import { entryLogicalPathOfFile } from './content-id-index'
 import { stampNewEntries, type StampedEntry } from './stamp-on-publish'
 
 /**
@@ -147,6 +151,8 @@ export interface SubmitBranchResult {
   changedPaths: string[]
   /** Every recorded editor of the branch, for the PR body. */
   editors: SubmissionEditor[]
+  /** The entry logical path of each changed path that is an entry, for its editor link. */
+  entryPaths: Map<string, string>
   /** The entries this submit stamped (stamp-on-publish.ts), for the editor's open forms. */
   stamped: StampedEntry[]
 }
@@ -418,6 +424,26 @@ async function _createCanopyServicesInternal(
     }
   }
 
+  /** The entries among `paths` that still exist, for their editor links. */
+  const existingEntryPaths = async (
+    context: BranchContext,
+    paths: readonly string[],
+  ): Promise<Map<string, string>> => {
+    const contentRoot = services.config.contentRoot || 'content'
+    const entryPaths = new Map<string, string>()
+    // Only the paths the PR body lists can carry a link.
+    await Promise.all(
+      [...new Set(paths)].slice(0, MAX_LISTED_ENTRIES).map(async (relativePath) => {
+        const entryPath = entryLogicalPathOfFile(relativePath, contentRoot)
+        if (!entryPath) return
+        // A deleted entry's link would open the editor on some other entry.
+        const stat = await fs.stat(path.join(context.branchRoot, relativePath)).catch(() => null)
+        if (stat?.isFile()) entryPaths.set(relativePath, entryPath)
+      }),
+    )
+    return entryPaths
+  }
+
   const submitBranch = async (options: {
     context: BranchContext
     submitter?: SubmissionEditor
@@ -541,6 +567,7 @@ async function _createCanopyServicesInternal(
     return {
       changedPaths: submitted,
       editors: await describeEditors(editorIds, lookupEditor),
+      entryPaths: await existingEntryPaths(options.context, submitted),
       stamped,
     }
   }

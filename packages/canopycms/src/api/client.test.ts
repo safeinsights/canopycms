@@ -3,10 +3,20 @@ import { CanopyApiClient, createApiClient, isNonApiResponse } from './client'
 import { computeContentSha256Hex } from './request-body-hash'
 import {
   ApiTimeoutError,
+  GATEWAY_MARGIN_MS,
+  GATEWAY_MAX_TIMEOUT_MS,
   REQUEST_TIMED_OUT_MESSAGE,
   REQUEST_TIMEOUT_MS,
   WRITE_TIMED_OUT_MESSAGE,
 } from './request-deadline'
+
+describe('request deadlines vs the gateway in front of the API', () => {
+  it('gives a request one margin past the longest a gateway holds it, and `long` more than that', () => {
+    expect(GATEWAY_MAX_TIMEOUT_MS).toBe(120_000)
+    expect(REQUEST_TIMEOUT_MS.standard).toBe(GATEWAY_MAX_TIMEOUT_MS + GATEWAY_MARGIN_MS)
+    expect(REQUEST_TIMEOUT_MS.long).toBeGreaterThan(REQUEST_TIMEOUT_MS.standard)
+  })
+})
 
 describe('CanopyApiClient', () => {
   describe('Response handling', () => {
@@ -476,7 +486,7 @@ describe('CanopyApiClient', () => {
 
     it('does not cut a long operation off at the standard deadline', async () => {
       const { fetch } = stalledFetch()
-      const pending = new CanopyApiClient({ fetch }).workflow.submit({ branch: 'feature' })
+      const pending = new CanopyApiClient({ fetch }).workflow.submit({ branch: 'feature' }, {})
       let settled = false
       pending.catch(() => {}).finally(() => (settled = true))
 

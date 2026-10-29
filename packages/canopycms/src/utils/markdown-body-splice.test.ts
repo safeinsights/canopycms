@@ -21,9 +21,21 @@ vi.mock('mdast-util-from-markdown', async (importActual) => {
   }
 })
 
+// Lets one test turn the restyle off, as when no block of an edit can be restyled.
+const restyleControl = vi.hoisted(() => ({ off: false }))
+vi.mock('./markdown-restyle', async (importActual) => {
+  const actual = await importActual<typeof import('./markdown-restyle')>()
+  return {
+    ...actual,
+    restyleMarkdown: (...args: Parameters<typeof actual.restyleMarkdown>) =>
+      restyleControl.off ? undefined : actual.restyleMarkdown(...args),
+  }
+})
+
 afterEach(() => {
   parseControl.corruptAfter = Infinity
   parseControl.calls = 0
+  restyleControl.off = false
 })
 
 /** A Prettier-formatted body as gray-matter splits it: led by the blank line after `---`. */
@@ -118,12 +130,16 @@ describe('preserveMarkdownSource', () => {
     )
   })
 
-  it('writes an edited paragraph in the editor text, and nothing else', () => {
+  it('writes an edited paragraph in the export style, and nothing else', () => {
     const line =
       'A paragraph with *emphasis*, **strong**, edited, and `code`. Escapes stay as written: a\\_b.'
     const updated = edit(EXPORT, EXPORT.split('\n')[2] ?? '', line)
     expect(preserveMarkdownSource(BODY, updated, 'md')).toBe(
-      edit(BODY, BODY.split('\n')[3] ?? '', line),
+      edit(
+        BODY,
+        BODY.split('\n')[3] ?? '',
+        'A paragraph with _emphasis_, **strong**, edited, and `code`. Escapes stay as written: a_b.',
+      ),
     )
   })
 
@@ -196,10 +212,10 @@ describe('preserveMarkdownSource', () => {
       )
     })
 
-    it('writes the whole list as the editor sent it when an item splice would change its looseness', () => {
-      const body = '\n- a\n\n- b\n\nAfter.\n'
+    it('writes the whole list in the export style when an item splice would change its looseness', () => {
+      const body = '\n+ a\n\n+ b\n\nAfter.\n'
       const updated = '* a\n* b\n* c\n\nAfter.'
-      expect(preserveMarkdownSource(body, updated, 'md')).toBe('\n* a\n* b\n* c\n\nAfter.\n')
+      expect(preserveMarkdownSource(body, updated, 'md')).toBe('\n- a\n- b\n- c\n\nAfter.\n')
     })
   })
 
@@ -278,19 +294,150 @@ Intro paragraph.
       )
     })
 
-    it('writes the edit as sent when the body on disk is not valid MDX', () => {
-      expect(preserveMarkdownSource('\nCosts { 5 dollars.\n', 'Costs 5 dollars.', 'mdx')).toBe(
-        'Costs 5 dollars.',
+    it('restyles the whole edit when the body on disk is not valid MDX', () => {
+      expect(preserveMarkdownSource('\nCosts { 5 dollars.\n', 'Costs *5* dollars.', 'mdx')).toBe(
+        'Costs _5_ dollars.',
       )
     })
   })
 
-  it('writes the edit as sent when no splice reads back as the edit', () => {
+  it('writes the edit as sent when neither it restyled nor any splice reads back as the edit', () => {
     parseControl.corruptAfter = 2
     const updated = `${EXPORT}\n\n![Logo](/assets/logo.png)`
     expect(preserveMarkdownSource(BODY, updated, 'md')).toBe(updated)
-    // Both splice attempts were checked (the original, the edit, then one parse per attempt).
+    // The original and the edit (whose new block has nothing to restyle), then one parse per
+    // splice.
     expect(parseControl.calls).toBe(4)
+  })
+
+  it('writes the restyled edit whole when no splice reads back as the edit', () => {
+    parseControl.corruptAfter = 3
+    const updated = '* a\n* b *em*\n\nNew.'
+    expect(preserveMarkdownSource('\n- a\n', updated, 'md')).toBe('- a\n- b _em_\n\nNew.')
+    // The original, the edit, the restyled edit, then four splices: restyled and as sent, each
+    // deep and shallow.
+    expect(parseControl.calls).toBe(7)
+  })
+
+  it('restyles the whole body of a new file', () => {
+    expect(preserveMarkdownSource(undefined, '* a *em*\n+ b', 'md')).toBe('- a _em_\n\n* b')
+  })
+
+  describe('an edit typed as source', () => {
+    /** A Prettier-formatted body, with a list and paragraph the source editor might add to. */
+    const PAGE =
+      '\n## Topics\n\n- Alpha\n- Beta\n\nIntro text.\n\n* Star list on disk\n\nOld *em* on disk.\n'
+
+    it('writes new list items in the export style, Prettier-clean, as the reported page needed', async () => {
+      const file = '---\ntitle: T\n---\n\n## Topics\n\n- Alpha\n- Beta\n\nIntro text.\n'
+      const typed =
+        '## Topics\n\n- Alpha\n- Beta\n- Gamma with *italic* text\n- Delta, *also* italic\n\nIntro text.\n\n* New list\n+ with *em*'
+      const out = serializeFrontmatter(typed, { title: 'T' }, file, 'md')
+      expect(out).toBe(
+        '---\ntitle: T\n---\n\n## Topics\n\n- Alpha\n- Beta\n- Gamma with _italic_ text\n- Delta, _also_ italic\n\nIntro text.\n\n- New list\n\n* with _em_\n',
+      )
+      expect(await format(out, { parser: 'markdown' })).toBe(out)
+    })
+
+    it('keeps untouched blocks byte-identical, even ones not in the export style', () => {
+      const typed =
+        '## Topics\n\n- Alpha\n- Beta\n- Gamma *new*\n\nIntro text.\n\n* Star list on disk\n\nOld *em* on disk.\n'
+      expect(preserveMarkdownSource(PAGE, typed, 'md')).toBe(
+        PAGE.replace('- Beta\n', '- Beta\n- Gamma _new_\n'),
+      )
+    })
+
+    it('writes an edited paragraph in the export style and leaves its neighbours byte-identical', () => {
+      const typed = PAGE.replace('Intro text.', 'Intro *text*, a\\_b, __bold__.')
+      expect(preserveMarkdownSource(PAGE, typed, 'md')).toBe(
+        PAGE.replace('Intro text.', 'Intro _text_, a_b, **bold**.'),
+      )
+    })
+
+    it('restyles a new block whose meaning matches an untouched one on disk', () => {
+      const page = '\nA\n\n---\n\nB\n'
+      expect(preserveMarkdownSource(page, 'A\n\n---\n\nB\n\n***\n\nC *x*', 'md')).toBe(
+        '\nA\n\n---\n\nB\n\n---\n\nC _x_\n',
+      )
+    })
+
+    it('numbers items as Prettier does, leaving an untouched one alone', () => {
+      const page = '\n0. a\n1. b\n1. c\n'
+      expect(preserveMarkdownSource(page, '0. a\n1. b, edited\n1. c', 'md')).toBe(
+        '\n0. a\n1. b, edited\n1. c\n',
+      )
+    })
+
+    it("restyles a new item's text but keeps the list's own marker", () => {
+      const typed = PAGE.replace('* Star list on disk\n', '* Star list on disk\n* New *em* item\n')
+      expect(preserveMarkdownSource(PAGE, typed, 'md')).toBe(
+        PAGE.replace('* Star list on disk\n', '* Star list on disk\n* New _em_ item\n'),
+      )
+    })
+
+    it('writes changed blocks as typed when no block can be restyled', () => {
+      restyleControl.off = true
+      // Sent without the disk's leading blank line, which only a splice restores.
+      const typed = PAGE.slice(1).replace('Intro text.', 'Intro *text*.')
+      expect(preserveMarkdownSource(PAGE, typed, 'md')).toBe(
+        PAGE.replace('Intro text.', 'Intro *text*.'),
+      )
+    })
+
+    it.each([
+      ['intraword emphasis with `*`', 'Many *API*s, 5*x* and un*frigging*believable.'],
+      ['character references', 'A&nbsp;B, &#x202E;, &#8203; and &amp;.'],
+      ['escapes and syntax only a plugin reads', 'Price \\$5, $a*b*c$, [[Page]] and \\* or \\#.'],
+      [
+        'links, images and inline code',
+        '[a](https://x.com/w?v=1&t=2 "R&D") ![Q&A b](i.png?w=1&h=2) `a\\_b` <https://y.com>',
+      ],
+    ])('keeps %s as typed in an edited paragraph', async (_case, line) => {
+      const typed = PAGE.replace('Intro text.', `${line} *x*`)
+      const out = preserveMarkdownSource(PAGE, typed, 'md')
+      expect(out).toBe(PAGE.replace('Intro text.', `${line} _x_`))
+      const prettier = await format(out, { parser: 'markdown' })
+      expect(prettier).toContain(`${line} _x_`)
+    })
+
+    it('unescapes `_` between word characters, and takes `*` for emphasis after a `_`', () => {
+      // Prettier misreads `_` emphasis that follows a literal `_` in the same block.
+      const typed = PAGE.replace('Intro text.', '*a* then a\\_b, snake\\_case\\_name, end\\_ *x*')
+      expect(preserveMarkdownSource(PAGE, typed, 'md')).toBe(
+        PAGE.replace('Intro text.', '_a_ then a_b, snake_case_name, end\\_ *x*'),
+      )
+    })
+
+    it('writes emphasis inside emphasis with `*`, as Prettier does', () => {
+      const typed = PAGE.replace('Intro text.', '*outer _inner_ more*')
+      expect(preserveMarkdownSource(PAGE, typed, 'md')).toBe(
+        PAGE.replace('Intro text.', '_outer *inner* more_'),
+      )
+    })
+
+    it('keeps escapes on the continuation lines of quoted and listed text', () => {
+      // `here ` ends in a soft line ending, whose trailing space the text does not keep.
+      const typed = `${PAGE.slice(1)}\n> one *x*\n> two \\$ here \n> three\n\n- item *y*\n  more \\$ text`
+      expect(preserveMarkdownSource(PAGE, typed, 'md')).toBe(
+        `${PAGE}\n> one _x_\n> two \\$ here\n> three\n\n- item _y_\n  more \\$ text\n`,
+      )
+    })
+
+    it("keeps an edited JSX element's attributes and layout as typed", () => {
+      const page = '\n<C c=\'he said "hi"\' u="x&nbsp;y">\nText.\n</C>\n'
+      expect(preserveMarkdownSource(page, page.replace('Text.', 'Text *x*.'), 'mdx')).toBe(
+        page.replace('Text.', 'Text _x_.'),
+      )
+    })
+
+    it('restyles an edited JSX block in place and keeps the untouched one as written', () => {
+      const page =
+        '\n<Callout type="info">\nFirst *note*.\n</Callout>\n\n<Callout>\nSecond.\n</Callout>\n'
+      const typed = page.replace('Second.', 'Second, *edited*.')
+      expect(preserveMarkdownSource(page, typed, 'mdx')).toBe(
+        '\n<Callout type="info">\nFirst *note*.\n</Callout>\n\n<Callout>\nSecond, _edited_.\n</Callout>\n',
+      )
+    })
   })
 })
 
@@ -333,6 +480,12 @@ describe('serializeFrontmatter body preservation', () => {
     )
   })
 
+  it("writes a new file's body in the export style", () => {
+    expect(serializeFrontmatter('* Typed *em*', { title: 'Hello' }, undefined, 'md')).toBe(
+      '---\ntitle: Hello\n---\n\n- Typed _em_\n',
+    )
+  })
+
   it('opens a new file body with a blank line after the frontmatter', () => {
     expect(serializeFrontmatter('Body.', { title: 'Hello' }, undefined, 'md')).toBe(
       '---\ntitle: Hello\n---\n\nBody.\n',
@@ -341,7 +494,7 @@ describe('serializeFrontmatter body preservation', () => {
 
   it('writes a Prettier-clean file when the editor writes in its configured style', async () => {
     // New blocks in the style MARKDOWN_EXPORT_OPTIONS gives the editor
-    // (editor/fields/markdown-export-options.ts); a new item in an existing list takes its marker.
+    // (utils/markdown-export-options.ts); a new item in an existing list takes its marker.
     const updated = `${edit(EXPORT, '* Third item', '* Third item\n* New _item_')}\n\n- An appended list\n\n---\n\nNew **closing**.`
     const out = serializeFrontmatter(updated, { title: 'Hello' }, FILE, 'md')
     expect(await format(out, { parser: 'markdown' })).toBe(out)

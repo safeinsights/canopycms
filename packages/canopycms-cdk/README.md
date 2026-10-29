@@ -22,7 +22,7 @@ What changed in each release, for all five CanopyCMS packages, is in `node_modul
 **`CanopyCmsDistribution`** — CloudFront + DNS (optional):
 
 - ACM certificate with DNS validation
-- CloudFront distribution with Lambda Function URL origin
+- CloudFront distribution with Lambda Function URL origin; its read timeout follows the Lambda's (60 s by default, at most 120 s, CloudFront's default quota)
 - Route53 A/AAAA alias records
 - Cache policies: no-cache for API/editor, long-cache for static assets
 - Response headers: framing protection (`frame-ancestors 'self'`), `nosniff`, HSTS, `X-Robots-Tag: noindex`
