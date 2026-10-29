@@ -6,6 +6,7 @@ import { toBranchListItem, type BranchListItemResponse } from './branch'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { defineEndpoint } from './route-builder'
 import { syncConvertToDraft } from './github-sync'
+import { syncPrComments } from './pr-comment-sync'
 import { CommentStore } from '../comment-store'
 import { getErrorMessage } from '../utils/error'
 import { REQUEST_CHANGES_NOTE_MAX_LENGTH } from '../authorization/review-role'
@@ -101,6 +102,7 @@ const requestChangesHandler = async (
       )
       warning = NOTE_NOT_SAVED_WARNING
     }
+    if (!warning) await syncPrComments(ctx, { ...branchContext, branch: updated.branch })
   }
 
   return {
