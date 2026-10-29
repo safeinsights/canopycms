@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createCanopyRouter, matchRoute, type RouteDefinition } from './router'
-import { CMS_BRANCH_PREFIX } from '../paths'
+import { TOP_LEVEL_ROUTE_SEGMENTS } from '../api/branch'
 import type { CanopyBinaryResponse } from './types'
 
 /** Build a minimal RouteDefinition for synthetic precedence tests. */
@@ -321,19 +321,17 @@ describe('matchRoute - CanopyHandler may return a CanopyBinaryResponse (M2 plumb
     expect(result).toEqual(binaryResult)
   })
 
-  // The router ranks a literal segment above `:branch`, so a branch named like a static top-level
-  // namespace would have its own routes shadowed. Editors' branches start with CMS_BRANCH_PREFIX
-  // (api/branch.ts), so no such namespace may.
+  // The router ranks a literal segment above `:branch`, so a branch whose short name is a static
+  // top-level segment would have its own routes shadowed. Creation refuses those names
+  // (api/branch.ts), so the list it refuses must hold every one.
   describe('branch names', () => {
-    it('has no static top-level namespace in the namespace editors create branches in', () => {
+    it('lists every static top-level segment among the names creation refuses', () => {
       const staticFirstSegments = createCanopyRouter()
         .routes.map((route) => route.pattern[0])
         .filter((segment) => segment && !segment.startsWith(':') && !segment.startsWith('...'))
 
       expect(staticFirstSegments.length).toBeGreaterThan(0)
-      expect(
-        staticFirstSegments.filter((segment) => segment.startsWith(CMS_BRANCH_PREFIX)),
-      ).toEqual([])
+      expect([...new Set(staticFirstSegments)].sort()).toEqual([...TOP_LEVEL_ROUTE_SEGMENTS].sort())
     })
   })
 })

@@ -70,7 +70,7 @@ describe('Review Workflow Integration', () => {
 
     // STEP 2: Editor writes content
     const firstWrite = await editorClient.put(
-      '/api/canopycms/canopycms-feature-review-test/content/posts/test-post',
+      '/api/canopycms/feature-review-test/content/posts/test-post',
       {
         collection: 'content/posts',
         slug: 'test-post',
@@ -87,12 +87,9 @@ describe('Review Workflow Integration', () => {
     expect(firstWrite.status).toBe(200)
 
     // STEP 3: Editor submits for review
-    const submitResponse = await editorClient.post(
-      '/api/canopycms/canopycms-feature-review-test/submit',
-      {
-        message: 'Ready for review',
-      },
-    )
+    const submitResponse = await editorClient.post('/api/canopycms/feature-review-test/submit', {
+      message: 'Ready for review',
+    })
 
     expect(submitResponse.status).toBe(200)
     const submitData = await submitResponse.json<BranchListItemResponse>()
@@ -100,7 +97,7 @@ describe('Review Workflow Integration', () => {
 
     // STEP 4: Reviewer adds comment
     const commentResponse = await reviewerClient.post(
-      '/api/canopycms/canopycms-feature-review-test/comments',
+      '/api/canopycms/feature-review-test/comments',
       {
         text: 'Please add more details to the introduction',
         type: 'entry',
@@ -112,7 +109,7 @@ describe('Review Workflow Integration', () => {
 
     // STEP 5: Reviewer requests changes
     const requestChangesResponse = await reviewerClient.post(
-      '/api/canopycms/canopycms-feature-review-test/request-changes',
+      '/api/canopycms/feature-review-test/request-changes',
       {
         message: 'Needs more details',
       },
@@ -124,7 +121,7 @@ describe('Review Workflow Integration', () => {
 
     // STEP 6: Editor updates content and resubmits
     const update = await editorClient.put(
-      '/api/canopycms/canopycms-feature-review-test/content/posts/test-post',
+      '/api/canopycms/feature-review-test/content/posts/test-post',
       {
         expectedVersion: (firstWrite.body as ApiResponse<{ version?: number }>).data?.version,
         collection: 'content/posts',
@@ -141,18 +138,15 @@ describe('Review Workflow Integration', () => {
     )
     expect(update.status).toBe(200)
 
-    const resubmitResponse = await editorClient.post(
-      '/api/canopycms/canopycms-feature-review-test/submit',
-      {
-        message: 'Updated with more details',
-      },
-    )
+    const resubmitResponse = await editorClient.post('/api/canopycms/feature-review-test/submit', {
+      message: 'Updated with more details',
+    })
 
     expect(resubmitResponse.status).toBe(200)
 
     // STEP 7: Reviewer approves
     const approveResponse = await reviewerClient.post(
-      '/api/canopycms/canopycms-feature-review-test/approve',
+      '/api/canopycms/feature-review-test/approve',
       {
         message: 'Looks good!',
       },
@@ -170,20 +164,20 @@ describe('Review Workflow Integration', () => {
       title: 'Multi Reviewer Test',
     })
 
-    await saveSamplePost(editorClient, 'canopycms-feature-multi-reviewer')
+    await saveSamplePost(editorClient, 'feature-multi-reviewer')
 
-    await editorClient.post('/api/canopycms/canopycms-feature-multi-reviewer/submit', {
+    await editorClient.post('/api/canopycms/feature-multi-reviewer/submit', {
       message: 'Ready for review',
     })
 
     // Both reviewer and admin add comments concurrently
     // (CommentStore now handles concurrency with optimistic locking)
     const [reviewerComment, adminComment] = await Promise.all([
-      reviewerClient.post('/api/canopycms/canopycms-feature-multi-reviewer/comments', {
+      reviewerClient.post('/api/canopycms/feature-multi-reviewer/comments', {
         text: 'Reviewer comment',
         type: 'branch',
       }),
-      adminClient.post('/api/canopycms/canopycms-feature-multi-reviewer/comments', {
+      adminClient.post('/api/canopycms/feature-multi-reviewer/comments', {
         text: 'Admin comment',
         type: 'branch',
       }),
@@ -193,9 +187,7 @@ describe('Review Workflow Integration', () => {
     expect(adminComment.status).toBe(201)
 
     // List all comments
-    const listResponse = await reviewerClient.get(
-      '/api/canopycms/canopycms-feature-multi-reviewer/comments',
-    )
+    const listResponse = await reviewerClient.get('/api/canopycms/feature-multi-reviewer/comments')
 
     expect(listResponse.status).toBe(200)
     const listData = await listResponse.json<CommentsResponse>()
@@ -209,15 +201,15 @@ describe('Review Workflow Integration', () => {
       title: 'Permission Test',
     })
 
-    await saveSamplePost(editorClient, 'canopycms-feature-permission-test')
+    await saveSamplePost(editorClient, 'feature-permission-test')
 
-    await editorClient.post('/api/canopycms/canopycms-feature-permission-test/submit', {
+    await editorClient.post('/api/canopycms/feature-permission-test/submit', {
       message: 'Ready',
     })
 
     // Editor (not a reviewer) tries to approve - should fail
     const approveResponse = await editorClient.post(
-      '/api/canopycms/canopycms-feature-permission-test/approve',
+      '/api/canopycms/feature-permission-test/approve',
       {
         message: 'Approving my own work',
       },
@@ -233,15 +225,15 @@ describe('Review Workflow Integration', () => {
       title: 'Comment Threads Test',
     })
 
-    await saveSamplePost(editorClient, 'canopycms-feature-comment-threads')
+    await saveSamplePost(editorClient, 'feature-comment-threads')
 
-    await editorClient.post('/api/canopycms/canopycms-feature-comment-threads/submit', {
+    await editorClient.post('/api/canopycms/feature-comment-threads/submit', {
       message: 'Ready',
     })
 
     // Reviewer adds a comment
     const commentResponse = await reviewerClient.post(
-      '/api/canopycms/canopycms-feature-comment-threads/comments',
+      '/api/canopycms/feature-comment-threads/comments',
       {
         text: 'This needs fixing',
         type: 'branch',
@@ -254,7 +246,7 @@ describe('Review Workflow Integration', () => {
 
     // Reviewer resolves the comment thread
     const resolveResponse = await reviewerClient.post(
-      `/api/canopycms/canopycms-feature-comment-threads/comments/${threadId}/resolve`,
+      `/api/canopycms/feature-comment-threads/comments/${threadId}/resolve`,
       {},
     )
 
@@ -269,17 +261,14 @@ describe('Review Workflow Integration', () => {
       title: 'Empty Submit',
     })
 
-    const submitResponse = await editorClient.post(
-      '/api/canopycms/canopycms-feature-empty-submit/submit',
-      {
-        message: 'Ready',
-      },
-    )
+    const submitResponse = await editorClient.post('/api/canopycms/feature-empty-submit/submit', {
+      message: 'Ready',
+    })
 
     expect(submitResponse.status).toBe(400)
     const body = await submitResponse.json<BranchListItemResponse>()
-    expect(body.error).toMatch(/^Nothing to submit yet: "canopycms-feature-empty-submit"/)
-    const status = await editorClient.get('/api/canopycms/canopycms-feature-empty-submit/status')
+    expect(body.error).toMatch(/^Nothing to submit yet: "feature-empty-submit"/)
+    const status = await editorClient.get('/api/canopycms/feature-empty-submit/status')
     expect((await status.json<BranchListItemResponse>()).data?.branch.status).toBe('editing')
   })
 
@@ -290,20 +279,17 @@ describe('Review Workflow Integration', () => {
       title: 'Withdraw Test',
     })
 
-    await saveSamplePost(editorClient, 'canopycms-feature-withdraw-test')
+    await saveSamplePost(editorClient, 'feature-withdraw-test')
 
-    const submitResponse = await editorClient.post(
-      '/api/canopycms/canopycms-feature-withdraw-test/submit',
-      {
-        message: 'Ready',
-      },
-    )
+    const submitResponse = await editorClient.post('/api/canopycms/feature-withdraw-test/submit', {
+      message: 'Ready',
+    })
 
     expect(submitResponse.status).toBe(200)
 
     // Editor withdraws submission
     const withdrawResponse = await editorClient.post(
-      '/api/canopycms/canopycms-feature-withdraw-test/withdraw',
+      '/api/canopycms/feature-withdraw-test/withdraw',
       {},
     )
 

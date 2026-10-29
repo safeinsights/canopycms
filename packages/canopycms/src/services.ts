@@ -39,6 +39,7 @@ import { BranchSchemaCache } from './branch-schema-cache'
 import { enqueueTask } from './task-queue/cms-task-queue'
 import { getTaskQueueDir } from './task-queue/task-queue-config'
 import { baseBranchOf } from './utils/base-branch'
+import { shortNameOf } from './branch-param'
 import { detectHeadBranch, isCanopyInternalPath } from './utils/git'
 import { readsFromCheckout } from './build-mode'
 import { timeRequestPhase } from './utils/request-timing'
@@ -539,7 +540,10 @@ async function _createCanopyServicesInternal(
       }
       if (changedPaths?.length === 0) {
         if (committed) await git.resetKeepingChanges(preCommitSha)
-        throw new NothingToSubmitError(options.context.branch.name, effectiveBase)
+        throw new NothingToSubmitError(
+          shortNameOf(config, options.context.branch.name),
+          effectiveBase,
+        )
       }
       // A failure here leaves them uncommitted, so the next commit names them again.
       if (committed && uncommitted.length > 0) {

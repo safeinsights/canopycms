@@ -683,12 +683,14 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
 
     await cleanupOldTasks(ctx.taskDir, undefined, ctx.log)
 
-    // For System health's comparison with the namespace the CMS creates branches in. A gateway
-    // that cannot answer leaves the last value standing.
+    // For System health's comparison with the namespace the CMS creates branches in, and the
+    // names creation refuses. A gateway that cannot answer leaves the last values standing.
     try {
       const { branchPolicy } = await ctx.github().health(ctx.shutdownSignal())
       if (branchPolicy.namespace !== '') {
-        ctx.ensureStatusReport().gatewayBranchNamespace = branchPolicy.namespace
+        const report = ctx.ensureStatusReport()
+        report.gatewayBranchNamespace = branchPolicy.namespace
+        report.gatewayProtectedBranches = branchPolicy.configured.filter((n) => !n.includes('*'))
       }
     } catch (err) {
       workerLogWarn(`Could not read the GitHub gateway's branch namespace: ${getErrorMessage(err)}`)

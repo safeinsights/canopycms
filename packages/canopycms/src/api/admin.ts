@@ -19,7 +19,7 @@ import {
   requeueFailedTask,
 } from '../task-queue/cms-task-queue'
 import { getTaskQueueDir } from '../task-queue/task-queue-config'
-import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
+import { readWorkerStatus } from '../task-queue/worker-status'
 import type { BuildIdentity, WorkerStatusReport } from '../types'
 import { operatingStrategy, type OperatingMode } from '../operating-mode'
 import type { SchemaIssue } from '../schema/types'
@@ -89,30 +89,6 @@ async function classifyWorkerLiveness(taskDir: string): Promise<WorkerLiveness> 
     state: lockAgeMs < LIVENESS_THRESHOLD_MS ? 'alive' : 'stale',
     lockMtime: stat.mtime.toISOString(),
     lockAgeMs,
-  }
-}
-
-/** Read + parse worker-status.json (written by the worker daemon, PR-W1). */
-async function readWorkerStatus(
-  taskDir: string,
-): Promise<{ workerStatus: WorkerStatusReport | null; statusReadError?: string }> {
-  const statusPath = path.join(taskDir, WORKER_STATUS_FILE)
-  let content: string
-  try {
-    content = await fs.readFile(statusPath, 'utf-8')
-  } catch (err) {
-    if (isNotFoundError(err)) return { workerStatus: null }
-    return { workerStatus: null, statusReadError: getErrorMessage(err) }
-  }
-
-  try {
-    // Trust boundary: this file is written only by the CMS worker daemon
-    // (PR-W1), never derived from request input — cast rather than
-    // runtime-validate every field.
-    const parsed = JSON.parse(content) as WorkerStatusReport
-    return { workerStatus: parsed }
-  } catch (err) {
-    return { workerStatus: null, statusReadError: getErrorMessage(err) }
   }
 }
 

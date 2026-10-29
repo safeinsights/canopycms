@@ -12,6 +12,7 @@ import { simpleGit } from 'simple-git'
 import type { BranchListItemResponse } from '../../api/branch'
 import { setProvisioningTestHooks } from '../../branch-workspace'
 import { createApiClient } from '../test-utils/api-client'
+import { branchKey } from '../test-utils/branch-names'
 import { createMockAuthPlugin, TEST_USERS } from '../test-utils/multi-user'
 import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-workspace'
 
@@ -32,7 +33,7 @@ describe('POST /branches over provisioning outcomes', () => {
   const clientAs = (role: 'editor' | 'reviewer') =>
     createApiClient({ config: workspace.config, authPlugin: createMockAuthPlugin(role) })
 
-  /** Another host publishes `canopycms-feat` between this request's build and its rename. */
+  /** Another host publishes `feat` between this request's build and its rename. */
   const competitorPublishesFirst = (createdBy: string) =>
     setProvisioningTestHooks({
       beforePublish: async ({ stagingPath, finalPath }) => {
@@ -48,7 +49,7 @@ describe('POST /branches over provisioning outcomes', () => {
   const readAccess = async () =>
     JSON.parse(
       await fs.readFile(
-        path.join(baseRoot, 'canopycms-feat', '.canopy-meta', 'branch.json'),
+        path.join(baseRoot, branchKey('feat'), '.canopy-meta', 'branch.json'),
         'utf8',
       ),
     ).branch.access
@@ -58,13 +59,13 @@ describe('POST /branches over provisioning outcomes', () => {
     const client = await clientAs('editor')
 
     const res = await client.post('/api/canopycms/branches', {
-      branch: 'canopycms-feat',
+      branch: 'feat',
       access: { allowedUsers: [TEST_USERS.editor.userId] },
     })
 
     expect(res.status).toBe(409)
     expect((await res.json<BranchListItemResponse>()).error).toBe(
-      'A branch with this name already exists',
+      'A branch named "feat" already exists',
     )
     expect(await readAccess()).toEqual({ allowedUsers: ['someone-else'] })
   })
@@ -73,7 +74,7 @@ describe('POST /branches over provisioning outcomes', () => {
     competitorPublishesFirst(TEST_USERS.editor.userId)
     const client = await clientAs('editor')
 
-    const res = await client.post('/api/canopycms/branches', { branch: 'canopycms-feat' })
+    const res = await client.post('/api/canopycms/branches', { branch: 'feat' })
 
     expect(res.status).toBe(200)
     const body = await res.json<BranchListItemResponse>()
@@ -82,11 +83,11 @@ describe('POST /branches over provisioning outcomes', () => {
 
   it('answers a repeated create with the same branch for its creator and a 409 for anyone else', async () => {
     const editor = await clientAs('editor')
-    const first = await editor.post('/api/canopycms/branches', { branch: 'canopycms-feat' })
+    const first = await editor.post('/api/canopycms/branches', { branch: 'feat' })
     expect(first.status).toBe(200)
     const created = (await first.json<BranchListItemResponse>()).data?.branch
 
-    const retry = await editor.post('/api/canopycms/branches', { branch: 'canopycms-feat' })
+    const retry = await editor.post('/api/canopycms/branches', { branch: 'feat' })
     expect(retry.status).toBe(200)
     expect((await retry.json<BranchListItemResponse>()).data?.branch.createdAt).toBe(
       created?.createdAt,
@@ -95,13 +96,13 @@ describe('POST /branches over provisioning outcomes', () => {
     const other = await (
       await clientAs('reviewer')
     ).post('/api/canopycms/branches', {
-      branch: 'canopycms-feat',
+      branch: 'feat',
     })
     expect(other.status).toBe(409)
   })
 
   it('503s while the name holds a fresh, unfinished clone', async () => {
-    const finalPath = path.join(baseRoot, 'canopycms-feat')
+    const finalPath = path.join(baseRoot, branchKey('feat'))
     await fs.mkdir(baseRoot, { recursive: true })
     await simpleGit().raw([
       'clone',
@@ -114,11 +115,11 @@ describe('POST /branches over provisioning outcomes', () => {
     ])
     const client = await clientAs('editor')
 
-    const res = await client.post('/api/canopycms/branches', { branch: 'canopycms-feat' })
+    const res = await client.post('/api/canopycms/branches', { branch: 'feat' })
 
     expect(res.status).toBe(503)
     expect((await res.json<BranchListItemResponse>()).error).toBe(
-      "Branch 'canopycms-feat' is still being set up. Try again in a minute.",
+      `Branch '${branchKey('feat')}' is still being set up. Try again in a minute.`,
     )
   })
 })

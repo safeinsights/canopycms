@@ -263,6 +263,11 @@ export interface WorkerStatusReport {
    */
   gatewayBranchNamespace?: string
   /**
+   * The exact names the GitHub gateway protects, its base branch among them, as of the same sync.
+   * Branch creation refuses a short name equal to one.
+   */
+  gatewayProtectedBranches?: string[]
+  /**
    * Present while the schema gate holds the base branch, and on the cycle a hold expires. Carried
    * into a restarted worker's first snapshot, so the bound survives restarts.
    */
