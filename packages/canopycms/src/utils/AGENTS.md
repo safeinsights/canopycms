@@ -10,7 +10,8 @@ span files.
   than assume `'main'`. services.ts resolves it through `GitManager.detectBaseBranch`, from the
   `remote.git` HEAD worker/cms-worker.ts records.
 - `content-serialize.ts` (module header, `looksLikeSameItem`): `ContentStore.write`'s
-  source-preserving write path, printed by `yaml-source-splice.ts`/`markdown-body-splice.ts`;
+  source-preserving write path, printed by `yaml-source-splice.ts`/`markdown-body-splice.ts`,
+  which restyles edited blocks to `markdown-export-options.ts` (rules: `markdown-restyle.ts`);
   evidence search reads `validation/block-structural-keys.ts`.
 - `content-write-lock.ts` (module header): [SYNC-C1]; taken by `ContentStore.write`/`delete`/
   `renameEntry` (mapped to `BranchSyncingError`) and by `rebaseActiveBranches`; reads never take
