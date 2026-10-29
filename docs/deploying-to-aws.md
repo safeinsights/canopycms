@@ -887,6 +887,16 @@ The env var deliberately wins over config, and if both are set and disagree the 
 
 Setting `CANOPYCMS_DEPLOYMENT_NAME` through the construct's `environment` prop still works and still wins over the `deploymentName` prop, but it is resolved at synth rather than passed through: the winning value is validated by the same rule as the prop (an invalid one fails `cdk synth` instead of crash-looping the Lambda at boot) and is written to **both** the Lambda's environment and the worker's `.env`. Prefer the `deploymentName` prop — it says the same thing in one place.
 
+**Each deployment writes only its own branches.** Every branch editors create starts with the
+branch namespace, `canopycms/{deployment}/` by default: a template, set by `CanopyCmsService`'s
+`branchNamespace` prop, in which `{deployment}` is the deployment name, ending with `/`. The
+construct resolves it at synth and sets `CANOPYCMS_BRANCH_NAMESPACE` for both the Lambda and the
+GitHub gateway, which writes no other branch but its settings branch and `legacyBranches`; set
+the same template as `branchNamespace` in `canopycms.config.ts` for development. System health
+says so when the two disagree. Keep `{deployment}` in one template on every stack sharing a
+repository: a deployment name holds no `/`, so `canopycms/prod/` never contains
+`canopycms/prod-eu/`, but nothing checks a template that differs between stacks.
+
 **Changing `deploymentName` (or `settingsBranch`) on a stack that already has a populated settings workspace is refused at boot, loudly** — it is not migrated automatically, because renaming the resolved settings branch would check out a _different_ orphan branch in the same on-disk workspace and wipe `permissions.json`/`groups.json` with no history to recover them from. If you see this error, either restore the previous value or deliberately move the settings workspace aside first. A moved-aside or wiped settings workspace is re-provisioned from `remote.git`, keeping groups and path rules.
 
 ## Base branch and settings branch: keeping the worker and the Lambda in step
@@ -1156,8 +1166,7 @@ request from, beside GitHub's default branch and the configured base branch (`ba
 it always protects: names, or globs in which `*` matches any run of characters, `/` included
 (`release/*`), case-sensitive, at most 1024 (fewer when long: user data is capped at 16 KiB). No
 entry may start with `canopycms-settings-`. Set `baseBranch` explicitly: without it the gateway
-does not know your base branch, and protects it only if it is GitHub's default. A compromised CMS Lambda can
-still drive the gateway at any other branch: see the [Security Model](#security-model).
+does not know your base branch, and protects it only if it is GitHub's default.
 
 **`clerkOrganizationsAsGroups`** (default `true`) sets whether the worker maps Clerk Organizations to
 groups; it, not the plugin's `useOrganizationsAsGroups`, governs a deployment, so keep them equal. Set

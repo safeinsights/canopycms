@@ -239,7 +239,7 @@ Enforcement is layered:
 
 ### Branch Names
 
-An editor's branch is created as `canopycms-<name>` (`parseCreatedBranchName`, `packages/canopycms/src/paths/validation.ts`), the namespace the GitHub gateway writes. That also keeps it clear of the API's static top-level routes (admin, assets, …), which outrank `/:branch/...` in the route table and would leave a branch named like one half-reachable: no static top-level route starts with `canopycms-`, which `http/router.test.ts` holds. A name under `canopycms-settings-` is refused, since that part of the namespace holds settings branches, where a content branch would corrupt a deployment's permissions and groups.
+The GitHub gateway writes only branches in its namespace, resolved per deployment from a template ending with `/` (`resolveBranchNamespace`, `packages/canopycms/src/operating-mode/branch-namespace.ts`; default `canopycms/{deployment}/`), so deployments sharing a repository never nest, and only from its own configuration. An editor's branch is created as `canopycms-<name>` (`parseCreatedBranchName`, `packages/canopycms/src/paths/validation.ts`). That also keeps it clear of the API's static top-level routes (admin, assets, …), which outrank `/:branch/...` in the route table and would leave a branch named like one half-reachable: no static top-level route starts with `canopycms-`, which `http/router.test.ts` holds. A name under `canopycms-settings-` is refused, since that part of the namespace holds settings branches, where a content branch would corrupt a deployment's permissions and groups.
 
 ## Operating Modes
 

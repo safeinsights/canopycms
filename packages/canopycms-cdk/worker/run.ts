@@ -162,6 +162,9 @@ export function isRecentGatewayFatal(recorded: RecordedFatal, now = Date.now()):
 /** The environment variable whose entries `parseProtectedBranches` reads. */
 const PROTECTED_BRANCHES_ENV = 'CANOPYCMS_PROTECTED_BRANCHES'
 
+/** The gateway's branch namespace template, which a split worker unit refuses. */
+const BRANCH_NAMESPACE_ENV = 'CANOPYCMS_BRANCH_NAMESPACE'
+
 /** The environment variable whose entries `parseLegacyBranches` reads. */
 const LEGACY_BRANCHES_ENV = 'CANOPYCMS_LEGACY_BRANCHES'
 
@@ -439,6 +442,7 @@ async function buildSingleProcessWorker(
     refreshAuthCache,
     protectedBranches: parseProtectedBranches(env),
     legacyBranches: parseLegacyBranches(env),
+    branchNamespace: env[BRANCH_NAMESPACE_ENV]?.trim() || undefined,
     ...commonWorkerConfig(env),
   })
   return {
@@ -485,6 +489,7 @@ async function buildSplitWorker(
   for (const [name, entries] of [
     [PROTECTED_BRANCHES_ENV, parseProtectedBranches(env)],
     [LEGACY_BRANCHES_ENV, parseLegacyBranches(env)],
+    [BRANCH_NAMESPACE_ENV, env[BRANCH_NAMESPACE_ENV]?.trim() ? [env[BRANCH_NAMESPACE_ENV]] : []],
   ] as const) {
     if (entries.length > 0) {
       throw new Error(

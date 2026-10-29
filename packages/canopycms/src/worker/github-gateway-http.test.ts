@@ -63,7 +63,7 @@ function fakeGateway(): FakeGateway {
       branchPolicy: {
         configured: ['main'],
         githubDefault: 'main',
-        namespace: 'canopycms-',
+        namespace: 'canopycms/prod/',
         legacy: [],
         settingsBranch: null,
       },
@@ -1575,7 +1575,7 @@ describe('the instance operations over the socket', () => {
       branchPolicy: {
         configured: entries,
         githubDefault: 'main',
-        namespace: 'canopycms-',
+        namespace: 'canopycms/prod/',
         legacy: [],
         settingsBranch: null,
       },
@@ -1593,7 +1593,7 @@ describe('the instance operations over the socket', () => {
       branchPolicy: {
         configured: [...entries, 'one-more'],
         githubDefault: 'main',
-        namespace: 'canopycms-',
+        namespace: 'canopycms/prod/',
         legacy: [],
         settingsBranch: null,
       },

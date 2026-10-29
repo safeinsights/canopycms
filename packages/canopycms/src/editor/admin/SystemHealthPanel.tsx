@@ -42,7 +42,7 @@ import {
   type AdminTaskStatus,
   type DeletableTaskStatus,
 } from './useSystemHealth'
-import type { WorkerLiveness } from '../../api/admin'
+import type { AdminStatusData, WorkerLiveness } from '../../api/admin'
 import type { DuplicateContentId } from '../../content-id-index'
 import type { OperatingMode } from '../../operating-mode'
 import type { Task, CorruptTaskFile } from '../../task-queue'
@@ -238,6 +238,47 @@ function DivergedBranchesAlert({ names }: { names: readonly string[] }) {
           ))}
         </Group>
       </Stack>
+    </Alert>
+  )
+}
+
+/**
+ * The branch namespace the CMS creates branches in, against the one the GitHub gateway writes. A
+ * mismatch leaves every new branch unpublishable, so it is shown before anything else needs it.
+ */
+function BranchNamespaceAlert({
+  own,
+  gateway,
+}: {
+  own: AdminStatusData['branchNamespace']
+  gateway: string | undefined
+}) {
+  if (own === undefined) return null
+  if (!own.ok) {
+    return (
+      <Alert
+        color="red"
+        icon={<IconAlertTriangle size={16} />}
+        title="The branch namespace is not valid"
+        data-testid="branch-namespace-alert"
+      >
+        <Text size="sm">{own.error}</Text>
+      </Alert>
+    )
+  }
+  if (gateway === undefined || gateway === own.namespace) return null
+  return (
+    <Alert
+      color="red"
+      icon={<IconAlertTriangle size={16} />}
+      title="New branches cannot be published"
+      data-testid="branch-namespace-alert"
+    >
+      <Text size="sm">
+        The CMS creates branches starting <Code>{escapeForLog(own.namespace)}</Code>, but the GitHub
+        gateway writes only branches starting <Code>{escapeForLog(gateway)}</Code>. A developer sets
+        branchNamespace, or CANOPYCMS_BRANCH_NAMESPACE, to the same value for both.
+      </Text>
     </Alert>
   )
 }
@@ -506,6 +547,11 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
           </Stack>
         </Alert>
       )}
+
+      <BranchNamespaceAlert
+        own={status.branchNamespace}
+        gateway={status.workerStatus?.gatewayBranchNamespace}
+      />
 
       {status.workerStatus?.baseHold && <BaseHoldAlert hold={status.workerStatus.baseHold} />}
 

@@ -14,7 +14,6 @@
  */
 
 import {
-  CMS_BRANCH_PREFIX,
   DEFAULT_TASK_TIMEOUT,
   GatewayInstance,
   assertSelfChecks,
@@ -25,6 +24,7 @@ import {
   redactEgress,
   registerPrivateKey,
   registerSecretText,
+  resolveBranchNamespace,
   resolveWorkerGitHubAuth,
   resolveWorkerSettingsBranch,
   type GitHubGateway,
@@ -209,6 +209,12 @@ async function buildGateway(
       deploymentName: env.CANOPYCMS_DEPLOYMENT_NAME,
     }),
     legacyBranches: parseLegacyBranches(env),
+    // From this unit's own environment: never from anything the CMS Lambda can write.
+    branchNamespace: resolveBranchNamespace(
+      { deploymentName: env.CANOPYCMS_DEPLOYMENT_NAME },
+      'prod',
+      env,
+    ),
     authSnapshot: createClerkSnapshotFetcher({
       secret: clerkSecret,
       useOrganizationsAsGroups,
@@ -243,7 +249,7 @@ export function failedGateway(
       branchPolicy: {
         configured: [],
         githubDefault: null,
-        namespace: CMS_BRANCH_PREFIX,
+        namespace: '',
         legacy: [],
         settingsBranch: null,
       },

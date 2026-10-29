@@ -209,7 +209,7 @@ const HEALTHY: GitHubGatewayHealth = {
   branchPolicy: {
     configured: [],
     githubDefault: 'main',
-    namespace: 'canopycms-',
+    namespace: 'canopycms/prod/',
     legacy: [],
     settingsBranch: 'canopycms-settings-prod',
   },
@@ -584,6 +584,23 @@ describe('runWorker: a healthy start', () => {
     expect(h.createWorker.mock.calls[0][0].legacyBranches).toEqual(['spring', 'fix/typos'])
   })
 
+  it('passes CANOPYCMS_BRANCH_NAMESPACE to the single-process worker, and none when it is absent', async () => {
+    const h = harness({
+      env: { ...baseEnv(), CANOPYCMS_BRANCH_NAMESPACE: 'editor-{deployment}/' },
+    })
+    await runWorker(h.deps)
+    expect(h.createWorker.mock.calls[0][0].branchNamespace).toBe('editor-{deployment}/')
+
+    const absent = harness({ env: envWithout('CANOPYCMS_BRANCH_NAMESPACE') })
+    await runWorker(absent.deps)
+    expect(absent.createWorker.mock.calls[0][0].branchNamespace).toBeUndefined()
+
+    // Blank, as the Lambda and the split gateway read it: unset, never a namespace of spaces.
+    const blank = harness({ env: { ...baseEnv(), CANOPYCMS_BRANCH_NAMESPACE: '  ' } })
+    await runWorker(blank.deps)
+    expect(blank.createWorker.mock.calls[0][0].branchNamespace).toBeUndefined()
+  })
+
   it.each([
     [undefined, true],
     ['', true],
@@ -863,6 +880,7 @@ describe('runWorker: split mode', () => {
   it.each([
     ['CANOPYCMS_PROTECTED_BRANCHES', 'release/*'],
     ['CANOPYCMS_LEGACY_BRANCHES', 'spring'],
+    ['CANOPYCMS_BRANCH_NAMESPACE', 'editor-production/'],
   ])("refuses %s on the worker's unit, which only the gateway enforces", async (name, value) => {
     const h = harness({ env: { ...splitEnv(), [name]: value } })
 
@@ -874,6 +892,15 @@ describe('runWorker: split mode', () => {
     expect(h.connectGateway).not.toHaveBeenCalled()
     expect(h.createWorker).not.toHaveBeenCalled()
     expect(h.exitCodes()).toEqual([1])
+  })
+
+  it('starts with a blank CANOPYCMS_BRANCH_NAMESPACE on the worker unit, which sets nothing', async () => {
+    const h = harness({ env: { ...splitEnv(), CANOPYCMS_BRANCH_NAMESPACE: '  ' } })
+
+    await runWorker(h.deps)
+
+    expect(h.record).not.toHaveBeenCalled()
+    expect(h.createWorker).toHaveBeenCalledTimes(1)
   })
 
   it("refuses to start beside a gateway that pushes another settings branch than this worker's", async () => {

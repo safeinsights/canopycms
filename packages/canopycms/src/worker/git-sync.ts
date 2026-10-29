@@ -683,6 +683,17 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
 
     await cleanupOldTasks(ctx.taskDir, undefined, ctx.log)
 
+    // For System health's comparison with the namespace the CMS creates branches in. A gateway
+    // that cannot answer leaves the last value standing.
+    try {
+      const { branchPolicy } = await ctx.github().health(ctx.shutdownSignal())
+      if (branchPolicy.namespace !== '') {
+        ctx.ensureStatusReport().gatewayBranchNamespace = branchPolicy.namespace
+      }
+    } catch (err) {
+      workerLogWarn(`Could not read the GitHub gateway's branch namespace: ${getErrorMessage(err)}`)
+    }
+
     // [C1] Sweep branch directories the admin purge action trashed more than
     // TRASH_RETENTION_MS ago. Worker-only by design: purge itself never deletes
     // anything (it stays reversible), and this is the sole place removal

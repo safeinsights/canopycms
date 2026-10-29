@@ -251,7 +251,7 @@ describe('failedGateway: the stand-in a failed boot serves', () => {
       branchPolicy: {
         configured: [],
         githubDefault: null,
-        namespace: 'canopycms-',
+        namespace: '',
         legacy: [],
         settingsBranch: null,
       },
@@ -340,6 +340,24 @@ describe('runGateway: a healthy boot on a token', () => {
     await runGateway(h.deps)
 
     expect(h.options().legacyBranches).toEqual(['spring', 'fix/typos'])
+  })
+
+  it.each([
+    [{}, 'canopycms/prod/'],
+    [{ CANOPYCMS_DEPLOYMENT_NAME: 'docs' }, 'canopycms/docs/'],
+    [{ CANOPYCMS_BRANCH_NAMESPACE: 'editor-production/' }, 'editor-production/'],
+    [
+      { CANOPYCMS_BRANCH_NAMESPACE: 'editor-{deployment}/', CANOPYCMS_DEPLOYMENT_NAME: 'docs' },
+      'editor-docs/',
+    ],
+  ])('resolves the branch namespace from %j as the worker does: %s', async (vars, expected) => {
+    // resolveDeploymentName reads the process's variable first; the harness's env stands in for it.
+    vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', '')
+    const h = harness({ env: { ...baseEnv(), ...vars } })
+
+    await runGateway(h.deps)
+
+    expect(h.options().branchNamespace).toBe(expected)
   })
 
   it.each([
@@ -861,7 +879,7 @@ describe('over a real socket', () => {
             branchPolicy: {
               configured: [],
               githubDefault: null,
-              namespace: 'canopycms-',
+              namespace: '',
               legacy: [],
               settingsBranch: null,
             },

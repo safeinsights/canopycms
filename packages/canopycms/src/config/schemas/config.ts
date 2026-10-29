@@ -131,6 +131,8 @@ export const CanopyConfigSchema = z
     // (operating-mode/deployment-name.ts) implements — config would always "win" over
     // modeDefault, masking dev's real default of 'local'. Do not remove `.optional()`.
     deploymentName: deploymentNameSchema.optional(),
+    // Checked where it is resolved (operating-mode/branch-namespace.ts), with the deployment name.
+    branchNamespace: z.string().optional(),
     contentRoot: contentRootSchema.default('content'),
     sourceRoot: sourceRootSchema.optional(),
     basePath: basePathSchema,

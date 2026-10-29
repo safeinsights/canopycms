@@ -222,18 +222,22 @@ afterEach(async () => {
   await fs.rm(root, { recursive: true, force: true })
 })
 
-/** GitHub and remote.git both at `main`, and remote.git's `canopycms-feature` one commit ahead of it. */
+/** GitHub and remote.git both at `main`, and remote.git's `canopycms/prod/feature` one commit ahead of it. */
 async function featureAhead(): Promise<{ main: string; feature: string }> {
   const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
   await git('--git-dir', githubPath, 'push', '-q', remoteGitPath, 'main:main')
-  const feature = await commitAndPush(remoteGitPath, 'refs/heads/canopycms-feature', 'feature.txt')
+  const feature = await commitAndPush(
+    remoteGitPath,
+    'refs/heads/canopycms/prod/feature',
+    'feature.txt',
+  )
   return { main, feature }
 }
 
 describe('where the gateway runs git', () => {
   it('only in its state directory, with --end-of-options and no lazy fetch or replace refs', async () => {
     const { main, feature } = await featureAhead()
-    const bundle = await bundleOf(remoteGitPath, 'refs/heads/canopycms-feature', `^${main}`)
+    const bundle = await bundleOf(remoteGitPath, 'refs/heads/canopycms/prod/feature', `^${main}`)
     const github = gateway()
     const observed = spySpawns()
 
@@ -241,15 +245,15 @@ describe('where the gateway runs git', () => {
     const fetched = await github.fetch({ have: [main] })
     const opened = await github.openBundle(fetched.bundleId ?? 'none').catch(() => null)
     opened?.destroy()
-    expect(await github.push(request('canopycms-feature', feature))).toMatchObject({
+    expect(await github.push(request('canopycms/prod/feature', feature))).toMatchObject({
       kind: 'need-objects',
     })
     expect(
-      await github.push(request('canopycms-feature', feature), await streamOf(bundle)),
+      await github.push(request('canopycms/prod/feature', feature), await streamOf(bundle)),
     ).toMatchObject({
       kind: 'pushed',
     })
-    expect(await github.push(request('canopycms-feature', feature))).toMatchObject({
+    expect(await github.push(request('canopycms/prod/feature', feature))).toMatchObject({
       kind: 'pushed',
       moved: false,
     })
@@ -281,7 +285,7 @@ describe('where the gateway runs git', () => {
       expect(spawned.env.GIT_NO_REPLACE_OBJECTS, label).toBe('1')
       if (subcommand(spawned.args) === 'check-ref-format') {
         const at = spawned.args.indexOf('check-ref-format')
-        expect(spawned.args.slice(at + 1)).toEqual(['--branch', 'canopycms-feature'])
+        expect(spawned.args.slice(at + 1)).toEqual(['--branch', 'canopycms/prod/feature'])
       } else {
         expect(spawned.args, label).toContain('--end-of-options')
       }
@@ -296,9 +300,9 @@ describe('pushing with a bundle', () => {
     const m3 = await commitAndPush(githubPath, 'refs/heads/main', 'm3.txt')
     const github = gateway()
     await fetchGitHubIntoRemoteGit(transfer(github))
-    await seed.raw(['checkout', '-q', '-b', 'canopycms-feature', m1])
-    await commitAndPush(remoteGitPath, 'refs/heads/canopycms-feature', 'f1.txt')
-    const f2 = await commitAndPush(remoteGitPath, 'refs/heads/canopycms-feature', 'f2.txt')
+    await seed.raw(['checkout', '-q', '-b', 'canopycms/prod/feature', m1])
+    await commitAndPush(remoteGitPath, 'refs/heads/canopycms/prod/feature', 'f1.txt')
+    const f2 = await commitAndPush(remoteGitPath, 'refs/heads/canopycms/prod/feature', 'f2.txt')
     const answers: GitHubPushAnswer[] = []
     const push = github.push.bind(github)
     vi.spyOn(github, 'push').mockImplementation(async (...args) => {
@@ -307,11 +311,11 @@ describe('pushing with a bundle', () => {
       return answer
     })
 
-    await pushVia(github, 'canopycms-feature')
+    await pushVia(github, 'canopycms/prod/feature')
 
     expect(answers[0]).toEqual({ kind: 'need-objects', usable: [m3] })
     expect(answers[1]).toMatchObject({ kind: 'pushed', to: f2 })
-    expect(await tip(githubPath, 'refs/heads/canopycms-feature')).toBe(f2)
+    expect(await tip(githubPath, 'refs/heads/canopycms/prod/feature')).toBe(f2)
   })
 
   it('accepts a prerequisite whose subject holds a tab and bytes that are not UTF-8', async () => {
@@ -333,22 +337,22 @@ describe('pushing with a bundle', () => {
     await git('--git-dir', githubPath, 'update-ref', 'refs/heads/main', odd)
     await git('--git-dir', githubPath, 'push', '-q', remoteGitPath, 'main:main')
     await seed.raw(['fetch', '-q', githubPath, 'main'])
-    await seed.raw(['checkout', '-q', '-B', 'canopycms-feature', 'FETCH_HEAD'])
+    await seed.raw(['checkout', '-q', '-B', 'canopycms/prod/feature', 'FETCH_HEAD'])
     const feature = await commitAndPush(
       remoteGitPath,
-      'refs/heads/canopycms-feature',
+      'refs/heads/canopycms/prod/feature',
       'feature.txt',
     )
-    const bundle = await bundleOf(remoteGitPath, 'refs/heads/canopycms-feature', `^${odd}`)
+    const bundle = await bundleOf(remoteGitPath, 'refs/heads/canopycms/prod/feature', `^${odd}`)
     expect((await fs.readFile(bundle)).includes(Buffer.from([0x09, 0x22, 0xff, 0xfe]))).toBe(true)
 
     const answer = await gateway().push(
-      request('canopycms-feature', feature),
+      request('canopycms/prod/feature', feature),
       await streamOf(bundle),
     )
 
     expect(answer).toMatchObject({ kind: 'pushed', to: feature })
-    expect(await tip(githubPath, 'refs/heads/canopycms-feature')).toBe(feature)
+    expect(await tip(githubPath, 'refs/heads/canopycms/prod/feature')).toBe(feature)
   })
 
   it('leaves the mirror byte for byte as it was when the ingest fails', async () => {
@@ -370,20 +374,20 @@ describe('pushing with a bundle', () => {
       '-w',
       file,
     )
-    await git('--git-dir', remoteGitPath, 'update-ref', 'refs/heads/canopycms-bad', bad)
-    const bundle = await bundleOf(remoteGitPath, 'refs/heads/canopycms-bad', `^${main}`)
+    await git('--git-dir', remoteGitPath, 'update-ref', 'refs/heads/canopycms/prod/bad', bad)
+    const bundle = await bundleOf(remoteGitPath, 'refs/heads/canopycms/prod/bad', `^${main}`)
     const github = gateway()
     await github.fetch({ have: [] })
     const before = await snapshot(mirrorDir())
 
     const caught = await github
-      .push(request('canopycms-bad', bad), await streamOf(bundle))
+      .push(request('canopycms/prod/bad', bad), await streamOf(bundle))
       .catch((err: unknown) => err)
 
     expect(caught).toBeInstanceOf(GitHubTransientError)
     expect((caught as GitHubTransientError).code).toBe('bundle-rejected')
     expect(await snapshot(mirrorDir())).toEqual(before)
-    expect(await tip(githubPath, 'refs/heads/canopycms-bad')).toBeNull()
+    expect(await tip(githubPath, 'refs/heads/canopycms/prod/bad')).toBeNull()
     expect(await fs.readdir(path.join(stateDirectory, 'incoming'))).toEqual([])
   })
 
@@ -393,10 +397,10 @@ describe('pushing with a bundle', () => {
     const main = await tip(githubPath, 'refs/heads/main')
     const feature = await commitAndPush(
       remoteGitPath,
-      'refs/heads/canopycms-feature',
+      'refs/heads/canopycms/prod/feature',
       'feature.txt',
     )
-    const bundle = await bundleOf(remoteGitPath, 'refs/heads/canopycms-feature', `^${main}`)
+    const bundle = await bundleOf(remoteGitPath, 'refs/heads/canopycms/prod/feature', `^${main}`)
     const github = gateway()
     // Loose in the mirror, so a repack moves every object.
     await github.fetch({ have: [] })
@@ -414,7 +418,10 @@ describe('pushing with a bundle', () => {
       }
     })
 
-    const answer = await github.push(request('canopycms-feature', feature), await streamOf(bundle))
+    const answer = await github.push(
+      request('canopycms/prod/feature', feature),
+      await streamOf(bundle),
+    )
     await repack
 
     expect(repack).toBeDefined()
@@ -437,16 +444,19 @@ describe('pushing with a bundle', () => {
     await git('--git-dir', githubPath, 'push', '-q', remoteGitPath, 'main:main')
     const feature = await commitAndPush(
       remoteGitPath,
-      'refs/heads/canopycms-feature',
+      'refs/heads/canopycms/prod/feature',
       'feature.txt',
     )
-    const bundle = await bundleOf(remoteGitPath, 'refs/heads/canopycms-feature', `^${main}`)
+    const bundle = await bundleOf(remoteGitPath, 'refs/heads/canopycms/prod/feature', `^${main}`)
     const github = gateway()
     await github.fetch({ have: [] })
     const loose = path.join(mirrorDir(), 'objects', oldBlob.slice(0, 2), oldBlob.slice(2))
     await fs.rm(loose)
 
-    const answer = await github.push(request('canopycms-feature', feature), await streamOf(bundle))
+    const answer = await github.push(
+      request('canopycms/prod/feature', feature),
+      await streamOf(bundle),
+    )
 
     expect(answer).toMatchObject({ kind: 'pushed', to: feature })
   })
@@ -476,32 +486,32 @@ describe('refusing a hostile bundle', () => {
       '-q',
       file,
       '--filter=blob:none',
-      'refs/heads/canopycms-feature',
+      'refs/heads/canopycms/prod/feature',
       `^${main}`,
     )
     const observed = spySpawns()
 
     const caught = await gateway()
-      .push(request('canopycms-feature', feature), await streamOf(file))
+      .push(request('canopycms/prod/feature', feature), await streamOf(file))
       .catch((err: unknown) => err)
 
     expect(caught).toBeInstanceOf(GitHubTransientError)
     expect(String(caught)).toMatch(/capability/)
     expect(quarantineFetches(observed)).toEqual([])
-    expect(await tip(githubPath, 'refs/heads/canopycms-feature')).toBeNull()
+    expect(await tip(githubPath, 'refs/heads/canopycms/prod/feature')).toBeNull()
     await expectNothingPlanted()
   })
 
   it('refuses a header refname that is an option, before git reads it, and plants nothing', async () => {
     const { main, feature } = await featureAhead()
     const file = await withHeader(
-      await bundleOf(remoteGitPath, 'refs/heads/canopycms-feature', `^${main}`),
+      await bundleOf(remoteGitPath, 'refs/heads/canopycms/prod/feature', `^${main}`),
       ['# v2 git bundle', `-${main} main.txt`, `${feature} --filter=blob:none`],
     )
     const observed = spySpawns()
 
     const caught = await gateway()
-      .push(request('canopycms-feature', feature), await streamOf(file))
+      .push(request('canopycms/prod/feature', feature), await streamOf(file))
       .catch((err: unknown) => err)
 
     expect(caught).toBeInstanceOf(GitHubTransientError)
@@ -516,34 +526,34 @@ describe('refusing a hostile bundle', () => {
       '--git-dir',
       remoteGitPath,
       'rev-parse',
-      'refs/heads/canopycms-feature:feature.txt',
+      'refs/heads/canopycms/prod/feature:feature.txt',
     )
     await git('--git-dir', remoteGitPath, 'update-ref', 'refs/tags/blob', blob)
     const file = await withHeader(await bundleOf(remoteGitPath, 'refs/tags/blob', `^${main}`), [
       '# v2 git bundle',
-      `${blob} refs/heads/canopycms-feature`,
+      `${blob} refs/heads/canopycms/prod/feature`,
     ])
 
     const caught = await gateway()
-      .push(request('canopycms-feature', blob), await streamOf(file))
+      .push(request('canopycms/prod/feature', blob), await streamOf(file))
       .catch((err: unknown) => err)
 
     expect(caught).toBeInstanceOf(RefusedPushError)
     expect(String(caught)).toMatch(/is not a commit/)
-    expect(await tip(githubPath, 'refs/heads/canopycms-feature')).toBeNull()
+    expect(await tip(githubPath, 'refs/heads/canopycms/prod/feature')).toBeNull()
   })
 
   it('refuses a bundle whose head is another commit', async () => {
     const { main, feature } = await featureAhead()
-    const bundle = await bundleOf(remoteGitPath, 'refs/heads/canopycms-feature', `^${main}`)
+    const bundle = await bundleOf(remoteGitPath, 'refs/heads/canopycms/prod/feature', `^${main}`)
 
     const caught = await gateway()
-      .push(request('canopycms-feature', main), await streamOf(bundle))
+      .push(request('canopycms/prod/feature', main), await streamOf(bundle))
       .catch((err: unknown) => err)
 
     expect(caught).toBeInstanceOf(GitHubTransientError)
     expect(String(caught)).toContain(`its one head must be ${main}`)
-    expect(await tip(githubPath, 'refs/heads/canopycms-feature')).toBeNull()
+    expect(await tip(githubPath, 'refs/heads/canopycms/prod/feature')).toBeNull()
     expect(feature).not.toBe(main)
   })
 
@@ -553,7 +563,7 @@ describe('refusing a hostile bundle', () => {
       (main: string, feature: string) => [
         '# v2 git bundle',
         `-${main} m`,
-        `${feature} refs/heads/canopycms-feature`,
+        `${feature} refs/heads/canopycms/prod/feature`,
         `${main} refs/heads/other`,
       ],
     ],
@@ -570,44 +580,44 @@ describe('refusing a hostile bundle', () => {
       (main: string, feature: string) => [
         '# v2 git bundle',
         `-${main} m`,
-        `${feature} refs/heads/canopycms-feature extra`,
+        `${feature} refs/heads/canopycms/prod/feature extra`,
       ],
     ],
   ])('refuses %s, so what is pushed is the request or nothing', async (_label, lines) => {
     const { main, feature } = await featureAhead()
     const file = await withHeader(
-      await bundleOf(remoteGitPath, 'refs/heads/canopycms-feature', `^${main}`),
+      await bundleOf(remoteGitPath, 'refs/heads/canopycms/prod/feature', `^${main}`),
       lines(main, feature),
     )
 
     const observed = spySpawns()
 
     const caught = await gateway()
-      .push(request('canopycms-feature', feature), await streamOf(file))
+      .push(request('canopycms/prod/feature', feature), await streamOf(file))
       .catch((err: unknown) => err)
 
     expect(caught).toBeInstanceOf(GitHubTransientError)
     // Refused in node, before git parses the header its own way.
     expect(quarantineFetches(observed)).toEqual([])
-    expect(await tip(githubPath, 'refs/heads/canopycms-feature')).toBeNull()
+    expect(await tip(githubPath, 'refs/heads/canopycms/prod/feature')).toBeNull()
     expect(await tip(githubPath, 'refs/heads/other')).toBeNull()
   })
 
   it('refuses a bundle larger than its cap', async () => {
     const { main, feature } = await featureAhead()
-    const bundle = await bundleOf(remoteGitPath, 'refs/heads/canopycms-feature', `^${main}`)
+    const bundle = await bundleOf(remoteGitPath, 'refs/heads/canopycms/prod/feature', `^${main}`)
     const size = (await fs.stat(bundle)).size
 
     const caught = await gateway({ maxBundleBytes: size - 1 })
-      .push(request('canopycms-feature', feature), await streamOf(bundle))
+      .push(request('canopycms/prod/feature', feature), await streamOf(bundle))
       .catch((err: unknown) => err)
 
     expect(caught).toBeInstanceOf(GitHubTransientError)
     expect(String(caught)).toContain(`larger than ${size - 1} bytes`)
-    expect(await tip(githubPath, 'refs/heads/canopycms-feature')).toBeNull()
+    expect(await tip(githubPath, 'refs/heads/canopycms/prod/feature')).toBeNull()
     expect(
       await gateway({ maxBundleBytes: size }).push(
-        request('canopycms-feature', feature),
+        request('canopycms/prod/feature', feature),
         await streamOf(bundle),
       ),
     ).toMatchObject({ kind: 'pushed' })
@@ -627,7 +637,7 @@ describe('refusing a hostile bundle', () => {
     )
 
     const caught = await gateway()
-      .push(request('canopycms-feature', feature), body)
+      .push(request('canopycms/prod/feature', feature), body)
       .catch((err: unknown) => err)
 
     expect(caught).toBeInstanceOf(GitHubTransientError)
@@ -649,7 +659,7 @@ describe('refusing a hostile bundle', () => {
     )
 
     const caught = await gateway()
-      .push(request('canopycms-feature', feature), body)
+      .push(request('canopycms/prod/feature', feature), body)
       .catch((err: unknown) => err)
 
     expect(caught).toBeInstanceOf(GitHubTransientError)
@@ -661,25 +671,25 @@ describe('refusing a hostile bundle', () => {
     await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     await seed.raw(['checkout', '-q', '-b', 'side'])
     const side = await commitAndPush(githubPath, 'refs/heads/side', 'side.txt')
-    await git('--git-dir', githubPath, 'push', '-q', remoteGitPath, 'side:canopycms-feature')
+    await git('--git-dir', githubPath, 'push', '-q', remoteGitPath, 'side:canopycms/prod/feature')
     const feature = await commitAndPush(
       remoteGitPath,
-      'refs/heads/canopycms-feature',
+      'refs/heads/canopycms/prod/feature',
       'feature.txt',
     )
-    const bundle = await bundleOf(remoteGitPath, 'refs/heads/canopycms-feature', `^${side}`)
+    const bundle = await bundleOf(remoteGitPath, 'refs/heads/canopycms/prod/feature', `^${side}`)
     const github = gateway()
     await github.fetch({ have: [] })
     // GitHub drops the branch the bundle builds on after the worker read it.
     await git('--git-dir', githubPath, 'update-ref', '-d', 'refs/heads/side')
 
     const caught = await github
-      .push(request('canopycms-feature', feature), await streamOf(bundle))
+      .push(request('canopycms/prod/feature', feature), await streamOf(bundle))
       .catch((err: unknown) => err)
 
     expect(caught).toBeInstanceOf(GitHubTransientError)
     expect((caught as GitHubTransientError).code).toBe('prerequisite-gone')
-    expect(await tip(githubPath, 'refs/heads/canopycms-feature')).toBeNull()
+    expect(await tip(githubPath, 'refs/heads/canopycms/prod/feature')).toBeNull()
   })
 })
 
@@ -688,7 +698,7 @@ describe('pushing without a bundle', () => {
     const { main, feature } = await featureAhead()
 
     const answer = await gateway().push({
-      ...request('canopycms-feature', feature),
+      ...request('canopycms/prod/feature', feature),
       prerequisites: [main, 'f'.repeat(40)],
     })
 
@@ -699,10 +709,10 @@ describe('pushing without a bundle', () => {
     const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     const blob = await git('--git-dir', githubPath, 'rev-parse', `${main}:main.txt`)
 
-    await expect(gateway().push(request('canopycms-feature', blob))).rejects.toBeInstanceOf(
+    await expect(gateway().push(request('canopycms/prod/feature', blob))).rejects.toBeInstanceOf(
       RefusedPushError,
     )
-    expect(await tip(githubPath, 'refs/heads/canopycms-feature')).toBeNull()
+    expect(await tip(githubPath, 'refs/heads/canopycms/prod/feature')).toBeNull()
   })
 
   it('pushes an up-to-date branch in one request, with no bundle', async () => {
@@ -713,12 +723,12 @@ describe('pushing without a bundle', () => {
       'push',
       '-q',
       githubPath,
-      'canopycms-feature:canopycms-feature',
+      'canopycms/prod/feature:canopycms/prod/feature',
     )
     const github = gateway()
     const push = vi.spyOn(github, 'push')
 
-    const { outcome } = await pushVia(github, 'canopycms-feature')
+    const { outcome } = await pushVia(github, 'canopycms/prod/feature')
 
     expect(outcome).toEqual({ moved: false, pastStaleLease: false })
     expect(push).toHaveBeenCalledTimes(1)
@@ -727,19 +737,19 @@ describe('pushing without a bundle', () => {
 
   it('never deadlocks the mirror session, whatever runs beside it', async () => {
     const { main, feature } = await featureAhead()
-    const bundle = await bundleOf(remoteGitPath, 'refs/heads/canopycms-feature', `^${main}`)
+    const bundle = await bundleOf(remoteGitPath, 'refs/heads/canopycms/prod/feature', `^${main}`)
     const github = gateway()
 
     const settled = await Promise.allSettled([
       github.fetch({ have: [] }),
-      github.push(request('canopycms-feature', feature)),
-      github.push(request('canopycms-feature', feature), await streamOf(bundle)),
+      github.push(request('canopycms/prod/feature', feature)),
+      github.push(request('canopycms/prod/feature', feature), await streamOf(bundle)),
       github.fetch({ have: [main] }),
-      github.push(request('canopycms-feature', feature)),
+      github.push(request('canopycms/prod/feature', feature)),
     ])
 
     expect(settled.map((s) => s.status)).toEqual(Array(5).fill('fulfilled'))
-    expect(await tip(githubPath, 'refs/heads/canopycms-feature')).toBe(feature)
+    expect(await tip(githubPath, 'refs/heads/canopycms/prod/feature')).toBe(feature)
   })
 })
 
@@ -761,39 +771,50 @@ describe('the worker side of a push', () => {
     let moves = 0
     const github = watched(async () => {
       if (moves++ === 0)
-        await commitAndPush(remoteGitPath, 'refs/heads/canopycms-feature', 'moved.txt')
+        await commitAndPush(remoteGitPath, 'refs/heads/canopycms/prod/feature', 'moved.txt')
     })
     const reads: string[] = []
     const readSha = async () => {
-      const sha = await git('--git-dir', remoteGitPath, 'rev-parse', 'refs/heads/canopycms-feature')
+      const sha = await git(
+        '--git-dir',
+        remoteGitPath,
+        'rev-parse',
+        'refs/heads/canopycms/prod/feature',
+      )
       reads.push(sha)
       return sha
     }
 
-    const pushed = await pushVia(github, 'canopycms-feature', readSha)
+    const pushed = await pushVia(github, 'canopycms/prod/feature', readSha)
 
     expect(reads).toHaveLength(2)
     expect(reads[0]).not.toBe(reads[1])
     expect(pushed.sha).toBe(reads[1])
-    expect(await tip(githubPath, 'refs/heads/canopycms-feature')).toBe(reads[1])
+    expect(await tip(githubPath, 'refs/heads/canopycms/prod/feature')).toBe(reads[1])
   })
 
   it('gives up as transient after three restarts when the branch keeps moving', async () => {
     await featureAhead()
     let moves = 0
     const github = watched(async () => {
-      await commitAndPush(remoteGitPath, 'refs/heads/canopycms-feature', `moved-${moves++}.txt`)
+      await commitAndPush(
+        remoteGitPath,
+        'refs/heads/canopycms/prod/feature',
+        `moved-${moves++}.txt`,
+      )
     })
     const readSha = vi.fn(async () =>
-      git('--git-dir', remoteGitPath, 'rev-parse', 'refs/heads/canopycms-feature'),
+      git('--git-dir', remoteGitPath, 'rev-parse', 'refs/heads/canopycms/prod/feature'),
     )
 
-    const caught = await pushVia(github, 'canopycms-feature', readSha).catch((err: unknown) => err)
+    const caught = await pushVia(github, 'canopycms/prod/feature', readSha).catch(
+      (err: unknown) => err,
+    )
 
     expect(caught).toBeInstanceOf(GitHubTransientError)
     expect((caught as GitHubTransientError).code).toBe('ref-kept-moving')
     expect(readSha).toHaveBeenCalledTimes(4)
-    expect(await tip(githubPath, 'refs/heads/canopycms-feature')).toBeNull()
+    expect(await tip(githubPath, 'refs/heads/canopycms/prod/feature')).toBeNull()
   })
 
   it('reports an abort that lands before the bundle header is read as the abort', async () => {
@@ -803,13 +824,16 @@ describe('the worker side of a push', () => {
 
     const caught = await pushToGitHub(
       transfer(github),
-      { branch: 'canopycms-feature', prerequisiteBranches: ['canopycms-feature', 'main'] },
-      async () => git('--git-dir', remoteGitPath, 'rev-parse', 'refs/heads/canopycms-feature'),
+      {
+        branch: 'canopycms/prod/feature',
+        prerequisiteBranches: ['canopycms/prod/feature', 'main'],
+      },
+      async () => git('--git-dir', remoteGitPath, 'rev-parse', 'refs/heads/canopycms/prod/feature'),
       controller.signal,
     ).catch((err: unknown) => err)
 
     expect(String(caught)).toMatch(/git bundle was aborted/)
-    expect(await tip(githubPath, 'refs/heads/canopycms-feature')).toBeNull()
+    expect(await tip(githubPath, 'refs/heads/canopycms/prod/feature')).toBeNull()
   })
 
   it('lets a bundle wait for the gateway to take it, past the inactivity bound', async () => {
@@ -819,12 +843,18 @@ describe('the worker side of a push', () => {
     await fs.writeFile(path.join(seedPath, 'large.bin'), randomBytes(3 * 1024 * 1024))
     await seed.add('.')
     await seed.commit('large')
-    await seed.raw(['push', '-q', '--force', remoteGitPath, 'HEAD:refs/heads/canopycms-feature'])
+    await seed.raw([
+      'push',
+      '-q',
+      '--force',
+      remoteGitPath,
+      'HEAD:refs/heads/canopycms/prod/feature',
+    ])
     const feature = await git(
       '--git-dir',
       remoteGitPath,
       'rev-parse',
-      'refs/heads/canopycms-feature',
+      'refs/heads/canopycms/prod/feature',
     )
     const github = gateway()
     const push = github.push.bind(github)
@@ -836,11 +866,14 @@ describe('the worker side of a push', () => {
 
     await pushToGitHub(
       { github: () => github, remoteGitPath, taskTimeoutMs: 300 },
-      { branch: 'canopycms-feature', prerequisiteBranches: ['canopycms-feature', 'main'] },
+      {
+        branch: 'canopycms/prod/feature',
+        prerequisiteBranches: ['canopycms/prod/feature', 'main'],
+      },
       async () => feature,
     )
 
-    expect(await tip(githubPath, 'refs/heads/canopycms-feature')).toBe(feature)
+    expect(await tip(githubPath, 'refs/heads/canopycms/prod/feature')).toBe(feature)
     expect(main).not.toBe(feature)
   })
 
@@ -857,7 +890,7 @@ describe('the worker side of a push', () => {
     })
     const started = Date.now()
 
-    const caught = await pushVia(github, 'canopycms-feature').catch((err: unknown) => err)
+    const caught = await pushVia(github, 'canopycms/prod/feature').catch((err: unknown) => err)
 
     expect(String(caught)).toContain('the token could not be minted')
     expect(Date.now() - started).toBeLessThan(10_000)
@@ -878,24 +911,24 @@ describe('the worker side of a push', () => {
     await fetchGitHubIntoRemoteGit(transfer(github))
     await git('--git-dir', remoteGitPath, 'update-ref', 'refs/heads/main', long)
     await seed.raw(['fetch', '-q', githubPath, 'main'])
-    await seed.raw(['checkout', '-q', '-B', 'canopycms-feature', 'FETCH_HEAD'])
+    await seed.raw(['checkout', '-q', '-B', 'canopycms/prod/feature', 'FETCH_HEAD'])
     const feature = await commitAndPush(
       remoteGitPath,
-      'refs/heads/canopycms-feature',
+      'refs/heads/canopycms/prod/feature',
       'feature.txt',
     )
     // git writes the 100 KiB subject as the bundle's prerequisite comment.
     const sent = await fs.readFile(
-      await bundleOf(remoteGitPath, 'refs/heads/canopycms-feature', `^${long}`),
+      await bundleOf(remoteGitPath, 'refs/heads/canopycms/prod/feature', `^${long}`),
     )
     expect(sent.toString('latin1')).toContain(`-${long} ${'s'.repeat(100 * 1024)}\n`)
 
     const push = vi.spyOn(github, 'push')
 
-    expect(await pushVia(github, 'canopycms-feature')).toMatchObject({
+    expect(await pushVia(github, 'canopycms/prod/feature')).toMatchObject({
       outcome: { moved: true, to: feature },
     })
-    expect(await tip(githubPath, 'refs/heads/canopycms-feature')).toBe(feature)
+    expect(await tip(githubPath, 'refs/heads/canopycms/prod/feature')).toBe(feature)
     // It went as a bundle built on that commit, so its header named it.
     expect(push.mock.calls.map(([, body]) => body !== undefined)).toEqual([false, true])
   })
@@ -906,7 +939,7 @@ describe('the worker side of a push', () => {
     // A gateway that keeps asking, offered a bundle that is empty: it names the commit itself.
     vi.spyOn(github, 'push').mockResolvedValue({ kind: 'need-objects', usable: [feature] })
 
-    const caught = await pushVia(github, 'canopycms-feature').catch((err: unknown) => err)
+    const caught = await pushVia(github, 'canopycms/prod/feature').catch((err: unknown) => err)
 
     expect(caught).toBeInstanceOf(GitHubTransientError)
     expect((caught as GitHubTransientError).code).toBe('objects-still-needed')
@@ -1099,7 +1132,7 @@ describe('GitHub fetches, coalesced at the production window', () => {
     const settled = await Promise.all([
       github.fetch({ have: [] }),
       github.fetch({ have: [main] }),
-      github.push(request('canopycms-feature', feature)),
+      github.push(request('canopycms/prod/feature', feature)),
     ])
 
     expect(settled[2]).toMatchObject({ kind: 'need-objects' })
@@ -1109,16 +1142,16 @@ describe('GitHub fetches, coalesced at the production window', () => {
   it('fetches afresh for a push after a push, and for a fetch after that', async () => {
     const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     await git('--git-dir', githubPath, 'push', '-q', remoteGitPath, 'main:main')
-    const one = await commitAndPush(remoteGitPath, 'refs/heads/canopycms-one', 'one.txt')
-    await git('--git-dir', remoteGitPath, 'update-ref', 'refs/heads/canopycms-two', main)
+    const one = await commitAndPush(remoteGitPath, 'refs/heads/canopycms/prod/one', 'one.txt')
+    await git('--git-dir', remoteGitPath, 'update-ref', 'refs/heads/canopycms/prod/two', main)
     await seed.raw(['reset', '-q', '--hard', main])
-    const two = await commitAndPush(remoteGitPath, 'refs/heads/canopycms-two', 'two.txt')
+    const two = await commitAndPush(remoteGitPath, 'refs/heads/canopycms/prod/two', 'two.txt')
     const github = coalescing()
     const observed = spySpawns()
 
-    expect((await pushVia(github, 'canopycms-one')).outcome).toMatchObject({ moved: true })
+    expect((await pushVia(github, 'canopycms/prod/one')).outcome).toMatchObject({ moved: true })
     const afterOne = githubFetches(observed)
-    expect((await pushVia(github, 'canopycms-two')).outcome).toMatchObject({ moved: true })
+    expect((await pushVia(github, 'canopycms/prod/two')).outcome).toMatchObject({ moved: true })
     const afterTwo = githubFetches(observed)
     const fetched = await github.fetch({ have: [] })
 
@@ -1126,8 +1159,8 @@ describe('GitHub fetches, coalesced at the production window', () => {
     expect(afterOne).toBe(1)
     expect(afterTwo).toBe(2)
     expect(githubFetches(observed)).toBe(3)
-    expect(fetched.refs.get('canopycms-one')).toBe(one)
-    expect(fetched.refs.get('canopycms-two')).toBe(two)
+    expect(fetched.refs.get('canopycms/prod/one')).toBe(one)
+    expect(fetched.refs.get('canopycms/prod/two')).toBe(two)
   })
 
   it('fetches again rather than answer from a mirror re-created after its fetch', async () => {
@@ -1157,7 +1190,7 @@ describe('GitHub fetches, coalesced at the production window', () => {
     let valid: Promise<GitHubPushAnswer> | undefined
     const observed = spySpawns((spawned) => {
       if (valid === undefined && subcommand(spawned.args) === 'ls-remote') {
-        valid = github.push(request('canopycms-copy', main))
+        valid = github.push(request('canopycms/prod/copy', main))
       }
     })
 
@@ -1183,18 +1216,18 @@ describe('GitHub fetches, coalesced at the production window', () => {
       }
     })
 
-    expect(await github.push(request('canopycms-copy', main))).toMatchObject({
+    expect(await github.push(request('canopycms/prod/copy', main))).toMatchObject({
       kind: 'pushed',
       moved: true,
     })
 
     expect(fetching).toBeDefined()
-    expect((await fetching!).refs.get('canopycms-copy')).toBe(main)
+    expect((await fetching!).refs.get('canopycms/prod/copy')).toBe(main)
   })
 
   it('fetches afresh after deleting a branch', async () => {
     const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
-    await git('--git-dir', githubPath, 'update-ref', 'refs/heads/canopycms-gone', main)
+    await git('--git-dir', githubPath, 'update-ref', 'refs/heads/canopycms/prod/gone', main)
     const deleteRef = vi.fn(async ({ ref }: { ref: string }) => {
       await git('--git-dir', githubPath, 'update-ref', '-d', `refs/${ref}`)
     })
@@ -1205,17 +1238,17 @@ describe('GitHub fetches, coalesced at the production window', () => {
         repos: { get: vi.fn().mockResolvedValue({ data: { default_branch: 'main' } }) },
       } as unknown as Octokit,
     })
-    expect((await github.fetch({ have: [] })).refs.has('canopycms-gone')).toBe(true)
+    expect((await github.fetch({ have: [] })).refs.has('canopycms/prod/gone')).toBe(true)
 
-    await github.deleteBranch('canopycms-gone')
+    await github.deleteBranch('canopycms/prod/gone')
 
     expect(deleteRef).toHaveBeenCalledTimes(1)
-    expect((await github.fetch({ have: [] })).refs.has('canopycms-gone')).toBe(false)
+    expect((await github.fetch({ have: [] })).refs.has('canopycms/prod/gone')).toBe(false)
   })
 
   it('fetches afresh after deleting a branch, even after a fetch that ran during the deletion', async () => {
     const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
-    await git('--git-dir', githubPath, 'update-ref', 'refs/heads/canopycms-gone', main)
+    await git('--git-dir', githubPath, 'update-ref', 'refs/heads/canopycms/prod/gone', main)
     const holder: { github?: GitHubGateway } = {}
     let during: ReadonlyMap<string, string> | undefined
     const deleteRef = vi.fn(async ({ ref }: { ref: string }) => {
@@ -1232,15 +1265,21 @@ describe('GitHub fetches, coalesced at the production window', () => {
     })
     holder.github = github
 
-    await github.deleteBranch('canopycms-gone')
+    await github.deleteBranch('canopycms/prod/gone')
 
-    expect(during?.has('canopycms-gone')).toBe(true)
-    expect((await github.fetch({ have: [] })).refs.has('canopycms-gone')).toBe(false)
+    expect(during?.has('canopycms/prod/gone')).toBe(true)
+    expect((await github.fetch({ have: [] })).refs.has('canopycms/prod/gone')).toBe(false)
   })
 
   it('fails no fetch whose two sessions span a branch deletion', async () => {
     await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
-    await git('--git-dir', githubPath, 'update-ref', 'refs/heads/canopycms-gone', 'refs/heads/main')
+    await git(
+      '--git-dir',
+      githubPath,
+      'update-ref',
+      'refs/heads/canopycms/prod/gone',
+      'refs/heads/main',
+    )
     let answer!: () => void
     const answered = new Promise<void>((resolve) => (answer = resolve))
     const deleteRef = vi.fn(async ({ ref }: { ref: string }) => {
@@ -1267,7 +1306,7 @@ describe('GitHub fetches, coalesced at the production window', () => {
     vi.spyOn(mirror, 'exclusive').mockImplementation((fn) =>
       exclusive((session) => {
         sessions++
-        if (sessions === 1) deletion = github.deleteBranch('canopycms-gone')
+        if (sessions === 1) deletion = github.deleteBranch('canopycms/prod/gone')
         if (sessions === 3) setImmediate(answer)
         return fn(session)
       }),
@@ -1280,6 +1319,6 @@ describe('GitHub fetches, coalesced at the production window', () => {
     // The fetch's own session and the caller's: no miss, so no second fetch.
     expect(sessions).toBe(2)
     expect(fetched.refs.has('main')).toBe(true)
-    expect((await github.fetch({ have: [] })).refs.has('canopycms-gone')).toBe(false)
+    expect((await github.fetch({ have: [] })).refs.has('canopycms/prod/gone')).toBe(false)
   })
 })

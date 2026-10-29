@@ -76,6 +76,7 @@ describe('CmsWorkerConfig.githubGateway', () => {
     ['refreshGitHubToken', { refreshGitHubToken: async () => undefined }],
     ['protectedBranches', { protectedBranches: ['release/*'] }],
     ['legacyBranches', { legacyBranches: ['spring'] }],
+    ['branchNamespace', { branchNamespace: 'editor-production/' }],
   ])('records %s beside it as the startup failure, naming both', async (name, extra) => {
     const { gateway, prepare } = stoppedGateway()
     const worker = makeWorker({ githubGateway: gateway, ...extra })

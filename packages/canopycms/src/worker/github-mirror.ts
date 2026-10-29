@@ -28,7 +28,6 @@ import {
   GatewayRefusalError,
   MAX_BRANCH_NAME_LENGTH,
   branchNameProblem,
-  pushRefusalMessage,
   type PushPolicyRefusal,
 } from './branch-policy'
 import { gatewayLog, gatewayLogError, gatewayLogWarn, redactEgress } from './gateway-egress'
@@ -679,18 +678,21 @@ export class RefusedPushError extends GatewayRefusalError {
     branch: string,
     reason: 'invalid' | PushPolicyRefusal | 'not-a-commit',
     sha?: string,
+    /** The policy's own message, which names the namespace (`pushRefusalMessage`). */
+    message?: string,
   ) {
     super(
       'push',
       branch,
       reason,
-      reason === 'invalid'
-        ? `Refusing to push ${JSON.stringify(branch)} to GitHub: it is not a valid branch name.`
-        : reason === 'not-a-commit'
-          ? `Refusing to push "${branch}" to GitHub: ${sha ?? 'the object asked for'} is not a ` +
-            `commit, and a branch can only point at one. Find out what put it at ` +
-            `refs/heads/${branch} in remote.git.`
-          : pushRefusalMessage(branch, reason),
+      message ??
+        (reason === 'invalid'
+          ? `Refusing to push ${JSON.stringify(branch)} to GitHub: it is not a valid branch name.`
+          : reason === 'not-a-commit'
+            ? `Refusing to push "${branch}" to GitHub: ${sha ?? 'the object asked for'} is not a ` +
+              `commit, and a branch can only point at one. Find out what put it at ` +
+              `refs/heads/${branch} in remote.git.`
+            : `Refusing to push ${JSON.stringify(branch)} to GitHub (${reason}).`),
     )
     this.name = 'RefusedPushError'
   }
@@ -1109,7 +1111,7 @@ export class MirrorSession {
               redactEgress(getErrorMessage(err)).trim(),
           )
         }),
-      (reason) => new RefusedPushError(branch, reason),
+      (reason, message) => new RefusedPushError(branch, reason, undefined, message),
     )
     options.onPushing?.()
     const status = await this.githubBound(

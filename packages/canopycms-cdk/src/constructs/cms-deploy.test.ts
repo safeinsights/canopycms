@@ -18,6 +18,7 @@ import {
 } from 'aws-cdk-lib'
 import {
   CanopyCmsService,
+  resolveBranchNamespaceProp,
   DEFAULT_CMS_LAMBDA_TIMEOUT,
   DEFAULT_CMS_RESERVED_CONCURRENCY,
   MIN_CMS_RESERVED_CONCURRENCY,
@@ -39,6 +40,11 @@ import {
 // a red test on drift rather than a comment asking nicely.
 // Both modules are dependency-free apart from canopycms's own logger shim.
 import { isValidDeploymentName } from '../../../canopycms/src/operating-mode/deployment-name'
+import { resolveBranchNamespaceTemplate } from '../../../canopycms/src/operating-mode/branch-namespace'
+import {
+  VALID_BRANCH_NAMESPACE_TEMPLATES,
+  INVALID_BRANCH_NAMESPACE_TEMPLATES,
+} from '../../../canopycms/src/operating-mode/branch-namespace-fixtures'
 import {
   VALID_DEPLOYMENT_NAMES,
   INVALID_DEPLOYMENT_NAMES,
@@ -2660,6 +2666,146 @@ describe('CanopyCmsService: protectedBranches', () => {
     expect(() => synth(false, { protectedBranches: ['release/*.lock'] })).toThrow(
       '"release/*.lock"',
     )
+  })
+})
+
+/** The body of the env file user data writes to `target`, as a name -> value map. */
+function envFileOf(template: Template, target: string): Map<string, string> {
+  const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = new RegExp(`cat > ${escaped} << 'ENVEOF'\\\\n(.*?)\\\\nENVEOF`).exec(
+    workerUserDataBlobs(template),
+  )
+  expect(match, `no ${target} in the user data`).not.toBeNull()
+  return new Map(
+    (match as RegExpExecArray)[1]
+      .split('\\n')
+      .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]),
+  )
+}
+
+describe('CanopyCmsService: branchNamespace', () => {
+  const lambdaNamespace = (template: Template) => {
+    const [fn] = Object.values(template.findResources('AWS::Lambda::Function'))
+    return (fn.Properties.Environment.Variables as Record<string, string>)
+      .CANOPYCMS_BRANCH_NAMESPACE
+  }
+  const stamped = (template: Template) => {
+    const gateway = envFileOf(template, '/opt/canopy-worker/gateway.env').get(
+      'CANOPYCMS_BRANCH_NAMESPACE',
+    )
+    expect(envFileOf(template, '/opt/canopy-worker/.env').has('CANOPYCMS_BRANCH_NAMESPACE')).toBe(
+      false,
+    )
+    expect(lambdaNamespace(template)).toBe(gateway)
+    return gateway
+  }
+
+  it('defaults to canopycms/prod/, stamped into the Lambda and gateway.env but never the worker .env', () => {
+    expect(stamped(synth())).toBe('canopycms/prod/')
+  })
+
+  it('follows the deploymentName prop', () => {
+    expect(stamped(synth(false, { deploymentName: 'acme' }))).toBe('canopycms/acme/')
+  })
+
+  it('follows an environment.CANOPYCMS_DEPLOYMENT_NAME override, the value stamped as the deployment name', () => {
+    const template = synth(false, {
+      deploymentName: 'acme',
+      environment: { CANOPYCMS_DEPLOYMENT_NAME: 'from-env' },
+    })
+    expect(stamped(template)).toBe('canopycms/from-env/')
+  })
+
+  it('resolves a custom template with its deployment name', () => {
+    const template = synth(false, {
+      deploymentName: 'acme',
+      branchNamespace: 'edits/{deployment}/drafts/',
+    })
+    expect(stamped(template)).toBe('edits/acme/drafts/')
+  })
+
+  it('takes a template without a placeholder as written', () => {
+    expect(stamped(synth(false, { branchNamespace: 'cms/' }))).toBe('cms/')
+  })
+
+  it('refuses an environment.CANOPYCMS_BRANCH_NAMESPACE, which would reach the Lambda alone', () => {
+    expect(() =>
+      synth(false, {
+        branchNamespace: 'cms/',
+        environment: { CANOPYCMS_BRANCH_NAMESPACE: 'other/' },
+      }),
+    ).toThrow('set the branch namespace with the branchNamespace prop')
+  })
+
+  it.each([
+    ['the base branch', { baseBranch: 'cms-prod-main' }],
+    ['the settings branch', { settingsBranch: 'cms-prod-settings' }],
+  ])(
+    'refuses a namespace with %s at a workspace directory a branch in it would share',
+    (_label, branches) => {
+      expect(() => synth(false, { branchNamespace: 'cms/{deployment}/', ...branches })).toThrow(
+        /is inside it/,
+      )
+    },
+  )
+
+  it.each([
+    ['the base branch', { baseBranch: 'cms' }],
+    ['the settings branch', { settingsBranch: 'cms' }],
+  ])('refuses a namespace with %s named after part of it', (_label, branches) => {
+    expect(() => synth(false, { branchNamespace: 'cms/{deployment}/', ...branches })).toThrow(
+      /is a branch named after part of it/,
+    )
+  })
+
+  it.each([
+    ['no trailing slash', 'canopycms/{deployment}', /must end with "\/"/],
+    ['an unknown placeholder', 'canopycms/{env}/', /"\{env\}" is not a placeholder/],
+    ['dot-dot', 'canopycms/../', /'\.\.'/],
+    ['a space', 'canopycms edits/', /printable ASCII without spaces/],
+    ['a percent sign', 'canopycms%2f/', /%/],
+    ['the settings prefix', 'canopycms-settings-/', /settings branches/],
+  ])('refuses a template with %s at synth', (_why, template, message) => {
+    expect(() => synth(false, { branchNamespace: template })).toThrow(
+      /CanopyCmsService: invalid branchNamespace/,
+    )
+    expect(() => synth(false, { branchNamespace: template })).toThrow(message)
+  })
+
+  it('refuses a settingsBranch inside the namespace', () => {
+    expect(() => synth(false, { branchNamespace: 'cms/', settingsBranch: 'cms/settings' })).toThrow(
+      /settingsBranch "cms\/settings" is inside it/,
+    )
+  })
+
+  it('refuses a baseBranch inside the namespace, the default one included', () => {
+    expect(() => synth(false, { baseBranch: 'canopycms/prod/trunk' })).toThrow(
+      /baseBranch "canopycms\/prod\/trunk" is inside it/,
+    )
+  })
+
+  it('takes a baseBranch and settingsBranch outside it', () => {
+    expect(() =>
+      synth(false, { baseBranch: 'canopycms/prodigy', settingsBranch: 'canopycms/other/s' }),
+    ).not.toThrow()
+  })
+
+  // The drift check, as for deploymentName: the construct cannot import core, so this test does.
+  describe('agrees with the runtime rule on every fixture template', () => {
+    for (const [template, expected] of VALID_BRANCH_NAMESPACE_TEMPLATES) {
+      it(`accepts ${JSON.stringify(template)}`, () => {
+        expect(resolveBranchNamespaceTemplate(template, 'prod', 'fixture')).toBe(expected)
+        expect(resolveBranchNamespaceProp(template, 'prod')).toBe(expected)
+      })
+    }
+    for (const [why, template] of INVALID_BRANCH_NAMESPACE_TEMPLATES) {
+      it(`refuses a template with ${why}: ${JSON.stringify(template)}`, () => {
+        expect(() => resolveBranchNamespaceTemplate(template, 'prod', 'fixture')).toThrow()
+        expect(() => resolveBranchNamespaceProp(template, 'prod')).toThrow(
+          /CanopyCmsService: invalid branchNamespace/,
+        )
+      })
+    }
   })
 })
 
