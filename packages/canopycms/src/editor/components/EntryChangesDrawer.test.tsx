@@ -351,8 +351,17 @@ describe('EntryChangesDrawer marks', () => {
         { name: 'notes', type: 'markdown', label: 'Notes' },
       ])
       const shown = await card()
-      expect(within(shown).getByTestId('entry-change-line-list')).toBeTruthy()
+      const list = within(shown).getByTestId('entry-change-line-list')
       expect(within(shown).queryByTestId('entry-change-line-grid')).toBeNull()
+      // A gutter and a line for each of Start, the added line and End: no After column.
+      expect([...list.children].map((cell) => cell.textContent)).toEqual([
+        '',
+        'Start',
+        '+',
+        'Added line: Added one',
+        '',
+        'End',
+      ])
     } finally {
       window.matchMedia = original
     }
