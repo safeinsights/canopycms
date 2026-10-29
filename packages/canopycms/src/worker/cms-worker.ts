@@ -52,6 +52,7 @@ import {
   pushBranchToGitHub,
   updateBranchMetadata,
 } from './task-runner'
+import type { BranchPolicyDescription } from './branch-policy'
 import { pollMergeState, runRebaseCycle, type RebaseSummary } from './rebase'
 import {
   cleanupTrashedBranchDirs,
@@ -1647,8 +1648,10 @@ export class CmsWorker {
   // apps/test-app/app/api/e2e-test/rebase/route.ts drives it from an e2e
   // fixture route. Do not delete it as unused.
 
-  private async rebaseActiveBranches(): Promise<RebaseSummary> {
-    return runRebaseCycle(this.ctx())
+  private async rebaseActiveBranches(
+    gatewayPolicy?: BranchPolicyDescription,
+  ): Promise<RebaseSummary> {
+    return runRebaseCycle(this.ctx(), gatewayPolicy)
   }
 
   // --- Git-sync cluster (worker/git-sync.ts) -----------------------------

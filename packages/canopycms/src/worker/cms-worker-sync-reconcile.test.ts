@@ -30,7 +30,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { simpleGit, type SimpleGit } from 'simple-git'
 
-import { getBranchMetadataFileManager } from '../branch-metadata'
+import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
 import { BRANCH_META_DIR, BRANCH_META_FILE } from '../branch-metadata-file'
 import { enqueueTask } from '../task-queue/cms-task-queue'
 import { mockConsole, openBareRepo, useLocalGitHubGateway } from '../test-utils'
@@ -311,6 +311,22 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
         recursive: true,
       })
       await worker.syncGit()
+      expect((await readStatus()).unpublishableBranches).toBeUndefined()
+    })
+
+    it('restores a namespace branch an older worker renamed before listing it as unpublishable', async () => {
+      await giveWorkspace('canopycms-prod-spring')
+      const branchPath = path.join(workspacePath, 'content-branches', 'canopycms-prod-spring')
+      await fs.writeFile(
+        path.join(branchPath, '.git', 'HEAD'),
+        'ref: refs/heads/canopycms/prod/spring\n',
+      )
+
+      await makeWorker().syncGit()
+
+      expect((await BranchMetadataFileManager.loadOnly(branchPath))?.branch.name).toBe(
+        'canopycms/prod/spring',
+      )
       expect((await readStatus()).unpublishableBranches).toBeUndefined()
     })
 
