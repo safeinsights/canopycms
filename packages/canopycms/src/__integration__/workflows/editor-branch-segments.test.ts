@@ -1,7 +1,8 @@
 /**
- * The `/:branch` segment the editor sends for a listed branch (editor/branch-names.ts's
- * `requestSegments`), through the real handler and `resolveBranchParam`: it reaches the branch
- * the editor listed, whatever the server would make of the branch's short name on that request.
+ * The `/:branch` segment `requestSegments` (editor/branch-names.ts) maps a listed branch to, sent
+ * through the real handler and `resolveBranchParam`: it reaches the branch the editor listed,
+ * whatever the server would make of the branch's short name on that request. That the editor's
+ * hook builds its table from `requestSegments` is pinned by the editor tests.
  */
 
 import { afterEach, describe, expect, it } from 'vitest'
