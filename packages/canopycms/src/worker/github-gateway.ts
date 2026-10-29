@@ -150,8 +150,16 @@ export function describeMove(update: Extract<GitHubRefUpdate, { moved: true }>):
 /** The fields of a pull request the worker reads. */
 export type GitHubPullRequest = Pick<
   RestEndpointMethodTypes['pulls']['get']['response']['data'],
-  'merged' | 'merged_at' | 'state' | 'node_id' | 'body'
->
+  'merged' | 'merged_at' | 'state' | 'node_id'
+> & {
+  /**
+   * The pull request's body, `''` when it has none. `null` when the gateway withholds it: the
+   * head is not in the namespace itself (a legacy or settings branch is not), is protected, or is
+   * in another repository (`LocalGitHubGateway.getPullRequest`). A pull request a person opened
+   * from a branch in the namespace has its body answered.
+   */
+  body: string | null
+}
 
 export type GitHubCreateOrUpdatePullRequest = Omit<
   CreateOrUpdatePullRequestParams,
@@ -1045,19 +1053,47 @@ class LocalGitHubGateway implements GitHubGateway {
     })
   }
 
+  /**
+   * Pull request `number`'s merge state, for any number, and its body only when its head is a
+   * branch of this repository in the namespace itself (no legacy or settings branch) and not
+   * protected (`BranchPolicy.isProtected`), whoever opened the pull request. When GitHub's default
+   * branch cannot be read, the configured protected set and the default as last read decide. The
+   * number comes from the worker, which a compromised CMS Lambda can steer; the head is GitHub's
+   * record.
+   */
   getPullRequest(number: number, signal?: AbortSignal): Promise<GitHubPullRequest> {
-    return this.credentialed(signal, (reach) => this.pullRequest(reach, number, signal))
-  }
-
-  private async pullRequest(
-    reach: GitHubReach,
-    number: number,
-    signal?: AbortSignal,
-  ): Promise<GitHubPullRequest> {
-    const { data } = await this.api(reach, () =>
-      this.octokit.pulls.get({ ...this.repo, pull_number: number, request: { signal } }),
-    )
-    return data
+    return this.credentialed(signal, async (reach) => {
+      const { data } = await this.api(reach, () =>
+        this.octokit.pulls.get({ ...this.repo, pull_number: number, request: { signal } }),
+      )
+      const head = data.head.ref
+      // By id, as `assertOwnPullRequest` compares; a deleted fork has no repo. A protected head is
+      // one the gateway refuses to update the pull request of, so its body is withheld too.
+      let ours = data.head.repo?.id === data.base.repo.id && this.policy.namespaceHolds(head)
+      if (ours) {
+        try {
+          ours = !(await this.policy.isProtected(head, () => this.readDefaultBranch(reach, signal)))
+        } catch (err) {
+          // `isProtected` reads GitHub only for a head the configured set (the base branch and
+          // each `protectedBranches` entry) does not cover. The merge poll needs the merge state,
+          // so an unread default branch leaves the body to that set and to the default as last
+          // read, however old: `updatePullRequest` judges the head again before writing it.
+          if (signal?.aborted) throw err
+          if (this.policy.matchesLastReadDefault(head)) ours = false
+          gatewayLogWarn(
+            `Could not read GitHub's default branch for pull request #${number} ` +
+              `(${redactEgress(getErrorMessage(err))}); judging its head by the configured protected set and the default as last read`,
+          )
+        }
+      }
+      return {
+        merged: data.merged,
+        merged_at: data.merged_at,
+        state: data.state,
+        node_id: data.node_id,
+        body: ours ? (data.body ?? '') : null,
+      }
+    })
   }
 
   /**

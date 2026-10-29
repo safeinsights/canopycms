@@ -159,7 +159,8 @@ function trackFetches(local: GitHubGateway): void {
 /**
  * Wait out the work an in-process gateway runs detached: every GitHub fetch it started, the boot
  * fetch its server's `prepare()` started included, so it writes nothing under a directory the test
- * then removes; and the credential re-read a failure arms, which logs when it fails, so its line lands
+ * then removes; the mirror maintenance a fetch starts detached, for the same reason; and the
+ * credential re-read a failure arms, which logs when it fails, so its line lands
  * while the suite's console spy is still installed. A re-read is bounded only by the gateway's
  * `timeoutMs`, so a test that arms one against a provider that never settles sets a `timeoutMs`
  * below vitest's hook timeout, or this wait outlasts the hook.
@@ -167,7 +168,7 @@ function trackFetches(local: GitHubGateway): void {
 async function backgroundWorkSettled(local: GitHubGateway): Promise<void> {
   const internals = local as unknown as {
     githubFetch?: { done: Promise<unknown> } | null
-    mirror?: { tail: Promise<unknown> }
+    mirror?: { tail: Promise<unknown>; maintenance?: { held: Promise<void> | null } }
     refreshing?: Promise<void> | null
   }
   // The boot fetch starts once prepare() has; a fetch a push replaced still runs in a session.
@@ -177,15 +178,18 @@ async function backgroundWorkSettled(local: GitHubGateway): Promise<void> {
     const job = internals.githubFetch
     const tail = internals.mirror?.tail
     const refreshing = internals.refreshing
+    const maintaining = internals.mirror?.maintenance?.held ?? null
     const fetches = started.size
     await job?.done.catch(() => undefined)
     await Promise.all(started)
     await tail
     await refreshing
+    await maintaining
     if (
       internals.githubFetch === job &&
       internals.mirror?.tail === tail &&
       internals.refreshing === refreshing &&
+      (internals.mirror?.maintenance?.held ?? null) === null &&
       started.size === fetches
     ) {
       return

@@ -539,6 +539,12 @@ export async function executeTask(
       }
       const pr = await ctx.github().getPullRequest(prNumber, signal)
       if (pr.state !== 'open') return { updated: false, skipped: 'not-open' }
+      // Withheld: GitHub reports the head outside the namespace (a legacy branch, say), protected,
+      // or in another repository. A legacy branch's blocks wait for its next submit.
+      if (pr.body === null) {
+        workerLog(`Not updating PR #${prNumber} for ${branch}: the gateway withholds its body`)
+        return { updated: false, skipped: 'body-withheld' }
+      }
       // A corrupt file leaves its block as it is and the other block still updates; any other read
       // error throws, so the task is retried.
       const body = await renderPrCommentsBody({

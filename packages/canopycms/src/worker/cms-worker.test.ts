@@ -3253,6 +3253,7 @@ describe('CmsWorker sync-pr-comments', () => {
   const run = async (
     pr: { state?: string; body?: string | null; headRef?: string } = {},
     extra: Record<string, unknown> = {},
+    workerOptions: { legacyBranches?: string[] } = {},
   ) => {
     const get = vi.fn().mockResolvedValue({
       data: {
@@ -3275,6 +3276,7 @@ describe('CmsWorker sync-pr-comments', () => {
       baseBranch: 'main',
       githubToken: 'fake-token',
       taskTimeoutMs: 2000,
+      ...workerOptions,
     })
     ;(worker as unknown as { running: boolean }).running = true
     useLocalGitHubGateway(worker, {
@@ -3298,15 +3300,27 @@ describe('CmsWorker sync-pr-comments', () => {
     return { task: await getTask(taskDir, id), get, update }
   }
 
-  it('updates nothing for a pull request whose head is outside the namespace', async () => {
-    await seedBranch({ pullRequestNumber: 7 })
-    await new CommentStore(branchPath).addComment({ userId: 'u1', text: 'A note', type: 'branch' })
+  it.each([
+    ['outside the namespace', {}],
+    ['a legacy branch, which the gateway still pushes', { legacyBranches: ['developer-branch'] }],
+  ])(
+    'updates nothing for a pull request whose head is %s: the gateway withholds its body',
+    async (_label, workerOptions) => {
+      await seedBranch({ pullRequestNumber: 7 })
+      await new CommentStore(branchPath).addComment({
+        userId: 'u1',
+        text: 'A note',
+        type: 'branch',
+      })
 
-    const { task, update } = await run({ headRef: 'developer-branch' })
+      const { task, get, update } = await run({ headRef: 'developer-branch' }, {}, workerOptions)
 
-    expect(task?.status).toBe('failed')
-    expect(update).not.toHaveBeenCalled()
-  })
+      expect(get).toHaveBeenCalled()
+      expect(task?.status).toBe('completed')
+      expect(task?.result).toEqual({ updated: false, skipped: 'body-withheld' })
+      expect(update).not.toHaveBeenCalled()
+    },
+  )
 
   it("re-renders the PR's comment block from comments.json and leaves sync status alone", async () => {
     await seedBranch({ pullRequestNumber: 7, syncStatus: 'sync-failed', syncFailureReason: 'old' })

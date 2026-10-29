@@ -31,7 +31,7 @@ import {
 } from './canopy-state'
 import { hasPendingHistoryRewrite } from './history-rewrite'
 import { runRebaseCycle, type RebaseContext } from './rebase'
-import { describeMove } from './github-gateway'
+import { describeMove, type GitHubGatewayHealth } from './github-gateway'
 import { fetchGitHubIntoRemoteGit, pushToGitHub } from './github-transfer'
 import { cleanupOldTasks } from '../task-queue/cms-task-queue'
 import { writeWorkerStatus } from '../task-queue/worker-status'
@@ -47,6 +47,7 @@ import {
   sharedRepoGit,
 } from './shared-repo-git'
 import { reapplySparseCones } from './sparse-cone'
+import { findUnpublishableBranches } from './unpublishable-branches'
 import {
   readEditorWork,
   settleStaleMirror,
@@ -683,17 +684,34 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
 
     await cleanupOldTasks(ctx.taskDir, undefined, ctx.log)
 
-    // For System health's comparison with the namespace the CMS creates branches in, and the
-    // names creation refuses. A gateway that cannot answer leaves the last values standing.
+    // For System health: the namespace it compares with the one the CMS creates branches in, the
+    // names creation refuses, and the branches the gateway would refuse to publish, read after the
+    // rebase cycle, which archives merged branches. A gateway that cannot answer, or answers with
+    // no namespace (a failed boot), leaves the last values standing; a fatal error, or a branches
+    // directory or branch.json that cannot be read, leaves the last report.
+    let health: GitHubGatewayHealth | undefined
     try {
-      const { branchPolicy } = await ctx.github().health(ctx.shutdownSignal())
-      if (branchPolicy.namespace !== '') {
-        const report = ctx.ensureStatusReport()
-        report.gatewayBranchNamespace = branchPolicy.namespace
-        report.gatewayProtectedBranches = branchPolicy.configured.filter((n) => !n.includes('*'))
-      }
+      health = await ctx.github().health(ctx.shutdownSignal())
     } catch (err) {
-      workerLogWarn(`Could not read the GitHub gateway's branch namespace: ${getErrorMessage(err)}`)
+      workerLogWarn(`Could not read the GitHub gateway's branch policy: ${getErrorMessage(err)}`)
+    }
+    if (health && health.branchPolicy.namespace !== '') {
+      const { branchPolicy } = health
+      const report = ctx.ensureStatusReport()
+      report.gatewayBranchNamespace = branchPolicy.namespace
+      report.gatewayProtectedBranches = branchPolicy.configured.filter((n) => !n.includes('*'))
+      if (health.fatalError === null) {
+        try {
+          const unpublishable = await findUnpublishableBranches(ctx, branchPolicy)
+          if (unpublishable.count > 0) {
+            report.unpublishableBranches = { ...unpublishable, at: new Date().toISOString() }
+          } else delete report.unpublishableBranches
+        } catch (err) {
+          workerLogWarn(
+            `Could not list the branches the gateway will not publish: ${getErrorMessage(err)}`,
+          )
+        }
+      }
     }
 
     // [C1] Sweep branch directories the admin purge action trashed more than

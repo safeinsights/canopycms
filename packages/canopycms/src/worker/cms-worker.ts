@@ -34,6 +34,7 @@ import {
 import { CANOPYCMS_VERSION } from '../version'
 import { workerLog, workerLogWarn, workerLogError } from './log'
 import { DEFAULT_SCHEMA_HOLD_MAX_MS, readCarriedBaseHold } from './schema-gate'
+import { readCarriedUnpublishableBranches } from './unpublishable-branches'
 import type { WorkerContext } from './worker-context'
 import {
   SharedRepoRefusalError,
@@ -371,18 +372,23 @@ function lockWorkerTaskDir(
 
 /**
  * The fields a new status snapshot carries from the previous file: `lastFatalError` and
- * `lastShutdown` (task-queue/worker-status.ts) and the schema gate's hold, so its bound keeps
- * counting from the first worker that saw each schema missing.
+ * `lastShutdown` (task-queue/worker-status.ts), the schema gate's hold, so its bound keeps
+ * counting from the first worker that saw each schema missing, and the unpublishable branches,
+ * which System health keeps showing until a sync can ask the gateway again.
  */
 async function readCarriedFields(
   taskDir: string,
-): Promise<Pick<WorkerStatusReport, 'lastFatalError' | 'lastShutdown' | 'baseHold'>> {
+): Promise<
+  Pick<WorkerStatusReport, 'lastFatalError' | 'lastShutdown' | 'baseHold' | 'unpublishableBranches'>
+> {
   const { lastFatalError, lastShutdown } = await readCarriedOverStatus(taskDir)
   const baseHold = await readCarriedBaseHold(taskDir)
+  const unpublishableBranches = await readCarriedUnpublishableBranches(taskDir)
   return {
     ...(lastFatalError ? { lastFatalError } : {}),
     ...(lastShutdown ? { lastShutdown } : {}),
     ...(baseHold ? { baseHold } : {}),
+    ...(unpublishableBranches ? { unpublishableBranches } : {}),
   }
 }
 
@@ -419,7 +425,8 @@ export async function recordWorkerStartupFailure(options: {
         workerLogError('Worker lock lost while recording a startup failure:', getErrorMessage(err)),
     })
     const now = new Date().toISOString()
-    const { lastFatalError, lastShutdown, baseHold } = await readCarriedFields(taskDir)
+    const { lastFatalError, lastShutdown, baseHold, unpublishableBranches } =
+      await readCarriedFields(taskDir)
     if (
       lastFatalError &&
       options.keepRecordedFatal &&
@@ -435,6 +442,7 @@ export async function recordWorkerStartupFailure(options: {
       updatedAt: now,
       ...(lastShutdown ? { lastShutdown } : {}),
       ...(baseHold ? { baseHold } : {}),
+      ...(unpublishableBranches ? { unpublishableBranches } : {}),
       lastFatalError: {
         // [REDACT] Served to the browser by the admin panel and the API's not-ready answer.
         message: redactCredentials(getErrorMessage(options.error)),
@@ -653,15 +661,16 @@ export class CmsWorker {
     // version. Best-effort, like the startup-failure write below. The previous
     // `lastFatalError` rides along in this snapshot only, so a crash loop keeps
     // its alert between restarts while the first successful sync still clears
-    // it. Two fields carry into the report itself: `lastShutdown`, which
-    // describes the last worker that ran until this worker's own stop() replaces it,
-    // and the schema gate's hold, so its bound keeps counting from the first
-    // worker that saw each schema missing.
+    // it. The other carried fields (readCarriedFields) go into the report itself;
+    // `lastShutdown` describes the last worker that ran until this worker's own
+    // stop() replaces it.
     try {
-      const { lastFatalError, lastShutdown, baseHold } = await readCarriedFields(this.taskDir)
+      const { lastFatalError, lastShutdown, baseHold, unpublishableBranches } =
+        await readCarriedFields(this.taskDir)
       const report = this.ensureStatusReport()
       if (lastShutdown) report.lastShutdown = lastShutdown
       if (baseHold) report.baseHold = baseHold
+      if (unpublishableBranches) report.unpublishableBranches = unpublishableBranches
       await writeWorkerStatus(this.taskDir, {
         ...report,
         ...(lastFatalError ? { lastFatalError } : {}),

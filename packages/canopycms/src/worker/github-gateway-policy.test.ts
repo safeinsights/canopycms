@@ -485,6 +485,130 @@ describe('pull requests by number', () => {
   })
 })
 
+describe('reading a pull request by number', () => {
+  const read = async (
+    answer: object,
+    options: Partial<LocalGitHubGatewayOptions> = {},
+    octokit = octokitStub(),
+  ) => {
+    octokit.pulls.get.mockResolvedValue({
+      data: {
+        merged: true,
+        merged_at: '2026-10-29T10:00:00Z',
+        state: 'closed',
+        body: 'Notes',
+        ...answer,
+      },
+    })
+    return gateway({ ...options, octokit: octokit as unknown as Octokit }).getPullRequest(2)
+  }
+
+  it('answers the body of one whose head is in the namespace, in this repository', async () => {
+    expect(await read(pullRequestHead('canopycms/prod/feature'))).toEqual({
+      merged: true,
+      merged_at: '2026-10-29T10:00:00Z',
+      state: 'closed',
+      node_id: 'PR_2',
+      body: 'Notes',
+    })
+  })
+
+  it("answers an empty body as '', which only a withheld body is not", async () => {
+    expect((await read({ ...pullRequestHead('canopycms/prod/feature'), body: null })).body).toBe('')
+  })
+
+  it.each([
+    ['outside the namespace', pullRequestHead('developer-branch'), {}],
+    ['on the legacy list', pullRequestHead('spring'), { legacyBranches: ['spring'] }],
+    ['the settings branch', pullRequestHead('canopycms-settings-prod'), {}],
+    ['protected, outside the namespace', pullRequestHead('main'), {}],
+    [
+      'protected, inside the namespace',
+      pullRequestHead('canopycms/prod/keep-1'),
+      { protectedBranches: ['canopycms/prod/keep-*'] },
+    ],
+    ['in a fork', pullRequestHead('canopycms/prod/feature', 2002), {}],
+    ['in a deleted fork', pullRequestHead('canopycms/prod/feature', null), {}],
+  ] as const)(
+    'withholds the body of one whose head is %s, answering its merge state',
+    async (_label, answer, options) => {
+      expect(await read(answer, options)).toEqual({
+        merged: true,
+        merged_at: '2026-10-29T10:00:00Z',
+        state: 'closed',
+        node_id: 'PR_2',
+        body: null,
+      })
+    },
+  )
+
+  it("withholds the body of one whose head is GitHub's default branch, inside the namespace", async () => {
+    const octokit = octokitStub()
+    octokit.repos.get.mockResolvedValue({ data: { default_branch: 'canopycms/prod/feature' } })
+
+    expect((await read(pullRequestHead('canopycms/prod/feature'), {}, octokit)).body).toBeNull()
+  })
+
+  it.each([
+    ['in the namespace', pullRequestHead('canopycms/prod/feature'), {}, 'Notes'],
+    [
+      'protected by protectedBranches',
+      pullRequestHead('canopycms/prod/keep-1'),
+      { protectedBranches: ['canopycms/prod/keep-*'] },
+      null,
+    ],
+    ['outside the namespace', pullRequestHead('developer-branch'), {}, null],
+    ['in a fork', pullRequestHead('canopycms/prod/feature', 2002), {}, null],
+  ] as const)(
+    "answers merge state when GitHub's default branch cannot be read, judging a head %s by protectedBranches alone",
+    async (_label, answer, options, body) => {
+      const octokit = octokitStub()
+      octokit.repos.get.mockRejectedValue(await octokitErrorFor(502, { message: 'Bad Gateway' }))
+
+      expect(await read(answer, options, octokit)).toEqual({
+        merged: true,
+        merged_at: '2026-10-29T10:00:00Z',
+        state: 'closed',
+        node_id: 'PR_2',
+        body,
+      })
+    },
+  )
+})
+
+describe('a pull request read after the default branch read expired', () => {
+  it('withholds the body of one whose head is the default as last read when the re-read fails, answering its merge state', async () => {
+    const octokit = octokitStub()
+    octokit.repos.get.mockResolvedValue({ data: { default_branch: 'canopycms/prod/feature' } })
+    octokit.pulls.get.mockResolvedValue({
+      data: {
+        ...pullRequestHead('canopycms/prod/feature'),
+        merged: true,
+        merged_at: '2026-10-29T10:00:00Z',
+        state: 'closed',
+        body: 'Notes',
+      },
+    })
+    const github = gateway({ octokit: octokit as unknown as Octokit })
+    const now = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
+    await github.getPullRequest(2)
+    expect(octokit.repos.get).toHaveBeenCalledTimes(1)
+
+    clock.mockReturnValue(now + DEFAULT_BRANCH_TTL_MS)
+    octokit.repos.get.mockRejectedValue(await octokitErrorFor(502, { message: 'Bad Gateway' }))
+
+    expect(await github.getPullRequest(2)).toEqual({
+      merged: true,
+      merged_at: '2026-10-29T10:00:00Z',
+      state: 'closed',
+      node_id: 'PR_2',
+      body: null,
+    })
+    expect(octokit.repos.get).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe('branch names', () => {
   const request = (head: string, base = 'main') => ({ head, base, title: 'T', body: 'B' })
 
@@ -692,11 +816,13 @@ describe('the canary sweep', () => {
         create: vi.fn().mockRejectedValue(octokitError),
         get: vi.fn().mockResolvedValue({
           data: {
+            ...pullRequestHead('canopycms/prod/feature'),
             merged: false,
             merged_at: null,
             state: 'open',
             node_id: TOKEN,
             title: `x ${pair}`,
+            body: `y ${pair}`,
           },
         }),
       },

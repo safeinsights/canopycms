@@ -18,6 +18,7 @@ import {
 } from 'aws-cdk-lib'
 import {
   CanopyCmsService,
+  assertValidLegacyBranches,
   resolveBranchNamespaceProp,
   DEFAULT_CMS_LAMBDA_TIMEOUT,
   DEFAULT_CMS_RESERVED_CONCURRENCY,
@@ -36,11 +37,17 @@ import {
 // in this directory do not import `canopycms` (see isValidDeploymentName's doc
 // comment in cms-service.ts for the real reason, and for why the older "the
 // package has no runtime dependency on canopycms" version of it was false),
-// but this SUITE can, which is what makes the duplicated deployment-name rule
-// a red test on drift rather than a comment asking nicely.
-// Both modules are dependency-free apart from canopycms's own logger shim.
+// but this SUITE can, which is what makes each duplicated rule (deployment
+// name, branch namespace, legacyBranches) a red test on drift rather than a
+// comment asking nicely. These modules are dependency-free apart from
+// canopycms's own logger shim.
 import { isValidDeploymentName } from '../../../canopycms/src/operating-mode/deployment-name'
 import { resolveBranchNamespaceTemplate } from '../../../canopycms/src/operating-mode/branch-namespace'
+import { BranchPolicy } from '../../../canopycms/src/worker/branch-policy'
+import {
+  VALID_LEGACY_BRANCH_LISTS,
+  INVALID_LEGACY_BRANCH_LISTS,
+} from '../../../canopycms/src/worker/legacy-branch-fixtures'
 import {
   VALID_BRANCH_NAMESPACE_TEMPLATES,
   INVALID_BRANCH_NAMESPACE_TEMPLATES,
@@ -2666,6 +2673,91 @@ describe('CanopyCmsService: protectedBranches', () => {
     expect(() => synth(false, { protectedBranches: ['release/*.lock'] })).toThrow(
       '"release/*.lock"',
     )
+  })
+})
+
+describe('CanopyCmsService: legacyBranches', () => {
+  it('stamps the entries, comma-separated, into the gateway env file', () => {
+    const all = workerUserDataBlobs(synth(false, { legacyBranches: ['spring', 'fix/old', 'v1'] }))
+    expect(all).toContain('CANOPYCMS_LEGACY_BRANCHES=spring,fix/old,v1')
+  })
+
+  it('stamps nothing when the prop is unset or empty', () => {
+    expect(workerUserDataBlobs(synth(false))).not.toContain('CANOPYCMS_LEGACY_BRANCHES')
+    expect(workerUserDataBlobs(synth(false, { legacyBranches: [] }))).not.toContain(
+      'CANOPYCMS_LEGACY_BRANCHES',
+    )
+  })
+
+  it.each([
+    ['a comma', 'a,b', /comma/],
+    ['a wildcard', 'release/*', /exact branch name/],
+    ['a percent sign', 'a%2fb', /%/],
+    ['an empty entry', '', /empty/],
+    ['a settings branch', 'canopycms-settings-prod', /settings branch/],
+    ['a name in the default namespace', 'canopycms/prod/fix', /already in the namespace/],
+    ['a name the default namespace is under', 'canopycms/prod', /named after part of/],
+  ])('refuses an entry with %s at synth', (_label, entry, why) => {
+    expect(() => synth(false, { legacyBranches: [entry] })).toThrow(/invalid legacyBranches entry/)
+    expect(() => synth(false, { legacyBranches: [entry] })).toThrow(why)
+  })
+
+  it('refuses an environment.CANOPYCMS_LEGACY_BRANCHES, which would reach the Lambda alone', () => {
+    expect(() =>
+      synth(false, {
+        legacyBranches: ['spring'],
+        environment: { CANOPYCMS_LEGACY_BRANCHES: 'autumn' },
+      }),
+    ).toThrow('set legacy branches with the legacyBranches prop')
+    expect(() => synth(false, { environment: { CANOPYCMS_LEGACY_BRANCHES: '' } })).toThrow(
+      'environment.CANOPYCMS_LEGACY_BRANCHES',
+    )
+  })
+
+  it('checks entries against the resolved branchNamespace', () => {
+    const custom = { branchNamespace: 'edits/{deployment}/', deploymentName: 'docs' }
+    expect(() => synth(false, { ...custom, legacyBranches: ['edits/docs/x'] })).toThrow(
+      /"edits\/docs\/x" -- it starts with the branch namespace edits\/docs\//,
+    )
+    expect(() => synth(false, { ...custom, legacyBranches: ['edits'] })).toThrow(
+      /"edits" -- it is a branch named after part of the branch namespace edits\/docs\//,
+    )
+    expect(() =>
+      synth(false, { ...custom, legacyBranches: ['canopycms/prod/x', 'edits/prod/x'] }),
+    ).not.toThrow()
+  })
+
+  it('refuses a set long enough to take the worker user data past the EC2 cap', () => {
+    const long = Array.from({ length: 700 }, (_, i) => `fix/${'x'.repeat(40)}-${i}`)
+    expect(() => synth(false, { legacyBranches: long })).toThrow(
+      /user data could reach \d+ bytes, over the 16384 EC2 accepts; protectedBranches has 0 entries and legacyBranches has 700\./,
+    )
+  })
+
+  // The drift check, as for branchNamespace: the construct cannot import core, so this test does.
+  describe('agrees with the gateway on every fixture list', () => {
+    const coreAccepts = (namespace: string, entries: readonly string[]) => {
+      try {
+        new BranchPolicy({ namespace, legacyBranches: entries })
+        return true
+      } catch {
+        return false
+      }
+    }
+    for (const [label, namespace, entries] of VALID_LEGACY_BRANCH_LISTS) {
+      it(`accepts ${label} in ${namespace}`, () => {
+        expect(coreAccepts(namespace, entries)).toBe(true)
+        expect(assertValidLegacyBranches(entries, namespace)).toEqual(entries)
+      })
+    }
+    for (const [label, namespace, entries] of INVALID_LEGACY_BRANCH_LISTS) {
+      it(`refuses ${label} in ${namespace}`, () => {
+        expect(coreAccepts(namespace, entries)).toBe(false)
+        expect(() => assertValidLegacyBranches(entries, namespace)).toThrow(
+          /CanopyCmsService: (?:invalid legacyBranches entry|legacyBranches has)/,
+        )
+      })
+    }
   })
 })
 

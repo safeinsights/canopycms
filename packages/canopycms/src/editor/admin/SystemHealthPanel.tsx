@@ -36,6 +36,7 @@ import { IconAlertCircle, IconAlertTriangle } from '@tabler/icons-react'
 import { openConfirm } from '../utils/confirm-modal'
 import { focusReturnProps } from '../utils/focus-return'
 import { formatRelativeTime } from '../relative-time'
+import { EDITOR_ACTIONS } from '../copy'
 import {
   useSystemHealth,
   type UseSystemHealthReturn,
@@ -47,7 +48,12 @@ import type { DuplicateContentId } from '../../content-id-index'
 import type { OperatingMode } from '../../operating-mode'
 import type { Task, CorruptTaskFile } from '../../task-queue'
 import type { BranchHealthEntry, DuplicateIdScan } from '../../branch-health'
-import type { BaseRefreshReport, BaseSchemaHold } from '../../types'
+import type {
+  BaseRefreshReport,
+  BaseSchemaHold,
+  UnpublishableBranch,
+  UnpublishableBranchesReport,
+} from '../../types'
 import { escapeForLog } from '../../utils/escape-text'
 import { branchStatusPresentation } from '../branch-status'
 
@@ -279,6 +285,94 @@ function BranchNamespaceAlert({
         gateway writes only branches starting <Code>{escapeForLog(gateway)}</Code>. A developer sets
         branchNamespace, or CANOPYCMS_BRANCH_NAMESPACE, to the same value for both.
       </Text>
+    </Alert>
+  )
+}
+
+/** Branch refs from metadata the CMS Lambda can write, so each is shown escaped. */
+function BranchRefs({ branches }: { branches: UnpublishableBranch[] }) {
+  return (
+    <Group gap={4}>
+      {branches.map((branch, i) => (
+        <Code key={i}>{escapeForLog(branch.name)}</Code>
+      ))}
+    </Group>
+  )
+}
+
+/**
+ * Editor branches the GitHub gateway will not publish, by ref, which is what a developer lists
+ * (worker/unpublishable-branches.ts), grouped by what would publish each.
+ */
+function UnpublishableBranchesAlert({
+  report,
+  namespace,
+}: {
+  report: UnpublishableBranchesReport
+  namespace: string | undefined
+}) {
+  const unlisted = report.count - report.branches.length
+  const listable = report.branches.filter((b) => b.reason === undefined)
+  const blocking = report.branches.filter((b) => b.reason === 'blocks-namespace')
+  const unlistable = report.branches.filter((b) => b.reason === 'unlistable')
+  return (
+    <Alert
+      color="orange"
+      icon={<IconAlertTriangle size={16} />}
+      title={`${plural(report.count, 'branch')} cannot be published`}
+      data-testid="unpublishable-branches-alert"
+    >
+      <Stack gap={4}>
+        <Text size="sm">
+          The GitHub gateway refuses to push each branch below, so submitting it for review fails.
+          Either it is outside the branch namespace
+          {namespace !== undefined && (
+            <>
+              {' '}
+              <Code>{escapeForLog(namespace)}</Code>
+            </>
+          )}{' '}
+          and legacyBranches does not list it, or it is protected: the base branch, GitHub&apos;s
+          default branch, or a match for an entry in protectedBranches.
+        </Text>
+        {listable.length > 0 && (
+          <>
+            <Text size="sm" data-testid="unpublishable-listable">
+              A developer lists each branch from outside the namespace in legacyBranches
+              (CANOPYCMS_LEGACY_BRANCHES on the GitHub gateway), and takes a protected one out of
+              protectedBranches, or makes another branch GitHub&apos;s default. Otherwise, an editor
+              re-enters its changes by hand in a new branch, which is created inside the namespace.
+            </Text>
+            <BranchRefs branches={listable} />
+          </>
+        )}
+        {blocking.length > 0 && (
+          <>
+            <Text size="sm" data-testid="unpublishable-blocking">
+              Delete each of these branches in the CMS, and by hand on GitHub too if it is there.
+              One in review needs {EDITOR_ACTIONS.withdrawFromReview} first. While one exists, no
+              branch in the namespace can be created or published.
+            </Text>
+            <BranchRefs branches={blocking} />
+          </>
+        )}
+        {unlistable.length > 0 && (
+          <>
+            <Text size="sm" data-testid="unpublishable-unlistable">
+              legacyBranches cannot hold these names, so an editor re-enters each branch&apos;s
+              changes by hand in a new branch, which is created inside the namespace.
+            </Text>
+            <BranchRefs branches={unlistable} />
+          </>
+        )}
+        {unlisted > 0 && <Text size="sm">And {unlisted} more.</Text>}
+        <Text size="xs" c="dimmed">
+          As of{' '}
+          <TooltipDetail detail={absoluteTime(report.at)}>
+            {formatRelativeTime(report.at)}
+          </TooltipDetail>
+        </Text>
+      </Stack>
     </Alert>
   )
 }
@@ -563,6 +657,13 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
 
       {lastGitSync?.tracked && lastGitSync.tracked.diverged.length > 0 && (
         <DivergedBranchesAlert names={lastGitSync.tracked.diverged} />
+      )}
+
+      {status.workerStatus?.unpublishableBranches && (
+        <UnpublishableBranchesAlert
+          report={status.workerStatus.unpublishableBranches}
+          namespace={status.workerStatus.gatewayBranchNamespace}
+        />
       )}
 
       {status.workerStatus?.lastGitSyncError && (
@@ -1049,6 +1150,12 @@ function DuplicateRepairDetails({
       </Text>
     </Stack>
   )
+}
+
+/** The absolute time a relative one's tooltip shows, or `iso` when it does not parse. */
+const absoluteTime = (iso: string): string => {
+  const date = new Date(iso)
+  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString()
 }
 
 /** "2d ago, 1/1/2026, 9:00:00 AM": inside a tooltip, so the absolute date sits beside it. */

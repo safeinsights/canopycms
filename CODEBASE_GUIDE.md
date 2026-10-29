@@ -235,7 +235,7 @@ direction, and every invariant.
 - `cms-worker.ts` — the `CmsWorker` class: lifecycle (draining `stop()`, `selfStopped`), worker lock, scheduling, `remote.git` provisioning, base-branch detection (`resolveBaseBranch`, `recordBaseBranchInRemoteHead`), and one delegating method per cluster
 - `worker-context.ts` — `WorkerContext`, the only channel between the class and its clusters
 - `task-runner.ts` — the task-queue cluster below `processTaskQueue`, including `PermanentTaskError`
-- `git-sync.ts` — the git-sync cluster below `syncGit`: tracking, settings push, base refresh (returns `BaseRefreshReport`), trash sweep, `repairBranchDirResidue`
+- `git-sync.ts` — the git-sync cluster below `syncGit`: tracking, settings push, base refresh (`BaseRefreshReport`), trash sweep, `repairBranchDirResidue`, `unpublishable-branches.ts`
 - `remote-git-maintenance.ts` — `maintainRemoteGit`: the logged repack of `remote.git` (rule: `git-manager.ts` `repackBareRemoteIfNeeded`)
 - `sparse-cone.ts` — `reapplySparseCones`: re-cones sparse clones after a content-root change
 - `schema-gate.ts` — `decideBaseAdvance`: holds the base branch while incoming content names a schema the serving editor lacks

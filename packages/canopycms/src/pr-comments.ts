@@ -28,10 +28,10 @@ export async function renderPrCommentsBody(options: {
   branchRoot: string
   branch: string
   editorUrl?: string
-  body: string | null | undefined
+  body: string
   warn: (message: string) => void
 }): Promise<string | undefined> {
-  const original = options.body ?? ''
+  const original = options.body
   let next = original
   try {
     const threads = await new CommentStore(options.branchRoot).listThreadsStrict()

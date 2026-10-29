@@ -33,11 +33,18 @@ type MergePollInternals = {
 }
 
 /**
- * `pulls.get`'s answer: the fields GitHub always sends that the gateway carries (`merged_at`,
- * `node_id`), under the ones a test sets.
+ * `pulls.get`'s answer: the fields GitHub always sends that the gateway reads (`merged_at`,
+ * `node_id`, the head and base), under the ones a test sets. The head is outside the namespace,
+ * as a legacy branch's is: the gateway answers merge state for any pull request.
  */
 const pullRequest = (data: Record<string, unknown>) => ({
-  data: { merged_at: null, node_id: 'PR_test', ...data },
+  data: {
+    merged_at: null,
+    node_id: 'PR_test',
+    head: { ref: 'legacy-feature', repo: { id: 1 } },
+    base: { ref: 'main', repo: { id: 1 } },
+    ...data,
+  },
 })
 
 describe('CmsWorker.pollMergeState()', () => {
