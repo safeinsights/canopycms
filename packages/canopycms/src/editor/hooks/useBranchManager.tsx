@@ -12,13 +12,14 @@ import type { ConflictStatus, PullRequestState, SyncStatus } from '../../types'
 import type { OperatingMode } from '../../operating-mode'
 import type { CommentThread } from '../../comment-store'
 import type { BranchListItem } from '../../api/branch'
-import { useApiClient } from '../context'
+import { useApiClient, useBranchSegments } from '../context'
 import { BRANCHES_KEY, fetchBranches, useBranchesData, type BranchesData } from './useBranchesData'
 // branch-name, NOT branch or the '../../paths' barrel: both of those pull
 // node:fs/promises + node:path at the top level (path RESOLUTION helpers),
 // which breaks adopters' production `next build` of the editor bundle.
 // paths/branch-name.ts is the dependency-free home of sanitizeBranchName.
 import { sanitizeBranchName } from '../../paths/branch-name'
+import { branchUrlName, displayBranchName, resolveListedBranch } from '../branch-names'
 import { RetryToastMessage } from '../components/RetryToastMessage'
 import { isNonApiResponse } from '../../api/client'
 import { isGatewayFailure, isUnanswered, UnansweredError } from '../unanswered'
@@ -155,7 +156,7 @@ const showSubmitConfirmation = (
           </Alert>
         )}
         <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
-          {`Submit "${branchName}" for review?\n\nThis will:\n• Create a pull request for review\n• Change the branch status to "In review"\n• Notify reviewers of pending changes`}
+          {`Submit “${branchName}” for review?\n\nThis will:\n• Create a pull request for review\n• Change the branch status to “In review”\n• Notify reviewers of pending changes`}
         </Text>
       </Stack>
     ),
@@ -198,14 +199,14 @@ const showWithdrawConfirmation = (
 ) => {
   const bullets = [
     withdrawPullRequestBullet(pr),
-    'Change the branch status back to "editing"',
+    'Change the branch status back to “editing”',
     'Remove from review queue',
   ].filter((b): b is string => b !== undefined)
   openConfirm({
     title: EDITOR_ACTIONS.withdrawFromReview,
     children: (
       <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
-        {`Withdraw "${branchName}" from review?\n\nThis will:\n${bullets.map((b) => `• ${b}`).join('\n')}`}
+        {`Withdraw “${branchName}” from review?\n\nThis will:\n${bullets.map((b) => `• ${b}`).join('\n')}`}
       </Text>
     ),
     labels: { confirm: EDITOR_ACTIONS.withdrawFromReview, cancel: 'Cancel' },
@@ -291,7 +292,7 @@ const showDeleteConfirmation = (
     title: 'Delete branch',
     children: (
       <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
-        {`Delete "${branchName}"?\n\nThis will:\n${bullets.map((b) => `• ${b}`).join('\n')}\n\nThis cannot be undone.`}
+        {`Delete “${branchName}”?\n\nThis will:\n${bullets.map((b) => `• ${b}`).join('\n')}\n\nThis cannot be undone.`}
       </Text>
     ),
     labels: { confirm: 'Delete branch', cancel: 'Cancel' },
@@ -332,25 +333,6 @@ function mergePendingBranches(
 }
 
 /**
- * The listed branch `name` opens, in the order the server resolves a `?branch=`: the base or
- * active branch (`defaultBranch`) by its full name, then a namespace branch by its short name,
- * then any branch by its full name. Last, the sanitized form catches a deep link carrying a
- * name's raw, unsanitized form ("feature/x" for the persisted "feature-x"). A branch outside the
- * namespace lists its full name as its short name, so only a namespace branch matches the second.
- */
-export function resolveListedBranch<
-  B extends Pick<BranchListItem, 'name' | 'shortName' | 'isProtected'>,
->(branches: readonly B[], name: string, defaultBranch?: string): B | undefined {
-  const byName = branches.find((b) => b.name === name)
-  if (byName && (byName.isProtected || name === defaultBranch)) return byName
-  return (
-    branches.find((b) => b.shortName === name && b.name !== name) ??
-    byName ??
-    branches.find((b) => b.name === sanitizeBranchName(name))
-  )
-}
-
-/**
  * Applies one received listing to the pending branches: drops those it arrived
  * past the grace window for, and takes the listing's copy of the rest. Written
  * so a listing with no arrival time (NaN) drops nothing.
@@ -381,6 +363,7 @@ function reconcilePendingBranches(
 
 interface BranchSummary {
   name: string
+  shortName?: string
   status: string
   createdBy?: string
   updatedAt?: string
@@ -452,6 +435,12 @@ export interface UseBranchManagerReturn {
   branches: BranchListItem[]
   branchSummaries: BranchSummary[]
   currentBranch: BranchListItem | undefined
+  /** The listed branch `name` opens, resolved as `currentBranch` is. */
+  listedBranch: (name: string) => BranchListItem | undefined
+  /** The full name of the listed branch `name` opens, else `name` sanitized. */
+  listedName: (name: string) => string
+  /** What `?branch=` carries for the branch `name` opens, else `name`. */
+  urlBranchName: (name: string) => string
   /** The listing failed and nothing earlier stands in for it. */
   branchesLoadFailed: boolean
   /** A listing has arrived, so a branch missing from it is not still loading. */
@@ -491,6 +480,13 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     () => mergePendingBranches(branchesData?.branches ?? [], pendingBranches),
     [branchesData, pendingBranches],
   )
+
+  // Requests name a branch by the form its URL does.
+  const segments = useMemo(
+    () => new Map(branches.map((b) => [b.name, branchUrlName(branches, b)])),
+    [branches],
+  )
+  useBranchSegments(segments)
 
   const addCreatedBranch = useCallback((branch: BranchListItem) => {
     setPendingBranches((prev) => [
@@ -581,7 +577,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     // eslint-disable-next-line react-hooks/exhaustive-deps -- options is a new object every Editor.tsx render; only setBusy (a stable setState) matters here
   }, [branchesIsValidating, options.setBusy])
 
-  const currentBranch = resolveListedBranch(branches, branchName, branchesData?.defaultBranch)
+  const currentBranch = resolveListedBranch(branches, branchName)
   const currentBranchName = currentBranch?.name
 
   // A link names a branch by its short name or a raw form; the state takes the listed name, so
@@ -596,6 +592,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
       const unresolvedCount = branchComments.filter((t) => !t.resolved).length
       return {
         name: b.name,
+        shortName: b.shortName,
         status: b.status,
         createdBy: b.createdBy,
         updatedAt: b.updatedAt,
@@ -672,9 +669,22 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
 
   // A deep link can carry a short name or the raw form of a listed name; the actions key, look
   // up and send the listed name, resolved the way `currentBranch` resolves it.
-  const listedName = (name: string): string =>
-    resolveListedBranch(latest.current.branches, name, latest.current.branchesData?.defaultBranch)
-      ?.name ?? sanitizeBranchName(name)
+  const listedBranch = (name: string): BranchListItem | undefined =>
+    resolveListedBranch(latest.current.branches, name)
+  const listedName = (name: string): string => listedBranch(name)?.name ?? sanitizeBranchName(name)
+
+  // What a dialog or toast calls the listed branch `name`; the keys, lookups and requests keep `name`.
+  const shownName = (name: string): string => {
+    const found = latest.current.branches.find((b) => b.name === name)
+    return found ? displayBranchName(found) : name
+  }
+
+  // The `?branch=` value for `name`: the listed branch's URL form, else `name` as given.
+  const urlBranchName = (name: string): string => {
+    const listed = latest.current.branches
+    const found = resolveListedBranch(listed, name)
+    return found ? branchUrlName(listed, found) : name
+  }
 
   const pullRequestOf = (name: string): BranchPullRequest => {
     const b = latest.current.branches.find((x) => x.name === name)
@@ -883,7 +893,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
       const unsaved = checking && (await checking.finally(() => options.setBusy(false)))
       return new Promise<void>((resolve, reject) => {
         showSubmitConfirmation(
-          branchNameToSubmit,
+          shownName(branchNameToSubmit),
           unsaved,
           async () => {
             // A listing that arrived while the dialog was open may show the branch already
@@ -944,7 +954,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
       () =>
         new Promise<void>((resolve, reject) => {
           showWithdrawConfirmation(
-            branchNameToWithdraw,
+            shownName(branchNameToWithdraw),
             pullRequestOf(branchNameToWithdraw),
             async () => {
               options.setBusy(true)
@@ -983,7 +993,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
       () =>
         new Promise<void>((resolve, reject) => {
           showApproveConfirmation(
-            branchNameToApprove,
+            shownName(branchNameToApprove),
             pullRequestOf(branchNameToApprove),
             async () => {
               options.setBusy(true)
@@ -1000,7 +1010,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               } catch (err) {
                 await reportReviewFailure(err, 'approve', branchNameToApprove, {
                   fallback: 'Failed to approve branch',
-                  label: `${EDITOR_ACTIONS.approve} "${branchNameToApprove}"`,
+                  label: `${EDITOR_ACTIONS.approve} “${shownName(branchNameToApprove)}”`,
                   retry: () =>
                     void handleApprove(branchNameToApprove, returnFocusTo).catch(() => {}),
                 })
@@ -1026,7 +1036,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
       () =>
         new Promise<void>((resolve) => {
           showRequestChangesConfirmation(
-            branchNameForChanges,
+            shownName(branchNameForChanges),
             pullRequestOf(branchNameForChanges),
             noteDrafts.current.get(branchNameForChanges) ?? '',
             (draft) => {
@@ -1061,7 +1071,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               } catch (err) {
                 await reportReviewFailure(err, 'request-changes', branchNameForChanges, {
                   fallback: 'Failed to request changes',
-                  label: `${EDITOR_ACTIONS.requestChanges} on "${branchNameForChanges}"`,
+                  label: `${EDITOR_ACTIONS.requestChanges} on “${shownName(branchNameForChanges)}”`,
                   note: note.trim() || undefined,
                   retry: () =>
                     void handleRequestChanges(branchNameForChanges, returnFocusTo).catch(() => {}),
@@ -1115,7 +1125,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
       () =>
         new Promise<void>((resolve) => {
           showDeleteConfirmation(
-            branchNameToDelete,
+            shownName(branchNameToDelete),
             pullRequestOf(branchNameToDelete),
             async () => {
               options.setBusy(true)
@@ -1179,16 +1189,34 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
 
   // The editor's own page; a Back off it to a page of the host leaves that page's URL alone.
   const editorPathRef = useRef(typeof window === 'undefined' ? '' : window.location.pathname)
+  const shownBranch = currentBranch ? branchUrlName(branches, currentBranch) : undefined
+  // Each Back or Forward, which can arrive at an entry naming this branch in another form.
+  const [historyMoves, setHistoryMoves] = useState(0)
   useEffect(() => {
     if (typeof window === 'undefined') return
-    if (!branchName || window.location.pathname !== editorPathRef.current) return
+    const moved = () => setHistoryMoves((n) => n + 1)
+    window.addEventListener('popstate', moved)
+    return () => window.removeEventListener('popstate', moved)
+  }, [])
+  const seenMovesRef = useRef(historyMoves)
+  // Written once the listing resolves the branch, so a link's own form stays until then; a form
+  // other than the shown one (the full name, a raw name) is replaced, never pushed. After a Back
+  // or Forward only a form of this branch is: one naming another is the entry manager's switch.
+  useEffect(() => {
+    const popped = seenMovesRef.current !== historyMoves
+    seenMovesRef.current = historyMoves
+    if (typeof window === 'undefined') return
+    if (!shownBranch || window.location.pathname !== editorPathRef.current) return
     const url = new URL(window.location.href)
-    const current = url.searchParams.get('branch')
-    if (current !== branchName) {
-      url.searchParams.set('branch', branchName)
-      writeEditorUrl(url.toString(), false)
+    const named = url.searchParams.get('branch')
+    if (named === shownBranch) return
+    if (popped && named !== null) {
+      const { branches: listed, branchName: current } = latest.current
+      if (resolveListedBranch(listed, named)?.name !== current) return
     }
-  }, [branchName])
+    url.searchParams.set('branch', shownBranch)
+    writeEditorUrl(url.toString(), false)
+  }, [shownBranch, historyMoves])
 
   return {
     branchName,
@@ -1196,6 +1224,9 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     branches,
     branchSummaries,
     currentBranch,
+    listedBranch,
+    listedName,
+    urlBranchName,
     branchesLoadFailed: !!branchesError && !branchesData,
     branchesLoaded: !!branchesData,
     addCreatedBranch,

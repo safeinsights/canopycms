@@ -21,6 +21,8 @@ import {
 import { BranchWorkspaceManager, setProvisioningTestHooks } from './branch-workspace'
 import { BranchRegistry } from './branch-registry'
 import { defineCanopyTestConfig } from './config-test'
+import { operatingStrategy } from './operating-mode'
+import { sanitizeBranchName } from './paths/branch-name'
 import { SettingsWorkspaceManager } from './settings-workspace'
 import { initTestRepo, mockConsole, useLocalGitHubGateway, type MockConsole } from './test-utils'
 import {
@@ -184,6 +186,57 @@ describe('publishing behind a live holder of the lock', () => {
   }, 20_000)
 })
 
+describe('a busy answer behind a live holder of the lock', () => {
+  const busy = "Branch 'young' is still being set up. Try again in a minute."
+
+  it('names a namespace branch by its short name when its publish waits too long', async () => {
+    const ref = `${operatingStrategy('prod').getBranchNamespace(config())}young`
+    const release = await acquireProvisioningLock(
+      baseRoot,
+      branchProvisioningLockName(sanitizeBranchName(ref)),
+    )
+    try {
+      await expect(create(ref)).rejects.toMatchObject({
+        name: 'BranchProvisioningBusyError',
+        message: busy,
+      })
+    } finally {
+      await release()
+    }
+  }, 20_000)
+
+  it('names a namespace branch by its short name when its adoption waits too long', async () => {
+    const ref = `${operatingStrategy('dev').getBranchNamespace(config('dev'))}young`
+    const devBase = path.join(tmpDir, '.canopy-dev', 'content-branches')
+    const finalPath = path.join(devBase, sanitizeBranchName(ref))
+    await fs.mkdir(finalPath, { recursive: true })
+    const wsGit = simpleGit({ baseDir: finalPath })
+    await wsGit.init()
+    await wsGit.addConfig('user.name', 'Dev')
+    await wsGit.addConfig('user.email', 'dev@example.com')
+    await fs.writeFile(path.join(finalPath, 'synced.md'), 'real work\n')
+    await wsGit.add('.')
+    await wsGit.commit('content pushed by sync')
+    await backdate(finalPath, 10 * 60_000)
+    const release = await acquireProvisioningLock(
+      devBase,
+      branchProvisioningLockName(sanitizeBranchName(ref)),
+    )
+    try {
+      await expect(
+        new BranchWorkspaceManager(config('dev')).openOrCreateBranch({
+          branchName: ref,
+          mode: 'dev',
+          basePathOverride: tmpDir,
+          createdBy: 'user-1',
+        }),
+      ).rejects.toMatchObject({ name: 'BranchProvisioningBusyError', message: busy })
+    } finally {
+      await release()
+    }
+  }, 20_000)
+})
+
 describe('residue that must not be quarantined', () => {
   it('a young residue answers busy and stays exactly where it was', async () => {
     const finalPath = await makeIncidentResidue('feat', 10_000)
@@ -193,6 +246,24 @@ describe('residue that must not be quarantined', () => {
 
     expect((await fs.lstat(finalPath)).ino).toBe(ino)
     expect(await trashDirs(baseRoot)).toEqual([])
+  })
+
+  it('names a branch in the namespace by its short name when it answers busy', async () => {
+    const ref = `${operatingStrategy('prod').getBranchNamespace(config())}young`
+    await makeIncidentResidue(sanitizeBranchName(ref), 10_000)
+
+    await expect(create(ref)).rejects.toMatchObject({
+      name: 'BranchProvisioningBusyError',
+      message: "Branch 'young' is still being set up. Try again in a minute.",
+    })
+  })
+
+  it('names a branch outside the namespace by its full name when it answers busy', async () => {
+    await makeIncidentResidue('feat', 10_000)
+
+    await expect(create('feat')).rejects.toMatchObject({
+      message: "Branch 'feat' is still being set up. Try again in a minute.",
+    })
   })
 
   it('a corrupt branch.json is never moved', async () => {

@@ -510,6 +510,8 @@ describe('parseCreatedBranchName', () => {
     ['@spring', 'canopycms/prod/', 'spring'],
     ['@.spring', 'canopycms/prod/', 'spring'],
     ['canopycms', 'canopycms/prod/', 'canopycms'],
+    ['a_', 'canopycms/prod/', 'a_'],
+    ['_1', '', '_1'],
     ['a'.repeat(235), 'canopycms/prod/', 'a'.repeat(235)],
   ])('creates %s in %j as the short name %s', (typed, namespace, shortName) => {
     expect(parseCreatedBranchName(typed, namespace)).toEqual({
@@ -533,8 +535,16 @@ describe('parseCreatedBranchName', () => {
       'canopycms/prod/',
       /without "canopycms\/prod\/"/,
     ],
-    ['a name with no letter or digit', '日本', '', /at least one letter or digit/],
-    ['punctuation only', '%%', 'canopycms/prod/', /at least one letter or digit/],
+    ['a name with no letter or digit', '日本', '', /at least one letter \(a–z\) or digit/],
+    ['punctuation only', '%%', 'canopycms/prod/', /at least one letter \(a–z\) or digit/],
+    ['an underscore alone', '_', '', /at least one letter \(a–z\) or digit/],
+    ['underscores only', '__', 'canopycms/prod/', /at least one letter \(a–z\) or digit/],
+    [
+      'an underscore after a character that sanitizes away',
+      '@_',
+      '',
+      /at least one letter \(a–z\) or digit/,
+    ],
   ])('refuses %s', (_label, typed, namespace, why) => {
     const result = parseCreatedBranchName(typed, namespace)
     expect(result.ok).toBe(false)

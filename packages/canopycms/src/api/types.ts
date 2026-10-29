@@ -67,6 +67,8 @@ export interface ApiResponse<TData = unknown> {
  * 409, see `SettingsVersionConflictError`); nothing was saved, and a reload shows the other edit.
  * The other settings 409, a busy file lock, carries no code. `BRANCH_SYNCING`: an entry save was
  * refused because the branch is mid-rebase (a 409); nothing was saved, and a retry soon can pass.
+ * `BRANCH_NAME_REFUSED`: a branch create was refused for the name it gave (a 400 or 409), so only
+ * another name can pass; no other create failure carries it.
  */
 export type ApiErrorCode =
   | 'SCHEMA_UNAVAILABLE'
@@ -76,3 +78,4 @@ export type ApiErrorCode =
   | 'EDITOR_MODE_MISMATCH'
   | 'SETTINGS_CHANGED'
   | 'BRANCH_SYNCING'
+  | 'BRANCH_NAME_REFUSED'

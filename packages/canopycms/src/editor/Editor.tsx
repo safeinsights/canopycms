@@ -80,7 +80,7 @@ import {
   useSchemaManager,
 } from './hooks'
 import { useBranchActions } from './hooks/useBranchActions'
-import { resolveListedBranch } from './hooks/useBranchManager'
+import { displayBranchName } from './branch-names'
 import { useBranchChangesData, useEntryChangeData } from './hooks/useBranchChangesData'
 import type { EntryChangesSubject } from './components/EntryChangesDrawer'
 import { LazyEntryChangesDrawer } from './components/LazyEntryChangesDrawer'
@@ -418,6 +418,9 @@ const EditorContent: React.FC<EditorProps> = ({
     branches,
     branchSummaries,
     currentBranch,
+    listedBranch,
+    listedName,
+    urlBranchName,
     branchesLoadFailed,
     branchesLoaded,
     addCreatedBranch,
@@ -451,6 +454,8 @@ const EditorContent: React.FC<EditorProps> = ({
   // of unlocked that invites a click the server rejects -- and the pane shows a
   // loading state during that window anyway.
   const branchContentLocked = currentBranch?.writeBlocked ?? true
+  // What the page calls the open branch; everything keyed or sent per branch uses branchNameState.
+  const branchLabel = currentBranch ? displayBranchName(currentBranch) : branchNameState
 
   const branchLoading = !currentBranch && (branchesLoading || branchSummaries.length === 0)
   // No lock reason is true yet while the list is unanswered; once it has failed, or answered
@@ -484,13 +489,11 @@ const EditorContent: React.FC<EditorProps> = ({
   const branchNotAvailable = !!branchNameState && branchBarState === 'not-available'
 
   // Set once the branch actions below exist; they depend on the drafts, which depend on the entries.
-  const switchBranchRef = useRef<(branch: string) => Promise<void>>(async () => {})
+  const switchBranchRef = useRef<(branch: string, superseded: () => boolean) => Promise<void>>(
+    async () => {},
+  )
   // Set once the changes read exists; it waits on the panel state, declared after the entries.
   const reloadChangesRef = useRef<(branch: string) => void>(() => {})
-
-  // The name a branch is listed by, for telling a short name from a switch to another branch.
-  const listedBranchName = (name: string): string =>
-    resolveListedBranch(branches, name)?.name ?? sanitizeBranchName(name)
 
   // 2. Entry manager (depends on branchNameState, owns selectedPath)
   const {
@@ -530,7 +533,7 @@ const EditorContent: React.FC<EditorProps> = ({
     collections,
     resolvePreviewSrc: (entry) =>
       buildPreviewSrc(entry, {
-        branchName: branchNameState,
+        branchName: urlBranchName(branchNameState),
         previewBaseByCollection,
         previewPrefix,
         contentRoot,
@@ -540,8 +543,10 @@ const EditorContent: React.FC<EditorProps> = ({
       buildPreviewRoute(entry, { previewBaseByCollection, contentRoot }),
     setBusy: setEntriesLoading,
     branchBarState,
-    switchBranch: (branch) => switchBranchRef.current(branch),
-    sameBranch: (a, b) => listedBranchName(a) === listedBranchName(b),
+    switchBranch: (branch, superseded) => switchBranchRef.current(branch, superseded),
+    // A short name in the URL is no switch to another branch.
+    sameBranch: (a, b) => listedName(a) === listedName(b),
+    urlBranchName,
     onContentRefresh: (branch) => reloadChangesRef.current(branch),
     // To the entry menu, which names the entry opened; a dialog keeps focus.
     onHistoryRestore: () =>
@@ -698,21 +703,28 @@ const EditorContent: React.FC<EditorProps> = ({
     confirmOpen: branchConfirmOpen,
   } = useBranchActions({
     branchName: branchNameState,
+    branchLabel,
     setBranchName,
     getUnsaved: resolveUnsaved,
     onReloadBranches: () => loadBranches(),
     onBranchCreated: addCreatedBranch,
+    urlBranchName,
     userId: userContext?.userId,
   })
-  switchBranchRef.current = async (branch) => {
-    if (branches.length > 0 && !resolveListedBranch(branches, branch)) {
-      notifications.show({
-        message: `Branch “${branch}” no longer exists or you can no longer open it, so you're still on “${branchNameState}”.`,
-        color: 'yellow',
-      })
+  // Only a Back or Forward calls this: it switches to the listed name, replacing the entry it arrived
+  // at. With no listing, the name is unchecked and could be either form, so the move is refused.
+  switchBranchRef.current = async (branch, superseded) => {
+    const listed = listedBranch(branch)
+    if (!listed) {
+      if (branches.length > 0) {
+        notifications.show({
+          message: `Branch “${branch}” no longer exists or you can no longer open it, so you're still on “${branchLabel}”.`,
+          color: 'yellow',
+        })
+      }
       throw new Error(`Branch ${branch} is not listed`)
     }
-    await handleBranchChange(branch)
+    await handleBranchChange(listed.name, { push: false, superseded })
   }
 
   // 5. Comment system (depends on branchNameState)
@@ -2290,6 +2302,7 @@ const EditorContent: React.FC<EditorProps> = ({
           topBar={
             <EditorHeader
               branchName={branchNameState}
+              branchLabel={branchLabel}
               branchStatus={currentBranch?.status}
               busy={busy}
               modifiedCount={modifiedCount}
@@ -2687,7 +2700,7 @@ const EditorContent: React.FC<EditorProps> = ({
                 <CommentsPanel
                   key={branchNameState}
                   opened={commentsPanelOpen}
-                  branchName={branchNameState}
+                  branchName={branchLabel}
                   comments={displayComments}
                   canResolve={canResolveAnyComment}
                   currentUserId={commentUserId}

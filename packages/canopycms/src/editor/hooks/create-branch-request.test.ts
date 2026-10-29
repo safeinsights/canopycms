@@ -94,14 +94,39 @@ describe('requestBranchCreate', () => {
   it("reports the server's refusal without looking for the branch", async () => {
     const { apiClient, list } = client(async () => ({
       status: 409,
-      body: { ok: false, status: 409, error: 'Branch already exists' },
+      body: { ok: false, status: 409, error: 'Branch already exists', code: 'BRANCH_NAME_REFUSED' },
     }))
 
     expect(await requestBranchCreate(apiClient, body, me)).toEqual({
       kind: 'failed',
       message: 'Branch already exists',
+      refused: true,
     })
     expect(list).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [400, 'Branch registry not initialized — ensure the workspace has been initialized'],
+    [409, 'Branches cannot be created: this CMS creates them in "canopycms/local/", but …'],
+  ])('does not call a %i with no name code a refusal of the name', async (status, error) => {
+    const { apiClient } = client(async () => ({ status, body: { ok: false, status, error } }))
+
+    expect(await requestBranchCreate(apiClient, body, me)).toEqual({
+      kind: 'failed',
+      message: error,
+    })
+  })
+
+  it('does not call a server error a refusal of the name', async () => {
+    const { apiClient } = client(async () => ({
+      status: 500,
+      body: { ok: false, status: 500, error: 'The disk is full.' },
+    }))
+
+    expect(await requestBranchCreate(apiClient, body, me)).toEqual({
+      kind: 'failed',
+      message: 'The disk is full.',
+    })
   })
 
   it('after the deadline, adopts the branch when the list shows it under the short name the typed name sanitizes to', async () => {
@@ -229,7 +254,8 @@ describe('requestBranchCreate', () => {
     )
     const conflict = {
       kind: 'failed',
-      message: 'A branch named "feature-x" already exists',
+      message: 'A branch named “feature-x” already exists',
+      refused: true,
     }
 
     const afterDeadline = client(never, theirs)
@@ -259,7 +285,8 @@ describe('requestBranchCreate', () => {
     const mine = vi.fn(async () => listingOf([branch('canopycms/local/feature-x', me, created)]))
     const conflict = {
       kind: 'failed',
-      message: 'A branch named "feature-x" already exists',
+      message: 'A branch named “feature-x” already exists',
+      refused: true,
     }
 
     vi.setSystemTime(created + IDEMPOTENT_CREATE_WINDOW_MS - 1)
@@ -282,7 +309,8 @@ describe('requestBranchCreate', () => {
 
     expect(await requestBranchCreate(apiClient, body, undefined)).toEqual({
       kind: 'failed',
-      message: 'A branch named "feature-x" already exists',
+      message: 'A branch named “feature-x” already exists',
+      refused: true,
     })
   })
 

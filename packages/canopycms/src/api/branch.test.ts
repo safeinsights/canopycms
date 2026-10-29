@@ -99,6 +99,7 @@ import { createMockApiContext, createMockBranchContext, createMockRegistry } fro
 import * as authorization from '../authorization'
 import { unsafeAsBranchName } from '../paths/test-utils'
 import { BranchWorkspaceManager } from '../branch-workspace'
+import { BranchDirOccupiedError } from '../branch-provisioning'
 import type { BranchRegistry } from '../branch-registry'
 import type { CanopyConfig } from '../config'
 import type { GitHubService } from '../github-service'
@@ -367,6 +368,7 @@ describe('branch api', () => {
     expect(res.ok).toBe(false)
     expect(res.status).toBe(400)
     expect(res.error).toBe('Cannot create a branch with the base branch name')
+    expect(res.code).toBe('BRANCH_NAME_REFUSED')
   })
 
   it('rejects creating a branch whose workspace already exists (409), naming its short name', async () => {
@@ -390,6 +392,7 @@ describe('branch api', () => {
     expect(res.ok).toBe(false)
     expect(res.status).toBe(409)
     expect(res.error).toBe('A branch named "feature-test" already exists')
+    expect(res.code).toBe('BRANCH_NAME_REFUSED')
   })
 
   it("refuses a create whose key another branch's workspace holds, naming that branch", async () => {
@@ -414,6 +417,25 @@ describe('branch api', () => {
       '"feature-test" would clash with the existing branch "canopycms-local-feature-test". ' +
         'Choose a different name.',
     )
+    expect(res.code).toBe('BRANCH_NAME_REFUSED')
+  })
+
+  it('names a namespace branch holding the key by its short name', async () => {
+    const registry = createMockRegistry([])
+    registry.getByKey.mockResolvedValue(
+      createMockBranchContext({ branchName: 'canopycms/local/feature/test', createdBy: 'u1' }),
+    )
+    const ctx = createMockApiContext({
+      branchContext: createMockBranchContext({ branchName: 'main', createdBy: 'system' }),
+      services: { registry: registry as unknown as BranchRegistry },
+    })
+
+    const res = await createBranch(ctx, asU1, { branch: unsafeAsBranchName('feature-test') })
+    expect(res.status).toBe(409)
+    expect(res.error).toBe(
+      '"feature-test" would clash with the existing branch "feature/test". Choose a different name.',
+    )
+    expect(res.code).toBe('BRANCH_NAME_REFUSED')
   })
 
   it('refuses a provisioning that finds another branch under the key, naming that branch', async () => {
@@ -436,6 +458,26 @@ describe('branch api', () => {
       '"feature-test" would clash with the existing branch "canopycms-local-feature-test". ' +
         'Choose a different name.',
     )
+    expect(res.code).toBe('BRANCH_NAME_REFUSED')
+  })
+
+  it('refuses a name whose workspace directory holds a repository it did not create', async () => {
+    vi.mocked(BranchWorkspaceManager).mockImplementationOnce(function () {
+      return {
+        provisionBranch: async () => {
+          throw new BranchDirOccupiedError('canopycms-local-feature-test')
+        },
+      }
+    } as unknown as typeof BranchWorkspaceManager)
+    const ctx = createMockApiContext({
+      branchContext: createMockBranchContext({ branchName: 'main', createdBy: 'system' }),
+      services: { registry: createMockRegistry([]) as unknown as BranchRegistry },
+    })
+
+    const res = await createBranch(ctx, asU1, { branch: unsafeAsBranchName('feature-test') })
+    expect(res.status).toBe(409)
+    expect(res.error).toContain("A directory named 'canopycms-local-feature-test' already exists")
+    expect(res.code).toBe('BRANCH_NAME_REFUSED')
   })
 
   describe('a create naming an existing branch that its own creator just made', () => {
@@ -502,6 +544,7 @@ describe('branch api', () => {
       expect(res.error).toBe(
         'Cannot create content branch with settings branch name (git branch name collision)',
       )
+      expect(res.code).toBe('BRANCH_NAME_REFUSED')
     })
 
     it.each([
@@ -517,6 +560,7 @@ describe('branch api', () => {
         expect(res.error).toBe(
           `"${short}" is a name CanopyCMS keeps for its settings. Choose a different name.`,
         )
+        expect(res.code).toBe('BRANCH_NAME_REFUSED')
       },
     )
 
@@ -533,6 +577,7 @@ describe('branch api', () => {
       expect(res.error).toBe(
         '"site-settings" is a name CanopyCMS keeps for its settings. Choose a different name.',
       )
+      expect(res.code).toBe('BRANCH_NAME_REFUSED')
     })
 
     it('creates a settings-like name outside the settings range', async () => {
@@ -550,6 +595,7 @@ describe('branch api', () => {
         expect(res.error).toBe(
           `"${typed}" is a name CanopyCMS uses for itself. Choose a different name.`,
         )
+        expect(res.code).toBe('BRANCH_NAME_REFUSED')
       },
     )
 
@@ -605,6 +651,22 @@ describe('branch api', () => {
       const res = await create('canopycms/local/spring')
       expect(res.status).toBe(400)
       expect(res.error).toContain('without "canopycms/local/" in front')
+      expect(res.code).toBe('BRANCH_NAME_REFUSED')
+    })
+
+    it.each(['_', '__', '@_'])(
+      'refuses the typed name %s, which holds no letter or digit',
+      async (typed) => {
+        const res = await create(typed)
+        expect(res.status).toBe(400)
+        expect(res.error).toBe('Branch name needs at least one letter (a–z) or digit')
+      },
+    )
+
+    it('takes a typed name that holds a letter or digit beside an underscore', async () => {
+      const res = await create('a_')
+      expect(res.status).toBe(200)
+      expect(res.data?.branch.name).toBe('canopycms/local/a_')
     })
 
     it('refuses a typed name the namespace pushes past the length limit, and takes one that fits', async () => {
@@ -615,6 +677,17 @@ describe('branch api', () => {
       const fits = await create('a'.repeat(234))
       expect(fits.status).toBe(200)
       expect(fits.data?.branch.name).toBe(`canopycms/local/${'a'.repeat(234)}`)
+    })
+
+    it('answers an uninitialized registry with no name code, since no name would pass', async () => {
+      const ctx = ctxWith({})
+      const res = await create('spring', {
+        ...ctx,
+        services: { ...ctx.services, registry: undefined },
+      })
+      expect(res.status).toBe(400)
+      expect(res.error).toMatch(/^Branch registry not initialized/)
+      expect(res.code).toBeUndefined()
     })
 
     it('refuses, as a 500 an administrator can act on, a namespace the CMS cannot resolve', async () => {
@@ -650,6 +723,7 @@ describe('branch api', () => {
         const outside = await create('legacy-update', ctx)
         expect(outside.status).toBe(409)
         expect(outside.error).toBe(refused('legacy-update'))
+        expect(outside.code).toBe('BRANCH_NAME_REFUSED')
 
         const retry = await create('inside', ctx)
         expect(retry.status).toBe(200)
@@ -693,6 +767,8 @@ describe('branch api', () => {
         expect(res.status).toBe(409)
         expect(res.error).toContain('"canopycms/local/"')
         expect(res.error).toContain('"canopycms/prod/"')
+        // No name would pass, so it is no refusal of this one.
+        expect(res.code).toBeUndefined()
       })
 
       it('creates when it agrees, or when none is recorded', async () => {

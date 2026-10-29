@@ -7,7 +7,7 @@ import { useDraftManager, type UnsavedSummary } from './useDraftManager'
 import type { EditorEntry } from '../Editor'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../../paths/test-utils'
 import type { MockApiClient } from '../../api/__test__/mock-client'
-import { CREATE_BRANCH_DEADLINE_MS } from './create-branch-request'
+import { CREATE_BRANCH_DEADLINE_MS, type CreateRefusal } from './create-branch-request'
 import {
   setupMockApiClient,
   setupMockLocation,
@@ -238,7 +238,7 @@ describe('useBranchActions', () => {
 
     const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
 
-    let created: boolean | undefined
+    let created: boolean | CreateRefusal | undefined
     await act(async () => {
       created = await result.current.handleCreateBranch({ name: 'new-branch' })
     })
@@ -251,26 +251,53 @@ describe('useBranchActions', () => {
     expect(pushedUrls().some((url) => url.includes('branch=new-branch'))).toBe(true)
   })
 
-  it('reports a failed create without switching or registering a branch', async () => {
+  it("hands the form the server's refusal of a name, with no toast, switching nothing", async () => {
     mockClient.branches.create.mockResolvedValueOnce({
       ok: false,
-      status: 400,
-      error: 'boom',
+      status: 409,
+      error: '"new-branch" is already the name of another branch. Choose a different name.',
+      code: 'BRANCH_NAME_REFUSED',
     })
 
     const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
 
-    let created: boolean | undefined
+    let created: unknown
     await act(async () => {
       created = await result.current.handleCreateBranch({ name: 'new-branch' })
     })
 
-    expect(created).toBe(false)
-    expect(notifications.show).toHaveBeenCalledWith({ message: 'boom', color: 'red' })
+    expect(created).toEqual({
+      refusal: '"new-branch" is already the name of another branch. Choose a different name.',
+    })
+    expect(notifications.show).not.toHaveBeenCalled()
     expect(mockOnBranchCreated).not.toHaveBeenCalled()
     expect(mockSetBranchName).not.toHaveBeenCalled()
     expect(mockOnBranchSwitch).not.toHaveBeenCalled()
   })
+
+  it.each([
+    [500, 'boom'],
+    [400, 'Branch registry not initialized — ensure the workspace has been initialized'],
+    [409, 'Branches cannot be created: this CMS creates them in "canopycms/local/", but …'],
+  ])(
+    'toasts a failed %i that is no refusal of the name, switching nothing',
+    async (status, error) => {
+      mockClient.branches.create.mockResolvedValueOnce({ ok: false, status, error })
+
+      const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+
+      let created: unknown
+      await act(async () => {
+        created = await result.current.handleCreateBranch({ name: 'new-branch' })
+      })
+
+      expect(created).toBe(false)
+      expect(notifications.show).toHaveBeenCalledWith({ message: error, color: 'red' })
+      expect(mockOnBranchCreated).not.toHaveBeenCalled()
+      expect(mockSetBranchName).not.toHaveBeenCalled()
+      expect(mockOnBranchSwitch).not.toHaveBeenCalled()
+    },
+  )
 
   describe('confirmCreate', () => {
     it('resolves true without a dialog when nothing is unsaved', async () => {
@@ -429,7 +456,7 @@ describe('useBranchActions', () => {
     })
     const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
 
-    let created: boolean | undefined
+    let created: boolean | CreateRefusal | undefined
     await act(async () => {
       created = await result.current.handleCreateBranch({ name: 'new-branch' })
     })

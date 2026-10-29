@@ -69,6 +69,20 @@ const appendBranch = (url: string, branchName?: string): string => {
   return `${beforeHash}${separator}branch=${encodeURIComponent(branchName)}${hash}`
 }
 
+/** `src` with its last `?branch=` value set to `branchName`; a `src` without one is returned as is. */
+export const withPreviewBranch = (src: string, branchName: string): string => {
+  const hashIndex = src.indexOf('#')
+  const beforeHash = hashIndex === -1 ? src : src.slice(0, hashIndex)
+  const queryIndex = beforeHash.indexOf('?')
+  if (queryIndex === -1) return src
+  const params = beforeHash.slice(queryIndex + 1).split('&')
+  const keys = params.map((param) => param.split('=', 1)[0])
+  const at = keys.lastIndexOf('branch')
+  if (at === -1) return src
+  params[at] = `branch=${encodeURIComponent(branchName)}`
+  return `${beforeHash.slice(0, queryIndex + 1)}${params.join('&')}${src.slice(beforeHash.length)}`
+}
+
 /**
  * The `previewBase` value under `key`, or `undefined` for none. An empty value counts as none, and
  * so does anything `Object.prototype` supplies.

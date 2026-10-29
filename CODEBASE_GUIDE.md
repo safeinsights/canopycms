@@ -532,6 +532,7 @@ Top-level components and helpers:
 - `theme.tsx` — theme, default control sizes
 - `branch-status.ts` — status labels and colours
 - `branch-lock.ts` — `branchBarStatus`, the bar's lock-state table; `describeBranchLock`
+- `branch-names.ts` — `displayBranchName`, `resolveListedBranch`, `branchUrlName`
 - `copy.ts` — fixed action verbs
 - `platform.ts` — `modKeyLabel()`, ⌘ or Ctrl
 - `slug.ts` — `slugFromTitle`; `validateEntrySlug`, the one slug validator

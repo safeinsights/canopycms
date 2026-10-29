@@ -5,15 +5,18 @@
  */
 import React from 'react'
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { SWRConfig } from 'swr'
+import { MantineProvider } from '@mantine/core'
 import { modals } from '@mantine/modals'
+import { notifications } from '@mantine/notifications'
 
 import type { EditorEntry } from './Editor'
 import { Editor } from './Editor'
 import { ApiClientProvider } from './context'
 import { RESERVED_GROUPS } from '../authorization/helpers'
+import { mockConsole } from '../test-utils/console-spy'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../paths/test-utils'
 
 vi.mock('@mantine/modals', () => ({
@@ -28,6 +31,8 @@ vi.mock('@mantine/notifications', async (importOriginal) => {
 
 afterEach(() => {
   cleanup()
+  // clearAllMocks keeps an implementation, so one test's autoConfirm would answer the next's.
+  vi.mocked(modals.openConfirmModal).mockReset()
   vi.clearAllMocks()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
@@ -36,7 +41,6 @@ afterEach(() => {
 })
 
 const SPRING = 'canopycms/local/spring'
-const SPRING_SEGMENT = encodeURIComponent(SPRING)
 
 const okJson = (data: unknown) =>
   new Response(JSON.stringify({ ok: true, status: 200, data }), {
@@ -59,7 +63,7 @@ const hello: EditorEntry = {
 
 const listed = (name: string, status: string) => ({
   name,
-  shortName: name === SPRING ? 'spring' : name,
+  shortName: name === SPRING ? 'spring' : name.replace('canopycms/local/', ''),
   status,
   access: {},
   createdBy: 'author-1',
@@ -91,7 +95,15 @@ const changesNote = {
   authorId: 'reviewer-1',
 }
 
-const stubApi = (options: { status: string; userId: string; holdSaves?: Promise<void> }) => {
+const OUTSIDE = 'feature/x'
+
+const stubApi = (options: {
+  status: string
+  userId: string
+  holdSaves?: Promise<void>
+  holdListing?: Promise<void>
+  listingFails?: boolean
+}) => {
   let changesRequested = false
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = urlOf(input)
@@ -102,9 +114,25 @@ const stubApi = (options: { status: string; userId: string; holdSaves?: Promise<
     if (url.endsWith('/comments')) {
       return okJson({ threads: changesRequested ? [changesNote] : [], users: [] })
     }
-    if (url.endsWith('/api/canopycms/branches')) {
+    if (url.endsWith('/api/canopycms/branches') && method === 'POST') {
       return okJson({
-        branches: [listed('main', 'editing'), listed(SPRING, options.status)],
+        branch: { ...listed('canopycms/local/summer', 'editing'), shortName: 'summer' },
+      })
+    }
+    if (url.endsWith('/api/canopycms/branches')) {
+      await options.holdListing
+      if (options.listingFails) {
+        return new Response(JSON.stringify({ ok: false, status: 500, error: 'Listing failed' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return okJson({
+        branches: [
+          listed('main', 'editing'),
+          listed(SPRING, options.status),
+          listed(OUTSIDE, 'editing'),
+        ],
         defaultBranch: 'main',
         users: [],
       })
@@ -200,18 +228,288 @@ const autoConfirm = () =>
   })
 
 describe('the editor on a namespace branch named by its short name', () => {
-  it('takes the listed name into the URL, replacing the entry it opened on', async () => {
+  it('keeps the short name in the URL, writing nothing', async () => {
     window.history.replaceState({}, '', '/?branch=spring')
     const pushState = vi.spyOn(window.history, 'pushState')
+    const replaceState = vi.spyOn(window.history, 'replaceState')
     stubApi({ status: 'editing', userId: 'author-1' })
     renderEditor('spring')
 
-    await waitFor(() => expect(urlBranch()).toBe(SPRING))
+    expect((await titleBox()).value).toBe('hello title')
+    expect(urlBranch()).toBe('spring')
+    expect(pushState).not.toHaveBeenCalled()
+    expect(
+      replaceState.mock.calls.filter(([, , url]) => String(url).includes('canopycms')),
+    ).toEqual([])
+  })
+
+  it('stores no drafts under the short name it was opened by', async () => {
+    window.history.replaceState({}, '', '/?branch=spring')
+    const setItem = vi.spyOn(Storage.prototype, 'setItem')
+    stubApi({ status: 'editing', userId: 'author-1' })
+    renderEditor('spring')
+    expect((await titleBox()).value).toBe('hello title')
+    await waitFor(() =>
+      expect(within(screen.getByTestId('branch-dropdown-button')).getByText('spring')).toBeTruthy(),
+    )
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+
+    expect(setItem.mock.calls.map(([key]) => key)).not.toContain('canopycms:drafts:spring')
+  })
+
+  it('rewrites a link carrying the full name to the short name, replacing the entry', async () => {
+    window.history.replaceState({}, '', `/?branch=${encodeURIComponent(SPRING)}`)
+    const pushState = vi.spyOn(window.history, 'pushState')
+    stubApi({ status: 'editing', userId: 'author-1' })
+    renderEditor(SPRING)
+
+    await waitFor(() => expect(urlBranch()).toBe('spring'))
     expect((await titleBox()).value).toBe('hello title')
     expect(pushState).not.toHaveBeenCalled()
   })
 
-  it('keeps a draft made there for the branch reopened by its full name', async () => {
+  it('rewrites a history entry left on the full name to the short name when Back reaches it', async () => {
+    window.history.replaceState({}, '', '/?branch=spring')
+    stubApi({ status: 'editing', userId: 'author-1' })
+    renderEditor('spring')
+    expect((await titleBox()).value).toBe('hello title')
+    await waitFor(() =>
+      expect(new URLSearchParams(window.location.search).get('entry')).toBe(hello.path),
+    )
+    const pushState = vi.spyOn(window.history, 'pushState')
+    // What an entry opened before the listing arrived keeps: the name the link gave.
+    window.history.replaceState(
+      window.history.state,
+      '',
+      `/?branch=${encodeURIComponent(SPRING)}&entry=${encodeURIComponent(hello.path)}`,
+    )
+
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+
+    await waitFor(() => expect(urlBranch()).toBe('spring'))
+    expect(new URLSearchParams(window.location.search).get('entry')).toBe(hello.path)
+    expect(pushState).not.toHaveBeenCalled()
+  })
+
+  it('frames the preview under the short name', async () => {
+    window.history.replaceState({}, '', `/?branch=${encodeURIComponent(SPRING)}`)
+    stubApi({ status: 'editing', userId: 'author-1' })
+    renderEditor(SPRING)
+    expect((await titleBox()).value).toBe('hello title')
+
+    await waitFor(() =>
+      expect(document.querySelector('iframe')?.getAttribute('src')).toBe(
+        '/posts/hello?branch=spring',
+      ),
+    )
+  })
+
+  it('keeps the preview frame on the short name across a refetch of entries that came before the listing', async () => {
+    let release!: () => void
+    const holdListing = new Promise<void>((resolve) => (release = resolve))
+    window.history.replaceState({}, '', `/?branch=${encodeURIComponent(SPRING)}`)
+    const fetchMock = stubApi({ status: 'editing', userId: 'author-1', holdListing })
+    renderEditor(SPRING)
+    expect((await titleBox()).value).toBe('hello title')
+    await waitFor(() =>
+      expect(document.querySelector('iframe')?.getAttribute('src')).toBe(
+        `/posts/hello?branch=${encodeURIComponent(SPRING)}`,
+      ),
+    )
+
+    await act(async () => release())
+    await waitFor(() =>
+      expect(document.querySelector('iframe')?.getAttribute('src')).toBe(
+        '/posts/hello?branch=spring',
+      ),
+    )
+    const frame = document.querySelector('iframe')
+    const entriesReads = () =>
+      fetchMock.mock.calls.filter(([input]) => urlOf(input).includes('/entries')).length
+    const readsBefore = entriesReads()
+    fireEvent.change(await titleBox(), { target: { value: 'Edited' } })
+    const save = await screen.findByTestId('save-button')
+    await waitFor(() => expect(save.getAttribute('aria-disabled')).toBeNull())
+    fireEvent.click(save)
+    await waitFor(() => expect(entriesReads()).toBeGreaterThan(readsBefore))
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+
+    expect(document.querySelector('iframe')).toBe(frame)
+    expect(frame?.getAttribute('src')).toBe('/posts/hello?branch=spring')
+  })
+
+  it('sends its requests under the short name, with no %2F in a path', async () => {
+    window.history.replaceState({}, '', '/?branch=spring')
+    const fetchMock = stubApi({ status: 'editing', userId: 'author-1' })
+    renderEditor('spring')
+    expect((await titleBox()).value).toBe('hello title')
+
+    const paths = fetchMock.mock.calls.map(([input]) => new URL(urlOf(input), 'http://x').pathname)
+    expect(paths).toContain('/api/canopycms/spring/entries')
+    expect(paths).toContain('/api/canopycms/spring/schema')
+    expect(paths.filter((path) => path.includes('%2F'))).toEqual([])
+  })
+
+  it('sends a branch outside the namespace under its full name', async () => {
+    window.history.replaceState({}, '', `/?branch=${encodeURIComponent(OUTSIDE)}`)
+    const fetchMock = stubApi({ status: 'editing', userId: 'author-1' })
+    renderEditor(OUTSIDE)
+    expect((await titleBox()).value).toBe('hello title')
+
+    const paths = fetchMock.mock.calls.map(([input]) => new URL(urlOf(input), 'http://x').pathname)
+    expect(paths).toContain('/api/canopycms/feature%2Fx/entries')
+    expect(paths).not.toContain('/api/canopycms/x/entries')
+    expect(urlBranch()).toBe(OUTSIDE)
+  })
+
+  it('sends a namespace branch the server lists by its full name under that name', async () => {
+    window.history.replaceState({}, '', `/?branch=${encodeURIComponent(SPRING)}`)
+    const inner = stubApi({ status: 'editing', userId: 'author-1' })
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+      urlOf(input).endsWith('/api/canopycms/branches') && (init?.method ?? 'GET') === 'GET'
+        ? okJson({
+            // `shortNameOf` lists a namespace branch named after the active branch by its full name.
+            branches: [
+              listed('main', 'editing'),
+              { ...listed(SPRING, 'editing'), shortName: SPRING },
+              listed('spring', 'editing'),
+            ],
+            defaultBranch: 'spring',
+            users: [],
+          })
+        : inner(input, init),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    renderEditor(SPRING)
+    await waitFor(async () => expect((await titleBox()).value).toBe('hello title'))
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+    fireEvent.change(await titleBox(), { target: { value: 'Edited' } })
+
+    const saveAll = await screen.findByTestId('save-all-button')
+    await waitFor(() => expect(saveAll.getAttribute('aria-disabled')).toBeNull())
+    fireEvent.click(saveAll)
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(true),
+    )
+    const put = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT')
+    expect(new URL(urlOf(put![0]), 'http://x').pathname).toBe(
+      `/api/canopycms/${encodeURIComponent(SPRING)}/content/content/posts/hello`,
+    )
+    expect(urlBranch()).toBe(SPRING)
+  })
+
+  it('shows the short name on the pill and the drawer card, and the full name of an outside branch', async () => {
+    window.history.replaceState({}, '', '/?branch=spring')
+    stubApi({ status: 'editing', userId: 'author-1' })
+    renderEditor('spring')
+    expect((await titleBox()).value).toBe('hello title')
+
+    await waitFor(() =>
+      expect(within(screen.getByTestId('branch-dropdown-button')).getByText('spring')).toBeTruthy(),
+    )
+    await openBranchesDrawer()
+    const card = await screen.findByTestId(`branch-list-item-${SPRING}`)
+    expect(within(card).getByText('spring')).toBeTruthy()
+    expect(screen.getByTestId(`branch-list-item-${OUTSIDE}`).textContent).toContain(OUTSIDE)
+    expect(screen.queryByText(SPRING)).toBeNull()
+  })
+
+  it('names the branch by its short name in the comments panel', async () => {
+    window.history.replaceState({}, '', '/?branch=spring')
+    stubApi({ status: 'editing', userId: 'author-1' })
+    renderEditor('spring')
+    expect((await titleBox()).value).toBe('hello title')
+    await waitFor(() =>
+      expect(within(screen.getByTestId('branch-dropdown-button')).getByText('spring')).toBeTruthy(),
+    )
+
+    fireEvent.click(screen.getByTestId('comments-button'))
+
+    const note = await screen.findByText(/Posts a branch-level comment on/)
+    expect(note.textContent).toContain('on "spring".')
+  })
+
+  it('names the new branch by its short name in the toast that says it was created', async () => {
+    window.history.replaceState({}, '', '/?branch=spring')
+    const fetchMock = stubApi({ status: 'editing', userId: 'author-1' })
+    renderEditor('spring')
+    expect((await titleBox()).value).toBe('hello title')
+    const pushState = vi.spyOn(window.history, 'pushState')
+    await openBranchesDrawer()
+    fireEvent.click(await screen.findByTestId('create-branch-button'))
+    fireEvent.change(await screen.findByTestId('branch-name-input'), {
+      target: { value: 'summer' },
+    })
+
+    fireEvent.click(screen.getByTestId('create-branch-submit'))
+
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith({
+        message: 'Branch “summer” created',
+        color: 'green',
+      }),
+    )
+    await waitFor(() => expect(urlBranch()).toBe('summer'))
+    // The listing may not hold it yet, so the push itself carries the short name.
+    expect(
+      pushState.mock.calls.map(([, , url]) => new URL(String(url)).searchParams.get('branch')),
+    ).toEqual(['summer'])
+    expect(
+      fetchMock.mock.calls.some(([input]) => urlOf(input).endsWith('/api/canopycms/summer/schema')),
+    ).toBe(true)
+  })
+
+  it('says where unsaved drafts stay by the short name', async () => {
+    window.history.replaceState({}, '', '/?branch=spring')
+    stubApi({ status: 'editing', userId: 'author-1' })
+    renderEditor('spring')
+    await waitFor(async () => expect((await titleBox()).value).toBe('hello title'))
+    fireEvent.change(await titleBox(), { target: { value: 'Edited' } })
+    await openBranchesDrawer()
+
+    fireEvent.click(await screen.findByTestId('switch-to-branch-button-main'))
+
+    await waitFor(() => expect(modals.openConfirmModal).toHaveBeenCalled())
+    const options = vi.mocked(modals.openConfirmModal).mock.calls.at(-1)?.[0]
+    const shown = render(<MantineProvider>{options?.children}</MantineProvider>)
+    expect(shown.container.textContent).toContain('Your drafts stay on “spring” and')
+  })
+
+  it('says a Back onto a branch that is gone leaves it on the short name', async () => {
+    window.history.replaceState({}, '', '/?branch=spring')
+    stubApi({ status: 'editing', userId: 'author-1' })
+    renderEditor('spring')
+    expect((await titleBox()).value).toBe('hello title')
+    await waitFor(() =>
+      expect(within(screen.getByTestId('branch-dropdown-button')).getByText('spring')).toBeTruthy(),
+    )
+
+    window.history.replaceState({}, '', `/?branch=${encodeURIComponent('canopycms/local/gone')}`)
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message:
+            'Branch “canopycms/local/gone” no longer exists or you can no longer open it, ' +
+            "so you're still on “spring”.",
+        }),
+      ),
+    )
+  })
+
+  it('keeps a draft made on the short name for the branch reopened from the drawer', async () => {
     autoConfirm()
     window.history.replaceState({}, '', '/?branch=spring')
     stubApi({ status: 'editing', userId: 'author-1' })
@@ -231,8 +529,105 @@ describe('the editor on a namespace branch named by its short name', () => {
     await openBranchesDrawer()
     fireEvent.click(await screen.findByTestId(`switch-to-branch-button-${SPRING}`))
 
-    await waitFor(() => expect(urlBranch()).toBe(SPRING))
+    await waitFor(() => expect(urlBranch()).toBe('spring'))
     await waitFor(async () => expect((await titleBox()).value).toBe('Drafted on spring'))
+  })
+
+  it('goes Back onto the short name under the full name, touching no other drafts key', async () => {
+    autoConfirm()
+    window.history.replaceState({}, '', '/?branch=spring')
+    stubApi({ status: 'editing', userId: 'author-1' })
+    renderEditor('spring')
+    await waitFor(async () => expect((await titleBox()).value).toBe('hello title'))
+    fireEvent.change(await titleBox(), { target: { value: 'Drafted on spring' } })
+    await waitFor(() =>
+      expect(window.localStorage.getItem(`canopycms:drafts:${SPRING}`)).toContain(
+        'Drafted on spring',
+      ),
+    )
+    await openBranchesDrawer()
+    fireEvent.click(await screen.findByTestId('switch-to-branch-button-main'))
+    await waitFor(() => expect(urlBranch()).toBe('main'))
+    await waitFor(async () => expect((await titleBox()).value).toBe('hello title'))
+    const getItem = vi.spyOn(Storage.prototype, 'getItem')
+    const setItem = vi.spyOn(Storage.prototype, 'setItem')
+
+    window.history.replaceState(
+      window.history.state,
+      '',
+      `/?branch=spring&entry=${encodeURIComponent(hello.path)}`,
+    )
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+
+    await waitFor(async () => expect((await titleBox()).value).toBe('Drafted on spring'))
+    expect(urlBranch()).toBe('spring')
+    expect(getItem.mock.calls.map(([key]) => key)).not.toContain('canopycms:drafts:spring')
+    const emptied = setItem.mock.calls.filter(
+      ([key, value]) =>
+        key === `canopycms:drafts:${SPRING}` &&
+        Object.keys((JSON.parse(value) as { drafts: object }).drafts).length === 0,
+    )
+    expect(emptied).toEqual([])
+  })
+
+  it('drops a confirmed switch from a Back that a later Back onto the open branch overtook', async () => {
+    window.history.replaceState({}, '', '/?branch=spring')
+    stubApi({ status: 'editing', userId: 'author-1' })
+    renderEditor('spring')
+    await waitFor(async () => expect((await titleBox()).value).toBe('hello title'))
+    fireEvent.change(await titleBox(), { target: { value: 'Drafted on spring' } })
+    await waitFor(() =>
+      expect(window.localStorage.getItem(`canopycms:drafts:${SPRING}`)).toContain(
+        'Drafted on spring',
+      ),
+    )
+
+    window.history.replaceState(window.history.state, '', '/?branch=main')
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    await waitFor(() => expect(modals.openConfirmModal).toHaveBeenCalled())
+    const confirm = vi.mocked(modals.openConfirmModal).mock.calls.at(-1)?.[0]
+    const entryOnSpring = `/?branch=spring&entry=${encodeURIComponent(hello.path)}`
+    window.history.replaceState(window.history.state, '', entryOnSpring)
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    await act(async () => {
+      confirm?.onConfirm?.()
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+
+    expect(`${window.location.pathname}${window.location.search}`).toBe(entryOnSpring)
+    expect(within(screen.getByTestId('branch-dropdown-button')).getByText('spring')).toBeTruthy()
+    expect((await titleBox()).value).toBe('Drafted on spring')
+  })
+
+  it('stays on its branch when a Back comes while it has no listing', async () => {
+    const consoleSpy = mockConsole()
+    onTestFinished(() => consoleSpy.restore())
+    window.history.replaceState({}, '', '/?branch=main')
+    stubApi({ status: 'editing', userId: 'author-1', listingFails: true })
+    renderEditor('main')
+    await waitFor(async () => expect((await titleBox()).value).toBe('hello title'))
+    const setItem = vi.spyOn(Storage.prototype, 'setItem')
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockClear()
+
+    window.history.replaceState(window.history.state, '', '/?branch=spring')
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+
+    expect(setItem.mock.calls.map(([key]) => key)).not.toContain('canopycms:drafts:spring')
+    expect(urlBranch()).toBe('main')
+    expect(fetchMock.mock.calls.some(([input]) => urlOf(input).includes('/spring/'))).toBe(false)
+    expect(consoleSpy).toHaveErrored(/Listing failed/)
   })
 
   it('holds a Submit from the branches drawer while Save all runs', async () => {
@@ -279,7 +674,7 @@ describe('the editor on a namespace branch named by its short name', () => {
     await waitFor(() =>
       expect(
         fetchMock.mock.calls.some(([input]) =>
-          urlOf(input).endsWith(`/${SPRING_SEGMENT}/request-changes`),
+          urlOf(input).endsWith('/api/canopycms/spring/request-changes'),
         ),
       ).toBe(true),
     )

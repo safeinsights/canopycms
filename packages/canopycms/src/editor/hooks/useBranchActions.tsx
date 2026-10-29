@@ -4,13 +4,16 @@ import { notifications } from '@mantine/notifications'
 import { Text } from '@mantine/core'
 import type { BranchListItem } from '../../api/branch'
 import { useApiClient } from '../context'
-import { requestBranchCreate } from './create-branch-request'
+import { requestBranchCreate, type CreateRefusal } from './create-branch-request'
 import type { UnsavedSummary } from './useDraftManager'
+import { displayBranchName } from '../branch-names'
 import { writeEditorUrl } from './editor-history'
 import { parseCreatedBranchName } from '../../paths/validation'
 
 export interface UseBranchActionsOptions {
   branchName: string
+  /** What the dialogs call the open branch, when it is not `branchName`. */
+  branchLabel?: string
   setBranchName: (name: string) => void
   /** From useDraftManager's `resolveUnsaved`: what a branch-level action would leave behind. */
   getUnsaved: () => Promise<UnsavedSummary>
@@ -18,19 +21,28 @@ export interface UseBranchActionsOptions {
   /** Receives the branch the server just created, so it can be shown before any listing includes it. */
   onBranchCreated: (branch: BranchListItem) => void
   onBranchSwitch?: (branch: string) => void
+  /** What `?branch=` carries for a branch (its short name); defaults to the name as given. */
+  urlBranchName?: (branch: string) => string
   /** The current user; a create the server never answered adopts only a listed branch they made. */
   userId?: string
 }
 
 export interface UseBranchActionsReturn {
-  handleBranchChange: (branch: string | null) => Promise<void>
+  /**
+   * `push: false` for a switch a Back or Forward makes, which arrived at its history entry already;
+   * it rejects instead once its `superseded()` holds.
+   */
+  handleBranchChange: (
+    branch: string | null,
+    options?: { push?: boolean; superseded?: () => boolean },
+  ) => Promise<void>
   /** True when nothing is unsaved or the user accepted the warning. Run before any in-flight UI. */
   confirmCreate: () => Promise<boolean>
   handleCreateBranch: (branch: {
     name: string
     title?: string
     description?: string
-  }) => Promise<boolean>
+  }) => Promise<boolean | CreateRefusal>
   /** True while the unsaved-changes confirm is on screen. */
   confirmOpen: boolean
 }
@@ -55,14 +67,14 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
   const apiClient = useApiClient()
   const [confirmOpen, setConfirmOpen] = useState(false)
 
-  const performBranchSwitch = (next: string) => {
+  const performBranchSwitch = (next: string, urlName?: string, push = true) => {
     options.setBranchName(next)
 
-    // Its own history entry; a Back onto another branch already shows this URL, so writes nothing.
+    // Its own history entry, unless a Back or Forward made it: that entry's URL is replaced.
     if (typeof window !== 'undefined') {
       const url = new URL(window.location.href)
-      url.searchParams.set('branch', next)
-      writeEditorUrl(url.toString(), true)
+      url.searchParams.set('branch', urlName ?? options.urlBranchName?.(next) ?? next)
+      writeEditorUrl(url.toString(), push)
     }
     options.onBranchSwitch?.(next)
   }
@@ -84,8 +96,8 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
         // Drafts are stored per branch, so leaving does not lose them.
         children: (
           <Text size="sm">
-            {describeUnsaved(unsaved)} Your drafts stay on “{options.branchName}” and come back when
-            you return. {question}
+            {describeUnsaved(unsaved)} Your drafts stay on “
+            {options.branchLabel ?? options.branchName}” and come back when you return. {question}
           </Text>
         ),
         labels: { confirm: 'Continue Anyway', cancel: 'Cancel' },
@@ -99,23 +111,30 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
     })
   }
 
-  const handleBranchChange = async (next: string | null) => {
+  const handleBranchChange = async (
+    next: string | null,
+    change: { push?: boolean; superseded?: () => boolean } = {},
+  ) => {
     if (!next || next === options.branchName) return
 
     const confirmed = await confirmIfDirty('Switch branches anyway?')
     if (!confirmed) throw new Error('User cancelled branch switch')
+    if (change.superseded?.()) throw new Error('A later history move superseded the branch switch')
 
-    performBranchSwitch(next)
+    performBranchSwitch(next, undefined, change.push ?? true)
   }
 
   const confirmCreate = () => confirmIfDirty('Create the new branch anyway?')
 
-  /** Resolves true when the branch was created and switched to, false when it was not. */
+  /**
+   * Resolves true when the branch was created and switched to, false when it was not and a toast
+   * says why, or a {@link CreateRefusal} when the name cannot be created.
+   */
   const handleCreateBranch = async (branch: {
     name: string
     title?: string
     description?: string
-  }): Promise<boolean> => {
+  }): Promise<boolean | CreateRefusal> => {
     try {
       const outcome = await requestBranchCreate(
         apiClient,
@@ -127,6 +146,7 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
         options.userId,
       )
       if (outcome.kind === 'failed') {
+        if (outcome.refused) return { refusal: outcome.message }
         throw new Error(outcome.message)
       }
 
@@ -136,9 +156,15 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
       // The server adds the namespace, which the editor is never told; its short name resolves too.
       const typed = parseCreatedBranchName(branch.name)
       const createdName = created?.name ?? (typed.ok ? typed.shortName : branch.name)
-      notifications.show({ message: `Branch "${createdName}" created`, color: 'green' })
+      const createdLabel = created
+        ? displayBranchName(created)
+        : typed.ok
+          ? typed.shortName
+          : branch.name
+      notifications.show({ message: `Branch “${createdLabel}” created`, color: 'green' })
 
-      performBranchSwitch(createdName)
+      // A listing may not hold it yet, so its own short name stands in for the lookup.
+      performBranchSwitch(createdName, created?.shortName)
 
       // Not awaited: a listing can lag the create, and the switch must not wait
       // on it. loadBranches reports its own failures and never rejects.

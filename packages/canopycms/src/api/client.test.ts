@@ -1176,6 +1176,54 @@ describe('CanopyApiClient', () => {
     })
   })
 
+  describe('branchSegment', () => {
+    const requestedUrl = async (
+      call: (client: CanopyApiClient) => Promise<unknown>,
+      branchSegment?: (branch: string) => string,
+    ): Promise<unknown> => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ ok: true, status: 200, data: {} }),
+      })
+      await call(new CanopyApiClient({ fetch: mockFetch, branchSegment }))
+      return mockFetch.mock.calls[0]?.[0]
+    }
+    const toShort = (branch: string) => branch.replace(/^canopycms\/prod\//, '')
+
+    it('sends the segment it maps a branch to, with no %2F left', async () => {
+      expect(
+        await requestedUrl((c) => c.entries.list({ branch: 'canopycms/prod/spring' }), toShort),
+      ).toBe('/api/canopycms/spring/entries')
+      expect(
+        await requestedUrl(
+          (c) => c.workflow.submit({ branch: 'canopycms/prod/spring' }, {}),
+          toShort,
+        ),
+      ).toBe('/api/canopycms/spring/submit')
+    })
+
+    it('sends a branch it maps to itself under its full name', async () => {
+      expect(await requestedUrl((c) => c.entries.list({ branch: 'feature/x' }), toShort)).toBe(
+        '/api/canopycms/feature%2Fx/entries',
+      )
+    })
+
+    it('maps only the branch param, not another path param', async () => {
+      expect(
+        await requestedUrl(
+          (c) => c.permissions.getUserMetadata({ userId: 'canopycms/prod/x' }),
+          toShort,
+        ),
+      ).toBe('/api/canopycms/users/canopycms%2Fprod%2Fx')
+    })
+
+    it('sends the given name when no mapping is set', async () => {
+      expect(await requestedUrl((c) => c.entries.list({ branch: 'canopycms/prod/spring' }))).toBe(
+        '/api/canopycms/canopycms%2Fprod%2Fspring/entries',
+      )
+    })
+  })
+
   describe('createApiClient factory', () => {
     it('should create a CanopyApiClient instance', () => {
       const client = createApiClient()

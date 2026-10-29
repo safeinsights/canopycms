@@ -29,6 +29,8 @@ import { useFocusHandOff, useMenuItemFocusReturn } from '../utils/focus-return'
 
 export interface EditorHeaderProps {
   branchName: string
+  /** What the pill shows for the branch, when it is not `branchName`. */
+  branchLabel?: string
   /** Whether operations are currently in progress. */
   busy: boolean
   /** Entries with unsaved changes on the branch. */
@@ -98,6 +100,7 @@ export interface EditorHeaderProps {
  */
 export function EditorHeader({
   branchName,
+  branchLabel,
   busy,
   modifiedCount,
   onShowUnsaved,
@@ -202,7 +205,7 @@ export function EditorHeader({
       leading={
         <Group gap="xs" wrap="wrap" align="center" style={{ rowGap: 4 }}>
           <BranchPill
-            branchName={branchName}
+            branchName={branchLabel ?? branchName}
             loading={busy}
             unsavedCount={modifiedCount}
             onSwitchBranch={onBranchManagerOpen}

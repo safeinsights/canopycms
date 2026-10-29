@@ -435,10 +435,37 @@ describe('history across entries', () => {
     })
 
     await waitFor(() => expect(isOpen('world')).toBe(true))
-    await waitFor(() => expect(urlBranch()).toBe('canopycms/local/spring'))
+    await waitFor(() => expect(urlBranch()).toBe('spring'))
     expect(isOpen('world')).toBe(true)
     expect(notifications.show).not.toHaveBeenCalled()
   })
+
+  it.each([
+    ['its raw form', 'feature%2Fx', 'feature-x'],
+    ['the full name of a namespace branch', encodeURIComponent('canopycms/local/spring'), 'spring'],
+  ])(
+    'pushes nothing for a Back onto another branch named by %s, so Forward still goes on',
+    async (_form, named, shown) => {
+      await openEditor()
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      })
+      writeEditorUrl(`/?branch=${named}&entry=content/posts/world`, true)
+      writeEditorUrl('/?branch=main&entry=content/posts/hello', true)
+      const pushes = pushState.mock.calls.length
+      const length = window.history.length
+
+      await back()
+
+      await waitFor(() => expect(urlBranch()).toBe(shown))
+      await waitFor(() => expect(isOpen('world')).toBe(true))
+      expect(pushState.mock.calls.length).toBe(pushes)
+      expect(window.history.length).toBe(length)
+      await forward()
+      await waitFor(() => expect(urlBranch()).toBe('main'))
+      await waitFor(() => expect(isOpen('hello')).toBe(true))
+    },
+  )
 
   it('leaves focus alone on a Back to the entry already open', async () => {
     await openEditor()

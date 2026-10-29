@@ -28,7 +28,9 @@ export const Default: Story = {
         isProtected: true,
       },
       {
-        name: 'feature/landing',
+        // A branch in the CMS's namespace shows its short name; one outside it, its full name.
+        name: 'canopycms/prod/landing',
+        shortName: 'landing',
         status: 'editing',
         updatedAt: ago(HOUR),
         createdBy: 'alice',
@@ -47,7 +49,7 @@ export const Default: Story = {
         commentCount: 1,
       },
     ],
-    currentBranchName: 'feature/landing',
+    currentBranchName: 'canopycms/prod/landing',
     onSelect: (name: string) => alert(`Open ${name}`),
     onCreate: (branch) => alert(`Create branch: ${branch.name}`),
     onSubmit: (name: string) => alert(`Submit ${name}`),
@@ -310,14 +312,29 @@ export const NewBranchForm: Story = {
   args: { ...Default.args, startCreating: true },
 }
 
-/** A long name: the preview wraps below the field, which stays where it is. */
+/** A long name sanitizing changes: the preview wraps below the field, which stays where it is. */
 export const NewBranchFormLongName: Story = {
   args: NewBranchForm.args,
-  play: () => typeBranchName('Spring homepage refresh for the 2027 launch'),
+  play: () => typeBranchName('Spring/homepage-refresh-for-the-2027-launch'),
 }
 
 /** A name that would be a settings branch: the field says why, and Create branch is off. */
 export const NewBranchFormRefusedName: Story = {
   args: NewBranchForm.args,
   play: () => typeBranchName('settings-prod'),
+}
+
+/** A name the server refuses on Create branch: its reason shows under the field, which has focus. */
+export const NewBranchFormServerRefusal: Story = {
+  args: {
+    ...NewBranchForm.args,
+    onCreate: async () => ({
+      refusal: '"spring-update" is already the name of another branch. Choose a different name.',
+    }),
+  },
+  play: async () => {
+    await typeBranchName('spring-update')
+    document.querySelector<HTMLButtonElement>('[data-testid="create-branch-submit"]')?.click()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  },
 }

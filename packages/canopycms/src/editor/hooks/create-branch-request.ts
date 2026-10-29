@@ -15,9 +15,18 @@ export const CREATE_BRANCH_DEADLINE_MS = GATEWAY_MAX_TIMEOUT_MS + 30_000
 export const CREATE_TIMED_OUT_MESSAGE =
   "Creating the branch didn't finish (the server timed out). It's safe to try again."
 
+/** The typed name cannot be created: the create form shows `refusal` in place, with no toast. */
+export interface CreateRefusal {
+  refusal: string
+}
+
 export type CreateBranchOutcome =
   | { kind: 'created'; branch: BranchListItem | undefined }
-  | { kind: 'failed'; message: string }
+  /**
+   * `refused`: the server refused this name (`BRANCH_NAME_REFUSED`), or the listing a busy or
+   * unanswered create settles on holds another user's branch of it. Retrying it cannot pass.
+   */
+  | { kind: 'failed'; message: string; refused?: true }
 
 /**
  * Create a branch. Past the deadline, after an error page from in front of the API, or after a
@@ -45,8 +54,10 @@ export async function requestBranchCreate(
   if (isNonApiResponse(result))
     return settle(apiClient, body.branch, userId, CREATE_TIMED_OUT_MESSAGE)
   const message = result.error || 'Failed to create branch'
-  return result.status === 503
-    ? settle(apiClient, body.branch, userId, message)
+  if (result.status === 503) return settle(apiClient, body.branch, userId, message)
+  // Only a refusal of the name carries this code; any other failure is the toast's to report.
+  return result.code === 'BRANCH_NAME_REFUSED'
+    ? { kind: 'failed', message, refused: true }
     : { kind: 'failed', message }
 }
 
@@ -62,7 +73,8 @@ async function settle(
   if (isCreatorsRecentBranch(listed, userId)) return { kind: 'created', branch: listed }
   return {
     kind: 'failed',
-    message: `A branch named "${listed.shortName ?? listed.name}" already exists`,
+    message: `A branch named “${listed.shortName ?? listed.name}” already exists`,
+    refused: true,
   }
 }
 

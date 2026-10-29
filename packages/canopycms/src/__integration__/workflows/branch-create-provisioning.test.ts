@@ -119,7 +119,7 @@ describe('POST /branches over provisioning outcomes', () => {
 
     expect(res.status).toBe(503)
     expect((await res.json<BranchListItemResponse>()).error).toBe(
-      `Branch '${branchKey('feat')}' is still being set up. Try again in a minute.`,
+      "Branch 'feat' is still being set up. Try again in a minute.",
     )
   })
 })

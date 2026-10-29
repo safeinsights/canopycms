@@ -523,9 +523,12 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   // Tracks which storage key the current in-memory `drafts` were loaded for.
   // Lags one render behind a branch switch (it only updates once `drafts`
   // itself has been reset/restored for the new key), which is what lets the
-  // persist effect below detect and skip the stale write.
-  const draftsStorageKeyRef = useRef(storageKey)
+  // persist effect below detect and skip the stale write. Null while `drafts` is
+  // still the empty set it started as, so a load stores nothing under its first key.
+  const initialDraftsRef = useRef(drafts)
+  const draftsStorageKeyRef = useRef<string | null>(null)
   useEffect(() => {
+    if (drafts === initialDraftsRef.current && Object.keys(drafts).length === 0) return
     draftsStorageKeyRef.current = storageKey
   }, [drafts])
 

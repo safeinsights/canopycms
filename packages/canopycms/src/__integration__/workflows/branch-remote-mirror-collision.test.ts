@@ -80,6 +80,7 @@ describe('Branch creation: remote-mirror collision guard (L2)', () => {
       expect(res.status).toBe(409)
       const body = await res.json<BranchListItemResponse>()
       expect(body.error).toMatch(/already exists on the remote/)
+      expect(body.code).toBe('BRANCH_NAME_REFUSED')
     })
 
     it.each([
@@ -96,6 +97,7 @@ describe('Branch creation: remote-mirror collision guard (L2)', () => {
           expect(res.status).toBe(409)
           const body = await res.json<BranchListItemResponse>()
           expect(body.error).toContain(`a branch named "${ancestor}" exists on the remote`)
+          expect(body.code).toBeUndefined()
 
           await simpleGit({ baseDir: workspace.seedPath }).raw(['push', 'origin', `:${ref}`])
         }
@@ -118,6 +120,7 @@ describe('Branch creation: remote-mirror collision guard (L2)', () => {
         `"spring" cannot be created: the remote has a branch named "${branchRef('spring')}/draft" ` +
           'inside it, and git cannot hold both. Choose a different name.',
       )
+      expect(body.code).toBe('BRANCH_NAME_REFUSED')
 
       await simpleGit({ baseDir: workspace.seedPath }).raw(['push', 'origin', `:${ref}`])
       expect((await client.post('/api/canopycms/branches', { branch: 'spring' })).status).toBe(200)

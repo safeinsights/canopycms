@@ -5,6 +5,7 @@ import type { CanopyConfig } from './config'
 import { BranchPathError, isSettingsBranchName, parseBranchName, resolveBranchPath } from './paths'
 import { buildInitialBranchMetadata, loadBranchContext } from './branch-metadata'
 import { BRANCH_META_DIR, BRANCH_META_FILE, readBranchMetadataFile } from './branch-metadata-file'
+import { shortNameOf } from './branch-param'
 import { BranchRegistry } from './branch-registry'
 import {
   BranchDirOccupiedError,
@@ -73,6 +74,8 @@ interface BranchPaths {
   dirName: string
   /** The branch's name in git and branch.json; `dirName` is its sanitized form. */
   ref: string
+  /** What messages call the branch (`shortNameOf`). */
+  shortName: string
 }
 
 /**
@@ -120,6 +123,7 @@ export class BranchWorkspaceManager {
       baseRoot,
       dirName: path.basename(branchRoot),
       ref: options.branchName,
+      shortName: shortNameOf({ ...this.config, mode: options.mode }, options.branchName),
     }
 
     const existing = await readBranchMetadataFile(branchRoot)
@@ -143,7 +147,7 @@ export class BranchWorkspaceManager {
     options: OpenBranchOptions,
     paths: BranchPaths,
   ): Promise<ProvisionOutcome> {
-    const { branchRoot, baseRoot, dirName } = paths
+    const { branchRoot, baseRoot, dirName, shortName } = paths
     await fs.mkdir(baseRoot, { recursive: true })
 
     // Resolve the fork point once so the clone and the recorded metadata agree, and the remote
@@ -177,7 +181,7 @@ export class BranchWorkspaceManager {
     // refuse anyway. Publish re-checks everything under the lock.
     const state = await classifyFinalDir(branchRoot, remoteUrl)
     if (state.kind === 'live' || state.kind === 'corrupt') return this.existing(paths)
-    if (state.kind === 'protected') throw new BranchProvisioningBusyError(dirName)
+    if (state.kind === 'protected') throw new BranchProvisioningBusyError(dirName, shortName)
     if (state.kind === 'foreign') {
       // dev's CLI sync builds a branch workspace by `git init` and real commits, with no
       // remote and no branch.json; it is adopted where it is.
@@ -185,7 +189,7 @@ export class BranchWorkspaceManager {
       return this.adoptInPlace(options, paths, baseBranch, metadata)
     }
     if (state.kind === 'residue' && (await this.recentlyActive(paths))) {
-      throw new BranchProvisioningBusyError(dirName)
+      throw new BranchProvisioningBusyError(dirName, shortName)
     }
 
     const sparseCone = sparseConeFor(this.config.contentRoot)
@@ -223,7 +227,7 @@ export class BranchWorkspaceManager {
       sparseCone: string[] | null
     },
   ): Promise<ProvisionOutcome> {
-    const { branchRoot, baseRoot, dirName } = paths
+    const { branchRoot, baseRoot, dirName, shortName } = paths
     const staged = await stageBranchWorkspace({
       baseRoot,
       dirName,
@@ -248,6 +252,7 @@ export class BranchWorkspaceManager {
         publishStaging({
           baseRoot,
           dirName,
+          shortName,
           stagingPath: staged.stagingPath,
           writeId: staged.meta.writeId,
           expectedRemoteUrl: run.remoteUrl,
@@ -273,11 +278,13 @@ export class BranchWorkspaceManager {
     baseBranch: string,
     metadata: ReturnType<typeof buildInitialBranchMetadata>,
   ): Promise<ProvisionOutcome> {
-    const { branchRoot, baseRoot, dirName } = paths
+    const { branchRoot, baseRoot, dirName, shortName } = paths
     const provisionLog = new ProvisionLog(dirName)
     let created = false
     try {
-      const release = await provisionLog.step('lock', () => lockBranchName(baseRoot, dirName))
+      const release = await provisionLog.step('lock', () =>
+        lockBranchName(baseRoot, dirName, shortName),
+      )
       try {
         if (!(await readBranchMetadataFile(branchRoot))) {
           await GitManager.initializeWorkspace({
@@ -321,7 +328,7 @@ export class BranchWorkspaceManager {
     provisionLog.finish(created ? 'ok' : 'exists')
     if (!created) return this.existing(paths)
     const meta = await readBranchMetadataFile(branchRoot)
-    if (!meta) throw new BranchProvisioningBusyError(dirName)
+    if (!meta) throw new BranchProvisioningBusyError(dirName, shortName)
     return { kind: 'created', context: { branch: meta.branch, branchRoot, baseRoot } }
   }
 
@@ -339,9 +346,10 @@ export class BranchWorkspaceManager {
     branchRoot,
     baseRoot,
     dirName,
+    shortName,
   }: BranchPaths): Promise<ProvisionOutcome> {
     const meta = await readBranchMetadataFile(branchRoot)
-    if (!meta) throw new BranchProvisioningBusyError(dirName)
+    if (!meta) throw new BranchProvisioningBusyError(dirName, shortName)
     return { kind: 'exists', context: { branch: meta.branch, branchRoot, baseRoot } }
   }
 }

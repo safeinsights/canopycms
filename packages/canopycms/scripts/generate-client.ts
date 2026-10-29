@@ -303,6 +303,13 @@ export interface ApiClientOptions {
 
   /** Called whenever the server refuses \`editorMode\` (code \`EDITOR_MODE_MISMATCH\`). @internal */
   onEditorModeMismatch?: () => void
+
+  /**
+   * Maps a branch name to the \`/:branch\` segment its requests carry. The server resolves a
+   * branch's short name as it does its name, so the editor sends a namespace branch's short name,
+   * with no \`%2F\`. @internal
+   */
+  branchSegment?: (branch: string) => string
 }
 
 /**
@@ -323,6 +330,7 @@ export class CanopyApiClient {
   private onUnauthorized: (() => void) | undefined
   private editorMode: OperatingMode | undefined
   private onEditorModeMismatch: (() => void) | undefined
+  private branchSegment: ((branch: string) => string) | undefined
 
 ${namespacesCode}
 
@@ -334,6 +342,7 @@ ${namespacesCode}
     this.onUnauthorized = options.onUnauthorized
     this.editorMode = options.editorMode
     this.onEditorModeMismatch = options.onEditorModeMismatch
+    this.branchSegment = options.branchSegment
   }
 
   private buildPath(template: string, params: Record<string, string>): string {
@@ -345,7 +354,8 @@ ${namespacesCode}
       const restParamPattern = \`...$\{key}\`
 
       if (result.includes(pathParamPattern)) {
-        result = result.replace(pathParamPattern, encodeURIComponent(String(value)))
+        const segment = key === 'branch' && this.branchSegment ? this.branchSegment(value) : value
+        result = result.replace(pathParamPattern, encodeURIComponent(String(segment)))
       } else if (result.includes(restParamPattern)) {
         // For rest parameters, encode each segment separately to preserve slashes
         const encoded = String(value).split('/').map(segment => encodeURIComponent(segment)).join('/')

@@ -1142,6 +1142,7 @@ function BranchHealthRow({
       <Table.Tr>
         <Table.Td>
           <Group gap={4} wrap="nowrap">
+            {/* The workspace directory, from the full ref: diagnosis keeps it, as it does the ref itself. */}
             <Text size="sm">{entry.dirName}</Text>
             {entry.isBaseBranch && (
               <Badge size="xs" color="gray" variant="outline">
