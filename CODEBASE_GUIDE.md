@@ -41,6 +41,7 @@ Repo-level tooling, under `scripts/`:
 - `scripts/docs-budgets.json` — the per-doc ceilings `check-docs.mjs` enforces
 - `.changeset/` — changelog entries, see its `README.md`
 - `scripts/smoke/standalone-image.mjs` — builds and boots the generated CMS image against packed tarballs; see [DEVELOPING.md](DEVELOPING.md#standalone-cms-image-smoke-test-standalone-image-ci-job)
+- `scripts/smoke/worker-platform.mjs` — boots worker user data on AL2023, then runs the worker tests; see [DEVELOPING.md](DEVELOPING.md#worker-platform-check-worker-platformyml)
 
 ## Source Code Organization
 
