@@ -38,10 +38,10 @@ export function sanitizeBranchName(branchName: string): SanitizedBranchName {
  */
 export const RESERVED_SETTINGS_BRANCH_PREFIX = 'canopycms-settings-'
 
-/** The namespace the GitHub gateway writes, and why it is fixed: worker/branch-policy.ts. */
+/** The prefix `cmsBranchName` gives the branches editors create. */
 export const CMS_BRANCH_PREFIX = 'canopycms-'
 
-/** The branch a typed name creates, which the editor previews: sanitized, in the namespace. */
+/** The branch a typed name creates, which the editor previews: sanitized, with `CMS_BRANCH_PREFIX`. */
 export function cmsBranchName(typed: string): SanitizedBranchName {
   const sanitized = sanitizeBranchName(typed)
   if (sanitized.startsWith(CMS_BRANCH_PREFIX)) return sanitized

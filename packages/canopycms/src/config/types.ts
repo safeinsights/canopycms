@@ -606,7 +606,8 @@ export interface CanopyConfigInput {
    * The prefix of every branch editors create, which the GitHub gateway confines its writes to,
    * as a template in which `{deployment}` is the deployment name, ending with `/` (default
    * `canopycms/{deployment}/`). `CANOPYCMS_BRANCH_NAMESPACE` wins over it, as the deployment
-   * name's variable does; a CDK deployment sets both from `CanopyCmsService`'s `branchNamespace`.
+   * name's variable does; a CDK deployment sets that variable for the CMS and for the GitHub
+   * gateway from `CanopyCmsService`'s `branchNamespace`.
    */
   branchNamespace?: string
   contentRoot?: string

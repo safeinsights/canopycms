@@ -256,8 +256,10 @@ export type DefaultBranchReader = () => Promise<string | null>
  * the namespace, be this deployment's settings branch, or be a `legacyBranches` entry, compared
  * exactly. Sanitized equivalence, right for the protected set where matching more refuses more,
  * would let an allow-list admit more. The protected set wins inside the namespace too. The
- * namespace comes from the gateway's own configuration, never a request; the base and settings
- * branches must lie outside it, and a legacy entry inside it is refused as pointless.
+ * namespace comes from the gateway's own configuration, never a request. The base and settings
+ * branches must lie outside it, by name and by workspace directory, and not be named after part of
+ * it; a legacy entry inside it is refused as pointless, and one named after part of it as
+ * blocking it.
  *
  * Settings branches are pushed plainly or not at all: no lease, no deletion, no pull request.
  * One is a name with the reserved prefix or this deployment's settings branch. Only this
@@ -295,7 +297,8 @@ export class BranchPolicy {
       ) {
         throw new Error(
           `The ${what} ${JSON.stringify(name)} is inside the branch namespace ${JSON.stringify(this.namespace)}, ` +
-            'which holds only the branches editors create; choose a namespace it is outside',
+            'or shares a workspace directory with a branch in it, and the namespace holds only the ' +
+            'branches editors create; choose a namespace it is outside',
         )
       }
       // git holds no ref under a path that is itself a branch.

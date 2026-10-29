@@ -489,7 +489,7 @@ async function buildSplitWorker(
   for (const [name, entries] of [
     [PROTECTED_BRANCHES_ENV, parseProtectedBranches(env)],
     [LEGACY_BRANCHES_ENV, parseLegacyBranches(env)],
-    [BRANCH_NAMESPACE_ENV, env[BRANCH_NAMESPACE_ENV] ? [env[BRANCH_NAMESPACE_ENV]] : []],
+    [BRANCH_NAMESPACE_ENV, env[BRANCH_NAMESPACE_ENV]?.trim() ? [env[BRANCH_NAMESPACE_ENV]] : []],
   ] as const) {
     if (entries.length > 0) {
       throw new Error(

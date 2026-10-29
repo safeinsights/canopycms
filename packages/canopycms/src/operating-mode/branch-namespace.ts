@@ -122,13 +122,14 @@ export function resolveBranchNamespace(
         'config.branchNamespace',
       )
     } catch {
-      // An invalid config template is reported by the warning below, as differing.
+      // An invalid config template is warned about too: the environment variable wins anyway.
     }
     if (fromConfig !== namespace) {
       warnOnce(
-        `CanopyCMS: ${BRANCH_NAMESPACE_ENV} (${JSON.stringify(fromEnv)}) resolves to another ` +
-          `namespace than config.branchNamespace (${JSON.stringify(config.branchNamespace)}); ` +
-          'using the environment variable, which infrastructure stamps per stack.',
+        `CanopyCMS: ${BRANCH_NAMESPACE_ENV} (${JSON.stringify(fromEnv)}) and ` +
+          `config.branchNamespace (${JSON.stringify(config.branchNamespace)}) do not resolve to ` +
+          'the same valid namespace; using the environment variable, which infrastructure stamps ' +
+          'per stack.',
       )
     }
   }

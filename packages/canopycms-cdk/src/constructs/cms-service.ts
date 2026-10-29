@@ -399,8 +399,9 @@ const DEFAULT_BRANCH_NAMESPACE_TEMPLATE = `canopycms/${DEPLOYMENT_PLACEHOLDER}/`
  * (packages/canopycms/src/operating-mode/branch-namespace.ts), which this module cannot import.
  * cms-deploy.test.ts holds the two to the fixtures in
  * packages/canopycms/src/operating-mode/branch-namespace-fixtures.ts; add a case there when you
- * change either copy. `{deployment}` is the only placeholder. The namespace may not contain
- * `baseBranch` or `settingsBranch`, which the policy refuses at boot too.
+ * change either copy. `{deployment}` is the only placeholder. `baseBranch` and `settingsBranch`
+ * may not lie inside the namespace, share a workspace directory with a branch in it, or be named
+ * after part of it, which the policy refuses at boot too.
  */
 export function resolveBranchNamespaceProp(
   template: string,
@@ -465,8 +466,8 @@ export function resolveBranchNamespaceProp(
       (branch.startsWith(namespace) || sanitize(branch).startsWith(sanitize(namespace)))
     ) {
       reject(
-        `the ${propName} ${JSON.stringify(branch)} is inside it, and the namespace holds only the ` +
-          'branches editors create',
+        `the ${propName} ${JSON.stringify(branch)} is inside it, or shares a workspace directory ` +
+          'with a branch in it, and the namespace holds only the branches editors create',
       )
     }
     if (branch !== undefined && namespace.startsWith(`${branch}/`)) {
@@ -1144,7 +1145,8 @@ export interface CanopyCmsServiceProps {
    * (default: `canopycms/{deployment}/`). A template in which `{deployment}` is this stack's
    * deployment name (`deploymentName`, including an `environment.CANOPYCMS_DEPLOYMENT_NAME`
    * override: exactly the value stamped as `CANOPYCMS_DEPLOYMENT_NAME`) and the only placeholder
-   * allowed. It must end with `/`, and neither `baseBranch` nor `settingsBranch` may start with it.
+   * allowed. It must end with `/`, and neither `baseBranch` nor `settingsBranch` may lie inside it,
+   * share a workspace directory with a branch in it, or be named after part of it.
    * Resolved at synth, and stamped into both the CMS Lambda's environment and the gateway's
    * `CANOPYCMS_BRANCH_NAMESPACE`, always, so the halves agree even when this prop is unset.
    * Set the same value in `canopycms.config.ts`'s `branchNamespace` for local development; the

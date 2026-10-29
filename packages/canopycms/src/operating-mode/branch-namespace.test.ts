@@ -110,7 +110,7 @@ describe('resolveBranchNamespace', () => {
       .map((call) => call.join(' '))
       .filter((line) => line.includes(BRANCH_NAMESPACE_ENV))
     expect(lines).toHaveLength(1)
-    expect(lines[0]).toContain('resolves to another namespace than config.branchNamespace')
+    expect(lines[0]).toContain('do not resolve to the same valid namespace')
     warn.mockRestore()
   })
 
