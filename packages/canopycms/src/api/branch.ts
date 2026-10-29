@@ -297,10 +297,12 @@ export const TOP_LEVEL_ROUTE_SEGMENTS: readonly string[] = [
 ]
 
 /**
- * The names of the branches outside `namespace` a URL can reach, which no short name may take,
- * since the base and active branches resolve first and a short name would shadow the rest
- * (branch-param.ts): the base, the configured active branch, every workspace outside the
- * namespace, and every exact name the GitHub gateway protects.
+ * The names of the branches outside `namespace` a URL can reach, which neither a new branch's
+ * short name nor its ref may take, since the base and active branches resolve first and a short
+ * name would shadow the rest (branch-param.ts): the base, the configured active branch, every
+ * workspace outside the namespace, and every exact name the GitHub gateway protects. A namespace
+ * workspace is left out: its ref is a new branch's ref only for a create that names it, which
+ * the key check answers.
  */
 const outsideBranchNames = (
   config: ApiContext['services']['config'],
@@ -417,14 +419,13 @@ export const createBranchHandler = async (
       }
     }
     const listed = await ctx.services.registry.list()
-    if (
-      outsideBranchNames(
-        config,
-        namespace,
-        listed,
-        workerStatus?.gatewayProtectedBranches ?? [],
-      ).has(shortName)
-    ) {
+    const outside = outsideBranchNames(
+      config,
+      namespace,
+      listed,
+      workerStatus?.gatewayProtectedBranches ?? [],
+    )
+    if (outside.has(shortName) || outside.has(branchName)) {
       return {
         ok: false,
         status: 409,

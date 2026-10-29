@@ -591,17 +591,40 @@ describe('branch api', () => {
         }
       })
 
-      it('refuses a workspace outside the namespace, and not one inside it', async () => {
-        const ctx = ctxWith({}, [
-          createMockBranchContext({ branchName: 'legacy-update' }),
-          createMockBranchContext({ branchName: 'canopycms/local/inside' }),
-        ])
+      it('refuses a workspace outside the namespace, and answers a retry of one inside it', async () => {
+        const inside = createMockBranchContext({
+          branchName: 'canopycms/local/inside',
+          createdBy: 'u1',
+          createdAt: new Date().toISOString(),
+        })
+        const ctx = ctxWith({}, [createMockBranchContext({ branchName: 'legacy-update' }), inside])
+        vi.mocked(ctx.services.registry!.getByKey).mockResolvedValue(inside)
+
         const outside = await create('legacy-update', ctx)
         expect(outside.status).toBe(409)
         expect(outside.error).toBe(refused('legacy-update'))
 
-        const inside = await create('canopycms-local-inside', ctx)
-        expect(inside.status).toBe(200)
+        const retry = await create('inside', ctx)
+        expect(retry.status).toBe(200)
+        expect(retry.data?.branch.name).toBe('canopycms/local/inside')
+      })
+
+      it('refuses a ref the gateway protects exactly', async () => {
+        mockReadWorkerStatus.mockResolvedValue({
+          workerStatus: { gatewayProtectedBranches: ['canopycms/local/release'] },
+        })
+        const res = await create('release', ctxWith({}))
+        expect(res.status).toBe(409)
+        expect(res.error).toBe(refused('release'))
+      })
+
+      it('refuses the ref of an active branch configured inside the namespace', async () => {
+        const res = await create(
+          'develop',
+          ctxWith({ defaultActiveBranch: 'canopycms/local/develop' }),
+        )
+        expect(res.status).toBe(409)
+        expect(res.error).toBe(refused('develop'))
       })
 
       it('refuses an exact name the gateway protects, as the worker last recorded them', async () => {
