@@ -455,6 +455,41 @@ describe('admin branch-health api', () => {
       await expectUntouched('canopycms-prod-spring')
     })
 
+    it('refuses a clone on a branch whose key is not the directory, archiving nothing', async () => {
+      await createCorruptBranchWithGit('canopycms-prod-spring', 'canopycms/prod/autumn')
+
+      const result = await repairHandler(ctx, req, { dirName: 'canopycms-prod-spring' })
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(409)
+      expect(result.error).toBe(
+        'Cannot repair this branch: its clone has "canopycms/prod/autumn" checked out, which is ' +
+          'not the branch this directory holds. Check out its branch in the clone, then repair ' +
+          'again, or purge the directory.',
+      )
+      await expectUntouched('canopycms-prod-spring')
+    })
+
+    it('refuses an invalid .git inside another repository, reading nothing from that one', async () => {
+      // The repository around the workspaces has the very branch the directory's key names.
+      const outer = await initTestRepo(branchesRoot)
+      await outer.checkoutLocalBranch('canopycms/prod/spring')
+      await fs.writeFile(path.join(branchesRoot, '.gitkeep'), '')
+      await outer.add(['.gitkeep'])
+      await outer.commit('outer')
+      await createCorruptBranch('canopycms-prod-spring')
+      await fs.mkdir(path.join(branchesRoot, 'canopycms-prod-spring', '.git'))
+
+      const result = await repairHandler(ctx, req, { dirName: 'canopycms-prod-spring' })
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(409)
+      expect(result.error).toMatch(
+        /^Cannot repair this branch: git could not read the clone's checked-out branch \(/,
+      )
+      await expectUntouched('canopycms-prod-spring')
+    })
+
     it('returns 404 for a nonexistent directory (MEDIUM-1 rider)', async () => {
       const result = await repairHandler(ctx, req, { dirName: 'never-existed' })
       expect(result.ok).toBe(false)
