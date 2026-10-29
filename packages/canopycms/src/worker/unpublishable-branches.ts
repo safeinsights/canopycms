@@ -15,7 +15,12 @@ import type {
   UnpublishableBranchesReport,
 } from '../types'
 import { isNodeError } from '../utils/error'
-import { legacyBranchProblem, publishesBranch, type BranchPolicyDescription } from './branch-policy'
+import {
+  MAX_BRANCH_NAME_LENGTH,
+  legacyBranchProblem,
+  publishesBranch,
+  type BranchPolicyDescription,
+} from './branch-policy'
 import type { WorkerContext } from './worker-context'
 
 /**
@@ -84,21 +89,29 @@ const REASONS = new Set<string>([
   'unlistable',
 ] satisfies UnpublishableBranchReason[])
 
+/**
+ * Whether `value` is a report `findUnpublishableBranches` could have made: at most
+ * MAX_UNPUBLISHABLE_LISTED names, none longer than a branch name can be, and a whole `count` no
+ * smaller than the list. The Lambda can write the status file, so nothing larger is carried.
+ */
 function isUnpublishableBranchesReport(value: unknown): value is UnpublishableBranchesReport {
   if (typeof value !== 'object' || value === null) return false
   if (!('branches' in value) || !('count' in value) || !('at' in value)) return false
   const { branches, count, at } = value
   return (
-    typeof count === 'number' &&
     typeof at === 'string' &&
     Array.isArray(branches) &&
     branches.length <= MAX_UNPUBLISHABLE_LISTED &&
+    typeof count === 'number' &&
+    Number.isInteger(count) &&
+    count >= branches.length &&
     branches.every(
       (entry: unknown) =>
         typeof entry === 'object' &&
         entry !== null &&
         'name' in entry &&
         typeof entry.name === 'string' &&
+        entry.name.length <= MAX_BRANCH_NAME_LENGTH &&
         (!('reason' in entry) || (typeof entry.reason === 'string' && REASONS.has(entry.reason))),
     )
   )

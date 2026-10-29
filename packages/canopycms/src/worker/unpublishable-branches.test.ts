@@ -8,8 +8,13 @@ import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../bran
 import { BRANCH_META_DIR, BRANCH_META_FILE } from '../branch-metadata-file'
 import { sanitizeBranchName } from '../paths/branch-name'
 import type { BranchStatus } from '../types'
-import type { BranchPolicyDescription } from './branch-policy'
-import { MAX_UNPUBLISHABLE_LISTED, findUnpublishableBranches } from './unpublishable-branches'
+import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
+import { MAX_BRANCH_NAME_LENGTH, type BranchPolicyDescription } from './branch-policy'
+import {
+  MAX_UNPUBLISHABLE_LISTED,
+  findUnpublishableBranches,
+  readCarriedUnpublishableBranches,
+} from './unpublishable-branches'
 
 let root: string
 let contentBranchesPath: string
@@ -148,5 +153,50 @@ describe('findUnpublishableBranches', () => {
       ],
       count: 4,
     })
+  })
+})
+
+describe('readCarriedUnpublishableBranches', () => {
+  const AT = '2026-10-29T09:00:00.000Z'
+
+  /** The report a previous worker left, as the status file holds it. */
+  async function carry(unpublishableBranches: unknown) {
+    await fs.writeFile(
+      path.join(root, WORKER_STATUS_FILE),
+      JSON.stringify({ version: 1, unpublishableBranches }),
+    )
+    return readCarriedUnpublishableBranches(root)
+  }
+
+  it('carries a report of the shape a sync records', async () => {
+    const report = {
+      branches: [
+        { name: 'a'.repeat(MAX_BRANCH_NAME_LENGTH) },
+        { name: 'a,b', reason: 'unlistable' },
+      ],
+      count: 60,
+      at: AT,
+    }
+
+    expect(await carry(report)).toEqual(report)
+  })
+
+  it.each([
+    [
+      'more names than a report lists',
+      {
+        branches: refs(...Array.from({ length: MAX_UNPUBLISHABLE_LISTED + 1 }, (_, i) => `b${i}`)),
+        count: MAX_UNPUBLISHABLE_LISTED + 1,
+      },
+    ],
+    [
+      'a name longer than a branch name can be',
+      { branches: refs('a'.repeat(MAX_BRANCH_NAME_LENGTH + 1)), count: 1 },
+    ],
+    ['a count that is not whole', { branches: refs('autumn'), count: 1.5 }],
+    ['a count smaller than its list', { branches: refs('autumn', 'winter'), count: 1 }],
+    ['an unknown reason', { branches: [{ name: 'autumn', reason: 'other' }], count: 1 }],
+  ])('carries nothing for a report with %s', async (_label, report) => {
+    expect(await carry({ ...report, at: AT })).toBeUndefined()
   })
 })
