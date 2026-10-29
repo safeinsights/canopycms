@@ -80,6 +80,7 @@ import {
   useSchemaManager,
 } from './hooks'
 import { useBranchActions } from './hooks/useBranchActions'
+import { resolveListedBranch } from './hooks/useBranchManager'
 import { useBranchChangesData, useEntryChangeData } from './hooks/useBranchChangesData'
 import type { EntryChangesSubject } from './components/EntryChangesDrawer'
 import { LazyEntryChangesDrawer } from './components/LazyEntryChangesDrawer'
@@ -414,6 +415,7 @@ const EditorContent: React.FC<EditorProps> = ({
   const {
     branchName: branchNameState,
     setBranchName,
+    branches,
     branchSummaries,
     currentBranch,
     branchesLoadFailed,
@@ -698,8 +700,7 @@ const EditorContent: React.FC<EditorProps> = ({
     userId: userContext?.userId,
   })
   switchBranchRef.current = async (branch) => {
-    const listed = (name: string) => name === branch || name === sanitizeBranchName(branch)
-    if (branchSummaries.length > 0 && !branchSummaries.some((b) => listed(b.name))) {
+    if (branches.length > 0 && !resolveListedBranch(branches, branch)) {
       notifications.show({
         message: `Branch “${branch}” no longer exists or you can no longer open it, so you're still on “${branchNameState}”.`,
         color: 'yellow',
@@ -737,7 +738,7 @@ const EditorContent: React.FC<EditorProps> = ({
   })
 
   reloadCommentsRef.current = (branch) => {
-    if (sanitizeBranchName(branch) === sanitizeBranchName(branchNameState))
+    if (sanitizeBranchName(branch) === sanitizeBranchName(currentBranch?.name ?? branchNameState))
       void loadComments(branch)
   }
 

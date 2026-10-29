@@ -122,7 +122,12 @@ const stubApi = () => {
             ok: true,
             status: 200,
             data: {
-              branches: [branch('main'), branch('feature'), branch('feature-x')],
+              branches: [
+                branch('main'),
+                branch('feature'),
+                branch('feature-x'),
+                { ...branch('canopycms/local/spring'), shortName: 'spring' },
+              ],
               defaultBranch: 'main',
             },
           }),
@@ -414,6 +419,22 @@ describe('history across entries', () => {
 
     await waitFor(() => expect(isOpen('world')).toBe(true))
     expect(urlBranch()).toBe('feature/x')
+    expect(notifications.show).not.toHaveBeenCalled()
+  })
+
+  it('switches for a Back onto a namespace branch named by its short name', async () => {
+    await openEditor()
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+    window.history.replaceState(null, '', '/?branch=spring&entry=content/posts/world')
+
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+
+    await waitFor(() => expect(isOpen('world')).toBe(true))
+    expect(urlBranch()).toBe('spring')
     expect(notifications.show).not.toHaveBeenCalled()
   })
 

@@ -332,6 +332,22 @@ function mergePendingBranches(
 }
 
 /**
+ * The listed branch `name` opens, in the order the server resolves a `?branch=`: its full name,
+ * then its short name. The sanitized form in between catches a deep link carrying a name's raw,
+ * unsanitized form ("feature/x" for the persisted "feature-x").
+ */
+export function resolveListedBranch<B extends Pick<BranchListItem, 'name' | 'shortName'>>(
+  branches: readonly B[],
+  name: string,
+): B | undefined {
+  return (
+    branches.find((b) => b.name === name) ??
+    branches.find((b) => b.name === sanitizeBranchName(name)) ??
+    branches.find((b) => b.shortName === name)
+  )
+}
+
+/**
  * Applies one received listing to the pending branches: drops those it arrived
  * past the grace window for, and takes the listing's copy of the rest. Written
  * so a listing with no arrival time (NaN) drops nothing.
@@ -562,17 +578,12 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     // eslint-disable-next-line react-hooks/exhaustive-deps -- options is a new object every Editor.tsx render; only setBusy (a stable setState) matters here
   }, [branchesIsValidating, options.setBusy])
 
-  // Exact match first; fall back to comparing sanitized forms so a legacy
-  // deep-link carrying the raw, unsanitized name (e.g. "?branch=feature%2Fx"
-  // from before a branch was created, or from an old bookmark) still
-  // resolves to the branch the server actually persisted (e.g. "feature-x").
-  const currentBranch =
-    branches.find((b) => b.name === branchName) ??
-    branches.find((b) => b.name === sanitizeBranchName(branchName))
+  const currentBranch = resolveListedBranch(branches, branchName)
+  const currentBranchName = currentBranch?.name
 
   const branchSummaries = useMemo(() => {
     return branches.map((b) => {
-      const branchComments = b.name === branchName ? options.comments : []
+      const branchComments = b.name === currentBranchName ? options.comments : []
       const unresolvedCount = branchComments.filter((t) => !t.resolved).length
       return {
         name: b.name,
@@ -616,7 +627,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         submitBlocked: b.submitBlocked ?? true,
       }
     })
-  }, [branches, branchName, options.comments])
+  }, [branches, currentBranchName, options.comments])
 
   // Explicit reload: always issues a fresh, independent fetch (raw call, not
   // SWR's `mutate()` revalidate path) so callers requesting a reload right
@@ -650,10 +661,10 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const latest = useRef({ branchName, branches, branchesData })
   latest.current = { branchName, branches, branchesData }
 
-  // A legacy deep link can carry the raw form of a listed name; the actions key, look up and
-  // send the listed name, resolved the way `currentBranch` resolves it.
+  // A deep link can carry a short name or the raw form of a listed name; the actions key, look
+  // up and send the listed name, resolved the way `currentBranch` resolves it.
   const listedName = (name: string): string =>
-    latest.current.branches.some((b) => b.name === name) ? name : sanitizeBranchName(name)
+    resolveListedBranch(latest.current.branches, name)?.name ?? sanitizeBranchName(name)
 
   const pullRequestOf = (name: string): BranchPullRequest => {
     const b = latest.current.branches.find((x) => x.name === name)
@@ -1063,13 +1074,19 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     )
   }
 
-  /** After a delete: drop it from the created-branch overlay, and leave it if it is open. */
-  const leaveDeletedBranch = (deleted: string, fresh: BranchesData | undefined) => {
+  /**
+   * After a delete: drop it from the created-branch overlay, and leave it if it is open. Matched
+   * the way `currentBranch` resolves a name, against the branch as it was listed before the
+   * delete (`deletedShortName`), since it is no longer listed to resolve against.
+   */
+  const leaveDeletedBranch = (
+    deleted: string,
+    deletedShortName: string | undefined,
+    fresh: BranchesData | undefined,
+  ) => {
     forgetCreatedBranch(deleted)
-    // Matched the way `currentBranch` resolves a name, since the deleted branch is no longer
-    // listed to resolve against.
     const open = latest.current.branchName
-    if (open === deleted || sanitizeBranchName(open) === deleted) {
+    if (open === deleted || sanitizeBranchName(open) === deleted || open === deletedShortName) {
       // Nothing is left to keep, so no unsaved-changes prompt. With no default known yet, the
       // empty name lets the default-branch adoption effect pick it.
       setBranchName(fresh?.defaultBranch ?? latest.current.branchesData?.defaultBranch ?? '')
@@ -1078,6 +1095,10 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
 
   const handleDelete = (requested: string) => {
     const branchNameToDelete = listedName(requested)
+    const deletedShortName = resolveListedBranch(
+      latest.current.branches,
+      branchNameToDelete,
+    )?.shortName
     return singleFlight(
       'delete',
       branchNameToDelete,
@@ -1096,7 +1117,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 // another user's.
                 if (!result.ok && result.status === 404 && !isNonApiResponse(result)) {
                   notifications.show({ message: 'Branch deleted', color: 'green' })
-                  leaveDeletedBranch(branchNameToDelete, await reloadBranches())
+                  leaveDeletedBranch(branchNameToDelete, deletedShortName, await reloadBranches())
                   return
                 }
                 if (!result.ok) throw actionError(result, 'Failed to delete branch')
@@ -1110,7 +1131,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                       }
                     : { message: 'Branch deleted', color: 'green' },
                 )
-                leaveDeletedBranch(branchNameToDelete, await reloadBranches())
+                leaveDeletedBranch(branchNameToDelete, deletedShortName, await reloadBranches())
               } catch (err) {
                 if (!isUnanswered(err)) {
                   await reportActionFailure(err, 'Failed to delete branch', 'Delete branch')
@@ -1126,7 +1147,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 )
                 if (fresh && !listed) {
                   notifications.show({ message: 'Branch deleted', color: 'green' })
-                  leaveDeletedBranch(branchNameToDelete, fresh)
+                  leaveDeletedBranch(branchNameToDelete, deletedShortName, fresh)
                 } else {
                   showOutcomeUnknown('Delete branch')
                 }
