@@ -206,15 +206,19 @@ export interface BaseSchemaHold {
 
 /**
  * Why listing an unpublishable branch in `legacyBranches` would not publish it.
- * `blocks-namespace`: it is named after part of the namespace, so while it exists git holds no
- * branch in the namespace. `unlistable`: `legacyBranches` refuses its name.
+ * `blocks-namespace`: it is named after part of the namespace, so while it exists neither
+ * remote.git nor GitHub holds a branch in the namespace. `unlistable`: `legacyBranches` refuses
+ * its name.
  */
 export type UnpublishableBranchReason = 'blocks-namespace' | 'unlistable'
 
 /** A branch the GitHub gateway will not publish, by ref. */
 export interface UnpublishableBranch {
   name: string
-  /** Absent when a `legacyBranches` entry or a `protectedBranches` change would publish it. */
+  /**
+   * Absent when a `legacyBranches` entry would publish it, or when it is protected: by
+   * `protectedBranches`, as the base branch, or as GitHub's default branch.
+   */
   reason?: UnpublishableBranchReason
 }
 

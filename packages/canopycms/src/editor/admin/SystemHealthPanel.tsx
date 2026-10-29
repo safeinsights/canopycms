@@ -338,9 +338,9 @@ function UnpublishableBranchesAlert({
           <>
             <Text size="sm" data-testid="unpublishable-listable">
               A developer lists each branch from outside the namespace in legacyBranches
-              (CANOPYCMS_LEGACY_BRANCHES on the GitHub gateway). Otherwise, an editor re-enters its
-              changes by hand in a new branch, which is created inside the namespace. A protected
-              branch stays unpublishable while it is protected.
+              (CANOPYCMS_LEGACY_BRANCHES on the GitHub gateway), and takes a protected one out of
+              protectedBranches. Otherwise, an editor re-enters its changes by hand in a new branch,
+              which is created inside the namespace.
             </Text>
             <BranchRefs branches={listable} />
           </>
