@@ -3065,7 +3065,10 @@ describe('CmsWorker sync-pr-comments', () => {
       branch: { name: 'canopycms/prod/feature-x', status: 'submitted', ...branch },
     })
 
-  const run = async (pr: { state?: string; body?: string | null; headRef?: string } = {}) => {
+  const run = async (
+    pr: { state?: string; body?: string | null; headRef?: string } = {},
+    extra: Record<string, unknown> = {},
+  ) => {
     const get = vi.fn().mockResolvedValue({
       data: {
         number: 7,
@@ -3101,6 +3104,7 @@ describe('CmsWorker sync-pr-comments', () => {
         branch: 'canopycms/prod/feature-x',
         pullRequestNumber: 7,
         editorUrl: 'https://cms.example.org/edit',
+        ...extra,
       },
     })
     const consoleSpy = mockConsole()
@@ -3140,6 +3144,17 @@ describe('CmsWorker sync-pr-comments', () => {
     const saved = await BranchMetadataFileManager.loadOnly(branchPath)
     expect(saved?.branch.syncStatus).toBe('sync-failed')
     expect(saved?.branch.syncFailureReason).toBe('old')
+  })
+
+  it('links the editor by the short name the API queued, else by the full name', async () => {
+    await seedBranch({ pullRequestNumber: 7 })
+    await new CommentStore(branchPath).addComment({ userId: 'u1', text: 'A note', type: 'branch' })
+
+    const short = await run({}, { editorBranch: 'feature-x' })
+    expect(short.update.mock.calls[0]![0].body).toContain('?branch=feature-x')
+
+    const full = await run()
+    expect(full.update.mock.calls[0]![0].body).toContain('?branch=canopycms%2Fprod%2Ffeature-x')
   })
 
   it('writes nothing when the summary is unchanged or the PR body has no block', async () => {

@@ -369,7 +369,7 @@ export async function executeTask(
         {
           head: branch,
           base: optionalString(payload, 'baseBranch', ctx.baseBranch),
-          title: optionalString(payload, 'title', `Submit ${branch}`),
+          title: optionalString(payload, 'title', `Submit ${editorBranchOf(payload, branch)}`),
           body: optionalString(payload, 'body', ''),
         },
         signal,
@@ -384,7 +384,7 @@ export async function executeTask(
       await ctx.github().updatePullRequest(
         prNumber,
         {
-          title: optionalString(payload, 'title', `Submit ${branch}`),
+          title: optionalString(payload, 'title', `Submit ${editorBranchOf(payload, branch)}`),
           body: optionalString(payload, 'body', ''),
         },
         signal,
@@ -425,7 +425,7 @@ export async function executeTask(
       const body = mergeSectionIntoBody
         ? await refreshCommentsBlock({
             branchRoot: ctx.branchWorkspacePath(branch),
-            branch,
+            branch: editorBranchOf(payload, branch),
             editorUrl: typeof payload.editorUrl === 'string' ? payload.editorUrl : undefined,
             section: queuedBody,
             warn: workerLogWarn,
@@ -437,7 +437,7 @@ export async function executeTask(
           {
             head: branch,
             base,
-            title: optionalString(payload, 'title', `Submit ${branch}`),
+            title: optionalString(payload, 'title', `Submit ${editorBranchOf(payload, branch)}`),
             body,
             // Content submits (api/github-sync.ts) set both.
             markReadyIfDraft: payload.markReadyIfDraft === true,
@@ -542,7 +542,7 @@ export async function executeTask(
       // A comments.json that does not parse stays so until a comment write rewrites it.
       const body = await renderPrCommentsBody({
         branchRoot: branchPath,
-        branch,
+        branch: editorBranchOf(payload, branch),
         editorUrl,
         body: pr.body,
       }).catch((err: unknown) => {
@@ -564,6 +564,14 @@ export async function executeTask(
  * delete-remote-branch task names a branch already deleted here, so a workspace under that
  * name is leftover or a newer branch's that reused the name.
  */
+/**
+ * The name links and a fallback title give the branch: the short name the API queued
+ * (branch-param.ts), else the ref, which the editor resolves too.
+ */
+function editorBranchOf(payload: Record<string, unknown>, branch: string): string {
+  return optionalString(payload, 'editorBranch', branch)
+}
+
 function metadataBranchOf(task: Task): string | null {
   if (task.action === 'delete-remote-branch' || task.action === SYNC_PR_COMMENTS_ACTION) return null
   return typeof task.payload.branch === 'string' ? task.payload.branch : null
@@ -590,7 +598,6 @@ export async function updateBranchMetadata(
   try {
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
     const updates: Record<string, unknown> = {
-      name: branch,
       syncStatus: 'synced',
       // save()'s merge only overwrites keys present in this update, so a prior
       // syncFailureReason would survive this successful sync forever unless
@@ -651,7 +658,7 @@ async function updateBranchMetadataOnFailure(
 
   try {
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
-    const failed = { name: branch, syncStatus: 'sync-failed', syncFailureReason: error } as const
+    const failed = { syncStatus: 'sync-failed', syncFailureReason: error } as const
     const submittedAt = task.payload.submittedAt
     const unlocked =
       options.unlock &&
@@ -842,7 +849,7 @@ async function recordPushedToGitHub(
   }
   try {
     await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).save({
-      branch: { name: branch, pushedToGitHubAt: new Date().toISOString() },
+      branch: { pushedToGitHubAt: new Date().toISOString() },
     })
   } catch (err) {
     workerLogError(`Failed to record the GitHub push for ${branch}:`, getErrorMessage(err))

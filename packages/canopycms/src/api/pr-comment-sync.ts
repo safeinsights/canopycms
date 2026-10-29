@@ -7,6 +7,7 @@ import { enqueueTask, listTasks } from '../task-queue/cms-task-queue'
 import { getTaskQueueDir } from '../task-queue/task-queue-config'
 import { withLock } from '../utils/async-mutex'
 import { getErrorMessage } from '../utils/error'
+import { shortNameOf } from '../branch-param'
 
 /** A PR the comment summary is still worth updating on: one exists and is not merged or closed. */
 function openPullRequest(context: BranchContext): number | undefined {
@@ -40,6 +41,8 @@ export async function syncPrComments(ctx: ApiContext, context: BranchContext): P
   if (prNumber === undefined) return
   if (!clientOperatingStrategy(ctx.services.config.mode).supportsPullRequests()) return
   const branch = context.branch.name
+  // The name the editor's URLs use, for the body's links.
+  const shortName = shortNameOf(ctx.services.config, branch)
   const editorUrl = ctx.services.config.editorUrl ?? context.branch.editorUrl
 
   try {
@@ -52,7 +55,7 @@ export async function syncPrComments(ctx: ApiContext, context: BranchContext): P
             if (pr.state !== 'open') return
             const body = await renderPrCommentsBody({
               branchRoot: context.branchRoot,
-              branch,
+              branch: shortName,
               editorUrl,
               body: pr.body,
             })
@@ -75,7 +78,12 @@ export async function syncPrComments(ctx: ApiContext, context: BranchContext): P
     if (queued) return
     await enqueueTask(taskDir, {
       action: SYNC_PR_COMMENTS_ACTION,
-      payload: { branch, pullRequestNumber: prNumber, ...(editorUrl ? { editorUrl } : {}) },
+      payload: {
+        branch,
+        pullRequestNumber: prNumber,
+        ...(editorUrl ? { editorUrl } : {}),
+        editorBranch: shortName,
+      },
     })
   } catch (err) {
     console.warn(

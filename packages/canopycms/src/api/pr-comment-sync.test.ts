@@ -212,11 +212,21 @@ describe('syncPrComments, queued path', () => {
     expect(tasks.map((t) => [t.action, t.payload])).toEqual([
       [
         'sync-pr-comments',
-        { branch: 'feature/x', pullRequestNumber: 7, editorUrl: 'https://cms.example.org/edit' },
+        {
+          branch: 'feature/x',
+          pullRequestNumber: 7,
+          editorUrl: 'https://cms.example.org/edit',
+          editorBranch: 'feature/x',
+        },
       ],
       [
         'sync-pr-comments',
-        { branch: 'feature/y', pullRequestNumber: 7, editorUrl: 'https://cms.example.org/edit' },
+        {
+          branch: 'feature/y',
+          pullRequestNumber: 7,
+          editorUrl: 'https://cms.example.org/edit',
+          editorBranch: 'feature/y',
+        },
       ],
     ])
   })
