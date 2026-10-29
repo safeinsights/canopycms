@@ -200,13 +200,49 @@ export const Failed: Story = {
 
 export const TooLarge: Story = {
   args: {
+    onOpenEntry: noop,
     state: { ...answer({}), data: undefined, error: { kind: 'tooLarge', message: 'x' } },
   },
 }
 
+/** A 404: no side to compare, with the ways the entry can still be looked at. */
 export const NotComparable: Story = {
   args: {
-    state: { ...answer({}), data: undefined, error: { kind: 'unavailable', message: 'x' } },
+    onOpenEntry: noop,
+    pullRequestUrl: 'https://example.com/pull/7',
+    state: { ...answer({}), data: undefined, error: { kind: 'notFound', message: 'x' } },
+  },
+}
+
+/** A 422: one side doesn't parse. */
+export const Unreadable: Story = {
+  args: {
+    onOpenEntry: noop,
+    state: { ...answer({}), data: undefined, error: { kind: 'unreadable', message: 'x' } },
+  },
+}
+
+/** 2,000 lines inserted into a body: Before and After stay level, row by row. */
+export const LongInsertion: Story = {
+  args: {
+    state: answer({
+      after: side(
+        afterData,
+        body.replace(
+          '## Saving\n',
+          `## Saving\n${Array.from({ length: 2000 }, (_, i) => `Inserted line ${i + 1}`).join('\n')}\n`,
+        ),
+      ),
+    }),
+  },
+}
+
+/** A whitespace-only change and a mostly rewritten title. */
+export const Whitespace: Story = {
+  args: {
+    state: answer({
+      after: side({ ...afterData, title: 'Getting  started' }),
+    }),
   },
 }
 

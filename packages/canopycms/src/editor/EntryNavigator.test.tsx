@@ -2946,6 +2946,11 @@ describe('EntryNavigator - the Changed filter', () => {
       'Old FAQ GuidesDeleted',
       'Untitled one GuidesDeleted',
     ])
+    expect(
+      within(deleted).getByRole('button', {
+        name: 'Old FAQ, deleted on this branch. Show changes',
+      }),
+    ).toBe(buttons[0])
     await userEvent.click(buttons[0])
     expect(onShowDeletedChanges).toHaveBeenCalledWith(
       expect.objectContaining({ status: 'deleted', logicalPath: 'content/guides/old-faq' }),

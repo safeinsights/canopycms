@@ -134,13 +134,13 @@ describe('computeEntryDiff', () => {
       expect.objectContaining({
         kind: 'moved',
         path: ['Team', 'Linus'],
-        before: { kind: 'position', position: 3 },
-        after: { kind: 'position', position: 1 },
+        before: { kind: 'position', position: 3, of: 3 },
+        after: { kind: 'position', position: 1, of: 3 },
       }),
     ])
   })
 
-  it('reads reordered blocks as moved, and an edit to a moved block as its own change', () => {
+  it('reads reordered blocks as moved, an edit to one as its own change, both named as at the base', () => {
     const before = side(base)
     const after = edit(before, (data) => {
       const blocks = data.blocks as Array<{ value: Record<string, unknown> }>
@@ -148,8 +148,8 @@ describe('computeEntryDiff', () => {
       data.blocks = [blocks[1], blocks[0]]
     })
     expect(summary(computeEntryDiff({ fields, before, after }).changes)).toEqual([
-      ['moved', 'Page sections › Hero: Welcome back'],
-      ['changed', 'Page sections › Hero: Welcome back › Heading'],
+      ['moved', 'Page sections › Hero: Welcome'],
+      ['changed', 'Page sections › Hero: Welcome › Heading'],
     ])
   })
 
@@ -203,14 +203,14 @@ describe('computeEntryDiff', () => {
     const text = changes[0].text
     expect(text?.mode).toBe('lines')
     if (text?.mode !== 'lines') return
-    expect(text.lines).toEqual([
+    expect(text.rows).toEqual([
       { kind: 'skipped', count: 4 },
       { kind: 'same', text: 'Line 5' },
       { kind: 'same', text: 'Line 6' },
-      { kind: 'removed', parts: [{ value: 'Line 7' }] },
       {
-        kind: 'added',
-        parts: [{ value: 'Line 7' }, { value: ', rewritten', added: true }],
+        kind: 'change',
+        before: [{ value: 'Line 7' }],
+        after: [{ value: 'Line 7' }, { value: ', rewritten', added: true }],
       },
       { kind: 'same', text: 'Line 8' },
       { kind: 'same', text: 'Line 9' },
@@ -277,10 +277,18 @@ describe('computeEntryDiff', () => {
       before: { kind: 'boolean', value: false },
       after: { kind: 'boolean', value: true },
     })
-    expect(byPath['Published at']).toMatchObject({
-      before: { kind: 'date', iso: '2026-01-02', dateOnly: true },
-      after: { kind: 'date', iso: '2026-02-03T10:00:00.000Z' },
+    const dateOnly = new Date(2026, 0, 2).toLocaleDateString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
     })
+    expect(byPath['Published at']).toMatchObject({
+      before: { kind: 'date', iso: '2026-01-02', dateOnly: true, text: dateOnly },
+      after: { kind: 'date', iso: '2026-02-03T10:00:00.000Z' },
+      text: { mode: 'words' },
+    })
+    const shown = byPath['Published at'].after
+    expect(shown?.kind === 'date' && shown.text).toMatch(/2026/)
     expect(byPath['Status']).toMatchObject({
       before: { kind: 'select', label: 'Draft copy' },
       after: { kind: 'select', label: 'Ready to go' },
@@ -309,14 +317,13 @@ describe('textDiff', () => {
     const side = (diff: TextDiff, keep: 'before' | 'after'): string =>
       diff.mode === 'words'
         ? own(diff.parts, keep)
-        : diff.lines
-            .flatMap((line) =>
-              line.kind === 'same'
-                ? [line.text]
-                : line.kind === 'skipped' || (line.kind === 'removed') !== (keep === 'before')
-                  ? []
-                  : [own(line.parts, keep)],
-            )
+        : diff.rows
+            .flatMap((row) => {
+              if (row.kind === 'same') return [row.text]
+              if (row.kind === 'skipped') return []
+              const parts = row[keep]
+              return parts ? [own(parts, keep)] : []
+            })
             .join('\n')
     const pairs: Array<[string, string]> = [
       ['To a branch.', 'To a branch of their own.'],
@@ -365,5 +372,30 @@ describe('computeEntryDiff on long lists', () => {
     // ~40ms here; the quadratic table this replaced took ~1s.
     expect(Date.now() - started).toBeLessThan(400)
     expect(summary(changes)).toEqual([['moved', 'Team › Person 0']])
+  })
+})
+
+describe('computeEntryDiff, display details', () => {
+  it('lines up a long insertion row by row, each added line with an empty Before cell', () => {
+    const inserted = Array.from({ length: 2000 }, (_, i) => `New line ${i}`)
+    const before = side({ title: 'Hello' }, 'Start\nEnd\n')
+    const after = side({ title: 'Hello' }, `Start\n${inserted.join('\n')}\nEnd\n`)
+    const text = computeEntryDiff({ fields, before, after }).changes[0].text
+    if (text?.mode !== 'lines') throw new Error('expected a line diff')
+    const changed = text.rows.filter((row) => row.kind === 'change')
+    expect(changed).toHaveLength(2000)
+    expect(changed.every((row) => row.kind === 'change' && !row.before && row.after)).toBe(true)
+    expect(text.rows[0]).toEqual({ kind: 'same', text: 'Start' })
+    expect(text.rows.at(-1)).toEqual({ kind: 'same', text: 'End' })
+  })
+
+  it('diffs two images’ alt texts by word', () => {
+    const before = side({ cover: { src: '/a.jpg', alt: 'A forest path' } })
+    const after = side({ cover: { src: '/a.jpg', alt: 'A forest path at dawn' } })
+    const [change] = computeEntryDiff({ fields, before, after }).changes
+    expect(change.altText).toEqual({
+      mode: 'words',
+      parts: [{ value: 'A forest path' }, { value: ' at dawn', added: true }],
+    })
   })
 })

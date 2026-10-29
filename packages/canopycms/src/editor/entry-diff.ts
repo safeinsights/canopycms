@@ -24,14 +24,18 @@ export interface DiffPart {
   removed?: true
 }
 
-/** One line of a line diff; `skipped` stands for unchanged lines left out between changes. */
-export type DiffLine =
+/**
+ * One row of a line diff, its Before and After lines side by side: an unchanged line on both, a
+ * changed pair, or a line on one side only (the other side's cell is empty). `skipped` stands
+ * for unchanged lines left out between changes.
+ */
+export type DiffRow =
   | { kind: 'same'; text: string }
-  | { kind: 'removed' | 'added'; parts: DiffPart[] }
+  | { kind: 'change'; before?: DiffPart[]; after?: DiffPart[] }
   | { kind: 'skipped'; count: number }
 
-/** A text change: word by word for a short value, line by line with word marks for long text. */
-export type TextDiff = { mode: 'words'; parts: DiffPart[] } | { mode: 'lines'; lines: DiffLine[] }
+/** A text change: word by word for a short value, row by row with word marks for long text. */
+export type TextDiff = { mode: 'words'; parts: DiffPart[] } | { mode: 'lines'; rows: DiffRow[] }
 
 /** A value as the drawer shows it. */
 export type DisplayValue =
@@ -39,14 +43,14 @@ export type DisplayValue =
   | { kind: 'text'; text: string; long?: true }
   | { kind: 'number'; value: number }
   | { kind: 'boolean'; value: boolean }
-  /** `dateOnly`: a calendar date, read as local midnight. */
-  | { kind: 'date'; iso: string; dateOnly?: true }
+  /** `text`, its absolute local form; `dateOnly`: a calendar date, read as local midnight. */
+  | { kind: 'date'; iso: string; text: string; dateOnly?: true }
   | { kind: 'select'; label: string }
   /** No `title` when the editor's entry list has no entry with this id. */
   | { kind: 'reference'; id: string; title?: string }
   | { kind: 'image'; src: string; name: string; alt?: string }
-  /** A list item's place, 1-based, for a move. */
-  | { kind: 'position'; position: number }
+  /** A list item's place, 1-based, among `of` items, for a move. */
+  | { kind: 'position'; position: number; of: number }
   | { kind: 'list'; items: DisplayValue[] }
   /** A whole object, list item or block, as its labelled fields. */
   | { kind: 'fields'; fields: Array<{ label: string; value: DisplayValue }> }
@@ -62,6 +66,8 @@ export interface EntryChange {
   before?: DisplayValue
   after?: DisplayValue
   text?: TextDiff
+  /** Both sides' images' alt texts, diffed by word. */
+  altText?: TextDiff
   /** The text differs too much to mark within the time allowed: show both sides whole. */
   tooLargeToMark?: true
 }
@@ -157,6 +163,34 @@ const rawText = (value: unknown): string =>
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
 
+/**
+ * A date as a comparison shows it: absolute, in the viewer's locale, with the time zone. The
+ * editor's dates are otherwise relative, but two relative dates can read alike while their values
+ * differ, which is the one thing a comparison must show.
+ */
+const formatDate = (iso: string, dateOnly: boolean): string => {
+  if (dateOnly) {
+    const [year, month, day] = iso.split('-').map(Number)
+    return new Date(year, month - 1, day).toLocaleDateString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    })
+  }
+  return new Date(iso).toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  })
+}
+
+/** The text a display marks word by word in a change: text values', and dates' absolute form. */
+const markableText = (value: DisplayValue | undefined): string | undefined =>
+  value?.kind === 'text' || value?.kind === 'date' ? value.text : undefined
+
 class Walker {
   readonly changes: EntryChange[] = []
 
@@ -216,8 +250,8 @@ class Walker {
       case 'datetime':
         if (typeof value === 'string' && !Number.isNaN(Date.parse(value))) {
           return DATE_ONLY.test(value)
-            ? { kind: 'date', iso: value, dateOnly: true }
-            : { kind: 'date', iso: value }
+            ? { kind: 'date', iso: value, text: formatDate(value, true), dateOnly: true }
+            : { kind: 'date', iso: value, text: formatDate(value, false) }
         }
         break
       default:
@@ -317,11 +351,28 @@ class Walker {
     const change: EntryChange = { key: where.key, path: where.path, kind }
     if (kind !== 'added') change.before = this.display(field, before)
     if (kind !== 'removed') change.after = this.display(field, after)
-    // Text only: a reference's id or a date's ISO string is a value, shown whole.
-    if (change.before?.kind === 'text' && change.after?.kind === 'text') {
-      const text = textDiff(change.before.text, change.after.text, !!change.after.long)
+    // Text and dates only: a reference's id is a value, shown whole.
+    const beforeText = markableText(change.before)
+    const afterText = markableText(change.after)
+    if (
+      beforeText !== undefined &&
+      afterText !== undefined &&
+      change.before?.kind === change.after?.kind
+    ) {
+      const long = change.after?.kind === 'text' && !!change.after.long
+      const text = textDiff(beforeText, afterText, long)
       if (text) change.text = text
       else change.tooLargeToMark = true
+    }
+    if (
+      change.before?.kind === 'image' &&
+      change.after?.kind === 'image' &&
+      change.before.alt !== undefined &&
+      change.after.alt !== undefined &&
+      change.before.alt !== change.after.alt
+    ) {
+      const alt = textDiff(change.before.alt, change.after.alt)
+      if (alt) change.altText = alt
     }
     this.changes.push(change)
   }
@@ -393,8 +444,14 @@ class Walker {
 
     aItems.forEach((value, index) => {
       const key = aKeys[index]
-      const itemAt = at(where, item.heading(value, index), key)
       const from = bIndex.get(key)
+      // A matched item is named as it was at the base, so a change to its title doesn't rename
+      // the path to it.
+      const itemAt = at(
+        where,
+        from === undefined ? item.heading(value, index) : item.heading(bItems[from], from),
+        key,
+      )
       if (from === undefined) {
         this.changes.push({
           key: itemAt.key,
@@ -409,8 +466,8 @@ class Walker {
           key: `${itemAt.key}#moved`,
           path: itemAt.path,
           kind: 'moved',
-          before: { kind: 'position', position: from + 1 },
-          after: { kind: 'position', position: index + 1 },
+          before: { kind: 'position', position: from + 1, of: bItems.length },
+          after: { kind: 'position', position: index + 1, of: aItems.length },
         })
       }
       item.compare(bItems[from], value, itemAt)
@@ -503,13 +560,13 @@ export function textDiff(
     return words && { mode: 'words', parts: toParts(words) }
   }
 
-  const lines: DiffLine[] = []
+  const rows: DiffRow[] = []
   const changes = diffLines(before, after, timeout())
   if (!changes) return undefined
   for (let i = 0; i < changes.length; i++) {
     const change = changes[i]
     if (!change.added && !change.removed) {
-      for (const text of splitLines(change.value)) lines.push({ kind: 'same', text })
+      for (const text of splitLines(change.value)) rows.push({ kind: 'same', text })
       continue
     }
     const removed = change.removed ? splitLines(change.value) : []
@@ -526,20 +583,23 @@ export function textDiff(
       const changed = diffWordsWithSpace(removed[n], added[n], timeout())
       if (!changed) return undefined
       const words = toParts(changed)
-      lines.push({ kind: 'removed', parts: words.filter((p) => !p.added) })
-      lines.push({ kind: 'added', parts: words.filter((p) => !p.removed) })
+      rows.push({
+        kind: 'change',
+        before: words.filter((p) => !p.added),
+        after: words.filter((p) => !p.removed),
+      })
     }
     for (const text of removed.slice(paired))
-      lines.push({ kind: 'removed', parts: [{ value: text, removed: true }] })
+      rows.push({ kind: 'change', before: [{ value: text, removed: true }] })
     for (const text of added.slice(paired))
-      lines.push({ kind: 'added', parts: [{ value: text, added: true }] })
+      rows.push({ kind: 'change', after: [{ value: text, added: true }] })
   }
-  return { mode: 'lines', lines: withContext(lines) }
+  return { mode: 'lines', rows: withContext(rows) }
 }
 
 /** `lines` with each run of unchanged lines cut to the context beside its changes. */
-const withContext = (lines: DiffLine[]): DiffLine[] => {
-  const out: DiffLine[] = []
+const withContext = (lines: DiffRow[]): DiffRow[] => {
+  const out: DiffRow[] = []
   for (let i = 0; i < lines.length; ) {
     if (lines[i].kind !== 'same') {
       out.push(lines[i++])

@@ -1720,6 +1720,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                 color="gray"
                 maw="100%"
                 rightSection={<ChangeMarker kind="deleted" context={null} />}
+                aria-label={`${entry.label}, deleted on this branch. ${EDITOR_ACTIONS.showChanges}`}
                 onClick={() => onShowDeletedChanges(entry.entry, entry.label)}
                 data-testid="entry-nav-deleted-entry"
               >

@@ -1642,11 +1642,8 @@ const EditorContent: React.FC<EditorProps> = ({
   // until the list catches up.
   const changesOffered = branchPending || currentBranch?.isProtected === false
   const changesAvailable = !!currentBranch && currentBranch.isProtected === false
-  const branchChanges = useBranchChangesData(
-    apiClient,
-    branchNameState,
-    (contentPanelShown || !!currentEntry) && changesAvailable,
-  )
+  const changesRead = (contentPanelShown || !!currentEntry) && changesAvailable
+  const branchChanges = useBranchChangesData(apiClient, branchNameState, changesRead)
   reloadChangesRef.current = (branch) => {
     if (branch === branchNameState) void branchChanges.reload()
   }
@@ -1665,7 +1662,11 @@ const EditorContent: React.FC<EditorProps> = ({
   const [changesOpen, setChangesOpen] = useState(false)
   // Its comparison stays keyed until the close transition ends, so the closing drawer keeps it.
   const [changesShown, setChangesShown] = useState(false)
-  const changesOpenerRef = useRef<HTMLElement | null>(null)
+  // Who opened the drawer, and the control that stands in for it once it is gone.
+  const changesOpenerRef = useRef<{ el: HTMLElement | null; standIn: () => HTMLElement | null }>({
+    el: null,
+    standIn: () => null,
+  })
   const showChangesRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     setChangesOpen(false)
@@ -1701,8 +1702,20 @@ const EditorContent: React.FC<EditorProps> = ({
       .filter((label): label is string => !!label)
     return [...collections, parts[parts.length - 1]].join(' › ')
   }
-  const showEntryChanges = (entry: BranchChangeEntry, title: string) => {
-    changesOpenerRef.current = rememberOpener()
+  const showEntryChanges = (
+    entry: BranchChangeEntry,
+    title: string,
+    from: 'header' | 'deleted row',
+  ) => {
+    // The header's button gives way to the entry menu's trigger; a deleted entry's row, gone with
+    // its panel, to the rail's Content button, never to another entry's controls.
+    changesOpenerRef.current = {
+      el: rememberOpener(),
+      standIn:
+        from === 'header'
+          ? () => showChangesRef.current ?? navigatorToggleRef.current ?? contentToggleRef.current
+          : () => contentToggleRef.current,
+    }
     // A deleted entry has no row to read a schema from, so it borrows its type's from a sibling.
     const fields =
       entriesState.find((e) => e.path === entry.logicalPath)?.schema ??
@@ -1724,13 +1737,22 @@ const EditorContent: React.FC<EditorProps> = ({
     setChangesOpen(true)
     setChangesShown(true)
   }
-  // The header's Show changes button, else the entry menu's trigger, once a save leaves the entry
-  // unchanged or a deleted entry's row goes with its panel.
   const changesReturnTarget = () =>
-    returnTarget(
-      changesOpenerRef.current,
-      () => showChangesRef.current ?? navigatorToggleRef.current ?? contentToggleRef.current,
-    )
+    returnTarget(changesOpenerRef.current.el, changesOpenerRef.current.standIn)
+  // Where a refused comparison can still be looked at: the entry itself, if the branch has it,
+  // and the pull request, for those who review it.
+  const changesOpenEntry =
+    changesSubject &&
+    changesSubject.status !== 'deleted' &&
+    entriesState.some((e) => e.path === changesSubject.logicalPath)
+      ? () => {
+          setChangesOpen(false)
+          openEntry(changesSubject.logicalPath)
+        }
+      : undefined
+  const changesPullRequestUrl = isReviewer(userContext?.groups)
+    ? currentBranch?.pullRequestUrl
+    : undefined
   const runSaveAll = () => {
     void handleSaveAll()
       .then((result) => {
@@ -2186,7 +2208,7 @@ const EditorContent: React.FC<EditorProps> = ({
           entryFilter={entryFilter === 'changed' && !changesOffered ? 'all' : entryFilter}
           onEntryFilterChange={setEntryFilter}
           onShowUnsaved={showUnsaved}
-          onShowDeletedChanges={showEntryChanges}
+          onShowDeletedChanges={(entry, label) => showEntryChanges(entry, label, 'deleted row')}
           branchChanges={
             changesOffered
               ? {
@@ -2351,8 +2373,12 @@ const EditorContent: React.FC<EditorProps> = ({
                         showEntryChanges(
                           openEntryChange,
                           currentEntry?.label ?? currentEntry?.slug ?? '',
+                          'header',
                         )
                     : undefined
+                }
+                showChangesPending={
+                  changesRead && !!currentEntry && !branchChanges.data && !branchChanges.error
                 }
                 showChangesRef={showChangesRef}
                 onFileReload={() => handleReload(() => navigatorToggleRef.current)}
@@ -2588,6 +2614,8 @@ const EditorContent: React.FC<EditorProps> = ({
                   }}
                   state={entryChange}
                   referenceTitle={referenceTitle}
+                  onOpenEntry={changesOpenEntry}
+                  pullRequestUrl={changesPullRequestUrl}
                 />
               )}
               {branchNameState && (

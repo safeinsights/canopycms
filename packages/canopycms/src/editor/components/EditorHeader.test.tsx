@@ -1742,3 +1742,47 @@ describe('EditorHeader - bar tooltips', () => {
     expect((await screen.findByRole('tooltip')).textContent).toBe('Branch actions')
   })
 })
+
+describe('EntryHeader - Show changes', () => {
+  const originalMatchMedia = window.matchMedia
+  afterEach(() => {
+    window.matchMedia = originalMatchMedia
+    cleanup()
+  })
+
+  it('offers a text button that opens the changes', async () => {
+    const onShowChanges = vi.fn()
+    renderHeader({ onShowChanges })
+    await userEvent.click(screen.getByRole('button', { name: 'Show changes' }))
+    expect(onShowChanges).toHaveBeenCalled()
+    expect(screen.getByTestId('entry-show-changes').textContent).toBe('Show changes')
+  })
+
+  it('holds its slot unseen and unreachable while the changes list loads', () => {
+    renderHeader({ showChangesPending: true })
+    const held = screen.getByTestId('entry-show-changes-pending')
+    expect(held.style.visibility).toBe('hidden')
+    expect(held.getAttribute('aria-hidden')).toBe('true')
+    expect(held.getAttribute('tabindex')).toBe('-1')
+    expect(screen.queryByRole('button', { name: 'Show changes' })).toBeNull()
+  })
+
+  it('is an icon-only control below sm, named and with a Tooltip on focus', async () => {
+    window.matchMedia = (query: string) =>
+      ({
+        matches: query.startsWith('(max-width:'),
+        media: query,
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      }) as MediaQueryList
+    renderHeader({ onShowChanges: vi.fn() })
+    const control = screen.getByRole('button', { name: 'Show changes' })
+    expect(control.textContent).toBe('')
+    act(() => control.focus())
+    expect((await screen.findByRole('tooltip')).textContent).toBe('Show changes')
+  })
+})

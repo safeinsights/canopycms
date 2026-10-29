@@ -45,17 +45,18 @@ export type BranchChangesError =
   | { kind: 'failed'; message: string }
 
 /**
- * Why an entry's change could not be loaded: as the list's, or a refusal no retry passes, the
- * entry too large to compare (413) or not comparable at all (404, 422).
+ * Why an entry's change could not be loaded: as the list's, or a refusal no retry passes: too
+ * large to compare (413), on neither side (404), or a side that doesn't parse (422).
  */
 type EntryChangeError =
   | BranchChangesError
   | { kind: 'tooLarge'; message: string }
-  | { kind: 'unavailable'; message: string }
+  | { kind: 'notFound'; message: string }
+  | { kind: 'unreadable'; message: string }
 
-class ChangesLoadError<E> extends Error {
+class ChangesLoadError<E extends { kind: string }> extends Error {
   constructor(readonly reason: E) {
-    super('changes not loaded')
+    super(`Couldn't load the branch's changes (${reason.kind})`)
   }
 }
 
@@ -95,9 +96,11 @@ async function fetchEntryChange(
       ? { kind: 'syncing', ...(result.error && { message: result.error }) }
       : result.status === 413
         ? { kind: 'tooLarge', message }
-        : result.status === 404 || result.status === 422
-          ? { kind: 'unavailable', message }
-          : { kind: 'failed', message },
+        : result.status === 404
+          ? { kind: 'notFound', message }
+          : result.status === 422
+            ? { kind: 'unreadable', message }
+            : { kind: 'failed', message },
   )
 }
 

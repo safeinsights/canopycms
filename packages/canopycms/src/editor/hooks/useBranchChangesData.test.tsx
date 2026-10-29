@@ -225,8 +225,8 @@ describe('useEntryChangeData', () => {
   it.each([
     [409, { kind: 'syncing', message: 'Being synced.' }],
     [413, { kind: 'tooLarge', message: 'Being synced.' }],
-    [404, { kind: 'unavailable', message: 'Being synced.' }],
-    [422, { kind: 'unavailable', message: 'Being synced.' }],
+    [404, { kind: 'notFound', message: 'Being synced.' }],
+    [422, { kind: 'unreadable', message: 'Being synced.' }],
     [503, { kind: 'failed', message: 'Being synced.' }],
   ])('maps a %i to its kind', async (status, error) => {
     client.changes.entry.mockResolvedValue({ ok: false, status, error: 'Being synced.' })

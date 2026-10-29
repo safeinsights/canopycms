@@ -71,7 +71,8 @@ describe('EntryChangesDrawer', () => {
     expect(textOf(card)).toContain('Changed')
     const inserted = card.querySelector('ins')
     // The inserted run keeps its own leading space, so the "Added: " prefix is followed by it.
-    expect(textOf(inserted)).toBe('Added:  there')
+    expect(textOf(inserted)).toBe('Added:  there, end of addition')
+    expect(within(card).getByRole('heading', { level: 3 }).textContent).toBe('Title')
     expect(within(inserted as HTMLElement).getByText('Added:')).toBeTruthy()
   })
 
@@ -87,8 +88,10 @@ describe('EntryChangesDrawer', () => {
       'Too many changes to highlight.',
     )
     expect(card.querySelector('ins, del')).toBeNull()
-    expect(textOf(card)).toContain('a9999')
-    expect(textOf(card)).toContain('b9999')
+    // Each side whole, cut as any long text is until asked.
+    expect(textOf(card)).toContain('a49')
+    expect(textOf(card)).toContain('b49')
+    expect(within(card).getAllByRole('button', { name: 'Show all 10000 lines' })).toHaveLength(2)
   })
 
   it('names a reference by title, or as an unknown entry by id', async () => {
@@ -98,7 +101,8 @@ describe('EntryChangesDrawer', () => {
     })
     const card = within(await waitFor(drawer)).getByTestId('entry-change-card')
     expect(textOf(card)).toContain('Ada')
-    expect(textOf(card)).toContain('Unknown entry bbbbbbbbbbbb')
+    expect(textOf(card)).toContain('Entry unavailable')
+    expect(textOf(card)).not.toContain('bbbbbbbbbbbb')
   })
 
   it('says a new, deleted or moved entry is one', async () => {
@@ -137,9 +141,10 @@ describe('EntryChangesDrawer', () => {
     )
   })
 
-  it('shows skeleton cards while loading', async () => {
+  it('shows skeleton cards while loading, saying so to a screen reader', async () => {
     renderDrawer({ state: { ...loaded(sides(null, null)), data: undefined } })
-    expect(within(await waitFor(drawer)).getByTestId('entry-changes-loading')).toBeTruthy()
+    const loading = within(await waitFor(drawer)).getByTestId('entry-changes-loading')
+    expect(textOf(loading)).toBe('Loading changes…')
   })
 
   it('shows a 409 in yellow in the server’s words, keeps the last data, and retries', async () => {
@@ -151,7 +156,9 @@ describe('EntryChangesDrawer', () => {
     renderDrawer({ state })
     const dialog = await waitFor(drawer)
     const alert = within(dialog).getByTestId('entry-changes-syncing')
-    expect(textOf(alert)).toContain('This branch is being synced with main.')
+    expect(textOf(alert)).toContain(
+      'This branch is being synced with main. The changes below may be out of date.',
+    )
     expect(within(dialog).getByTestId('entry-change-card')).toBeTruthy()
     await userEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
     expect(state.reload).toHaveBeenCalled()
@@ -159,14 +166,42 @@ describe('EntryChangesDrawer', () => {
 
   it.each([
     ['tooLarge', 'This entry is too large to compare here.'],
-    ['unavailable', 'This entry can’t be compared.'],
-  ] as const)('gives a %s refusal plain copy and no Retry', async (kind, copy) => {
+    ['notFound', 'This entry isn’t on this branch or its base.'],
+    ['unreadable', 'This entry couldn’t be read on one side, so it can’t be compared.'],
+  ] as const)(
+    'gives a %s refusal its own copy, no Retry, and the ways still open',
+    async (kind, copy) => {
+      const onOpenEntry = vi.fn()
+      renderDrawer({
+        state: { ...loaded(sides(null, null)), data: undefined, error: { kind, message: 'x' } },
+        onOpenEntry,
+        pullRequestUrl: 'https://example.com/pull/7',
+      })
+      const dialog = await waitFor(drawer)
+      const refusal = within(dialog).getByTestId(`entry-changes-${kind}`)
+      expect(textOf(refusal)).toContain(copy)
+      expect(within(dialog).queryByRole('button', { name: 'Retry' })).toBeNull()
+      expect(
+        within(refusal)
+          .getByRole('link', { name: 'Compare on the pull request' })
+          .getAttribute('href'),
+      ).toBe('https://example.com/pull/7')
+      await userEvent.click(within(refusal).getByRole('button', { name: 'Open the entry' }))
+      expect(onOpenEntry).toHaveBeenCalled()
+    },
+  )
+
+  it('offers neither way out when there is none', async () => {
     renderDrawer({
-      state: { ...loaded(sides(null, null)), data: undefined, error: { kind, message: 'x' } },
+      state: {
+        ...loaded(sides(null, null)),
+        data: undefined,
+        error: { kind: 'notFound', message: 'x' },
+      },
     })
-    const dialog = await waitFor(drawer)
-    expect(textOf(within(dialog).getByTestId(`entry-changes-${kind}`))).toContain(copy)
-    expect(within(dialog).queryByRole('button', { name: 'Retry' })).toBeNull()
+    const refusal = within(await waitFor(drawer)).getByTestId('entry-changes-notFound')
+    expect(within(refusal).queryByRole('button')).toBeNull()
+    expect(within(refusal).queryByRole('link')).toBeNull()
   })
 
   it('closes on Escape and returns focus to the button that opened it', async () => {
@@ -197,5 +232,111 @@ describe('EntryChangesDrawer', () => {
     await userEvent.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await waitFor(() => expect(document.activeElement).toBe(opener))
+  })
+})
+
+describe('EntryChangesDrawer marks', () => {
+  const card = async () => within(await waitFor(drawer)).getByTestId('entry-change-card')
+  const one = (
+    before: Record<string, unknown> | null,
+    after: Record<string, unknown> | null,
+    extra: FieldConfig[] = [],
+  ) =>
+    renderDrawer({
+      subject: { ...subject, fields: [...fields, ...extra] },
+      state: loaded(sides(before, after)),
+    })
+
+  it('joins removed words split only by a space into one removal', async () => {
+    one({ title: 'keep two three end' }, { title: 'keep 2 3 end' })
+    const removals = (await card()).querySelectorAll('del')
+    expect([...removals].map((d) => d.textContent)).toEqual(['Removed: two three, end of removal'])
+  })
+
+  it('names a mostly changed value once, up front, instead of run by run', async () => {
+    one({ title: 'Alpha' }, { title: 'Omega' })
+    const shown = await card()
+    expect(textOf(shown)).toContain('Removed: Alpha')
+    expect(textOf(shown)).not.toContain('end of removal')
+  })
+
+  it('shows a whitespace change as marks, said in words', async () => {
+    one({ title: 'a b' }, { title: 'a  b' })
+    const inserted = (await card()).querySelector('ins')
+    expect(textOf(inserted)).toContain('··')
+    expect(textOf(inserted)).toContain('space, space')
+  })
+
+  it('lines up a line diff in rows, an empty cell opposite a line the other side lacks', async () => {
+    one({ notes: 'Start\nEnd' }, { notes: 'Start\nAdded one\nAdded two\nEnd' }, [
+      { name: 'notes', type: 'markdown', label: 'Notes' },
+    ])
+    const grid = within(await card()).getByTestId('entry-change-line-grid')
+    // Two column labels, then four cells (gutter and text a side) for each of the four rows.
+    expect(grid.children).toHaveLength(2 + 4 * 4)
+    const cells = [...grid.children].slice(2).map((cell) => cell.textContent)
+    expect(cells.slice(4, 8)).toEqual(['', '', '+', 'Added line: Added one'])
+    expect(within(await card()).getByTestId('entry-change-line-list')).toBeTruthy()
+  })
+
+  it('says how a moved item moved, and counts moves apart from changed fields', async () => {
+    const team: FieldConfig = {
+      name: 'team',
+      type: 'object',
+      list: true,
+      label: 'Team',
+      fields: [{ name: 'name', type: 'string', label: 'Name' }],
+    }
+    const people = [
+      { name: 'Ada', _key: 'k1' },
+      { name: 'Grace', _key: 'k2' },
+      { name: 'Linus', _key: 'k3' },
+    ]
+    one(
+      { title: 'Hello', team: people },
+      { title: 'Hello there', team: [people[1], people[0], people[2]] },
+      [team],
+    )
+    const dialog = await waitFor(drawer)
+    expect(textOf(within(dialog).getByTestId('entry-changes-summary'))).toBe(
+      '1 field changed, 1 item moved since main',
+    )
+    const moved = within(dialog)
+      .getAllByTestId('entry-change-card')
+      .find((c) => textOf(c).includes('Moved from'))
+    expect(textOf(moved ?? null)).toContain('Team › Ada')
+    expect(textOf(moved ?? null)).toContain('Moved from 1st to 2nd of 3')
+  })
+
+  it('gives each card of a new entry an Added badge', async () => {
+    one(null, { title: 'Hello', author: 'aaaaaaaaaaaa' })
+    const cards = within(await waitFor(drawer)).getAllByTestId('entry-change-card')
+    expect(cards.map((c) => textOf(c).includes('Added'))).toEqual([true, true])
+  })
+
+  it('collapses a long new body after 50 lines until asked', async () => {
+    const body = Array.from({ length: 250 }, (_, i) => `Line ${i + 1}`).join('\n')
+    one(null, { notes: body }, [{ name: 'notes', type: 'markdown', label: 'Notes' }])
+    const shown = await card()
+    expect(textOf(shown)).toContain('Line 50')
+    expect(textOf(shown)).not.toContain('Line 51')
+    await userEvent.click(within(shown).getByRole('button', { name: 'Show all 250 lines' }))
+    expect(textOf(shown)).toContain('Line 250')
+  })
+
+  it('shows dates in full, the changed part marked, then relative', async () => {
+    one({ publishedAt: '2026-01-02' }, { publishedAt: '2026-01-03' }, [
+      { name: 'publishedAt', type: 'datetime', label: 'Published' },
+    ])
+    const shown = await card()
+    const full = (day: number) =>
+      new Date(2026, 0, day).toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      })
+    expect(textOf(shown)).toContain(full(2).replace(/\s/g, ' ').split(' ')[0])
+    expect(shown.querySelector('ins')).not.toBeNull()
+    expect(shown.querySelector('del')).not.toBeNull()
   })
 })

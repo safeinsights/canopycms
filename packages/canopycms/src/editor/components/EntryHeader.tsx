@@ -1,7 +1,17 @@
 'use client'
 
 import React, { type Ref } from 'react'
-import { Box, Button, Group } from '@mantine/core'
+import {
+  ActionIcon,
+  Box,
+  Button,
+  em,
+  getBreakpointValue,
+  Group,
+  Tooltip,
+  useMantineTheme,
+} from '@mantine/core'
+import { useMediaQuery } from '@mantine/hooks'
 import { IconArrowsDiff } from '@tabler/icons-react'
 import type { BranchStatus } from '../../types'
 import type { EditorEntry } from '../Editor'
@@ -29,6 +39,8 @@ export interface EntryHeaderProps {
   navigatorToggleRef?: Ref<HTMLButtonElement>
   /** Opens the open entry's changes against the base; offered only while it has some. */
   onShowChanges?: () => void
+  /** The changes list is still loading, so the Show changes slot is held, unseen. */
+  showChangesPending?: boolean
   showChangesRef?: Ref<HTMLButtonElement>
   /** Replaces the open entry with the server's copy. */
   onFileReload: () => void
@@ -70,6 +82,59 @@ export interface EntryHeaderProps {
   branchMissing?: boolean
 }
 
+/**
+ * "Show changes": a subtle text button, icon-only below `sm`. Without `onClick` it holds its
+ * place unseen while the changes list loads, so nothing beside it moves when it appears.
+ */
+const ShowChangesButton: React.FC<{ onClick?: () => void; buttonRef?: Ref<HTMLButtonElement> }> = ({
+  onClick,
+  buttonRef,
+}) => {
+  const theme = useMantineTheme()
+  const narrow =
+    useMediaQuery(`(max-width: ${em(getBreakpointValue('sm', theme.breakpoints) - 0.1)})`, false, {
+      getInitialValueInEffect: false,
+    }) === true
+  const placeholder = !onClick
+  const hold = placeholder
+    ? { 'aria-hidden': true, tabIndex: -1, style: { visibility: 'hidden' as const, flexShrink: 0 } }
+    : { style: { flexShrink: 0 } }
+  const icon = <IconArrowsDiff size={14} aria-hidden />
+  if (narrow) {
+    return (
+      <Tooltip
+        label={EDITOR_ACTIONS.showChanges}
+        events={{ hover: true, focus: true, touch: false }}
+        disabled={placeholder}
+      >
+        <ActionIcon
+          ref={placeholder ? undefined : buttonRef}
+          variant="subtle"
+          aria-label={EDITOR_ACTIONS.showChanges}
+          onClick={onClick}
+          data-testid={placeholder ? 'entry-show-changes-pending' : 'entry-show-changes'}
+          {...hold}
+        >
+          {icon}
+        </ActionIcon>
+      </Tooltip>
+    )
+  }
+  return (
+    <Button
+      ref={placeholder ? undefined : buttonRef}
+      size="compact-sm"
+      variant="subtle"
+      leftSection={icon}
+      onClick={onClick}
+      data-testid={placeholder ? 'entry-show-changes-pending' : 'entry-show-changes'}
+      {...hold}
+    >
+      {EDITOR_ACTIONS.showChanges}
+    </Button>
+  )
+}
+
 /** The open entry's breadcrumb, menu, unsaved dot and "Read-only" chip, then Save, over the panes. */
 export function EntryHeader({
   currentEntry,
@@ -81,6 +146,7 @@ export function EntryHeader({
   onEntryReveal,
   navigatorToggleRef,
   onShowChanges,
+  showChangesPending = false,
   showChangesRef,
   onFileReload,
   onFileDiscardDraft,
@@ -169,18 +235,8 @@ export function EntryHeader({
           entryMenuRef={navigatorToggleRef}
         />
       </Box>
-      {onShowChanges && (
-        <Button
-          ref={showChangesRef}
-          size="compact-sm"
-          variant="subtle"
-          leftSection={<IconArrowsDiff size={14} aria-hidden />}
-          onClick={onShowChanges}
-          data-testid="entry-show-changes"
-          style={{ flexShrink: 0 }}
-        >
-          {EDITOR_ACTIONS.showChanges}
-        </Button>
+      {(onShowChanges || showChangesPending) && (
+        <ShowChangesButton onClick={onShowChanges} buttonRef={showChangesRef} />
       )}
       <EntrySaveButton
         onSave={onSave}
