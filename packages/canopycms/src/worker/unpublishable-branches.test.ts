@@ -127,6 +127,19 @@ describe('findUnpublishableBranches', () => {
     await expect(findUnpublishableBranches(context(), POLICY)).rejects.toThrow(/ENOTDIR/)
   })
 
+  it('fails when an entry vanishes mid-listing, rather than reporting no branches directory', async () => {
+    await workspace('autumn')
+    // `readdir` with file types lstats each entry, and rejects with the entry's own ENOENT.
+    vi.spyOn(fs, 'readdir').mockRejectedValue(
+      Object.assign(new Error('ENOENT: no such file or directory, lstat'), {
+        code: 'ENOENT',
+        path: path.join(contentBranchesPath, 'autumn'),
+      }),
+    )
+
+    await expect(findUnpublishableBranches(context(), POLICY)).rejects.toThrow(/ENOENT/)
+  })
+
   it('fails, rather than leaving a branch out, when a branch.json cannot be read', async () => {
     await workspace('autumn')
     vi.spyOn(BranchMetadataFileManager, 'loadOnly').mockRejectedValue(
@@ -196,7 +209,32 @@ describe('readCarriedUnpublishableBranches', () => {
     ['a count that is not whole', { branches: refs('autumn'), count: 1.5 }],
     ['a count smaller than its list', { branches: refs('autumn', 'winter'), count: 1 }],
     ['an unknown reason', { branches: [{ name: 'autumn', reason: 'other' }], count: 1 }],
+    ['a count past any real workspace', { branches: refs('autumn'), count: 100_001 }],
   ])('carries nothing for a report with %s', async (_label, report) => {
     expect(await carry({ ...report, at: AT })).toBeUndefined()
+  })
+
+  it.each([
+    ['an at that is not a date', 'not a date'],
+    ['an at longer than a timestamp', `2026-10-29T09:00:00.${'0'.repeat(40)}Z`],
+    ['an at that is not a string', 20261029],
+  ])('carries nothing for a report with %s', async (_label, at) => {
+    expect(await carry({ branches: refs('autumn'), count: 1, at })).toBeUndefined()
+  })
+
+  it('carries only the fields a sync writes', async () => {
+    const carried = await carry({
+      branches: [{ name: 'a,b', reason: 'unlistable', note: 'x'.repeat(1000) }, { name: 'autumn' }],
+      count: 2,
+      at: AT,
+      extra: { huge: 'x'.repeat(1000) },
+    })
+
+    expect(carried).toEqual({
+      branches: [{ name: 'a,b', reason: 'unlistable' }, { name: 'autumn' }],
+      count: 2,
+      at: AT,
+    })
+    expect(Object.keys(carried ?? {}).sort()).toEqual(['at', 'branches', 'count'])
   })
 })

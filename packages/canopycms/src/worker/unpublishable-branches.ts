@@ -56,7 +56,15 @@ export async function findUnpublishableBranches(
   try {
     entries = await fs.readdir(ctx.contentBranchesPath, { withFileTypes: true })
   } catch (err) {
+    // `withFileTypes` may lstat each entry, so an entry removed mid-listing rejects with its own
+    // ENOENT: only the branches directory's absence means no branches.
     if (!isNodeError(err) || err.code !== 'ENOENT') throw err
+    if (
+      typeof err.path !== 'string' ||
+      path.resolve(err.path) !== path.resolve(ctx.contentBranchesPath)
+    ) {
+      throw err
+    }
     entries = []
   }
   const dirs = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name)
@@ -84,37 +92,65 @@ export async function findUnpublishableBranches(
   return { branches: branches.slice(0, MAX_UNPUBLISHABLE_LISTED), count: branches.length }
 }
 
-const REASONS = new Set<string>([
+const REASONS: ReadonlySet<unknown> = new Set<UnpublishableBranchReason>([
   'blocks-namespace',
   'unlistable',
-] satisfies UnpublishableBranchReason[])
+])
+
+function isReason(value: unknown): value is UnpublishableBranchReason {
+  return REASONS.has(value)
+}
+
+/** The most branches a carried report may claim to hold; a real workspace has far fewer. */
+const MAX_CARRIED_COUNT = 100_000
+
+/** The longest timestamp a carried report's `at` may be; an ISO 8601 instant is 24. */
+const MAX_CARRIED_AT_LENGTH = 32
 
 /**
- * Whether `value` is a report `findUnpublishableBranches` could have made: at most
- * MAX_UNPUBLISHABLE_LISTED names, none longer than a branch name can be, and a whole `count` no
- * smaller than the list. The Lambda can write the status file, so nothing larger is carried.
+ * The report `value` holds, rebuilt from the fields `findUnpublishableBranches` writes, or
+ * undefined when `value` is not one it could have made: at most MAX_UNPUBLISHABLE_LISTED names,
+ * none longer than a branch name can be, a whole `count` no smaller than the list and at most
+ * MAX_CARRIED_COUNT, and an `at` that parses as a date within MAX_CARRIED_AT_LENGTH characters.
+ * The Lambda can write the status file, so nothing else it holds is carried.
  */
-function isUnpublishableBranchesReport(value: unknown): value is UnpublishableBranchesReport {
-  if (typeof value !== 'object' || value === null) return false
-  if (!('branches' in value) || !('count' in value) || !('at' in value)) return false
+function carriedReport(value: unknown): UnpublishableBranchesReport | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  if (!('branches' in value) || !('count' in value) || !('at' in value)) return undefined
   const { branches, count, at } = value
-  return (
-    typeof at === 'string' &&
-    Array.isArray(branches) &&
-    branches.length <= MAX_UNPUBLISHABLE_LISTED &&
-    typeof count === 'number' &&
-    Number.isInteger(count) &&
-    count >= branches.length &&
-    branches.every(
-      (entry: unknown) =>
-        typeof entry === 'object' &&
-        entry !== null &&
-        'name' in entry &&
-        typeof entry.name === 'string' &&
-        entry.name.length <= MAX_BRANCH_NAME_LENGTH &&
-        (!('reason' in entry) || (typeof entry.reason === 'string' && REASONS.has(entry.reason))),
-    )
-  )
+  if (
+    typeof at !== 'string' ||
+    at.length > MAX_CARRIED_AT_LENGTH ||
+    !Number.isFinite(Date.parse(at)) ||
+    !Array.isArray(branches) ||
+    branches.length > MAX_UNPUBLISHABLE_LISTED ||
+    typeof count !== 'number' ||
+    !Number.isInteger(count) ||
+    count < branches.length ||
+    count > MAX_CARRIED_COUNT
+  ) {
+    return undefined
+  }
+  const carried: UnpublishableBranch[] = []
+  for (const entry of branches as unknown[]) {
+    if (
+      typeof entry !== 'object' ||
+      entry === null ||
+      !('name' in entry) ||
+      typeof entry.name !== 'string' ||
+      entry.name.length > MAX_BRANCH_NAME_LENGTH
+    ) {
+      return undefined
+    }
+    if (!('reason' in entry)) {
+      carried.push({ name: entry.name })
+    } else if (isReason(entry.reason)) {
+      carried.push({ name: entry.name, reason: entry.reason })
+    } else {
+      return undefined
+    }
+  }
+  return { branches: carried, count, at }
 }
 
 /**
@@ -132,9 +168,7 @@ export async function readCarriedUnpublishableBranches(
     if (typeof parsed !== 'object' || parsed === null || !('unpublishableBranches' in parsed)) {
       return undefined
     }
-    return isUnpublishableBranchesReport(parsed.unpublishableBranches)
-      ? parsed.unpublishableBranches
-      : undefined
+    return carriedReport(parsed.unpublishableBranches)
   } catch {
     return undefined
   }
