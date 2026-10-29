@@ -238,6 +238,31 @@ describe('the editor on a namespace branch named by its short name', () => {
     expect(pushState).not.toHaveBeenCalled()
   })
 
+  it('rewrites a history entry left on the full name to the short name when Back reaches it', async () => {
+    window.history.replaceState({}, '', '/?branch=spring')
+    stubApi({ status: 'editing', userId: 'author-1' })
+    renderEditor('spring')
+    expect((await titleBox()).value).toBe('hello title')
+    await waitFor(() =>
+      expect(new URLSearchParams(window.location.search).get('entry')).toBe(hello.path),
+    )
+    const pushState = vi.spyOn(window.history, 'pushState')
+    // What an entry opened before the listing arrived keeps: the name the link gave.
+    window.history.replaceState(
+      window.history.state,
+      '',
+      `/?branch=${encodeURIComponent(SPRING)}&entry=${encodeURIComponent(hello.path)}`,
+    )
+
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+
+    await waitFor(() => expect(urlBranch()).toBe('spring'))
+    expect(new URLSearchParams(window.location.search).get('entry')).toBe(hello.path)
+    expect(pushState).not.toHaveBeenCalled()
+  })
+
   it('sends its requests under the short name, with no %2F in a path', async () => {
     window.history.replaceState({}, '', '/?branch=spring')
     const fetchMock = stubApi({ status: 'editing', userId: 'author-1' })

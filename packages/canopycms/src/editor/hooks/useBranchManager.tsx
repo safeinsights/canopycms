@@ -1193,17 +1193,33 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const shownBranch = currentBranch
     ? branchUrlName(branches, currentBranch, branchesData?.defaultBranch)
     : undefined
-  // Written once the listing resolves the branch, so a link's own form stays until then; a form
-  // other than the shown one (the full name, a raw name) is replaced, never pushed.
+  // Each Back or Forward, which can arrive at an entry naming this branch in another form.
+  const [historyMoves, setHistoryMoves] = useState(0)
   useEffect(() => {
+    if (typeof window === 'undefined') return
+    const moved = () => setHistoryMoves((n) => n + 1)
+    window.addEventListener('popstate', moved)
+    return () => window.removeEventListener('popstate', moved)
+  }, [])
+  const seenMovesRef = useRef(historyMoves)
+  // Written once the listing resolves the branch, so a link's own form stays until then; a form
+  // other than the shown one (the full name, a raw name) is replaced, never pushed. After a Back
+  // or Forward only a form of this branch is: one naming another is the entry manager's switch.
+  useEffect(() => {
+    const popped = seenMovesRef.current !== historyMoves
+    seenMovesRef.current = historyMoves
     if (typeof window === 'undefined') return
     if (!shownBranch || window.location.pathname !== editorPathRef.current) return
     const url = new URL(window.location.href)
-    if (url.searchParams.get('branch') !== shownBranch) {
-      url.searchParams.set('branch', shownBranch)
-      writeEditorUrl(url.toString(), false)
+    const named = url.searchParams.get('branch')
+    if (named === shownBranch) return
+    if (popped && named !== null) {
+      const { branches: listed, branchesData: data, branchName: current } = latest.current
+      if (resolveListedBranch(listed, named, data?.defaultBranch)?.name !== current) return
     }
-  }, [shownBranch])
+    url.searchParams.set('branch', shownBranch)
+    writeEditorUrl(url.toString(), false)
+  }, [shownBranch, historyMoves])
 
   return {
     branchName,
