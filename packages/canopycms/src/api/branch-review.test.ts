@@ -25,6 +25,11 @@ const mockSaveIf = vi.fn(
     onlyIf({ branch: { status: disk.status } }) ? mockMetadataSave(update) : null,
 )
 
+const { mockSyncPrComments } = vi.hoisted(() => ({
+  mockSyncPrComments: vi.fn<(...args: unknown[]) => Promise<void>>(),
+}))
+vi.mock('./pr-comment-sync', () => ({ syncPrComments: mockSyncPrComments }))
+
 vi.mock('../branch-metadata', () => ({
   BranchMetadataFileManager: vi.fn().mockImplementation(() => ({
     save: mockMetadataSave,
@@ -38,6 +43,8 @@ vi.mock('../branch-metadata', () => ({
 
 beforeEach(() => {
   disk.status = 'submitted'
+  mockSyncPrComments.mockReset()
+  mockSyncPrComments.mockResolvedValue(undefined)
 })
 
 import { requestChanges, approveBranch } from './branch-review'
@@ -239,8 +246,76 @@ describe('branch review api - requestChanges', () => {
     const res = await requestChangesHandler(ctx, admin, { branch: 'feature/x' as BranchName }, {})
     expect(res.ok).toBe(true)
     expect(mockMetadataSave).toHaveBeenLastCalledWith({
-      branch: { name: 'feature/x', status: 'editing' },
+      branch: expect.objectContaining({ name: 'feature/x', status: 'editing' }),
     })
+  })
+
+  it('records who requested changes, then shows it on the pull request', async () => {
+    mockMetadataSave.mockClear()
+    const ctx = makeCtx()
+    const res = await requestChangesHandler(
+      ctx,
+      {
+        user: {
+          type: 'authenticated',
+          userId: 'rev1',
+          name: 'Rae <b>Viewer</b>',
+          email: 'rae@example.com',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
+      },
+      { branch: 'feature/x' as BranchName },
+      {},
+    )
+    expect(res.ok).toBe(true)
+    expect(mockMetadataSave).toHaveBeenCalledTimes(1)
+    const saved = mockMetadataSave.mock.calls[0]![0].branch
+    expect(saved).toEqual({
+      name: 'feature/x',
+      status: 'editing',
+      review: {
+        state: 'changes-requested',
+        by: { userId: 'rev1', name: 'Rae bViewer/b' },
+        at: expect.stringMatching(/^\d{4}-\d\d-\d\dT[\d:.]+Z$/),
+      },
+    })
+    expect(JSON.stringify(res.data?.branch)).not.toContain('rev1')
+    expect(res.data?.branch).not.toHaveProperty('review')
+    expect(mockSyncPrComments).toHaveBeenCalledTimes(1)
+    expect(mockSyncPrComments).toHaveBeenCalledWith(
+      ctx,
+      expect.objectContaining({ branchRoot: baseContext.branchRoot }),
+    )
+  })
+
+  it('always records the reviewer, so a new verdict replaces an old approval', async () => {
+    mockMetadataSave.mockClear()
+    await requestChangesHandler(
+      makeCtx(),
+      {
+        user: { type: 'authenticated', userId: 'rev2', groups: [RESERVED_GROUPS.REVIEWERS] },
+      },
+      { branch: 'feature/x' as BranchName },
+      {},
+    )
+    expect(mockMetadataSave.mock.calls[0]![0].branch.review).toEqual({
+      state: 'changes-requested',
+      by: { userId: 'rev2' },
+      at: expect.any(String),
+    })
+  })
+
+  it('syncs the pull request body only after the review is saved', async () => {
+    const order: string[] = []
+    mockMetadataSave.mockImplementationOnce(async () => {
+      order.push('save')
+      return { branch: { ...baseContext.branch, status: 'editing' } }
+    })
+    mockSyncPrComments.mockImplementationOnce(async () => {
+      order.push('sync')
+    })
+    await requestChangesHandler(makeCtx(), admin, { branch: 'feature/x' as BranchName }, {})
+    expect(order).toEqual(['save', 'sync'])
   })
 
   describe('a status that changed after the guard read the branch', () => {
@@ -264,6 +339,7 @@ describe('branch review api - requestChanges', () => {
         expect(res.status).toBe(409)
         expect(res.error).toBe(error)
         expect(mockMetadataSave).not.toHaveBeenCalled()
+        expect(mockSyncPrComments).not.toHaveBeenCalled()
         expect(Object.keys((await new CommentStore(branchRoot).load()).threads)).toHaveLength(0)
       } finally {
         await fs.rm(branchRoot, { recursive: true, force: true })
@@ -342,6 +418,31 @@ describe('branch review api - requestChanges', () => {
       })
       await run({ note: 'x' })
       expect(order).toEqual(['status', 'comment'])
+    })
+
+    it('syncs the pull request body after the note is saved, so one update carries both', async () => {
+      const order: string[] = []
+      mockMetadataSave.mockImplementationOnce(async () => {
+        order.push('status')
+        return { branch: { ...baseContext.branch, status: 'editing' } }
+      })
+      vi.spyOn(CommentStore.prototype, 'addComment').mockImplementation(async () => {
+        order.push('comment')
+        return { threadId: 't', commentId: 'c' }
+      })
+      mockSyncPrComments.mockImplementationOnce(async () => {
+        order.push('sync')
+      })
+      await run({ note: 'x' })
+      expect(order).toEqual(['status', 'comment', 'sync'])
+    })
+
+    it('syncs even when the note cannot be saved', async () => {
+      const consoleSpy = mockConsole()
+      vi.spyOn(CommentStore.prototype, 'addComment').mockRejectedValue(new Error('disk full'))
+      await run({ note: 'x' })
+      expect(mockSyncPrComments).toHaveBeenCalledTimes(1)
+      consoleSpy.restore()
     })
 
     it('still succeeds, with a warning, when the note cannot be saved', async () => {
@@ -463,8 +564,47 @@ describe('branch review api - approveBranch', () => {
     const res = await approveBranchHandler(makeCtx(), admin, { branch: 'feature/x' as BranchName })
     expect(res.status).toBe(200)
     expect(mockMetadataSave).toHaveBeenCalledWith({
-      branch: { name: 'feature/x', status: 'approved' },
+      branch: {
+        name: 'feature/x',
+        status: 'approved',
+        review: {
+          state: 'approved',
+          by: { userId: 'rev1' },
+          at: expect.stringMatching(/^\d{4}-\d\d-\d\dT[\d:.]+Z$/),
+        },
+      },
     })
+  })
+
+  it('records the approver by cleaned name, never sends it to the client, and syncs the PR body', async () => {
+    mockMetadataSave.mockClear()
+    const ctx = makeCtx()
+    const res = await approveBranchHandler(
+      ctx,
+      {
+        user: {
+          type: 'authenticated',
+          userId: 'rev1',
+          name: 'Rae\nViewer',
+          email: 'rae@example.com',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
+      },
+      { branch: 'feature/x' as BranchName },
+    )
+    expect(res.status).toBe(200)
+    expect(mockMetadataSave.mock.calls[0]![0].branch.review).toEqual({
+      state: 'approved',
+      by: { userId: 'rev1', name: 'Rae Viewer' },
+      at: expect.any(String),
+    })
+    expect(res.data?.branch).not.toHaveProperty('review')
+    expect(JSON.stringify(res.data)).not.toContain('rae@example.com')
+    expect(mockSyncPrComments).toHaveBeenCalledTimes(1)
+    expect(mockSyncPrComments).toHaveBeenCalledWith(
+      ctx,
+      expect.objectContaining({ branchRoot: baseContext.branchRoot }),
+    )
   })
 
   it.each([
@@ -478,6 +618,7 @@ describe('branch review api - approveBranch', () => {
     expect(res.status).toBe(409)
     expect(res.error).toBe(error)
     expect(mockMetadataSave).not.toHaveBeenCalled()
+    expect(mockSyncPrComments).not.toHaveBeenCalled()
   })
 
   it('refuses the protected base branch', async () => {

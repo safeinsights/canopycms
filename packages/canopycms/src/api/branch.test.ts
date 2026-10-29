@@ -91,6 +91,7 @@ import {
   canCreateBranch,
   canDeleteBranch,
   canModifyBranchAccess,
+  toBranchListItem,
 } from './branch'
 import { RESERVED_GROUPS } from '../authorization'
 import { unsafeAsPermissionPath } from '../authorization/test-utils'
@@ -1707,5 +1708,26 @@ describe('updateBranchAccess api', () => {
     const payload = mockMetadataUpdate.mock.calls[0][0] as { branch?: { access?: object } }
     expect(payload.branch?.access).toEqual({ allowedUsers: [] })
     expect(payload.branch?.access).not.toHaveProperty('allowedGroups')
+  })
+})
+
+describe('toBranchListItem', () => {
+  it('leaves the reviewer out, for a privileged viewer too', () => {
+    const context = createMockBranchContext({ branchName: 'feature/x', createdBy: 'u1' })
+    const branch = {
+      ...context.branch,
+      review: {
+        state: 'approved' as const,
+        by: { userId: 'rev1', name: 'Rae' },
+        at: '2026-10-28T14:05:00.000Z',
+      },
+    }
+    const config = baseCtx.services.config
+    for (const groups of [[], [RESERVED_GROUPS.ADMINS]]) {
+      const item = toBranchListItem(config, branch, { type: 'authenticated', userId: 'v', groups })
+      expect(item).not.toHaveProperty('review')
+      expect(JSON.stringify(item)).not.toContain('rev1')
+      expect(item.name).toBe('feature/x')
+    }
   })
 })

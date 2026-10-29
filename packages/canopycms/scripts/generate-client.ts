@@ -24,6 +24,8 @@ const MOCK_CLIENT_FILE = path.join(API_DIR, '__test__/mock-client.ts')
 // Import all API modules to populate ROUTE_REGISTRY
 // These imports execute the defineEndpoint() calls
 import '../src/api/branch.js'
+import '../src/api/branch-changes.js'
+import '../src/api/branch-entry-changes.js'
 import '../src/api/branch-status.js'
 import '../src/api/comments.js'
 import '../src/api/content.js'
@@ -159,6 +161,7 @@ function namespaceToModule(namespace: string): string {
   const mapping: Record<string, string> = {
     branches: 'branch',
     workflow: 'branch-status',
+    changes: 'branch-changes',
     comments: 'comments',
     content: 'content',
     resolveReferences: 'resolve-references',
@@ -181,6 +184,7 @@ function typeNameToModule(typeName: string): string | null {
     ResolveReferencesResponse: 'resolve-references',
     ResolveReferencesBody: 'resolve-references',
     ReferenceOptionsResponse: 'reference-options',
+    BranchEntryChangeResponse: 'branch-entry-changes',
     // Schema types come from the schema-store-types module (client-safe)
     CreateCollectionInput: '../schema/schema-store-types',
     UpdateCollectionInput: '../schema/schema-store-types',

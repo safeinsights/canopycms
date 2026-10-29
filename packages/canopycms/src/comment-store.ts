@@ -73,6 +73,9 @@ function ownThread(data: CommentsFile, threadId: string): CommentThread | undefi
     : undefined
 }
 
+/** comments.json parses but has no `threads` object; text that does not parse throws SyntaxError. */
+export class CommentsFileMalformedError extends Error {}
+
 /**
  * Comment storage for a branch workspace, in .canopy-meta/comments.json and
  * never committed to git.
@@ -121,7 +124,7 @@ export class CommentStore {
         ? (parsed as Partial<CommentsFile>).threads
         : undefined
     if (typeof threads !== 'object' || threads === null) {
-      throw new Error('comments.json has no threads object')
+      throw new CommentsFileMalformedError('comments.json has no threads object')
     }
     return Object.values(threads)
   }

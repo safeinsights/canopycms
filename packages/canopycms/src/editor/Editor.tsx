@@ -31,7 +31,12 @@ type TreeController = ReturnType<typeof useTree>
 const noop = (): void => {}
 
 import type { ContentFormat, EntrySchema, EntryTypeUnavailable, MdxAllowlist } from '../config'
-import { EntryNavigator, type ContentPanelReveal, type EntryNavCollection } from './EntryNavigator'
+import {
+  EntryNavigator,
+  type ContentPanelReveal,
+  type EntryFilter,
+  type EntryNavCollection,
+} from './EntryNavigator'
 import type { CustomFieldRenderers, FormValue } from './FormRenderer'
 import { FormRenderer } from './FormRenderer'
 import { PreviewPane } from './PreviewPane'
@@ -75,6 +80,10 @@ import {
   useSchemaManager,
 } from './hooks'
 import { useBranchActions } from './hooks/useBranchActions'
+import { useBranchChangesData, useEntryChangeData } from './hooks/useBranchChangesData'
+import type { EntryChangesSubject } from './components/EntryChangesDrawer'
+import { LazyEntryChangesDrawer } from './components/LazyEntryChangesDrawer'
+import type { BranchChangeEntry } from '../api/branch-changes'
 import type { UnsavedSummary } from './hooks/useDraftManager'
 import type { StampedEntry } from '../stamp-on-publish'
 import {
@@ -474,6 +483,8 @@ const EditorContent: React.FC<EditorProps> = ({
 
   // Set once the branch actions below exist; they depend on the drafts, which depend on the entries.
   const switchBranchRef = useRef<(branch: string) => Promise<void>>(async () => {})
+  // Set once the changes read exists; it waits on the panel state, declared after the entries.
+  const reloadChangesRef = useRef<(branch: string) => void>(() => {})
 
   // 2. Entry manager (depends on branchNameState, owns selectedPath)
   const {
@@ -524,6 +535,7 @@ const EditorContent: React.FC<EditorProps> = ({
     setBusy: setEntriesLoading,
     branchBarState,
     switchBranch: (branch) => switchBranchRef.current(branch),
+    onContentRefresh: (branch) => reloadChangesRef.current(branch),
     // To the entry menu, which names the entry opened; a dialog keeps focus.
     onHistoryRestore: () =>
       requestAnimationFrame(() => {
@@ -1616,7 +1628,7 @@ const EditorContent: React.FC<EditorProps> = ({
           event.preventDefault()
           // Opened under a modal or drawer, it would take the keyboard from the one in use.
           if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
-          setChangedOnly(false)
+          setEntryFilter('all')
           const field = entryFilterRef.current
           if (field && document.activeElement === field) field.select()
           else openNavigator({ transient: true })
@@ -1633,7 +1645,7 @@ const EditorContent: React.FC<EditorProps> = ({
   // Only ever rises: the navigator serves each seq once, and the request is cleared once served.
   const revealSeqRef = useRef(0)
   const revealInContentPanel = (
-    reveal: { kind: 'collection' | 'entry'; path: string } | { kind: 'changed' },
+    reveal: { kind: 'collection' | 'entry'; path: string } | { kind: 'unsaved' },
   ) => {
     openNavigator()
     revealSeqRef.current += 1
@@ -1643,14 +1655,134 @@ const EditorContent: React.FC<EditorProps> = ({
   useEffect(() => {
     if (!contentPanelShown) setContentReveal(undefined)
   }, [contentPanelShown])
-  // The content panel's All / Changed filter. It stays as chosen, emptied by a save or not, except
-  // that Mod+P finds among all entries and another branch has its own unsaved set: both reset it.
-  const [changedOnly, setChangedOnly] = useState(false)
-  useEffect(() => setChangedOnly(false), [branchNameState])
+  // The content panel's All / Unsaved / Changed filter. It stays as chosen, emptied by a save or
+  // not, except that Mod+P finds among all entries and another branch has its own sets: both reset it.
+  const [entryFilter, setEntryFilter] = useState<EntryFilter>('all')
+  useEffect(() => setEntryFilter('all'), [branchNameState])
   const showUnsaved = () => {
-    setChangedOnly(true)
-    revealInContentPanel({ kind: 'changed' })
+    setEntryFilter('unsaved')
+    revealInContentPanel({ kind: 'unsaved' })
   }
+  // What the branch changes against its base, read while the panel shows so Changed has its count,
+  // and while an entry is open so its header knows to offer "Show changes".
+  // The protected base has nothing to compare. Changed keeps its place while the branch list loads,
+  // so the control doesn't re-flow then, and reads once the branch is known not to be the base. A
+  // list that failed, or lacks the branch, offers none, so a branch just created can lack Changed
+  // until the list catches up.
+  const changesOffered = branchPending || currentBranch?.isProtected === false
+  const changesAvailable = !!currentBranch && currentBranch.isProtected === false
+  const changesRead = (contentPanelShown || !!currentEntry) && changesAvailable
+  const branchChanges = useBranchChangesData(apiClient, branchNameState, changesRead)
+  reloadChangesRef.current = (branch) => {
+    if (branch === branchNameState) void branchChanges.reload()
+  }
+  // Submit, withdraw and a review move the branch's status, which no entries refresh follows.
+  const changesStatusRef = useRef({ branch: branchNameState, status: currentBranch?.status })
+  useEffect(() => {
+    const seen = changesStatusRef.current
+    changesStatusRef.current = { branch: branchNameState, status: currentBranch?.status }
+    if (seen.branch === branchNameState && seen.status && seen.status !== currentBranch?.status) {
+      void branchChanges.reload()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `reload` is fresh each branch; only a status move matters
+  }, [branchNameState, currentBranch?.status])
+  // "Show changes": the entry compared stays set after a close, so the closing drawer keeps it.
+  const [changesSubject, setChangesSubject] = useState<EntryChangesSubject>()
+  const [changesOpen, setChangesOpen] = useState(false)
+  // Its comparison stays keyed until the close transition ends, so the closing drawer keeps it.
+  const [changesShown, setChangesShown] = useState(false)
+  // Who opened the drawer, and the control that stands in for it once it is gone.
+  const changesOpenerRef = useRef<{ el: HTMLElement | null; standIn: () => HTMLElement | null }>({
+    el: null,
+    standIn: () => null,
+  })
+  const showChangesRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    setChangesOpen(false)
+    setChangesShown(false)
+  }, [branchNameState])
+  const entryChange = useEntryChangeData(
+    apiClient,
+    branchNameState,
+    (changesOpen || changesShown) && changesSubject
+      ? {
+          logicalPath: changesSubject.logicalPath,
+          from: changesSubject.from,
+          id: changesSubject.contentId,
+        }
+      : undefined,
+  )
+  const openEntryChange =
+    currentEntry &&
+    branchChanges.data?.entries.find(
+      (e) => e.status !== 'deleted' && e.logicalPath === currentEntry.path,
+    )
+  const referenceTitles = useMemo(
+    () => new Map(entriesState.map((e) => [e.contentId as string, e.title ?? e.label])),
+    [entriesState],
+  )
+  const referenceTitle = useMemo(() => (id: string) => referenceTitles.get(id), [referenceTitles])
+  /** A logical path in the labels the content tree shows: "Blog › hello". */
+  const humanEntryPath = (logicalPath: string): string => {
+    const parts = logicalPath.split('/').filter(Boolean)
+    const collections = parts
+      .slice(1, -1)
+      .map((_, i) => collectionLabels.get(parts.slice(0, i + 2).join('/')))
+      .filter((label): label is string => !!label)
+    return [...collections, parts[parts.length - 1]].join(' › ')
+  }
+  const showEntryChanges = (
+    entry: BranchChangeEntry,
+    title: string,
+    from: 'header' | 'deleted row',
+  ) => {
+    // The header's button gives way to the entry menu's trigger; a deleted entry's row, gone with
+    // its panel, to the rail's Content button, never to another entry's controls.
+    changesOpenerRef.current = {
+      el: rememberOpener(),
+      standIn:
+        from === 'header'
+          ? () => showChangesRef.current ?? navigatorToggleRef.current ?? contentToggleRef.current
+          : () => contentToggleRef.current,
+    }
+    // A deleted entry has no row to read a schema from, so it borrows its type's from a sibling.
+    const fields =
+      entriesState.find((e) => e.path === entry.logicalPath)?.schema ??
+      entriesState.find(
+        (e) => e.collectionPath === entry.collectionPath && e.entryType === entry.entryType,
+      )?.schema ??
+      EMPTY_SCHEMA
+    setChangesSubject({
+      logicalPath: entry.logicalPath,
+      contentId: entry.contentId,
+      status: entry.status,
+      title,
+      fields,
+      ...(entry.previousLogicalPath && {
+        from: entry.previousLogicalPath,
+        movedFromLabel: humanEntryPath(entry.previousLogicalPath),
+      }),
+    })
+    setChangesOpen(true)
+    setChangesShown(true)
+  }
+  const changesReturnTarget = () =>
+    returnTarget(changesOpenerRef.current.el, changesOpenerRef.current.standIn)
+  // Where a refused comparison can still be looked at: the entry itself, if the branch has it and
+  // it isn't the one open, and the pull request, for those who review it.
+  const changesOpenEntry =
+    changesSubject &&
+    changesSubject.status !== 'deleted' &&
+    changesSubject.logicalPath !== currentEntry?.path &&
+    entriesState.some((e) => e.path === changesSubject.logicalPath)
+      ? () => {
+          setChangesOpen(false)
+          openEntry(changesSubject.logicalPath)
+        }
+      : undefined
+  const changesPullRequestUrl = isReviewer(userContext?.groups)
+    ? currentBranch?.pullRequestUrl
+    : undefined
   const runSaveAll = () => {
     void handleSaveAll()
       .then((result) => {
@@ -2107,8 +2239,21 @@ const EditorContent: React.FC<EditorProps> = ({
           dirtyPaths={dirtyPaths}
           reveal={contentReveal}
           onRevealed={() => setContentReveal(undefined)}
-          changedOnly={changedOnly}
-          onChangedOnlyChange={setChangedOnly}
+          entryFilter={entryFilter === 'changed' && !changesOffered ? 'all' : entryFilter}
+          onEntryFilterChange={setEntryFilter}
+          onShowUnsaved={showUnsaved}
+          onShowDeletedChanges={(entry, label) => showEntryChanges(entry, label, 'deleted row')}
+          branchChanges={
+            changesOffered
+              ? {
+                  base: branchChanges.data?.base ?? currentBranch?.baseBranch ?? 'the base branch',
+                  data: branchChanges.data,
+                  error: branchChanges.error,
+                  onRetry: () => void branchChanges.reload(),
+                  retrying: branchChanges.isValidating,
+                }
+              : undefined
+          }
           unsavedCount={modifiedCount}
           unsavedEntries={editedFiles}
           entryListFailed={entriesLoadFailed && entriesState.length === 0}
@@ -2269,6 +2414,18 @@ const EditorContent: React.FC<EditorProps> = ({
                   currentEntry && revealInContentPanel({ kind: 'entry', path: currentEntry.path })
                 }
                 navigatorToggleRef={navigatorToggleRef}
+                onShowChanges={
+                  openEntryChange
+                    ? () =>
+                        showEntryChanges(
+                          openEntryChange,
+                          currentEntry?.label ?? currentEntry?.slug ?? '',
+                          'header',
+                        )
+                    : undefined
+                }
+                showChangesPending={changesOffered && !!currentEntry}
+                showChangesRef={showChangesRef}
                 onFileReload={() => handleReload(() => navigatorToggleRef.current)}
                 onFileDiscardDraft={() => handleDiscardFileDraft(() => navigatorToggleRef.current)}
                 onEntryRename={() => currentEntry && handleRenameEntry(currentEntry.path, true)}
@@ -2502,6 +2659,24 @@ const EditorContent: React.FC<EditorProps> = ({
                   onGetCommentUserMetadata={getCommentUserMetadata}
                 />
               </BranchesDrawer>
+              {changesSubject && (
+                <LazyEntryChangesDrawer
+                  opened={changesOpen}
+                  onClose={() => setChangesOpen(false)}
+                  onExited={() => setChangesShown(false)}
+                  returnFocusTo={changesReturnTarget}
+                  base={branchChanges.data?.base ?? currentBranch?.baseBranch ?? 'the base branch'}
+                  subject={{
+                    ...changesSubject,
+                    unsavedEdits:
+                      changesSubject.logicalPath === currentEntry?.path && isSelectedDirty(),
+                  }}
+                  state={entryChange}
+                  referenceTitle={referenceTitle}
+                  onOpenEntry={changesOpenEntry}
+                  pullRequestUrl={changesPullRequestUrl}
+                />
+              )}
               {branchNameState && (
                 <CommentsPanel
                   key={branchNameState}
