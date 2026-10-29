@@ -1809,6 +1809,39 @@ export class GitManager {
   }
 
   /**
+   * Every file in `rev`'s tree below repo-relative directory `under`, with its size in bytes,
+   * so a caller can refuse a file too large to read before reading it.
+   */
+  async listFilesWithSizeAt(
+    rev: string,
+    under: string,
+  ): Promise<Array<{ path: string; size: number }>> {
+    const dir = `${under.replace(/\/+$/, '')}/`
+    const output = await this.git.raw([
+      'ls-tree',
+      '-r',
+      '-z',
+      '-l',
+      '--full-tree',
+      '--end-of-options',
+      rev,
+      dir,
+    ])
+    // -z -l: "<mode> <type> <object> <padded size>\t<path>" per record, unquoted.
+    const files: Array<{ path: string; size: number }> = []
+    for (const record of output.split('\0')) {
+      const tab = record.indexOf('\t')
+      if (tab === -1) continue
+      const [, type, , size] = record.slice(0, tab).split(/ +/)
+      const filePath = record.slice(tab + 1)
+      if (type === 'blob' && filePath.startsWith(dir)) {
+        files.push({ path: filePath, size: Number(size) })
+      }
+    }
+    return files
+  }
+
+  /**
    * The commit HEAD forked from the base branch at, or `undefined` when they share no history.
    * Takes the base tip from the remote by `ls-remote` rather than `<remote>/<base>`: the worker
    * fetches by path, which moves no remote-tracking ref, so that ref is left behind by every

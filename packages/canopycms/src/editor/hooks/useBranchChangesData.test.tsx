@@ -3,8 +3,16 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import { createMockApiClient, type MockApiClient } from '../../api/__test__/mock-client'
 import type { BranchChangesData, BranchChangesResponse } from '../../api/branch-changes'
+import type {
+  BranchEntryChangeData,
+  BranchEntryChangeResponse,
+} from '../../api/branch-entry-changes'
 import { createApiClientWrapper } from './__test__/test-utils'
-import { useBranchChangesData } from './useBranchChangesData'
+import {
+  useBranchChangesData,
+  useEntryChangeData,
+  type EntryChangeTarget,
+} from './useBranchChangesData'
 
 const answer = (logicalPath: string): BranchChangesData => ({
   base: 'main',
@@ -177,5 +185,78 @@ describe('useBranchChangesData ordering', () => {
     await act(() => result.current.reload())
     expect(result.current.error).toEqual({ kind: 'failed', message: 'Disk full' })
     expect(result.current.data).toEqual(answer('content/new'))
+  })
+})
+
+const entrySides = (title: string): BranchEntryChangeData => ({
+  before: { format: 'json', entryType: 'page', data: { title: 'Before' } },
+  after: { format: 'json', entryType: 'page', data: { title } },
+  mergeBaseSha: 'a'.repeat(40),
+})
+const entryOk = (title: string): BranchEntryChangeResponse => ({
+  ok: true,
+  status: 200,
+  data: entrySides(title),
+})
+
+describe('useEntryChangeData', () => {
+  const renderEntry = (target: EntryChangeTarget | undefined) =>
+    renderHook(({ target }) => useEntryChangeData(client as never, 'feature', target), {
+      wrapper: createApiClientWrapper(client),
+      initialProps: { target },
+    })
+
+  it('fetches nothing until it has a target, then reads it, `from` included', async () => {
+    client.changes.entry.mockResolvedValue(entryOk('After'))
+    const { result, rerender } = renderEntry(undefined)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(client.changes.entry).not.toHaveBeenCalled()
+
+    rerender({ target: { logicalPath: 'content/b', from: 'content/a', id: 'aB3cD4eF5gH6' } })
+    await waitFor(() => expect(result.current.data).toEqual(entrySides('After')))
+    expect(client.changes.entry).toHaveBeenCalledWith({
+      branch: 'feature',
+      entryPath: 'content/b',
+      from: 'content/a',
+      id: 'aB3cD4eF5gH6',
+    })
+  })
+
+  it.each([
+    [409, { kind: 'syncing', message: 'Being synced.' }],
+    [413, { kind: 'tooLarge', message: 'Being synced.' }],
+    [404, { kind: 'notFound', message: 'Being synced.' }],
+    [422, { kind: 'unreadable', message: 'Being synced.' }],
+    [503, { kind: 'failed', message: 'Being synced.' }],
+  ])('maps a %i to its kind', async (status, error) => {
+    client.changes.entry.mockResolvedValue({ ok: false, status, error: 'Being synced.' })
+    const { result } = renderEntry({ logicalPath: 'content/a' })
+    await waitFor(() => expect(result.current.error).toEqual(error))
+  })
+
+  it('reloads when the branch’s list of changes reloads', async () => {
+    client.changes.list.mockResolvedValue(ok('content/a'))
+    client.changes.entry.mockResolvedValue(entryOk('First'))
+    const { result } = renderHook(
+      () => ({
+        list: useBranchChangesData(client as never, 'feature', true),
+        entry: useEntryChangeData(client as never, 'feature', { logicalPath: 'content/a' }),
+        other: useEntryChangeData(client as never, 'other', { logicalPath: 'content/a' }),
+      }),
+      { wrapper: createApiClientWrapper(client) },
+    )
+    await waitFor(() => expect(result.current.entry.data).toEqual(entrySides('First')))
+    await waitFor(() => expect(result.current.other.data).toBeDefined())
+    expect(client.changes.entry).toHaveBeenCalledTimes(2)
+
+    client.changes.entry.mockResolvedValue(entryOk('Second'))
+    await act(() => result.current.list.reload())
+    await waitFor(() => expect(result.current.entry.data).toEqual(entrySides('Second')))
+    // Another branch's entry change is left alone.
+    expect(client.changes.entry).toHaveBeenCalledTimes(3)
+    expect(client.changes.entry).toHaveBeenLastCalledWith({
+      branch: 'feature',
+      entryPath: 'content/a',
+    })
   })
 })

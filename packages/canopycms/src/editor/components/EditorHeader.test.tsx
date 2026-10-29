@@ -2027,3 +2027,62 @@ describe('EditorHeader - review actions', () => {
     expect(document.activeElement).toBe(screen.getByTestId('request-changes-button'))
   })
 })
+
+describe('EntryHeader - Show changes', () => {
+  const originalMatchMedia = window.matchMedia
+  afterEach(() => {
+    window.matchMedia = originalMatchMedia
+    cleanup()
+  })
+
+  it('offers a text button that opens the changes', async () => {
+    const onShowChanges = vi.fn()
+    renderHeader({ onShowChanges })
+    await userEvent.click(screen.getByRole('button', { name: 'Show changes' }))
+    expect(onShowChanges).toHaveBeenCalled()
+    expect(screen.getByTestId('entry-show-changes').textContent).toBe('Show changes')
+  })
+
+  it('takes one slot, alike in every state, so the header never shifts', () => {
+    const slot = () =>
+      screen.queryByTestId('entry-show-changes') ?? screen.getByTestId('entry-show-changes-pending')
+    const { rerender } = renderHeader({ showChangesPending: true })
+    const pending = slot().className
+    rerender(<Headers {...defaultProps} showChangesPending onShowChanges={vi.fn()} />)
+    expect(slot().className).toBe(pending)
+    expect(slot().style.visibility).toBe('')
+    rerender(<Headers {...defaultProps} showChangesPending />)
+    expect(slot().className).toBe(pending)
+    expect(slot().style.visibility).toBe('hidden')
+  })
+
+  it('holds its slot unseen and unreachable while the changes list loads', () => {
+    renderHeader({ showChangesPending: true })
+    const held = screen.getByTestId('entry-show-changes-pending')
+    expect(held.style.visibility).toBe('hidden')
+    expect(held.getAttribute('aria-hidden')).toBe('true')
+    expect(held.getAttribute('tabindex')).toBe('-1')
+    expect(screen.queryByRole('button', { name: 'Show changes' })).toBeNull()
+  })
+
+  it('is an icon-only control below sm, named and with a Tooltip on focus', async () => {
+    window.matchMedia = (query: string) =>
+      ({
+        matches: query.startsWith('(max-width:'),
+        media: query,
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      }) as MediaQueryList
+    renderHeader({ onShowChanges: vi.fn() })
+    const control = screen.getByRole('button', { name: 'Show changes' })
+    expect(control.textContent).toBe('')
+    // At least 28px to touch.
+    expect(control.style.getPropertyValue('--ai-size')).toBe('var(--ai-size-md)')
+    act(() => control.focus())
+    expect((await screen.findByRole('tooltip')).textContent).toBe('Show changes')
+  })
+})

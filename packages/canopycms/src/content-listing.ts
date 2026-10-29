@@ -56,6 +56,30 @@ const normalizePath = (root: string, target: string): string => {
 }
 
 /**
+ * Parse an entry file's text into its data and, for md/mdx, its markdown content apart, as
+ * `ContentStore.read` shapes a document. Throws on text that does not parse.
+ */
+export const parseEntryParts = (
+  raw: string,
+  format: ContentFormat,
+): { data: Record<string, unknown>; body?: string } => {
+  if (format === 'json') return { data: asRecord(JSON.parse(raw)) }
+  if (format === 'yaml') return { data: asRecord(yamlParse(raw)) }
+  // Read-only here, and the result is copied immediately below before anything
+  // is written into it -- see that comment for the hazard being avoided.
+  // eslint-disable-next-line no-restricted-syntax
+  const parsed = matter(raw)
+  // A copy, never gray-matter's own object. gray-matter keeps a PROCESS-GLOBAL cache keyed by
+  // file content and hands every caller the same `data` object instance, so writing the body
+  // into it in place wrote it into a shared object that later, unrelated `matter()` calls then
+  // saw as frontmatter: listing a collection containing an md entry poisoned the cache, and a
+  // reference resolution to that same entry (through `ContentStore.read()`, whose md branch
+  // calls `matter()` again) returned the body as a frontmatter field -- one entry with two
+  // shapes, decided by unrelated listing scope.
+  return { data: { ...((parsed.data as Record<string, unknown>) ?? {}) }, body: parsed.content }
+}
+
+/**
  * Parse an entry file's text. For md/mdx: frontmatter fields plus the body content under
  * `bodyFieldName` (defaults to `'body'`); for json/yaml, the parsed object. Throws on text
  * that does not parse.
@@ -65,27 +89,8 @@ export const parseEntryData = (
   format: ContentFormat,
   bodyFieldName = 'body',
 ): Record<string, unknown> => {
-  if (format === 'json') {
-    return asRecord(JSON.parse(raw))
-  }
-  if (format === 'yaml') {
-    return asRecord(yamlParse(raw))
-  }
-  // Read-only here, and the result is copied immediately below before anything
-  // is written into it -- see that comment for the hazard being avoided.
-  // eslint-disable-next-line no-restricted-syntax
-  const parsed = matter(raw)
-  // Copy before writing the body in. gray-matter keeps a PROCESS-GLOBAL cache keyed by file
-  // content and hands every caller the same `data` object instance, so mutating it in place
-  // wrote the body into a shared object that later, unrelated `matter()` calls then saw as
-  // frontmatter: listing a collection containing an md entry poisoned the cache, and a
-  // reference resolution to that same entry (through `ContentStore.read()`, whose md branch
-  // calls `matter()` again) returned the body as a frontmatter field -- one entry with two
-  // shapes, decided by unrelated listing scope.
-  const data = { ...((parsed.data as Record<string, unknown>) ?? {}) }
-  if (parsed.content) {
-    data[bodyFieldName] = parsed.content
-  }
+  const { data, body } = parseEntryParts(raw, format)
+  if (body) data[bodyFieldName] = body
   return data
 }
 
