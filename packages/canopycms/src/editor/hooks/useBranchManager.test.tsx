@@ -1800,6 +1800,108 @@ describe('useBranchManager', () => {
       await waitFor(() => expect(writtenBranches()).toEqual(['canopycms/local/main']))
     })
 
+    describe('beside a branch outside the namespace named its short name', () => {
+      const outside: BranchListItem = { ...spring, name: 'spring', shortName: 'spring' }
+      const listBoth = () =>
+        mockClient.branches.list.mockResolvedValue({
+          ok: true,
+          status: 200,
+          data: {
+            branches: [mockBranches[0], outside, spring],
+            defaultBranch: 'main',
+            users: [],
+          },
+        })
+      // Earlier tests leave the confirm mock dismissing; these confirm, then put it back.
+      let previousConfirm:
+        | (typeof import('@mantine/modals'))['modals']['openConfirmModal']
+        | undefined
+      beforeEach(async () => {
+        const { modals } = await import('@mantine/modals')
+        const confirm = vi.mocked(modals.openConfirmModal)
+        previousConfirm = confirm.getMockImplementation()
+        confirm.mockImplementation((options) => {
+          options.onConfirm?.()
+          return 'mock-modal-id'
+        })
+      })
+      afterEach(async () => {
+        const { modals } = await import('@mantine/modals')
+        if (previousConfirm) vi.mocked(modals.openConfirmModal).mockImplementation(previousConfirm)
+      })
+      const loaded = async (initialBranch: string) => {
+        listBoth()
+        const hook = renderHook(() => useBranchManager({ ...defaultOptions, initialBranch }), {
+          wrapper,
+        })
+        await waitFor(() => expect(hook.result.current.currentBranch).toBeDefined())
+        return hook
+      }
+
+      it('opens each by the name its card hands an action, and writes a URL that opens it', async () => {
+        const opened = await loaded('refs/heads/spring')
+        expect(opened.result.current.currentBranch?.name).toBe('spring')
+        await waitFor(() => expect(writtenBranches()).toEqual(['refs/heads/spring']))
+        opened.unmount()
+
+        const other = await loaded('canopycms/local/spring')
+        expect(other.result.current.currentBranch?.name).toBe('canopycms/local/spring')
+        await waitFor(() => expect(writtenBranches()).toEqual(['refs/heads/spring', 'spring']))
+      })
+
+      it.each([
+        ['the outside branch', 'refs/heads/spring', 'spring'],
+        ['the namespace branch', 'canopycms/local/spring', 'canopycms/local/spring'],
+      ])('sends every action on %s under its own name', async (_label, address, sent) => {
+        const ok = { ok: true, status: 200 } as const
+        mockClient.workflow.submit.mockResolvedValue(ok)
+        mockClient.workflow.withdraw.mockResolvedValue(ok)
+        mockClient.workflow.approve.mockResolvedValue(ok)
+        mockClient.workflow.requestChanges.mockResolvedValue(ok)
+        mockClient.branches.delete.mockResolvedValue(ok)
+        const { result } = await loaded('main')
+
+        await act(async () => {
+          await result.current.handleSubmit(address)
+          await result.current.handleWithdraw(address)
+          await result.current.handleApprove(address)
+          await result.current.handleRequestChanges(address)
+          await result.current.handleDelete(address)
+        })
+
+        expect(mockClient.workflow.submit).toHaveBeenCalledWith({ branch: sent }, expect.anything())
+        expect(mockClient.workflow.withdraw).toHaveBeenCalledWith({ branch: sent })
+        expect(mockClient.workflow.approve).toHaveBeenCalledWith({ branch: sent })
+        expect(mockClient.workflow.requestChanges).toHaveBeenCalledWith({ branch: sent }, {})
+        expect(mockClient.branches.delete).toHaveBeenCalledWith({ branch: sent })
+      })
+
+      it('stays on the namespace branch when the outside one is deleted', async () => {
+        mockClient.branches.delete.mockResolvedValue({ ok: true, status: 200 })
+        const { result } = await loaded('spring')
+        expect(result.current.currentBranch?.name).toBe('canopycms/local/spring')
+
+        await act(async () => {
+          await result.current.handleDelete('refs/heads/spring')
+        })
+
+        expect(mockClient.branches.delete).toHaveBeenCalledWith({ branch: 'spring' })
+        expect(result.current.branchName).toBe('canopycms/local/spring')
+      })
+
+      it('leaves the outside branch when it is the one open and deleted', async () => {
+        mockClient.branches.delete.mockResolvedValue({ ok: true, status: 200 })
+        const { result } = await loaded('refs/heads/spring')
+        expect(result.current.currentBranch?.name).toBe('spring')
+
+        await act(async () => {
+          await result.current.handleDelete('refs/heads/spring')
+        })
+
+        expect(result.current.branchName).toBe('main')
+      })
+    })
+
     it('opens no branch for a raw name that a namespace branch shadows, and writes no URL', async () => {
       const outside: BranchListItem = { ...spring, name: 'feature-y', shortName: 'feature-y' }
       const namespaced: BranchListItem = {

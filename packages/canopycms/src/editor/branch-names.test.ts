@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { branchUrlName, displayBranchName, resolveListedBranch } from './branch-names'
+import {
+  branchAddress,
+  branchUrlName,
+  displayBranchName,
+  resolveListedBranch,
+} from './branch-names'
 
 const listed = (name: string, shortName: string, isProtected = false) => ({
   name,
@@ -46,6 +51,15 @@ describe('resolveListedBranch', () => {
     expect(branchUrlName([oldBase, namespaceX], namespaceX)).toBe('x')
   })
 
+  it('opens by the exact form only the branch with that full name', () => {
+    expect(resolveListedBranch([outsideX, namespaceX], 'refs/heads/x')).toBe(outsideX)
+    expect(resolveListedBranch([outsideX, namespaceX], 'refs/heads/canopycms/prod/x')).toBe(
+      namespaceX,
+    )
+    // Never a short name.
+    expect(resolveListedBranch([namespaceX], 'refs/heads/x')).toBeUndefined()
+  })
+
   it('falls back to the sanitized form of a raw name', () => {
     const sanitized = listed('feature-x', 'feature-x')
     expect(resolveListedBranch([sanitized], 'feature/x')).toBe(sanitized)
@@ -72,11 +86,37 @@ describe('branchUrlName', () => {
     expect(branchUrlName([outside], outside)).toBe('feature/x')
   })
 
+  it('carries the exact form of an outside branch a namespace branch shadows, and each opens its own', () => {
+    const outsideX = listed('x', 'x')
+    const namespaceX = listed('canopycms/prod/x', 'x')
+    const branches = [outsideX, namespaceX]
+    expect(branchUrlName(branches, outsideX)).toBe('refs/heads/x')
+    expect(branchUrlName(branches, namespaceX)).toBe('x')
+    for (const b of branches) {
+      expect(resolveListedBranch(branches, branchUrlName(branches, b))).toBe(b)
+    }
+  })
+
   it('carries the full name of a namespace branch the server lists under it', () => {
     // `shortNameOf` lists a namespace branch named after the active branch by its full name.
     const active = listed('main', 'main', true)
     const named = listed('canopycms/prod/main', 'canopycms/prod/main')
     expect(branchUrlName([active, named], named)).toBe('canopycms/prod/main')
     expect(branchUrlName([active, named], active)).toBe('main')
+  })
+})
+
+describe('branchAddress', () => {
+  it('is the full name, else the URL form when the full name opens another branch', () => {
+    const outsideX = listed('x', 'x')
+    const namespaceX = listed('canopycms/prod/x', 'x')
+    const unshadowed = listed('feature/y', 'feature/y')
+    const branches = [outsideX, namespaceX, unshadowed]
+    expect(branchAddress(branches, namespaceX)).toBe('canopycms/prod/x')
+    expect(branchAddress(branches, unshadowed)).toBe('feature/y')
+    expect(branchAddress(branches, outsideX)).toBe('refs/heads/x')
+    for (const b of branches) {
+      expect(resolveListedBranch(branches, branchAddress(branches, b))).toBe(b)
+    }
   })
 })

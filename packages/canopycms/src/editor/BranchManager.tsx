@@ -33,7 +33,7 @@ import { DestructiveMenuItem } from './components/DestructiveMenuItem'
 import { ReasonedMenuItem } from './components/ReasonedMenuItem'
 import { RelativeTime } from './components/RelativeTime'
 import { branchStatusPresentation } from './branch-status'
-import { displayBranchName } from './branch-names'
+import { branchAddress, displayBranchName } from './branch-names'
 import type { CreateRefusal } from './hooks/create-branch-request'
 import { CLOSED_PULL_REQUEST_REASON, EDITOR_ACTIONS } from './copy'
 import { isReviewerOfOthersReview } from '../authorization/review-role'
@@ -829,25 +829,31 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
           </Text>
         ) : (
           <Stack gap="sm">
-            {orderedBranches.map((b) => (
-              <BranchCard
-                key={b.name}
-                branch={b}
-                isCurrent={b.name === currentBranchName}
-                workflowBlockedReason={
-                  b.name === currentBranchName ? currentWorkflowBlockedReason : undefined
-                }
-                user={user}
-                onSelect={onSelect}
-                onSubmit={onSubmit}
-                onWithdraw={onWithdraw}
-                onApprove={onApprove}
-                onRequestChanges={onRequestChanges}
-                onDelete={onDelete}
-                onGetUserMetadata={onGetUserMetadata}
-                onGetOwnerMetadata={onGetOwnerMetadata}
-              />
-            ))}
+            {orderedBranches.map((b) => {
+              // The editor resolves a shadowed outside branch's full name to the namespace branch
+              // whose short name it is, so a card's actions name its branch by `branchAddress`.
+              const address = branchAddress(branches, b)
+              const act = (run?: (name: string) => void) => run && (() => run(address))
+              return (
+                <BranchCard
+                  key={b.name}
+                  branch={b}
+                  isCurrent={b.name === currentBranchName}
+                  workflowBlockedReason={
+                    b.name === currentBranchName ? currentWorkflowBlockedReason : undefined
+                  }
+                  user={user}
+                  onSelect={act(onSelect)}
+                  onSubmit={act(onSubmit)}
+                  onWithdraw={act(onWithdraw)}
+                  onApprove={act(onApprove)}
+                  onRequestChanges={act(onRequestChanges)}
+                  onDelete={act(onDelete)}
+                  onGetUserMetadata={onGetUserMetadata}
+                  onGetOwnerMetadata={onGetOwnerMetadata}
+                />
+              )
+            })}
           </Stack>
         )}
       </ScrollArea>

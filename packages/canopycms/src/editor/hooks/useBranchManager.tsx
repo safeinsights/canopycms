@@ -19,7 +19,12 @@ import { BRANCHES_KEY, fetchBranches, useBranchesData, type BranchesData } from 
 // which breaks adopters' production `next build` of the editor bundle.
 // paths/branch-name.ts is the dependency-free home of sanitizeBranchName.
 import { sanitizeBranchName } from '../../paths/branch-name'
-import { branchUrlName, displayBranchName, resolveListedBranch } from '../branch-names'
+import {
+  branchAddress,
+  branchUrlName,
+  displayBranchName,
+  resolveListedBranch,
+} from '../branch-names'
 import { RetryToastMessage } from '../components/RetryToastMessage'
 import { isNonApiResponse } from '../../api/client'
 import { isGatewayFailure, isUnanswered, UnansweredError } from '../unanswered'
@@ -579,12 +584,14 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
 
   const currentBranch = resolveListedBranch(branches, branchName)
   const currentBranchName = currentBranch?.name
+  // The listed name, unless another branch's short name shadows it (`branchAddress`).
+  const currentAddress = currentBranch ? branchAddress(branches, currentBranch) : undefined
 
   // A link names a branch by its short name or a raw form; the state takes the listed name, so
   // the URL (replaced below) and everything keyed per branch see one name for one branch.
   useEffect(() => {
-    if (currentBranchName && currentBranchName !== branchName) setBranchName(currentBranchName)
-  }, [currentBranchName, branchName])
+    if (currentAddress && currentAddress !== branchName) setBranchName(currentAddress)
+  }, [currentAddress, branchName])
 
   const branchSummaries = useMemo(() => {
     return branches.map((b) => {
@@ -1096,17 +1103,18 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
 
   /**
    * After a delete: drop it from the created-branch overlay, and leave it if it is open. Matched
-   * the way `currentBranch` resolves a name, against the branch as it was listed before the
-   * delete (`deletedShortName`), since it is no longer listed to resolve against.
+   * the way `listedName` resolves the open name, against the listing from before the delete
+   * (`listedBefore`), since the deleted branch is no longer listed to resolve against.
    */
   const leaveDeletedBranch = (
     deleted: string,
-    deletedShortName: string | undefined,
+    listedBefore: readonly BranchListItem[],
     fresh: BranchesData | undefined,
   ) => {
     forgetCreatedBranch(deleted)
     const open = latest.current.branchName
-    if (open === deleted || sanitizeBranchName(open) === deleted || open === deletedShortName) {
+    const openName = resolveListedBranch(listedBefore, open)?.name ?? sanitizeBranchName(open)
+    if (openName === deleted) {
       // Nothing is left to keep, so no unsaved-changes prompt. With no default known yet, the
       // empty name lets the default-branch adoption effect pick it.
       setBranchName(fresh?.defaultBranch ?? latest.current.branchesData?.defaultBranch ?? '')
@@ -1115,10 +1123,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
 
   const handleDelete = (requested: string) => {
     const branchNameToDelete = listedName(requested)
-    const deletedShortName = resolveListedBranch(
-      latest.current.branches,
-      branchNameToDelete,
-    )?.shortName
+    const listedBefore = latest.current.branches
     return singleFlight(
       'delete',
       branchNameToDelete,
@@ -1137,7 +1142,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 // another user's.
                 if (!result.ok && result.status === 404 && !isNonApiResponse(result)) {
                   notifications.show({ message: 'Branch deleted', color: 'green' })
-                  leaveDeletedBranch(branchNameToDelete, deletedShortName, await reloadBranches())
+                  leaveDeletedBranch(branchNameToDelete, listedBefore, await reloadBranches())
                   return
                 }
                 if (!result.ok) throw actionError(result, 'Failed to delete branch')
@@ -1151,7 +1156,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                       }
                     : { message: 'Branch deleted', color: 'green' },
                 )
-                leaveDeletedBranch(branchNameToDelete, deletedShortName, await reloadBranches())
+                leaveDeletedBranch(branchNameToDelete, listedBefore, await reloadBranches())
               } catch (err) {
                 if (!isUnanswered(err)) {
                   await reportActionFailure(err, 'Failed to delete branch', 'Delete branch')
@@ -1167,7 +1172,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 )
                 if (fresh && !listed) {
                   notifications.show({ message: 'Branch deleted', color: 'green' })
-                  leaveDeletedBranch(branchNameToDelete, deletedShortName, fresh)
+                  leaveDeletedBranch(branchNameToDelete, listedBefore, fresh)
                 } else {
                   showOutcomeUnknown('Delete branch')
                 }

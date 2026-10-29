@@ -9,7 +9,7 @@ import { loadBranchContext } from './branch-metadata'
 import type { CanopyConfig } from './config'
 import { operatingStrategy } from './operating-mode'
 import { namesNoWorkspace } from './paths/branch'
-import { branchShortName } from './paths/branch-name'
+import { branchShortName, exactBranchName } from './paths/branch-name'
 import type { BranchContext } from './types'
 import { BaseBranchUnresolvedError, baseBranchOf } from './utils/base-branch'
 
@@ -53,11 +53,13 @@ export function shortNameOf(config: BranchParamConfig, name: string): string {
 }
 
 /**
- * The workspace `param` names, or null. In order:
+ * The workspace `param` names, or null. `refs/heads/<name>` (`EXACT_BRANCH_PREFIX`) names only
+ * the branch whose branch.json `name` is `<name>`. Any other `param`, in order:
  * 1. the base or configured active branch, exactly, so no namespace branch ever shadows it;
  * 2. the namespace branch whose short name is `param`, when its branch.json `name` is that ref;
  * 3. a branch outside the namespace by its full name, when its `name` is `param`. A namespace
- *    branch's full ref resolves here too.
+ *    branch's full ref resolves here too. A branch outside the namespace that step 2 shadows
+ *    opens only by the exact form.
  * Throws what loading throws for a name that can name no workspace (`namesNoWorkspace`).
  */
 export async function resolveBranchParam(
@@ -67,6 +69,12 @@ export async function resolveBranchParam(
 ): Promise<BranchContext | null> {
   const load = (branchName: string) =>
     loadBranchContext({ branchName, mode: config.mode, basePathOverride: options.basePathOverride })
+
+  const exact = exactBranchName(param)
+  if (exact !== null) {
+    const named = await load(exact)
+    return named?.branch.name === exact ? named : null
+  }
 
   if (namesBaseOrActive(param, config)) return load(param)
 
