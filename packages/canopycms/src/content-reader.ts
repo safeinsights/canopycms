@@ -162,6 +162,15 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       return resolved
     }
 
+    // An existing branch resolves first, so a short name reads its namespace branch; only a
+    // name that resolves to none is provisioned.
+    const existing = await resolveBranchParam(branchName, services.config, {
+      basePathOverride,
+    }).catch((err: unknown) => {
+      if (namesNoWorkspace(err)) return null
+      throw err
+    })
+    if (existing) return existing
     if (allowCreateBranch) {
       return loadOrCreateBranchContext({
         config: services.config,
@@ -172,15 +181,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
         remoteUrl: services.config.defaultRemoteUrl,
       })
     }
-
-    const existing = await resolveBranchParam(branchName, services.config, {
-      basePathOverride,
-    }).catch((err: unknown) => {
-      if (namesNoWorkspace(err)) return null
-      throw err
-    })
-    if (!existing) throw new ContentStoreError(`Branch not found: ${branchName}`, 'NOT_FOUND')
-    return existing
+    throw new ContentStoreError(`Branch not found: ${branchName}`, 'NOT_FOUND')
   }
 
   const resolveStore = async (branchName: string) => {

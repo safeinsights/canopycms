@@ -528,10 +528,9 @@ describe('createContentReader', () => {
       await expect(readPage(reader, 'a'.repeat(300))).rejects.toMatchObject({ code: 'NOT_FOUND' })
     })
 
-    it('finds a namespace branch by its short name, through the one resolver', async () => {
-      const root = await tmpDir()
-      const reader = await readerFor(root)
-      const { branchRoot } = resolveBranchPath({
+    /** The workspace of the namespace branch `canopycms/local/spring`; resolves its branches root. */
+    const springWorkspace = async (root: string): Promise<string> => {
+      const { branchRoot, baseRoot } = resolveBranchPath({
         branchName: 'canopycms/local/spring',
         mode: 'dev',
         basePathOverride: root,
@@ -545,11 +544,29 @@ describe('createContentReader', () => {
           }),
         ),
       )
+      return baseRoot
+    }
+
+    it('finds a namespace branch by its short name, through the one resolver', async () => {
+      const root = await tmpDir()
+      const reader = await readerFor(root)
+      await springWorkspace(root)
 
       // The branch is found; only the entry is missing.
       const err: unknown = await readPage(reader, 'spring').catch((e: unknown) => e)
       expect(err).toMatchObject({ code: 'NOT_FOUND' })
       expect((err as Error).message).not.toContain('Branch not found')
+    })
+
+    it('reads an existing namespace branch by its short name with allowCreateBranch, provisioning nothing', async () => {
+      const root = await tmpDir()
+      const reader = await readerFor(root, { allowCreateBranch: true })
+      const baseRoot = await springWorkspace(root)
+
+      const err: unknown = await readPage(reader, 'spring').catch((e: unknown) => e)
+      expect(err).toMatchObject({ code: 'NOT_FOUND' })
+      expect((err as Error).message).not.toContain('Branch not found')
+      expect(await fs.readdir(baseRoot)).toEqual(['canopycms-local-spring'])
     })
 
     it('reads as NOT_FOUND when a getBranchContext resolver returns null, even with allowCreateBranch', async () => {
