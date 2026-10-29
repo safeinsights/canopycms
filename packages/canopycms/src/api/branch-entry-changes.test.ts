@@ -365,6 +365,24 @@ describe('GET /:branch/changes/...entryPath', () => {
     expect(await entryChange(createCtx(), 'content/blog/hello')).toMatchObject({ status: 413 })
   })
 
+  it('refuses with 409 when the read finds another file than the one it checked', async () => {
+    await write(files.hello, JSON.stringify({ ...helloPost, title: 'Hello again' }))
+    const read = ContentStore.prototype.read
+    const spy = vi.spyOn(ContentStore.prototype, 'read').mockImplementationOnce(async function (
+      this: ContentStore,
+      ...args
+    ) {
+      const doc = await read.apply(this, args)
+      return { ...doc, absolutePath: `${doc.absolutePath}.replaced` }
+    })
+    onTestFinished(() => spy.mockRestore())
+    expect(await entryChange(createCtx(), 'content/blog/hello')).toEqual({
+      ok: false,
+      status: 409,
+      error: 'This branch changed while its changes were being read. Try again in a moment.',
+    })
+  })
+
   it('answers 422 when a side doesn’t parse', async () => {
     await write(files.hello, '{ not json')
     expect(await entryChange(createCtx(), 'content/blog/hello')).toEqual({

@@ -168,7 +168,7 @@ const WHITESPACE_MARKS: Record<string, { shown: string; said: string }> = {
 
 /** A run's text; whitespace alone shows a mark for each character, said in words. */
 const RunText: React.FC<{ value: string }> = ({ value }) => {
-  if (value === '') return <em>blank line</em>
+  if (value === '') return <em>(blank line)</em>
   if (!/^\s+$/.test(value)) return <>{value}</>
   const chars = [...value]
   return (
@@ -547,6 +547,10 @@ const ChangeCard: React.FC<{ change: EntryChange; wholeEntry: Side | undefined }
         <Value value={change[wholeEntry] ?? { kind: 'empty' }} />
       ) : change.text?.mode === 'lines' ? (
         <LineRows rows={change.text.rows} />
+      ) : change.text?.mode === 'endLineBreak' ? (
+        <Text size="sm">
+          {change.text.added ? 'Line break added at the end' : 'Line break removed at the end'}
+        </Text>
       ) : (
         <SimpleGrid cols={{ base: 1, md: 2 }} spacing="sm">
           <SideColumn label="Before" change={change} side="before" />

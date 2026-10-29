@@ -61,7 +61,7 @@ const TOO_LARGE_ERROR = 'This entry is too large to compare here.'
 const FORMATS: readonly ContentFormat[] = ['mdx', 'md', 'json', 'yaml']
 
 /** A side read, or why it can't be shown. */
-type SideRead = EntryChangeSide | 'too-large' | 'unreadable' | undefined
+type SideRead = EntryChangeSide | 'too-large' | 'unreadable' | 'moved' | undefined
 
 const entryChangeParamsSchema = z.object({
   branch: branchNameSchema,
@@ -151,6 +151,9 @@ const readAfter = async (
     const stat = await fs.stat(located.absolutePath)
     if (stat.size > MAX_SIDE_BYTES) return { ...found, side: 'too-large' }
     const doc = await store.read(collectionPath, slug, { resolveReferences: false })
+    // The read resolves the slug again; another file there now is another entry than the one
+    // whose id and size were checked.
+    if (doc.absolutePath !== located.absolutePath) return { side: 'moved' }
     return {
       ...found,
       side: {
@@ -304,6 +307,7 @@ const entryChangeHandler = async (
   if (!read.steady) return unsteadyReadResponse(read.reason, base)
   if (!read.value) return notComparable
   const { mergeBase, before, after } = read.value
+  if (before === 'moved' || after === 'moved') return unsteadyReadResponse('moved', base)
   if (before === 'too-large' || after === 'too-large') {
     return { ok: false, status: 413, error: TOO_LARGE_ERROR }
   }

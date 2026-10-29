@@ -57,6 +57,7 @@ export const LazyEntryChangesDrawer: React.FC<LazyEntryChangesDrawerProps> = ({
     })
   }
   const { Drawer } = opening
+  const focusReturn = focusReturnProps(props.returnFocusTo)
   if (opening.seq === 0) return null
   return (
     <EditorErrorBoundary
@@ -71,7 +72,11 @@ export const LazyEntryChangesDrawer: React.FC<LazyEntryChangesDrawerProps> = ({
           position="right"
           size={720}
           title={`Changes to ${props.subject.title}`}
-          {...focusReturnProps(props.returnFocusTo)}
+          {...focusReturn}
+          onExitTransitionEnd={() => {
+            focusReturn.onExitTransitionEnd?.()
+            props.onExited?.()
+          }}
         >
           <Alert
             variant="light"

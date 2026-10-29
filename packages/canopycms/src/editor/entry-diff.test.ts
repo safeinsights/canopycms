@@ -326,14 +326,16 @@ describe('textDiff', () => {
     const side = (diff: TextDiff, keep: 'before' | 'after'): string =>
       diff.mode === 'words'
         ? own(diff.parts, keep)
-        : diff.rows
-            .flatMap((row) => {
-              if (row.kind === 'same') return [row.text]
-              if (row.kind === 'skipped') return []
-              const parts = row[keep]
-              return parts ? [own(parts, keep)] : []
-            })
-            .join('\n')
+        : diff.mode === 'endLineBreak'
+          ? ''
+          : diff.rows
+              .flatMap((row) => {
+                if (row.kind === 'same') return [row.text]
+                if (row.kind === 'skipped') return []
+                const parts = row[keep]
+                return parts ? [own(parts, keep)] : []
+              })
+              .join('\n')
     const pairs: Array<[string, string]> = [
       ['To a branch.', 'To a branch of their own.'],
       ['Nothing  reaches the site', 'Nothing reaches your site '],
@@ -406,5 +408,93 @@ describe('computeEntryDiff, display details', () => {
       mode: 'words',
       parts: [{ value: 'A forest path' }, { value: ' at dawn', added: true }],
     })
+  })
+})
+
+describe('computeEntryDiff, round 2', () => {
+  const markdown = (name: string): FieldConfig => ({
+    name,
+    type: 'markdown',
+    label: humanName(name),
+  })
+  const humanName = (name: string) => name.charAt(0).toUpperCase() + name.slice(1)
+
+  it('starts no jsdiff call once the deadline has passed', () => {
+    expect(textDiff('a\nb', 'a\nc', true, Date.now() - 1)).toBeUndefined()
+    expect(textDiff('one', 'two', false, Date.now() - 1)).toBeUndefined()
+  })
+
+  it('spends one budget on the whole entry, marking the text changes left once it runs out', () => {
+    const many = Array.from({ length: 30 }, (_, i) => markdown(`field${i}`))
+    const text = (word: string) =>
+      Array.from({ length: 2000 }, (_, i) => `${word} ${i} ${(i * 31) % 97}`).join('\n')
+    const data = (word: string) => Object.fromEntries(many.map((f) => [f.name, text(word)]))
+    const started = Date.now()
+    const { changes } = computeEntryDiff({
+      fields: many,
+      before: { format: 'json', entryType: 'page', data: data('old') },
+      after: { format: 'json', entryType: 'page', data: data('new') },
+    })
+    expect(Date.now() - started).toBeLessThan(450)
+    expect(changes).toHaveLength(30)
+    expect(changes.at(-1)?.tooLargeToMark).toBe(true)
+  })
+
+  it('stops 20,000 changed line pairs at the deadline', () => {
+    const lines = (end: string) =>
+      Array.from({ length: 20_000 }, (_, i) => `l${i}${end}`).join('\n')
+    const started = Date.now()
+    expect(textDiff(lines('a'), lines('b'), true)).toBeUndefined()
+    expect(Date.now() - started).toBeLessThan(450)
+  })
+
+  it('reads two spellings of one instant as no change', () => {
+    const at = [{ name: 'publishedAt', type: 'datetime', label: 'Published' }] as FieldConfig[]
+    const before = {
+      format: 'json' as const,
+      entryType: 'page',
+      data: { publishedAt: '2026-02-03T10:00:00.000Z' },
+    }
+    const after = { ...before, data: { publishedAt: '2026-02-03T11:00:00+01:00' } }
+    expect(computeEntryDiff({ fields: at, before, after }).changes).toEqual([])
+  })
+
+  it('shows seconds when two times differ only within the minute', () => {
+    const at = [{ name: 'publishedAt', type: 'datetime', label: 'Published' }] as FieldConfig[]
+    const before = {
+      format: 'json' as const,
+      entryType: 'page',
+      data: { publishedAt: '2026-02-03T10:00:05Z' },
+    }
+    const after = { ...before, data: { publishedAt: '2026-02-03T10:00:40Z' } }
+    const [change] = computeEntryDiff({ fields: at, before, after }).changes
+    const withSeconds = (iso: string) =>
+      new Date(iso).toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        second: '2-digit',
+        timeZoneName: 'short',
+      })
+    expect(change.before).toMatchObject({ text: withSeconds('2026-02-03T10:00:05Z') })
+    expect(change.after).toMatchObject({ text: withSeconds('2026-02-03T10:00:40Z') })
+    expect(change.text?.mode).toBe('words')
+  })
+
+  it('marks a line that became blank, or was blank, as a blank line', () => {
+    const text = textDiff('a\n\nb\n', 'a\nx\nb\n', true)
+    if (text?.mode !== 'lines') throw new Error('expected a line diff')
+    expect(text.rows).toContainEqual({
+      kind: 'change',
+      before: [{ value: '', removed: true }],
+      after: [{ value: 'x', added: true }],
+    })
+  })
+
+  it('says a line break added or removed at the very end, and nothing else', () => {
+    expect(textDiff('a\nb', 'a\nb\n', true)).toEqual({ mode: 'endLineBreak', added: true })
+    expect(textDiff('a\nb\n', 'a\nb', true)).toEqual({ mode: 'endLineBreak', added: false })
   })
 })

@@ -70,7 +70,8 @@ describe('LazyEntryChangesDrawer', () => {
         .fn<NonNullable<LazyEntryChangesDrawerProps['load']>>()
         .mockRejectedValueOnce(new Error('Failed to fetch dynamically imported module'))
         .mockImplementation(real)
-      render(<Harness load={load} />)
+      const onExited = vi.fn()
+      render(<Harness load={load} onExited={onExited} />)
       await open()
       const crashed = await within(await dialog()).findByTestId('entry-changes-crashed')
       expect(crashed.textContent).toContain(
@@ -80,6 +81,8 @@ describe('LazyEntryChangesDrawer', () => {
 
       await userEvent.click(within(crashed).getByRole('button', { name: 'Close' }))
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+      // The crashed drawer's close ends its comparison's fetching too.
+      await waitFor(() => expect(onExited).toHaveBeenCalledTimes(1))
       await open()
       expect(await within(await dialog()).findByTestId('entry-changes-summary')).toBeTruthy()
       expect(load).toHaveBeenCalledTimes(2)

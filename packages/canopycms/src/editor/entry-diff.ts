@@ -34,8 +34,14 @@ export type DiffRow =
   | { kind: 'change'; before?: DiffPart[]; after?: DiffPart[] }
   | { kind: 'skipped'; count: number }
 
-/** A text change: word by word for a short value, row by row with word marks for long text. */
-export type TextDiff = { mode: 'words'; parts: DiffPart[] } | { mode: 'lines'; rows: DiffRow[] }
+/**
+ * A text change: word by word for a short value, row by row with word marks for long text, or a
+ * line break added or removed at the very end, the only difference.
+ */
+export type TextDiff =
+  | { mode: 'words'; parts: DiffPart[] }
+  | { mode: 'lines'; rows: DiffRow[] }
+  | { mode: 'endLineBreak'; added: boolean }
 
 /** A value as the drawer shows it. */
 export type DisplayValue =
@@ -98,9 +104,9 @@ const SHORT_TEXT = 200
 /** Unchanged lines kept on each side of a change in a line diff. */
 const CONTEXT_LINES = 2
 /**
- * How long one text change's diffing may take, across every jsdiff call it makes, before it is
- * shown unmarked instead: jsdiff's run time grows with the square of the edits, and it runs on
- * the editor's main thread.
+ * How long one entry's text diffing may take in all, on the editor's main thread, where jsdiff's
+ * run time grows with the square of the edits. The deadline is checked before each jsdiff call,
+ * and each call is given only the time left; past it, every text change left is shown unmarked.
  */
 const DIFF_TIMEOUT_MS = 300
 const OTHER_FIELDS_LABEL = 'Other fields'
@@ -168,7 +174,7 @@ const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
  * editor's dates are otherwise relative, but two relative dates can read alike while their values
  * differ, which is the one thing a comparison must show.
  */
-const formatDate = (iso: string, dateOnly: boolean): string => {
+const formatDate = (iso: string, dateOnly: boolean, seconds = false): string => {
   if (dateOnly) {
     const [year, month, day] = iso.split('-').map(Number)
     return new Date(year, month - 1, day).toLocaleDateString(undefined, {
@@ -183,8 +189,29 @@ const formatDate = (iso: string, dateOnly: boolean): string => {
     day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
+    ...(seconds && { second: '2-digit' as const }),
     timeZoneName: 'short',
   })
+}
+
+/** Two date-time values naming one instant, however spelled: no change. */
+const sameInstant = (field: FieldConfig | undefined, a: unknown, b: unknown): boolean => {
+  if (field?.type !== 'datetime' || typeof a !== 'string' || typeof b !== 'string') return false
+  const [x, y] = [Date.parse(a), Date.parse(b)]
+  return !Number.isNaN(x) && x === y
+}
+
+/** Two date-times in the same minute are shown to the second, so their difference shows. */
+const withSecondsWhenNeeded = (
+  before: Extract<DisplayValue, { kind: 'date' }>,
+  after: Extract<DisplayValue, { kind: 'date' }>,
+): void => {
+  if (before.dateOnly || after.dateOnly) return
+  if (Math.floor(Date.parse(before.iso) / 60_000) !== Math.floor(Date.parse(after.iso) / 60_000)) {
+    return
+  }
+  before.text = formatDate(before.iso, false, true)
+  after.text = formatDate(after.iso, false, true)
 }
 
 /** The text a display marks word by word in a change: text values', and dates' absolute form. */
@@ -194,7 +221,11 @@ const markableText = (value: DisplayValue | undefined): string | undefined =>
 class Walker {
   readonly changes: EntryChange[] = []
 
-  constructor(private readonly referenceTitle?: (id: string) => string | undefined) {}
+  constructor(
+    private readonly referenceTitle: ((id: string) => string | undefined) | undefined,
+    /** The `Date.now()` past which no more text is diffed. */
+    private readonly deadline: number,
+  ) {}
 
   /** `value` of `field`, as the drawer shows it. */
   display(field: FieldConfig | undefined, value: unknown): DisplayValue {
@@ -346,7 +377,7 @@ class Walker {
 
   /** One leaf change: a value set, cleared or changed. */
   value(field: FieldConfig | undefined, before: unknown, after: unknown, where: At): void {
-    if (sameValue(before, after)) return
+    if (sameValue(before, after) || sameInstant(field, before, after)) return
     const kind = isEmpty(before) ? 'added' : isEmpty(after) ? 'removed' : 'changed'
     const change: EntryChange = { key: where.key, path: where.path, kind }
     if (kind !== 'added') change.before = this.display(field, before)
@@ -360,7 +391,15 @@ class Walker {
       change.before?.kind === change.after?.kind
     ) {
       const long = change.after?.kind === 'text' && !!change.after.long
-      const text = textDiff(beforeText, afterText, long)
+      if (change.before?.kind === 'date' && change.after?.kind === 'date') {
+        withSecondsWhenNeeded(change.before, change.after)
+      }
+      const text = textDiff(
+        markableText(change.before) ?? beforeText,
+        markableText(change.after) ?? afterText,
+        long,
+        this.deadline,
+      )
       if (text) change.text = text
       else change.tooLargeToMark = true
     }
@@ -371,7 +410,7 @@ class Walker {
       change.after.alt !== undefined &&
       change.before.alt !== change.after.alt
     ) {
-      const alt = textDiff(change.before.alt, change.after.alt)
+      const alt = textDiff(change.before.alt, change.after.alt, false, this.deadline)
       if (alt) change.altText = alt
     }
     this.changes.push(change)
@@ -518,12 +557,52 @@ const longestCommonRun = (a: readonly string[], b: readonly string[]): Set<strin
   return out
 }
 
-const toParts = (changes: Change[]): DiffPart[] =>
-  changes.map((c) => ({
-    value: c.value,
-    ...(c.added && { added: true as const }),
-    ...(c.removed && { removed: true as const }),
-  }))
+const WHITESPACE = /^\s+$/
+
+/**
+ * jsdiff's changes as parts. A gap of whitespace widened or narrowed comes back as the old gap
+ * removed and the new one added; it is kept as their common start, then only the net change.
+ */
+const toParts = (changes: Change[]): DiffPart[] => {
+  const parts: DiffPart[] = []
+  for (let i = 0; i < changes.length; i++) {
+    const c = changes[i]
+    const next = changes[i + 1]
+    if (
+      next &&
+      c.removed !== next.removed &&
+      (c.removed || c.added) &&
+      (next.removed || next.added) &&
+      WHITESPACE.test(c.value) &&
+      WHITESPACE.test(next.value)
+    ) {
+      const [removed, added] = c.removed ? [c.value, next.value] : [next.value, c.value]
+      const shorter = removed.length < added.length ? removed : added
+      const longer = shorter === removed ? added : removed
+      if (longer.startsWith(shorter)) {
+        parts.push({ value: shorter })
+        const rest = longer.slice(shorter.length)
+        parts.push(
+          shorter === removed ? { value: rest, added: true } : { value: rest, removed: true },
+        )
+        i++
+        continue
+      }
+    }
+    parts.push({
+      value: c.value,
+      ...(c.added && { added: true as const }),
+      ...(c.removed && { removed: true as const }),
+    })
+  }
+  return parts
+}
+
+/** A side of a changed row that kept no text: a blank line, marked, so the row says so. */
+const sideParts = (parts: DiffPart[], mark: 'removed' | 'added'): DiffPart[] =>
+  parts.some((p) => p.value !== '')
+    ? parts
+    : [mark === 'removed' ? { value: '', removed: true } : { value: '', added: true }]
 
 const splitLines = (value: string): string[] => {
   const lines = value.split('\n')
@@ -537,18 +616,24 @@ const splitLines = (value: string): string[] => {
  * of unchanged lines cut to {@link CONTEXT_LINES} beside each change. Words are diffed with
  * whitespace as tokens (`diffWordsWithSpace`): `diffWords` gives an unchanged run the new
  * text's spacing, so one side read back from its parts would not be the text it was.
- * Undefined when the diffing outruns {@link DIFF_TIMEOUT_MS}.
+ * Undefined once `deadline` (a `Date.now()`) passes: no jsdiff call starts after it.
  * @internal Exported for tests.
  */
 export function textDiff(
   before: string,
   after: string,
   long = false,
-  timeoutMs = DIFF_TIMEOUT_MS,
+  deadline = Date.now() + DIFF_TIMEOUT_MS,
 ): TextDiff | undefined {
-  const deadline = Date.now() + timeoutMs
-  // jsdiff answers undefined once its timeout passes; at least 1ms, since 0 means none.
-  const timeout = () => ({ timeout: Math.max(1, deadline - Date.now()) })
+  // jsdiff restarts its clock on each call, so each is given only what is left of the budget.
+  const timeLeft = (): { timeout: number } | undefined => {
+    const left = deadline - Date.now()
+    return left > 0 ? { timeout: left } : undefined
+  }
+  const withoutEnd = (text: string) => (text.endsWith('\n') ? text.slice(0, -1) : text)
+  if (before !== after && withoutEnd(before) === withoutEnd(after)) {
+    return { mode: 'endLineBreak', added: after.endsWith('\n') }
+  }
   const short =
     !long &&
     !before.includes('\n') &&
@@ -556,12 +641,14 @@ export function textDiff(
     before.length <= SHORT_TEXT &&
     after.length <= SHORT_TEXT
   if (short) {
-    const words = diffWordsWithSpace(before, after, timeout())
-    return words && { mode: 'words', parts: toParts(words) }
+    const budget = timeLeft()
+    const words = budget && diffWordsWithSpace(before, after, budget)
+    return words ? { mode: 'words', parts: toParts(words) } : undefined
   }
 
   const rows: DiffRow[] = []
-  const changes = diffLines(before, after, timeout())
+  const budget = timeLeft()
+  const changes = budget && diffLines(before, after, budget)
   if (!changes) return undefined
   for (let i = 0; i < changes.length; i++) {
     const change = changes[i]
@@ -580,13 +667,20 @@ export function textDiff(
     if (change.removed && next?.added) i++
     const paired = Math.min(removed.length, added.length)
     for (let n = 0; n < paired; n++) {
-      const changed = diffWordsWithSpace(removed[n], added[n], timeout())
+      const pairBudget = timeLeft()
+      const changed = pairBudget && diffWordsWithSpace(removed[n], added[n], pairBudget)
       if (!changed) return undefined
       const words = toParts(changed)
       rows.push({
         kind: 'change',
-        before: words.filter((p) => !p.added),
-        after: words.filter((p) => !p.removed),
+        before: sideParts(
+          words.filter((p) => !p.added),
+          'removed',
+        ),
+        after: sideParts(
+          words.filter((p) => !p.removed),
+          'added',
+        ),
       })
     }
     for (const text of removed.slice(paired))
@@ -628,7 +722,8 @@ export function computeEntryDiff({
   after,
   referenceTitle,
 }: EntryDiffInput): EntryDiff {
-  const walker = new Walker(referenceTitle)
+  // One budget for the whole entry: see DIFF_TIMEOUT_MS.
+  const walker = new Walker(referenceTitle, Date.now() + DIFF_TIMEOUT_MS)
   const root: At = { path: [], key: '' }
   if (before && after && before.entryType !== after.entryType) {
     walker.value(

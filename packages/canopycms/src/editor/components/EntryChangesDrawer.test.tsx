@@ -260,11 +260,12 @@ describe('EntryChangesDrawer marks', () => {
     expect(textOf(shown)).not.toContain('end of removal')
   })
 
-  it('shows a whitespace change as marks, said in words', async () => {
+  it('shows a widened gap as the one space added, a mark said in words', async () => {
     one({ title: 'a b' }, { title: 'a  b' })
-    const inserted = (await card()).querySelector('ins')
-    expect(textOf(inserted)).toContain('··')
-    expect(textOf(inserted)).toContain('space, space')
+    const shown = await card()
+    expect(shown.querySelector('del')).toBeNull()
+    const inserted = shown.querySelectorAll('ins')
+    expect([...inserted].map((i) => i.textContent)).toEqual(['Added: ·space, end of addition'])
   })
 
   it('lines up a line diff in rows, an empty cell opposite a line the other side lacks', async () => {
@@ -338,5 +339,26 @@ describe('EntryChangesDrawer marks', () => {
     expect(textOf(shown)).toContain(full(2).replace(/\s/g, ' ').split(' ')[0])
     expect(shown.querySelector('ins')).not.toBeNull()
     expect(shown.querySelector('del')).not.toBeNull()
+  })
+})
+
+describe('EntryChangesDrawer blank lines and line breaks', () => {
+  const notes: FieldConfig[] = [{ name: 'notes', type: 'markdown', label: 'Notes' }]
+  const show = (before: string, after: string) =>
+    renderDrawer({
+      subject: { ...subject, fields: notes },
+      state: loaded(sides({ notes: before }, { notes: after })),
+    })
+
+  it('shows a blank line as "(blank line)", seen and said alike', async () => {
+    show('a\n\nb', 'a\nx\nb')
+    const card = within(await waitFor(drawer)).getByTestId('entry-change-card')
+    expect(card.querySelector('del')?.textContent).toContain('(blank line)')
+  })
+
+  it('says a line break was added at the end', async () => {
+    show('a\nb', 'a\nb\n')
+    const card = within(await waitFor(drawer)).getByTestId('entry-change-card')
+    expect(textOf(card)).toContain('Line break added at the end')
   })
 })
