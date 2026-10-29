@@ -1229,7 +1229,7 @@ describe('useEntryManager', () => {
     }
     const listedOptions = {
       sameBranch: (url: string, branchName: string) => (opens[url] ?? url) === branchName,
-      urlBranchName: (name: string) => (name === 'spring' ? 'refs/heads/spring' : 'spring'),
+      urlBranchName: (name: string): string => (name === 'spring' ? 'refs/heads/spring' : 'spring'),
     }
     const entry1: EditorEntry = {
       ...mockEntry,
