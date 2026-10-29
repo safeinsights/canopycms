@@ -15,14 +15,17 @@ export const CREATE_BRANCH_DEADLINE_MS = GATEWAY_MAX_TIMEOUT_MS + 30_000
 export const CREATE_TIMED_OUT_MESSAGE =
   "Creating the branch didn't finish (the server timed out). It's safe to try again."
 
-/** The server refused the typed name: the create form shows `refusal` in place, with no toast. */
+/** The typed name cannot be created: the create form shows `refusal` in place, with no toast. */
 export interface CreateRefusal {
   refusal: string
 }
 
 export type CreateBranchOutcome =
   | { kind: 'created'; branch: BranchListItem | undefined }
-  /** `refused`: the server answered no to this name, so retrying it cannot pass; the form shows why. */
+  /**
+   * `refused`: the server refused this name (`BRANCH_NAME_REFUSED`), or the listing a busy or
+   * unanswered create settles on holds another user's branch of it. Retrying it cannot pass.
+   */
   | { kind: 'failed'; message: string; refused?: true }
 
 /**

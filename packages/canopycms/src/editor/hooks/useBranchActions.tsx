@@ -128,7 +128,7 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
 
   /**
    * Resolves true when the branch was created and switched to, false when it was not and a toast
-   * says why, or a {@link CreateRefusal} when the server refused the name.
+   * says why, or a {@link CreateRefusal} when the name cannot be created.
    */
   const handleCreateBranch = async (branch: {
     name: string

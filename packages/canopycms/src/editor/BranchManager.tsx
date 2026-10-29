@@ -203,8 +203,8 @@ export interface BranchManagerProps {
   onBeforeCreate?: () => Promise<boolean>
   /**
    * Resolving `false` means the branch was not created, so the form stays open with the user's
-   * values; `{ refusal }` also shows the server's reason under the name field. Any other return
-   * (including none) closes it.
+   * values; `{ refusal }` also shows why under the name field. Any other return (including none)
+   * closes it.
    */
   onCreate?: (branch: {
     name: string
@@ -667,7 +667,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   const [newBranchDescription, setNewBranchDescription] = useState('')
 
   const [creating, setCreating] = useState(false)
-  // The server's reason for refusing a name, shown while that name is still what is typed.
+  // Why a create refused the name, shown while that name is still what is typed.
   const [refused, setRefused] = useState<{ typed: string; reason: string } | null>(null)
   const nameInputRef = useRef<HTMLInputElement>(null)
   // Set by a refusal: the name field takes focus once it is enabled again, so its error is read.

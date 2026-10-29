@@ -16,12 +16,12 @@ drawer, the Submit for review, Withdraw, Approve, Request changes and Delete dia
 panel and the toasts. The editor's `?branch=` carries the short name too, as do the preview and its
 page link, and its API requests go to `/spring/entries` rather than
 `/canopycms%2Fprod%2Fspring/entries`; an old link with the full name still opens the branch, and
-the editor rewrites it to the short name. A branch outside the
-namespace keeps its full name everywhere, as do System health and pull request links to GitHub.
-Drafts saved in a browser stay with the branch, whichever name opened it.
+the editor rewrites it to the short name. A branch outside the namespace keeps its full name
+everywhere, and System health keeps the full ref and workspace directory. Drafts saved in a
+browser stay with the branch, whichever name opened it.
 
 The New branch field says "Will be named …" only when sanitizing changed what was typed, and shows
-the server's refusal of a name under the field, where it used to toast. A name with no letter
+why a name is refused under the field, where it used to toast. A name with no letter
 (a–z) or digit, such as `_`, is now refused. The "still being set up" answer a create or
 open can get names the branch by its short name, not its workspace directory.
 

@@ -47,7 +47,8 @@ export function resolveListedBranch<B extends Named>(
 
 /**
  * The `?branch=` value for `branch`: its short name when that opens the same branch, else its
- * full name, so a URL never opens a different branch than the one shown.
+ * full name. A branch outside the namespace whose name a namespace branch's short name takes opens
+ * under neither, here as on the server.
  */
 export function branchUrlName<B extends Named>(branches: readonly B[], branch: B): string {
   const short = displayBranchName(branch)

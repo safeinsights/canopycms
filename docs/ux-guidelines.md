@@ -54,7 +54,7 @@ from `packages/canopycms/src/editor/branch-lock.ts`.
 - **Human labels, never internal names**: "Page sections › Hero › Heading", never
   `blocks[0].title`. `entryTypeLabel`
   (`packages/canopycms/src/editor/editor-utils.ts`) humanises an unlabelled schema name.
-- **Branches by short name**; System health shows the full ref.
+- **Branches by short name**, except in System health.
 - **Developer diagnostics** go behind a "Details" disclosure or to admins only.
 - **Dates** are relative, with the absolute date in a tooltip
   (`packages/canopycms/src/editor/relative-time.ts`).

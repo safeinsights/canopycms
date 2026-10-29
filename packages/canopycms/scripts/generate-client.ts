@@ -306,8 +306,8 @@ export interface ApiClientOptions {
 
   /**
    * Maps a branch name to the \`/:branch\` segment its requests carry. The server resolves a
-   * branch's short name as it does its name, so the editor sends that and no \`%2F\` is left in
-   * the path. @internal
+   * branch's short name as it does its name, so the editor sends a namespace branch's short name,
+   * with no \`%2F\`. @internal
    */
   branchSegment?: (branch: string) => string
 }
