@@ -134,7 +134,7 @@ const all = userDataLines(tokenDeployment)
 
 /** Names the worker must never hold: secrets, names of secrets, AWS and what only the gateway enforces. */
 const GATEWAY_ONLY =
-  /^(?:CANOPYCMS_GITHUB_TOKEN|CANOPYCMS_GITHUB_APP_|CLERK_SECRET_KEY|AWS_|CANOPYCMS_PROTECTED_BRANCHES$|CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS$|CANOPYCMS_WORKER_CAPACITY$)/
+  /^(?:CANOPYCMS_GITHUB_TOKEN|CANOPYCMS_GITHUB_APP_|CLERK_SECRET_KEY|AWS_|CANOPYCMS_PROTECTED_BRANCHES$|CANOPYCMS_BRANCH_NAMESPACE$|CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS$|CANOPYCMS_WORKER_CAPACITY$)/
 
 describe('the environment, split between the two processes', () => {
   const envFiles = (t: Template) => {
