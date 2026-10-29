@@ -1483,11 +1483,21 @@ describe('BranchManager', () => {
   })
 
   describe('actions menu', () => {
-    it('labels its trigger with the branch it acts on', () => {
-      renderBranchManager({ branches: baseBranches, user: creatorUser, mode: 'prod' })
+    it('labels its trigger with the branch it acts on, by its short name', () => {
+      const spring: BranchSummary = {
+        ...baseBranches[1],
+        name: 'canopycms/prod/spring',
+        shortName: 'spring',
+      }
+      renderBranchManager({
+        branches: [...baseBranches, spring],
+        user: creatorUser,
+        mode: 'prod',
+      })
 
       expect(screen.getByRole('button', { name: 'More actions for main' })).toBeTruthy()
       expect(screen.getByRole('button', { name: 'More actions for feature/test' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'More actions for spring' })).toBeTruthy()
     })
 
     it('shows the workflow action of another branch with the reason it cannot act', async () => {
