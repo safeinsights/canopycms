@@ -502,6 +502,16 @@ export const createBranchHandler = async (
             }
           }
         }
+        const [inside] = await GitManager.bareRemoteBranchesInside(resolvedMirrorPath, branchName)
+        if (inside !== undefined) {
+          return {
+            ok: false,
+            status: 409,
+            error:
+              `"${shortName}" cannot be created: the remote has a branch named "${inside}" inside ` +
+              'it, and git cannot hold both. Choose a different name.',
+          }
+        }
         const collision = await GitManager.bareRemoteHasBranch(
           resolvedMirrorPath,
           branchName,

@@ -29,6 +29,7 @@ import {
   MAX_BRANCH_NAME_LENGTH,
   branchNameProblem,
   namespaceBlockedMessage,
+  branchInsideMessage,
   type PushPolicyRefusal,
 } from './branch-policy'
 import { gatewayLog, gatewayLogError, gatewayLogWarn, redactEgress } from './gateway-egress'
@@ -1116,13 +1117,23 @@ export class MirrorSession {
     )
     // The mirror's heads are GitHub's as of this session's fetch.
     if (branch.startsWith(options.policy.namespace)) {
-      const blocker = options.policy.namespaceBlocker(await this.heads())
+      const heads = await this.heads()
+      const blocker = options.policy.namespaceBlocker(heads)
       if (blocker !== null) {
         throw new RefusedPushError(
           branch,
           'invalid',
           undefined,
           namespaceBlockedMessage(branch, blocker),
+        )
+      }
+      const inside = [...heads.keys()].find((name) => name.startsWith(`${branch}/`))
+      if (inside !== undefined) {
+        throw new RefusedPushError(
+          branch,
+          'invalid',
+          undefined,
+          branchInsideMessage(branch, inside),
         )
       }
     }

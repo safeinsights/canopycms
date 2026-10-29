@@ -361,6 +361,25 @@ describe('the namespace', () => {
     expect(isPermanentTaskFailure(caught)).toBe(true)
   })
 
+  it('refuses to push a branch while GitHub has a branch inside it, and pushes one beside it', async () => {
+    await git('--git-dir', githubPath, 'branch', 'canopycms/prod/spring/draft', 'main')
+    await onMain('canopycms/prod/spring')
+    const besideSha = await onMain('canopycms/prod/spring-draft')
+    const github = gateway()
+
+    const caught = await pushVia(github, 'canopycms/prod/spring').catch((err: unknown) => err)
+    await pushVia(github, 'canopycms/prod/spring-draft')
+
+    expect(caught).toBeInstanceOf(RefusedPushError)
+    expect(caught).toMatchObject({
+      message: expect.stringContaining(
+        'GitHub has a branch named "canopycms/prod/spring/draft" inside it',
+      ),
+    })
+    expect(isPermanentTaskFailure(caught)).toBe(true)
+    expect(await tip('refs/heads/canopycms/prod/spring-draft')).toBe(besideSha)
+  })
+
   it('pushes a legacyBranches entry, by its exact name', async () => {
     const sha = await onMain('spring/update')
     const github = gateway({ legacyBranches: ['spring/update'] })

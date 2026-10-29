@@ -104,6 +104,35 @@ describe('Branch creation: remote-mirror collision guard (L2)', () => {
       },
     )
 
+    it.each([
+      ['a local head', 'refs/heads/'],
+      ['a GitHub tracking ref', GITHUB_TRACKING_REF_PREFIX],
+    ])('refuses (409) a create while %s sits inside the new branch', async (_label, prefix) => {
+      const ref = `${prefix}${branchRef('spring')}/draft`
+      await simpleGit({ baseDir: workspace.seedPath }).raw(['push', 'origin', `main:${ref}`])
+
+      const res = await client.post('/api/canopycms/branches', { branch: 'spring' })
+      expect(res.status).toBe(409)
+      const body = await res.json<BranchListItemResponse>()
+      expect(body.error).toBe(
+        `"spring" cannot be created: the remote has a branch named "${branchRef('spring')}/draft" ` +
+          'inside it, and git cannot hold both. Choose a different name.',
+      )
+
+      await simpleGit({ baseDir: workspace.seedPath }).raw(['push', 'origin', `:${ref}`])
+      expect((await client.post('/api/canopycms/branches', { branch: 'spring' })).status).toBe(200)
+    })
+
+    it('creates a branch beside one whose name merely starts with it', async () => {
+      await simpleGit({ baseDir: workspace.seedPath }).raw([
+        'push',
+        'origin',
+        `main:${GITHUB_TRACKING_REF_PREFIX}${branchRef('spring')}-draft`,
+      ])
+
+      expect((await client.post('/api/canopycms/branches', { branch: 'spring' })).status).toBe(200)
+    })
+
     it('proceeds (200) when the requested name is absent from both namespaces', async () => {
       const res = await client.post('/api/canopycms/branches', {
         branch: 'brand-new-branch',

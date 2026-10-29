@@ -115,6 +115,15 @@ export function namespaceBlockedMessage(branch: string, blocker: string): string
   )
 }
 
+/** Why a push of `branch` is refused while GitHub has `inside`, a branch inside it. */
+export function branchInsideMessage(branch: string, inside: string): string {
+  return (
+    `Refusing to push ${JSON.stringify(branch)} to GitHub: GitHub has a branch named ` +
+    `${JSON.stringify(inside)} inside it, and git cannot hold both. Rename or delete that ` +
+    'branch on GitHub.'
+  )
+}
+
 /**
  * Why `branch` is not a name the gateway takes, before git sees it, or null. Printable ASCII only,
  * so no two names differ invisibly; no `"`, `%`, `{` or `}`, which reach URLs and log lines; no
