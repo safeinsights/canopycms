@@ -17,6 +17,7 @@ import { ContentWriteLockBusyError } from '../utils/content-write-lock'
 import { submissionEditorFromUser, type SubmissionEditor } from '../submission-attribution'
 import { NothingToSubmitError } from '../services'
 import { baseBranchOf } from '../utils/base-branch'
+import { shortNameOf } from '../branch-param'
 import { resolveEditorUrl } from '../editor-url'
 
 // Re-export for client generation
@@ -231,7 +232,10 @@ const submitBranchForMergeHandler = async (
     return {
       ok: false,
       status: 400,
-      error: new NothingToSubmitError(branchContext.branch.name, base).message,
+      error: new NothingToSubmitError(
+        shortNameOf(ctx.services.config, branchContext.branch.name),
+        base,
+      ).message,
     }
   }
 

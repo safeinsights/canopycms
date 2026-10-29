@@ -166,7 +166,7 @@ test.describe('Branch Lifecycle & Workflow', () => {
 
     await branchPage.submitBranch(ref)
 
-    await expect(editorPage.notification(`Nothing to submit yet: "${ref}"`)).toBeVisible()
+    await expect(editorPage.notification(`Nothing to submit yet: "${branchName}"`)).toBeVisible()
     await branchPage.verifyBranchStatus(ref, 'editing')
   })
 
