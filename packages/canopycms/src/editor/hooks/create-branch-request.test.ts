@@ -94,7 +94,7 @@ describe('requestBranchCreate', () => {
   it("reports the server's refusal without looking for the branch", async () => {
     const { apiClient, list } = client(async () => ({
       status: 409,
-      body: { ok: false, status: 409, error: 'Branch already exists' },
+      body: { ok: false, status: 409, error: 'Branch already exists', code: 'BRANCH_NAME_REFUSED' },
     }))
 
     expect(await requestBranchCreate(apiClient, body, me)).toEqual({
@@ -103,6 +103,18 @@ describe('requestBranchCreate', () => {
       refused: true,
     })
     expect(list).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [400, 'Branch registry not initialized — ensure the workspace has been initialized'],
+    [409, 'Branches cannot be created: this CMS creates them in "canopycms/local/", but …'],
+  ])('does not call a %i with no name code a refusal of the name', async (status, error) => {
+    const { apiClient } = client(async () => ({ status, body: { ok: false, status, error } }))
+
+    expect(await requestBranchCreate(apiClient, body, me)).toEqual({
+      kind: 'failed',
+      message: error,
+    })
   })
 
   it('does not call a server error a refusal of the name', async () => {

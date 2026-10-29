@@ -390,6 +390,7 @@ describe('branch api', () => {
     expect(res.ok).toBe(false)
     expect(res.status).toBe(409)
     expect(res.error).toBe('A branch named "feature-test" already exists')
+    expect(res.code).toBe('BRANCH_NAME_REFUSED')
   })
 
   it("refuses a create whose key another branch's workspace holds, naming that branch", async () => {
@@ -605,6 +606,7 @@ describe('branch api', () => {
       const res = await create('canopycms/local/spring')
       expect(res.status).toBe(400)
       expect(res.error).toContain('without "canopycms/local/" in front')
+      expect(res.code).toBe('BRANCH_NAME_REFUSED')
     })
 
     it.each(['_', '__', '@_'])(
@@ -630,6 +632,17 @@ describe('branch api', () => {
       const fits = await create('a'.repeat(234))
       expect(fits.status).toBe(200)
       expect(fits.data?.branch.name).toBe(`canopycms/local/${'a'.repeat(234)}`)
+    })
+
+    it('answers an uninitialized registry with no name code, since no name would pass', async () => {
+      const ctx = ctxWith({})
+      const res = await create('spring', {
+        ...ctx,
+        services: { ...ctx.services, registry: undefined },
+      })
+      expect(res.status).toBe(400)
+      expect(res.error).toMatch(/^Branch registry not initialized/)
+      expect(res.code).toBeUndefined()
     })
 
     it('refuses, as a 500 an administrator can act on, a namespace the CMS cannot resolve', async () => {
@@ -665,6 +678,7 @@ describe('branch api', () => {
         const outside = await create('legacy-update', ctx)
         expect(outside.status).toBe(409)
         expect(outside.error).toBe(refused('legacy-update'))
+        expect(outside.code).toBe('BRANCH_NAME_REFUSED')
 
         const retry = await create('inside', ctx)
         expect(retry.status).toBe(200)
@@ -708,6 +722,8 @@ describe('branch api', () => {
         expect(res.status).toBe(409)
         expect(res.error).toContain('"canopycms/local/"')
         expect(res.error).toContain('"canopycms/prod/"')
+        // No name would pass, so it is no refusal of this one.
+        expect(res.code).toBeUndefined()
       })
 
       it('creates when it agrees, or when none is recorded', async () => {

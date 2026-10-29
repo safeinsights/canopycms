@@ -355,7 +355,7 @@ export const createBranchHandler = async (
     }
 
     const named = parseCreatedBranchName(body.branch, namespace)
-    if (!named.ok) return { ok: false, status: 400, error: named.error }
+    if (!named.ok) return nameRefused(400, named.error)
     const { name: branchName, shortName } = named
     const key = sanitizeBranchName(branchName)
     log.debug('api', 'Create branch request', {
@@ -374,42 +374,32 @@ export const createBranchHandler = async (
     if (strategy.usesSeparateSettingsBranch()) {
       const settingsBranchName = strategy.getSettingsBranchName(config)
       if (key === sanitizeBranchName(settingsBranchName)) {
-        return {
-          ok: false,
-          status: 400,
-          error:
-            'Cannot create content branch with settings branch name (git branch name collision)',
-        }
+        return nameRefused(
+          400,
+          'Cannot create content branch with settings branch name (git branch name collision)',
+        )
       }
     }
     // The handler answers any `/:branch` segment in the settings range as not found
     // (http/handler.ts), so a branch with such a short name could never be opened.
     if (isSettingsBranchName(shortName, strategy.getSettingsBranchName(config))) {
-      return {
-        ok: false,
-        status: 400,
-        error: `"${shortName}" is a name CanopyCMS keeps for its settings. Choose a different name.`,
-      }
+      return nameRefused(
+        400,
+        `"${shortName}" is a name CanopyCMS keeps for its settings. Choose a different name.`,
+      )
     }
 
     // Reject the base branch name outright, even before the base branch is
     // provisioned. No recorded fork point exists yet for a not-yet-created
     // branch, so this checks config protection only.
     const { isProtected } = getBranchProtection(config, branchName)
-    if (isProtected) {
-      return {
-        ok: false,
-        status: 400,
-        error: 'Cannot create a branch with the base branch name',
-      }
-    }
+    if (isProtected) return nameRefused(400, 'Cannot create a branch with the base branch name')
 
     if (TOP_LEVEL_ROUTE_SEGMENTS.includes(shortName)) {
-      return {
-        ok: false,
-        status: 400,
-        error: `"${shortName}" is a name CanopyCMS uses for itself. Choose a different name.`,
-      }
+      return nameRefused(
+        400,
+        `"${shortName}" is a name CanopyCMS uses for itself. Choose a different name.`,
+      )
     }
 
     if (!ctx.services.registry) {
@@ -427,11 +417,10 @@ export const createBranchHandler = async (
       workerStatus?.gatewayProtectedBranches ?? [],
     )
     if (outside.has(shortName) || outside.has(branchName)) {
-      return {
-        ok: false,
-        status: 409,
-        error: `"${shortName}" is already the name of another branch. Choose a different name.`,
-      }
+      return nameRefused(
+        409,
+        `"${shortName}" is already the name of another branch. Choose a different name.`,
+      )
     }
 
     // A name collision with ANY existing branch answers before a clone is paid
@@ -505,13 +494,11 @@ export const createBranchHandler = async (
         }
         const [inside] = await GitManager.bareRemoteBranchesInside(resolvedMirrorPath, branchName)
         if (inside !== undefined) {
-          return {
-            ok: false,
-            status: 409,
-            error:
-              `"${shortName}" cannot be created: the remote has a branch named "${inside}" inside ` +
+          return nameRefused(
+            409,
+            `"${shortName}" cannot be created: the remote has a branch named "${inside}" inside ` +
               'it, and git cannot hold both. Choose a different name.',
-          }
+          )
         }
         const collision = await GitManager.bareRemoteHasBranch(
           resolvedMirrorPath,
@@ -525,15 +512,13 @@ export const createBranchHandler = async (
           { namespaces: 'tracking' },
         )
         if (collision) {
-          return {
-            ok: false,
-            status: 409,
-            error:
-              `A branch named "${shortName}" already exists on the remote. ` +
+          return nameRefused(
+            409,
+            `A branch named "${shortName}" already exists on the remote. ` +
               `It may have been created by another CanopyCMS deployment sharing this ` +
               `repository, pushed directly to GitHub, or left behind by an earlier branch ` +
               `of the same name. Choose a different name.`,
-          }
+          )
         }
         // No collision: GitHub does not have this name. Clear any STALE local
         // head the mirror still carries for it, so this new branch's first
@@ -611,9 +596,7 @@ export const createBranchHandler = async (
       if (err instanceof BranchProvisioningBusyError) {
         return { ok: false, status: 503, error: err.message }
       }
-      if (err instanceof BranchDirOccupiedError) {
-        return { ok: false, status: 409, error: err.message }
-      }
+      if (err instanceof BranchDirOccupiedError) return nameRefused(409, err.message)
       throw err
     }
     if (outcome.kind === 'exists') return existingBranchResponse(ctx, req, outcome.context, named)
@@ -639,13 +622,11 @@ const existingBranchResponse = (
   named: { name: string; shortName: string },
 ): BranchListItemResponse => {
   if (existing.branch.name !== named.name) {
-    return {
-      ok: false,
-      status: 409,
-      error:
-        `"${named.shortName}" would clash with the existing branch "${existing.branch.name}". ` +
+    return nameRefused(
+      409,
+      `"${named.shortName}" would clash with the existing branch "${existing.branch.name}". ` +
         'Choose a different name.',
-    }
+    )
   }
   if (isCreatorsRecentBranch(existing.branch, req.user.userId)) {
     return {
@@ -654,8 +635,16 @@ const existingBranchResponse = (
       data: { branch: toBranchListItem(ctx.services.config, existing.branch, req.user) },
     }
   }
-  return { ok: false, status: 409, error: `A branch named "${named.shortName}" already exists` }
+  return nameRefused(409, `A branch named "${named.shortName}" already exists`)
 }
+
+/** A create refused for the name it was given, which the editor shows under its name field. */
+const nameRefused = (status: 400 | 409, error: string): BranchListItemResponse => ({
+  ok: false,
+  status,
+  error,
+  code: 'BRANCH_NAME_REFUSED',
+})
 
 /** @internal Exported for tests. */
 export const listBranchesHandler = async (

@@ -256,6 +256,7 @@ describe('useBranchActions', () => {
       ok: false,
       status: 409,
       error: '"new-branch" is already the name of another branch. Choose a different name.',
+      code: 'BRANCH_NAME_REFUSED',
     })
 
     const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
@@ -274,26 +275,29 @@ describe('useBranchActions', () => {
     expect(mockOnBranchSwitch).not.toHaveBeenCalled()
   })
 
-  it('toasts a failed create that is no refusal of the name, switching nothing', async () => {
-    mockClient.branches.create.mockResolvedValueOnce({
-      ok: false,
-      status: 500,
-      error: 'boom',
-    })
+  it.each([
+    [500, 'boom'],
+    [400, 'Branch registry not initialized — ensure the workspace has been initialized'],
+    [409, 'Branches cannot be created: this CMS creates them in "canopycms/local/", but …'],
+  ])(
+    'toasts a failed %i that is no refusal of the name, switching nothing',
+    async (status, error) => {
+      mockClient.branches.create.mockResolvedValueOnce({ ok: false, status, error })
 
-    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+      const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
 
-    let created: unknown
-    await act(async () => {
-      created = await result.current.handleCreateBranch({ name: 'new-branch' })
-    })
+      let created: unknown
+      await act(async () => {
+        created = await result.current.handleCreateBranch({ name: 'new-branch' })
+      })
 
-    expect(created).toBe(false)
-    expect(notifications.show).toHaveBeenCalledWith({ message: 'boom', color: 'red' })
-    expect(mockOnBranchCreated).not.toHaveBeenCalled()
-    expect(mockSetBranchName).not.toHaveBeenCalled()
-    expect(mockOnBranchSwitch).not.toHaveBeenCalled()
-  })
+      expect(created).toBe(false)
+      expect(notifications.show).toHaveBeenCalledWith({ message: error, color: 'red' })
+      expect(mockOnBranchCreated).not.toHaveBeenCalled()
+      expect(mockSetBranchName).not.toHaveBeenCalled()
+      expect(mockOnBranchSwitch).not.toHaveBeenCalled()
+    },
+  )
 
   describe('confirmCreate', () => {
     it('resolves true without a dialog when nothing is unsaved', async () => {

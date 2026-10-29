@@ -52,9 +52,10 @@ export async function requestBranchCreate(
     return settle(apiClient, body.branch, userId, CREATE_TIMED_OUT_MESSAGE)
   const message = result.error || 'Failed to create branch'
   if (result.status === 503) return settle(apiClient, body.branch, userId, message)
-  // The create handler answers a name it refuses with 400, or 409 for a clash.
-  const refused = result.status === 400 || result.status === 409
-  return refused ? { kind: 'failed', message, refused } : { kind: 'failed', message }
+  // Only a refusal of the name carries this code; any other failure is the toast's to report.
+  return result.code === 'BRANCH_NAME_REFUSED'
+    ? { kind: 'failed', message, refused: true }
+    : { kind: 'failed', message }
 }
 
 /** A same-named branch the server would not answer this create with is a name conflict. */
