@@ -33,6 +33,7 @@ import { DestructiveMenuItem } from './components/DestructiveMenuItem'
 import { ReasonedMenuItem } from './components/ReasonedMenuItem'
 import { RelativeTime } from './components/RelativeTime'
 import { branchStatusPresentation } from './branch-status'
+import { displayBranchName } from './branch-names'
 import { CLOSED_PULL_REQUEST_REASON, EDITOR_ACTIONS } from './copy'
 import { isReviewerOfOthersReview } from '../authorization/review-role'
 import { SYSTEM_USER_ID } from '../system-users'
@@ -40,6 +41,8 @@ import { SYSTEM_USER_ID } from '../system-users'
 /** @internal Exported for tests. */
 export interface BranchSummary {
   name: string
+  /** What the card shows for the branch (`displayBranchName`); the full `name` keys it. */
+  shortName?: string
   status: string
   createdBy?: string
   updatedAt?: string
@@ -385,7 +388,7 @@ const BranchCard: React.FC<BranchCardProps> = ({
   const showViewPullRequest = !!b.pullRequestUrl
   const showDelete = !b.isProtected && (userIsAdmin || (!!user && b.createdBy === user.userId))
   const hasMenu = menuActions.length > 0 || showViewPullRequest || showDelete
-  const menuLabel = `More actions for ${b.name}`
+  const menuLabel = `More actions for ${displayBranchName(b)}`
   const [menuOpen, setMenuOpen] = useState(false)
 
   return (
@@ -400,7 +403,7 @@ const BranchCard: React.FC<BranchCardProps> = ({
       <Group justify="space-between" align="flex-start" wrap="nowrap">
         <Stack gap={4}>
           <Group gap="xs">
-            <Text fw={600}>{b.name}</Text>
+            <Text fw={600}>{displayBranchName(b)}</Text>
             {isCurrent && (
               <Badge color="brand" variant="filled" data-testid={`branch-current-badge-${b.name}`}>
                 Current

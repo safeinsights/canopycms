@@ -25,7 +25,7 @@ export interface BranchPillProps {
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
 
 /**
- * The branch's name. Its menu, headed by the full name, holds the branch actions. Below `sm` the
+ * The branch's name. Its menu, headed by the name untruncated, holds the branch actions. Below `sm` the
  * name truncates shorter, so the actions don't clip.
  */
 export function BranchPill({

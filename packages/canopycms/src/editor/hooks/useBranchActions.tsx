@@ -6,11 +6,14 @@ import type { BranchListItem } from '../../api/branch'
 import { useApiClient } from '../context'
 import { requestBranchCreate } from './create-branch-request'
 import type { UnsavedSummary } from './useDraftManager'
+import { displayBranchName } from '../branch-names'
 import { writeEditorUrl } from './editor-history'
 import { parseCreatedBranchName } from '../../paths/validation'
 
 export interface UseBranchActionsOptions {
   branchName: string
+  /** What the dialogs call the open branch, when it is not `branchName`. */
+  branchLabel?: string
   setBranchName: (name: string) => void
   /** From useDraftManager's `resolveUnsaved`: what a branch-level action would leave behind. */
   getUnsaved: () => Promise<UnsavedSummary>
@@ -86,8 +89,8 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
         // Drafts are stored per branch, so leaving does not lose them.
         children: (
           <Text size="sm">
-            {describeUnsaved(unsaved)} Your drafts stay on “{options.branchName}” and come back when
-            you return. {question}
+            {describeUnsaved(unsaved)} Your drafts stay on “
+            {options.branchLabel ?? options.branchName}” and come back when you return. {question}
           </Text>
         ),
         labels: { confirm: 'Continue Anyway', cancel: 'Cancel' },
@@ -138,7 +141,12 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
       // The server adds the namespace, which the editor is never told; its short name resolves too.
       const typed = parseCreatedBranchName(branch.name)
       const createdName = created?.name ?? (typed.ok ? typed.shortName : branch.name)
-      notifications.show({ message: `Branch "${createdName}" created`, color: 'green' })
+      const createdLabel = created
+        ? displayBranchName(created)
+        : typed.ok
+          ? typed.shortName
+          : branch.name
+      notifications.show({ message: `Branch "${createdLabel}" created`, color: 'green' })
 
       // A listing may not hold it yet, so its own short name stands in for the lookup.
       performBranchSwitch(createdName, created?.shortName)

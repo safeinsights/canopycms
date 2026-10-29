@@ -80,7 +80,7 @@ import {
   useSchemaManager,
 } from './hooks'
 import { useBranchActions } from './hooks/useBranchActions'
-import { resolveListedBranch } from './branch-names'
+import { displayBranchName, resolveListedBranch } from './branch-names'
 import { useBranchChangesData, useEntryChangeData } from './hooks/useBranchChangesData'
 import type { EntryChangesSubject } from './components/EntryChangesDrawer'
 import { LazyEntryChangesDrawer } from './components/LazyEntryChangesDrawer'
@@ -453,6 +453,8 @@ const EditorContent: React.FC<EditorProps> = ({
   // of unlocked that invites a click the server rejects -- and the pane shows a
   // loading state during that window anyway.
   const branchContentLocked = currentBranch?.writeBlocked ?? true
+  // What the page calls the open branch; everything keyed or sent per branch uses branchNameState.
+  const branchLabel = currentBranch ? displayBranchName(currentBranch) : branchNameState
 
   const branchLoading = !currentBranch && (branchesLoading || branchSummaries.length === 0)
   // No lock reason is true yet while the list is unanswered; once it has failed, or answered
@@ -698,6 +700,7 @@ const EditorContent: React.FC<EditorProps> = ({
     confirmOpen: branchConfirmOpen,
   } = useBranchActions({
     branchName: branchNameState,
+    branchLabel,
     setBranchName,
     getUnsaved: resolveUnsaved,
     onReloadBranches: () => loadBranches(),
@@ -708,7 +711,7 @@ const EditorContent: React.FC<EditorProps> = ({
   switchBranchRef.current = async (branch) => {
     if (branches.length > 0 && !resolveListedBranch(branches, branch)) {
       notifications.show({
-        message: `Branch “${branch}” no longer exists or you can no longer open it, so you're still on “${branchNameState}”.`,
+        message: `Branch “${branch}” no longer exists or you can no longer open it, so you're still on “${branchLabel}”.`,
         color: 'yellow',
       })
       throw new Error(`Branch ${branch} is not listed`)
@@ -2291,6 +2294,7 @@ const EditorContent: React.FC<EditorProps> = ({
           topBar={
             <EditorHeader
               branchName={branchNameState}
+              branchLabel={branchLabel}
               branchStatus={currentBranch?.status}
               busy={busy}
               modifiedCount={modifiedCount}
@@ -2688,7 +2692,7 @@ const EditorContent: React.FC<EditorProps> = ({
                 <CommentsPanel
                   key={branchNameState}
                   opened={commentsPanelOpen}
-                  branchName={branchNameState}
+                  branchName={branchLabel}
                   comments={displayComments}
                   canResolve={canResolveAnyComment}
                   currentUserId={commentUserId}

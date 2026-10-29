@@ -2729,6 +2729,64 @@ describe('useBranchManager', () => {
       })
     })
 
+    describe('a namespace branch', () => {
+      const spring: BranchListItem = {
+        ...mockBranches[1],
+        name: 'canopycms/local/spring',
+        shortName: 'spring',
+        status: 'editing',
+        writeBlocked: false,
+        submitBlocked: false,
+        isProtected: false,
+      }
+      const loadedSpring = () => loaded([mockBranches[0], spring])
+
+      it.each([
+        ['submit', 'Submit "spring" for review?'],
+        ['withdraw', 'Withdraw "spring" from review?'],
+        ['approve', 'Approve "spring"?'],
+        ['request changes', 'Send "spring" back to its editor?'],
+        ['delete', 'Delete "spring"?'],
+      ] as const)('is called by its short name in the %s dialog', async (action, sentence) => {
+        const { result } = await loadedSpring()
+        const handlers = {
+          submit: result.current.handleSubmit,
+          withdraw: result.current.handleWithdraw,
+          approve: result.current.handleApprove,
+          'request changes': result.current.handleRequestChanges,
+          delete: result.current.handleDelete,
+        }
+
+        await act(async () => {
+          await handlers[action]('canopycms/local/spring').catch(() => {})
+        })
+
+        const { body } = await dialogBody()
+        expect(body).toContain(sentence)
+        expect(body).not.toContain('canopycms/local')
+      })
+
+      it('is called by its short name when an approve or request changes got no answer', async () => {
+        const { notifications } = await import('@mantine/notifications')
+        mockClient.workflow.approve.mockRejectedValueOnce(new ApiTimeoutError('POST', '/x', 1000))
+        mockClient.workflow.requestChanges.mockRejectedValueOnce(
+          new ApiTimeoutError('POST', '/x', 1000),
+        )
+        const { result } = await loadedSpring()
+
+        await act(async () => {
+          await result.current.handleApprove('spring').catch(() => {})
+          await result.current.handleRequestChanges('spring').catch(() => {})
+        })
+
+        const messages = vi.mocked(notifications.show).mock.calls.map(([n]) => n.message)
+        expect(messages).toContain(branchActionOutcomeUnknown('Approve "spring"'))
+        expect(messages).toContainEqual(
+          expect.stringContaining('Request changes on "spring" may have gone through'),
+        )
+      })
+    })
+
     it('says an approve that got no answer may have gone through, and reloads', async () => {
       const { notifications } = await import('@mantine/notifications')
       mockClient.workflow.approve.mockRejectedValueOnce(new ApiTimeoutError('POST', '/x', 1000))

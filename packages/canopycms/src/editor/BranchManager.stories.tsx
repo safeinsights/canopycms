@@ -28,7 +28,9 @@ export const Default: Story = {
         isProtected: true,
       },
       {
-        name: 'feature/landing',
+        // A branch in the CMS's namespace shows its short name; one outside it, its full name.
+        name: 'canopycms/prod/landing',
+        shortName: 'landing',
         status: 'editing',
         updatedAt: ago(HOUR),
         createdBy: 'alice',
@@ -47,7 +49,7 @@ export const Default: Story = {
         commentCount: 1,
       },
     ],
-    currentBranchName: 'feature/landing',
+    currentBranchName: 'canopycms/prod/landing',
     onSelect: (name: string) => alert(`Open ${name}`),
     onCreate: (branch) => alert(`Create branch: ${branch.name}`),
     onSubmit: (name: string) => alert(`Submit ${name}`),
