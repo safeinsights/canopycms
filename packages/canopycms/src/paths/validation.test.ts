@@ -535,15 +535,15 @@ describe('parseCreatedBranchName', () => {
       'canopycms/prod/',
       /without "canopycms\/prod\/"/,
     ],
-    ['a name with no letter or digit', '日本', '', /at least one letter or digit/],
-    ['punctuation only', '%%', 'canopycms/prod/', /at least one letter or digit/],
-    ['an underscore alone', '_', '', /at least one letter or digit/],
-    ['underscores only', '__', 'canopycms/prod/', /at least one letter or digit/],
+    ['a name with no letter or digit', '日本', '', /at least one letter \(a–z\) or digit/],
+    ['punctuation only', '%%', 'canopycms/prod/', /at least one letter \(a–z\) or digit/],
+    ['an underscore alone', '_', '', /at least one letter \(a–z\) or digit/],
+    ['underscores only', '__', 'canopycms/prod/', /at least one letter \(a–z\) or digit/],
     [
       'an underscore after a character that sanitizes away',
       '@_',
       '',
-      /at least one letter or digit/,
+      /at least one letter \(a–z\) or digit/,
     ],
   ])('refuses %s', (_label, typed, namespace, why) => {
     const result = parseCreatedBranchName(typed, namespace)

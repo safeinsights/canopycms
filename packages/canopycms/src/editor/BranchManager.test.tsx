@@ -951,7 +951,7 @@ describe('BranchManager', () => {
       ['spring update', /cannot contain spaces/],
       ['a..b', /cannot contain "\.\."/],
       ['a'.repeat(251), /too long \(max 250 characters\)/],
-      ['_', /needs at least one letter or digit/],
+      ['_', /needs at least one letter \(a–z\) or digit/],
     ])('says why %s cannot be created, and offers no create', async (typed, why) => {
       const onCreate = vi.fn(async () => true)
       renderBranchManager({ branches: baseBranches, onCreate, mode: 'prod' })

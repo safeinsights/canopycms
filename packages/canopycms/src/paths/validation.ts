@@ -260,7 +260,7 @@ export function parseCreatedBranchName(
   const shortName = sanitizeBranchName(typed).replace(/^[-.]+/, '')
   // "_" alone would name a branch whose short name is no word at all.
   if (!/[a-zA-Z0-9]/.test(shortName)) {
-    return { ok: false, error: 'Branch name needs at least one letter or digit' }
+    return { ok: false, error: 'Branch name needs at least one letter (a–z) or digit' }
   }
   const ref = `${namespace}${shortName}`
   if (ref.length > MAX_BRANCH_NAME_LENGTH) {

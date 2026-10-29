@@ -631,7 +631,7 @@ describe('branch api', () => {
       async (typed) => {
         const res = await create(typed)
         expect(res.status).toBe(400)
-        expect(res.error).toBe('Branch name needs at least one letter or digit')
+        expect(res.error).toBe('Branch name needs at least one letter (a–z) or digit')
       },
     )
 
