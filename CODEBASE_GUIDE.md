@@ -236,14 +236,14 @@ direction, and every invariant.
 - `cms-worker.ts` — the `CmsWorker` class: lifecycle (draining `stop()`, `selfStopped`), worker lock, scheduling, `remote.git` provisioning, base-branch detection (`resolveBaseBranch`, `recordBaseBranchInRemoteHead`), and one delegating method per cluster
 - `worker-context.ts` — `WorkerContext`, the only channel between the class and its clusters
 - `task-runner.ts` — the task-queue cluster below `processTaskQueue`, including `PermanentTaskError`
-- `git-sync.ts` — the git-sync cluster below `syncGit`: tracking, settings push, base refresh (`BaseRefreshReport`), trash sweep, `repairBranchDirResidue`, `unpublishable-branches.ts`
+- `git-sync.ts` — the git-sync cluster below `syncGit`: tracking, settings push, base refresh (`BaseRefreshReport`), trash sweep, `repairBranchDirResidue`, `unpublishable-branches.ts` (`readCarriedGatewayPolicy`)
 - `remote-git-maintenance.ts` — `maintainRemoteGit`: the logged repack of `remote.git` (rule: `git-manager.ts` `repackBareRemoteIfNeeded`)
 - `sparse-cone.ts` — `reapplySparseCones`: re-cones sparse clones after a content-root change
 - `schema-gate.ts` — `decideBaseAdvance`: holds the base branch while incoming content names a schema the serving editor lacks
 - `stale-mirror.ts` — `settleStaleMirror`: a `remote.git` head without editor work follows GitHub
 - `canopy-state.ts` — how sync treats adopter-tracked `.canopy-meta/` state: `listTrackedCanopyState`, `trackedCanopyStateChanges`, `splitByUpstreamTracking`, `untrackInIndex`, `restoreRetiredSchemaCache`
 - `provisioned-workspace.ts` — `holdProvisionedWorkspace`: the zero-retry provisioning-lock hold around base refresh and each rebase
-- `rebase.ts` — the rebase loop, `runRebaseCycle`, and `pollMergeState`
+- `rebase.ts` — the rebase loop, `runRebaseCycle`, `pollMergeState`
 - `github-gateway.ts` — GitHub access; `branch-policy.ts`, `gateway-egress.ts`, `github-gateway-http.ts` its policy, scrubbing, socket
 - `github-mirror.ts`, `github-mirror-upkeep.ts`, `shared-repo-git.ts` — isolated git
 - `github-transfer.ts`, `bundle-header.ts`, `git-process.ts` — bundle transfer; `self-checks.ts` — boot checks
@@ -533,7 +533,7 @@ Top-level components and helpers:
 - `theme.tsx` — theme, default control sizes
 - `branch-status.ts` — status labels and colours
 - `branch-lock.ts` — `branchBarStatus`, the bar's lock-state table; `describeBranchLock`
-- `branch-names.ts` — `displayBranchName`, `resolveListedBranch`, `branchUrlName`
+- `branch-names.ts` — `displayBranchName`, `resolveListedBranch`, `branchUrlName`, `branchAddress`
 - `copy.ts` — fixed action verbs
 - `platform.ts` — `modKeyLabel()`, ⌘ or Ctrl
 - `slug.ts` — `slugFromTitle`; `validateEntrySlug`, the one slug validator
@@ -694,7 +694,7 @@ All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 
 - `git-manager.ts` — the `simple-git` wrapper: `cloneRepo` / `cloneWorkspace` (`CloneRepoOptions`), `resolveCloneRemoteUrl`, `setSparseCone`, `repoExistsAt`, `gitChildEnv`, `addAllExceptCanopyState()`, `listBaseFiles`, `mergeBaseWithBase`, `diffNameStatusAgainst`, `bareRemoteBranchesInside`, `detectBaseBranch`, `resolveWorkspaceBaseBranch`
 - `branch-registry.ts` — branch tracking and listing over a generation-token snapshot cache, `getByKey`; quarantines a dir whose metadata will not load
-- `branch-param.ts` — `resolveBranchParam`, `shortNameOf`
+- `branch-param.ts` — `resolveBranchParam` (`refs/heads/<name>` first), `shortNameOf`
 - `branch-metadata.ts` — `branch.json` persistence under layered concurrency; `baseBranch` immutable; `buildMergedBranchUpdate`, `buildInitialBranchMetadata`; `update` (a computed save), `recordEditor`, `markEditorsCommitted`, `recordBranchEditor`
 - `branch-metadata-file.ts` — schema-checked `branch.json` reads; a deliberate leaf module
 - `branch-metadata-error.ts` — the corrupt-metadata error, node-free
@@ -783,8 +783,8 @@ prefer the branch's recorded `context.branch.baseBranch` over the config value. 
 - `validation.ts` — security validation: `parseLogicalPath`, `parsePhysicalPath`, `parseBranchName`, `parseContentId`, `parseSlug`
 - `resolve.ts` — `resolveLogicalPath`
 - `branch.ts` — branch workspace path resolution; imports `node:fs` and the mode strategies, so server-only
-- `branch-name.ts` — the dependency-free home of `sanitizeBranchName`, `RESERVED_SETTINGS_BRANCH_PREFIX`, `isSettingsBranchName` and `branchShortName`
-- `index.ts` — the barrel, which re-exports `branch.ts` and so is not client-safe
+- `branch-name.ts` — dependency-free home of `sanitizeBranchName`, `RESERVED_SETTINGS_BRANCH_PREFIX`, `isSettingsBranchName`, `branchShortName`, `exactBranchName`
+- `index.ts` — the barrel; re-exports `branch.ts`, so not client-safe
 - `test-utils.ts` — test-only casts `unsafeAsBranchName` and `unsafeAsSlug`, not exported from the barrel
 
 **Client-bundle boundary**: import `sanitizeBranchName` from `branch-name.ts`, never the barrel or
