@@ -2,7 +2,7 @@
  * The worker alarms (`alarmTopic`): a metric filter on the worker's per-cycle
  * git-sync log line and an alarm that fires when that line has not appeared for
  * 30 minutes; a second filter on the line a completed cycle logs, and an alarm
- * that fires when cycles start and none completes for 60 minutes; and the
+ * that fires when cycles start and none completes for an hour; and the
  * unpatched-boot alarm. The last describe runs the real `syncGit` and checks
  * that the lines the filters count are the lines the worker writes.
  */
