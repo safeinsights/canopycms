@@ -47,7 +47,7 @@ const log = createDebugLogger({ prefix: 'BranchAPI' })
  * rather than silently behaving as if nothing changed. That is by design:
  * wire compatibility here means "doesn't break", not "behaves the same".
  */
-export interface BranchListItem extends BranchMetadata {
+export interface BranchListItem extends Omit<BranchMetadata, 'review'> {
   isProtected?: boolean
   readOnly?: boolean
   /**
@@ -259,8 +259,10 @@ export const toBranchListItem = (
   viewer: CanopyUser,
 ): BranchListItem => {
   const protection = getBranchWriteProtection(config, branch.name, branch.baseBranch, branch.status)
+  // `review` names the reviewer, whom the editor has no use for.
+  const { review: _review, ...listed } = branch
   return {
-    ...branch,
+    ...listed,
     ...accessForViewer(branch.access ?? {}, viewer),
     isProtected: protection.isProtected,
     readOnly: protection.readOnly,

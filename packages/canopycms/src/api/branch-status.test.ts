@@ -231,6 +231,22 @@ describe('branch status api', () => {
     )
   })
 
+  it("clears the last round's review on submit, so the next round starts fresh", async () => {
+    mockMetadataUpdate.mockClear()
+
+    const res = await submitBranchForMerge(
+      makeCtx(true),
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+      undefined,
+    )
+
+    expect(res.ok).toBe(true)
+    const saved = mockMetadataUpdate.mock.calls.at(-1)![0].branch
+    expect(saved.status).toBe('submitted')
+    expect(saved).toHaveProperty('review', undefined)
+  })
+
   it('never writes the conflict record, leaving it for the reviewer', async () => {
     mockMetadataUpdate.mockClear()
 

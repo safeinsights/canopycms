@@ -10,6 +10,10 @@ import { CommentStore } from '../comment-store'
 import { getErrorMessage } from '../utils/error'
 import { REQUEST_CHANGES_NOTE_MAX_LENGTH } from '../authorization/review-role'
 import { getBranchProtection } from '../authorization'
+import type { CanopyUser } from '../user'
+import type { BranchReview } from '../types'
+import { sanitizeDisplayName, submissionEditorFromUser } from '../submission-attribution'
+import { syncPrComments } from './pr-comment-sync'
 
 /** Optional on the wire: a bodiless request means no note. */
 const requestChangesBodySchema = z
@@ -52,6 +56,35 @@ const approveConflict = (status: string | undefined): BranchListItemResponse => 
       : staleStatusError(status, "it can't be approved"),
 })
 
+/** The verdict `user` gives, or none for a caller with no identity to credit. */
+const reviewBy = (user: CanopyUser, state: BranchReview['state']): { review?: BranchReview } => {
+  const reviewer = submissionEditorFromUser(user)
+  return reviewer
+    ? {
+        review: {
+          state,
+          by: { userId: reviewer.userId, name: sanitizeDisplayName(reviewer.name) },
+          at: new Date().toISOString(),
+        },
+      }
+    : {}
+}
+
+/**
+ * Shows the new verdict on the PR. Best-effort: the review is already saved, so a failure is
+ * logged and never fails the action.
+ */
+const syncReviewToPr = async (ctx: ApiContext, branchContext: BranchContext): Promise<void> => {
+  try {
+    await syncPrComments(ctx, branchContext)
+  } catch (err) {
+    console.warn(
+      `CanopyCMS: Could not show the review of ${branchContext.branch.name} on its pull request:`,
+      getErrorMessage(err),
+    )
+  }
+}
+
 const requestChangesHandler = async (
   gc: { branchContext: BranchContext },
   ctx: ApiContext,
@@ -75,13 +108,22 @@ const requestChangesHandler = async (
   // merged one cannot be converted.
   let found: string | undefined
   const updated = await meta.saveIf(
-    { branch: { name: branchContext.branch.name, status: 'editing' } },
+    {
+      branch: {
+        name: branchContext.branch.name,
+        status: 'editing',
+        ...reviewBy(req.user, 'changes-requested'),
+      },
+    },
     (existing) => {
       found = existing?.branch.status
       return canRequestChangesFrom(found)
     },
   )
   if (!updated) return requestChangesConflict(found)
+
+  // After the save, which the PR body renders from; the draft conversion above never writes the body.
+  await syncReviewToPr(ctx, branchContext)
 
   // The note is written after the status change so a failed write never blocks the branch from
   // returning to editing; the caller is warned instead.
@@ -158,13 +200,21 @@ const approveBranchHandler = async (
   // As for request changes, the status on disk decides, in the step that writes.
   let found: string | undefined
   const updated = await meta.saveIf(
-    { branch: { name: branchContext.branch.name, status: 'approved' } },
+    {
+      branch: {
+        name: branchContext.branch.name,
+        status: 'approved',
+        ...reviewBy(req.user, 'approved'),
+      },
+    },
     (existing) => {
       found = existing?.branch.status
       return found === 'submitted'
     },
   )
   if (!updated) return approveConflict(found)
+
+  await syncReviewToPr(ctx, branchContext)
 
   return {
     ok: true,

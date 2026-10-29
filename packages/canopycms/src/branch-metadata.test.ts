@@ -13,6 +13,7 @@ import {
   recordBranchEditor,
   type BranchMetadataFile,
 } from './branch-metadata'
+import type { BranchReview } from './types'
 import { ANONYMOUS_USER } from './user'
 import { mockConsole } from './test-utils'
 
@@ -92,6 +93,26 @@ describe('BranchMetadataFileManager', () => {
 
       const loaded = await BranchMetadataFileManager.loadOnly(root)
       expect(loaded?.branch.name).toBe('feature/x')
+    })
+
+    it('clears the review with an undefined one, and drops the key from the file', async () => {
+      const root = await tmpDir()
+      const meta = createMeta(root, await tmpDir())
+      const review: BranchReview = {
+        state: 'approved',
+        by: { userId: 'rev1' },
+        at: '2026-10-28T14:05:00.000Z',
+      }
+      await meta.save({
+        branch: { name: 'feature/x', status: 'approved', createdBy: 'u1', review },
+      })
+      expect((await BranchMetadataFileManager.loadOnly(root))?.branch.review).toEqual(review)
+
+      await meta.save({ branch: { name: 'feature/x', status: 'editing', review: undefined } })
+
+      expect((await BranchMetadataFileManager.loadOnly(root))?.branch.review).toBeUndefined()
+      const raw = await fs.readFile(path.join(root, '.canopy-meta', 'branch.json'), 'utf8')
+      expect(raw).not.toContain('review')
     })
 
     it('uses atomic temp-file + link when creating a new branch.json', async () => {

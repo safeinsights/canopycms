@@ -133,7 +133,7 @@ Route handlers, one file per endpoint namespace:
 - `admin.ts` — admin status (incl. sharp availability) and task-queue endpoints, and the single `ADMIN_ROUTES` export
 - `admin-branch-health.ts` — admin branch-health scan, purge and repair endpoints; see [ARCHITECTURE.md](ARCHITECTURE.md#admin-observability-and-recovery-api)
 - `github-sync.ts` — `syncSubmitPr` / `syncConvertToDraft` / `syncDeleteRemoteBranch`: direct GitHub call or queued task; see [GitHub Sync](#github-sync-direct-vs-async)
-- `pr-comment-sync.ts` — `syncPrComments`: re-renders a PR's editor-comment summary after a comment change, directly or as one queued task per branch
+- `pr-comment-sync.ts` — `syncPrComments`: re-renders a PR's comment and review blocks, directly or as one queued task per branch
 
 Support files:
 
@@ -704,7 +704,7 @@ All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 - `github-service.ts` — GitHub API integration: `createOrUpdatePullRequest`, `createCanopyOctokit`, `isRefAlreadyGoneError`, the rate-limit retry predicates
 - `submission-attribution.ts` — sanitized editor identity, `describeEditors`: `Edited-by:` / `Co-authored-by:` commit trailers and the PR body's marker-delimited section
 - `editor-url.ts` — the editor URL PR bodies link to, and its deep links
-- `pr-comments.ts` — the PR body's editor-comment summary, re-rendered from comments.json
+- `pr-comments.ts` — the PR body's comment and review blocks, re-rendered from disk
 
 Key types: `BranchContext` (branch state plus `branchRoot` / `baseRoot`), `BranchMetadata`,
 `BranchPaths`, `SyncStatus` (`synced`, `pending-sync`, `sync-failed`).

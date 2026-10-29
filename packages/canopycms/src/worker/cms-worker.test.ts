@@ -3092,6 +3092,43 @@ describe('CmsWorker sync-pr-comments', () => {
     expect(saved?.branch.syncFailureReason).toBe('old')
   })
 
+  it("renders the PR's review block from branch.json, and the comment block with it", async () => {
+    await seedBranch({
+      pullRequestNumber: 7,
+      status: 'approved',
+      review: {
+        state: 'approved',
+        by: { userId: 'rev1', name: 'Rae <b>@everyone</b>' },
+        at: '2026-10-28T14:05:00.000Z',
+      },
+    })
+    await new CommentStore(branchPath).addComment({ userId: 'u1', text: 'A note', type: 'branch' })
+
+    const { task, update } = await run()
+
+    expect(task?.status).toBe('completed')
+    expect(update).toHaveBeenCalledTimes(1)
+    const body: string = update.mock.calls[0]![0].body
+    expect(body).toContain('Approved in CanopyCMS by `Rae b@everyone/b` on 2026-10-28 14:05 UTC.')
+    expect(body).not.toContain('rev1')
+    expect(body).toContain('**1 unresolved editor comment thread**')
+    expect(body.startsWith('Notes\n\n')).toBe(true)
+  })
+
+  it('shows a request for changes on a branch back in editing', async () => {
+    await seedBranch({
+      pullRequestNumber: 7,
+      status: 'editing',
+      review: { state: 'changes-requested', by: { userId: 'rev1' }, at: '2026-10-28T09:01:00Z' },
+    })
+
+    const { update } = await run()
+
+    expect(update.mock.calls[0]![0].body).toContain(
+      'Changes requested in CanopyCMS by a reviewer on 2026-10-28 09:01 UTC.',
+    )
+  })
+
   it('writes nothing when the summary is unchanged or the PR body has no block', async () => {
     await seedBranch({ pullRequestNumber: 7 })
     for (const body of [submittedBody, 'rewritten by a human', null]) {

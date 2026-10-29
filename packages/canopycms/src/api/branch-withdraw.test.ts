@@ -115,6 +115,29 @@ describe('branch withdraw api', () => {
     )
   })
 
+  it.each(['submitted', 'approved'])(
+    'clears the review when withdrawing a %s branch, so the next round starts fresh',
+    async (status) => {
+      mockMetadataSave.mockClear()
+      const ctx = makeCtx()
+      ctx.getBranchContext = vi.fn().mockResolvedValue({
+        ...baseContext,
+        branch: { ...baseContext.branch, status },
+      })
+
+      const res = await withdrawHandler(
+        ctx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        { branch: 'feature/x' as BranchName },
+      )
+
+      expect(res.ok).toBe(true)
+      const saved = mockMetadataSave.mock.calls.at(-1)![0].branch
+      expect(saved.status).toBe('editing')
+      expect(saved).toHaveProperty('review', undefined)
+    },
+  )
+
   it('returns 400 when withdrawing an archived branch', async () => {
     const ctx = makeCtx()
     ctx.getBranchContext = vi.fn().mockResolvedValue({

@@ -244,6 +244,8 @@ const submitBranchForMergeHandler = async (
       // pre-submit rebase-failure record would otherwise stick as a stale
       // warning through review and archive.
       rebaseFailure: undefined,
+      // A verdict covers one submit; the next review starts blank.
+      review: undefined,
     },
   })
 

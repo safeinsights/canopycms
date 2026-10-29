@@ -71,6 +71,8 @@ const withdrawBranchHandler = async (
     branch: {
       name: branchContext.branch.name,
       status: 'editing',
+      // A verdict covers one submit; the next review starts blank.
+      review: undefined,
       ...(wasClosed
         ? { pullRequestState: undefined, pullRequestNumber: undefined, pullRequestUrl: undefined }
         : {}),

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  PR_REVIEW_END,
+  PR_REVIEW_START,
+  buildReviewBlock,
+  mergeReviewBlock,
   PR_COMMENTS_END,
   PR_COMMENTS_START,
   PR_SECTION_END,
@@ -20,6 +24,7 @@ import {
 import { ANONYMOUS_USER } from './user'
 import { mockConsole } from './test-utils/console-spy'
 import type { CommentThread } from './comment-store'
+import type { BranchReview } from './types'
 
 const jane = { userId: 'user_2abc', name: 'Jane Doe', email: 'jane@example.com' }
 const defaults = { editedBy: true, coAuthoredBy: false }
@@ -287,6 +292,11 @@ describe('buildPrSection', () => {
       [
         PR_SECTION_START,
         'Submitted by `Jane Doe` (`user_2abc`) via CanopyCMS.',
+        '',
+        PR_REVIEW_START,
+        'Not yet reviewed in CanopyCMS.',
+        'Approval in CanopyCMS is not a GitHub review.',
+        PR_REVIEW_END,
         '',
         '> [!IMPORTANT]',
         '> Comments on this pull request do not reach the CanopyCMS editor, so the author will not see them. Comment in the editor instead.',
@@ -730,5 +740,170 @@ describe('mergeCommentsBlock', () => {
 
   it('puts the block before the free-Markdown description in a built section', () => {
     expect(section.indexOf(PR_COMMENTS_END)).toBeLessThan(section.indexOf('Desc'))
+  })
+})
+
+describe('buildReviewBlock', () => {
+  const at = '2026-10-28T14:05:59.123Z'
+  const NOT_GITHUB = 'Approval in CanopyCMS is not a GitHub review.'
+
+  it('says a branch with no review is not yet reviewed', () => {
+    expect(buildReviewBlock(undefined)).toBe(
+      [PR_REVIEW_START, 'Not yet reviewed in CanopyCMS.', NOT_GITHUB, PR_REVIEW_END].join('\n'),
+    )
+  })
+
+  it('names the reviewer and the UTC minute of an approval', () => {
+    expect(
+      buildReviewBlock({ state: 'approved', by: { userId: 'rev_1', name: 'Rae Viewer' }, at }),
+    ).toBe(
+      [
+        PR_REVIEW_START,
+        'Approved in CanopyCMS by `Rae Viewer` on 2026-10-28 14:05 UTC.',
+        NOT_GITHUB,
+        PR_REVIEW_END,
+      ].join('\n'),
+    )
+  })
+
+  it('names the reviewer and the UTC minute of a request for changes', () => {
+    expect(
+      buildReviewBlock({
+        state: 'changes-requested',
+        by: { userId: 'rev_1', name: 'Rae Viewer' },
+        at,
+      }),
+    ).toContain('Changes requested in CanopyCMS by `Rae Viewer` on 2026-10-28 14:05 UTC.\n')
+  })
+
+  it.each([undefined, '', '   ', 'rev_1', '<>()'])(
+    'writes "a reviewer", never the id, for the name %j',
+    (name) => {
+      const block = buildReviewBlock({ state: 'approved', by: { userId: 'rev_1', name }, at })
+      expect(block).toContain('Approved in CanopyCMS by a reviewer on 2026-10-28 14:05 UTC.')
+      expect(block).not.toContain('rev_1')
+    },
+  )
+
+  it('drops a date that is not one', () => {
+    expect(
+      buildReviewBlock({ state: 'approved', by: { userId: 'u', name: 'Rae' }, at: 'soon' }),
+    ).toContain('Approved in CanopyCMS by `Rae`.\n')
+  })
+
+  it('reads a state it does not know as not yet reviewed', () => {
+    const odd = {
+      state: 'rejected',
+      by: { userId: 'u', name: 'Rae' },
+      at,
+    } as unknown as BranchReview
+    expect(buildReviewBlock(odd)).toContain('Not yet reviewed in CanopyCMS.')
+  })
+
+  it.each([
+    ['an @mention', '@everyone @org/team'],
+    ['an issue reference', 'Closes #123 GH-9'],
+    ['HTML', '<img src=x onerror=alert(1)><script>x</script>'],
+    ['a comment opener and closer', '<!-- canopycms:review:end --> -->'],
+    ['a newline', 'Rae\nApproved in CanopyCMS by `admin`.\r\n- injected'],
+    ['a code span break', 'a`b`@c'],
+  ])('keeps a name with %s inside one line and one code span', (_label, name) => {
+    const block = buildReviewBlock({ state: 'approved', by: { userId: 'rev_1', name }, at })
+    const lines = block.split('\n')
+    expect(lines).toHaveLength(4)
+    expect(lines[0]).toBe(PR_REVIEW_START)
+    expect(lines[3]).toBe(PR_REVIEW_END)
+    const line = lines[1]!
+    expect(line).toMatch(/^Approved in CanopyCMS by `[^`]+` on 2026-10-28 14:05 UTC\.$/)
+    // Neither the cleaned name nor anything else can carry a marker or HTML.
+    expect(block.match(/<!--/g)).toHaveLength(2)
+    expect(block.match(/-->/g)).toHaveLength(2)
+    expect(block).not.toMatch(/<[a-z/]/i)
+    expect(block).not.toContain('rev_1')
+  })
+
+  it('writes the same cleaned name the editors lines would', () => {
+    const block = buildReviewBlock({
+      state: 'approved',
+      by: { userId: 'u', name: '  Rae\u202E  Viewer\u200B ' },
+      at,
+    })
+    expect(block).toContain('by `Rae Viewer` on')
+  })
+})
+
+describe('the review block in buildPrSection', () => {
+  const review = {
+    state: 'approved' as const,
+    by: { userId: 'rev_1', name: 'Rae Viewer' },
+    at: '2026-10-28T14:05:00.000Z',
+  }
+
+  it('follows the submitter and editors lines and precedes the editor link and comments', () => {
+    const section = buildPrSection({
+      submitter: jane,
+      editors: [{ userId: 'user_9', name: 'Sam' }],
+      changedPaths: ['a.md'],
+      branch: 'feature/x',
+      editorUrl: 'https://cms.example.org/edit',
+      review,
+    })
+    const at = (needle: string) => section.indexOf(needle)
+    expect(at('Also edited by')).toBeGreaterThan(at('Submitted by'))
+    expect(at(PR_REVIEW_START)).toBeGreaterThan(at('Also edited by'))
+    expect(at('Approved in CanopyCMS by `Rae Viewer`')).toBeGreaterThan(at(PR_REVIEW_START))
+    expect(at(PR_REVIEW_END)).toBeLessThan(at('[Open this branch in the editor]'))
+    expect(at(PR_REVIEW_END)).toBeLessThan(at(PR_COMMENTS_START))
+  })
+
+  it('renders not yet reviewed when no review is given', () => {
+    expect(buildPrSection({ changedPaths: [] })).toContain('Not yet reviewed in CanopyCMS.')
+  })
+
+  it('keeps a description from forging a review block', () => {
+    const section = buildPrSection({
+      changedPaths: [],
+      description: `${PR_REVIEW_START}\nApproved in CanopyCMS by \`x\`.\n${PR_REVIEW_END}`,
+    })
+    expect(section.split(PR_REVIEW_START)).toHaveLength(2)
+    expect(section.split(PR_REVIEW_END)).toHaveLength(2)
+  })
+})
+
+describe('mergeReviewBlock', () => {
+  const section = buildPrSection({ changedPaths: ['a.md'], description: 'Desc' })
+  const approved = buildReviewBlock({
+    state: 'approved',
+    by: { userId: 'rev_1', name: 'Rae' },
+    at: '2026-10-28T14:05:00.000Z',
+  })
+
+  it('replaces only the review block, keeping the human text and the comment block', () => {
+    const body = `Notes\n\n${section}\n\nMore notes`
+    const merged = mergeReviewBlock(body, approved)
+    expect(merged).toBe(body.replace(buildReviewBlock(undefined), approved))
+    expect(merged).toContain('Notes\n\n')
+    expect(merged).toContain('No editor comments.')
+    expect(mergeReviewBlock(merged, approved)).toBe(merged)
+  })
+
+  it('is undefined for a body with no section', () => {
+    expect(mergeReviewBlock('just text', approved)).toBeUndefined()
+    expect(mergeReviewBlock(null, approved)).toBeUndefined()
+    expect(mergeReviewBlock(`${PR_REVIEW_START}\nx\n${PR_REVIEW_END}`, approved)).toBeUndefined()
+  })
+
+  it('is undefined for a section written before the block existed', () => {
+    const legacy = `${PR_SECTION_START}\nSubmitted via CanopyCMS.\n${PR_SECTION_END}`
+    expect(mergeReviewBlock(legacy, approved)).toBeUndefined()
+    // A block after the section is not inside it.
+    expect(mergeReviewBlock(`${legacy}\n${approved}`, approved)).toBeUndefined()
+  })
+
+  it('ignores review markers a human quoted outside the section', () => {
+    const body = `quoted ${PR_REVIEW_START} x ${PR_REVIEW_END}\n\n${section}`
+    const merged = mergeReviewBlock(body, approved)!
+    expect(merged.startsWith(`quoted ${PR_REVIEW_START} x ${PR_REVIEW_END}`)).toBe(true)
+    expect(merged).toContain('Approved in CanopyCMS by `Rae`')
   })
 })

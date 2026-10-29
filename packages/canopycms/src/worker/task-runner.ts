@@ -551,7 +551,7 @@ export async function executeTask(
       })
       if (body === undefined) return { updated: false, skipped: 'unchanged' }
       await ctx.github().updatePullRequest(prNumber, { body }, signal)
-      workerLog(`Updated the editor comments on PR #${prNumber} for ${branch}`)
+      workerLog(`Updated the comment and review blocks of PR #${prNumber} for ${branch}`)
       return { updated: true }
     }
     default:

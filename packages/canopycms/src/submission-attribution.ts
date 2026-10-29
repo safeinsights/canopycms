@@ -5,6 +5,7 @@ import { getErrorMessage } from './utils/error'
 import { canopyLogWarn } from './utils/logger'
 import { editorDeepLink } from './editor-url'
 import type { CommentThread } from './comment-store'
+import type { BranchReview } from './types'
 
 /**
  * Who submitted (and edited) a branch, recorded in the submit commit's trailers
@@ -50,6 +51,15 @@ export const PR_SECTION_END = '<!-- canopycms:submission:end -->'
 export const PR_COMMENTS_START = '<!-- canopycms:comments:start -->'
 /** @internal Exported for tests. */
 export const PR_COMMENTS_END = '<!-- canopycms:comments:end -->'
+
+/**
+ * The reviewer's verdict, nested in the section like the comment block so a review action can
+ * replace it alone (mergeReviewBlock).
+ * @internal Exported for tests.
+ */
+export const PR_REVIEW_START = '<!-- canopycms:review:start -->'
+/** @internal Exported for tests. */
+export const PR_REVIEW_END = '<!-- canopycms:review:end -->'
 
 // Cc (C0/C1 controls incl. newlines), Cf (zero-width and bidi overrides), Zl/Zp
 // (Unicode line/paragraph separators) can forge a trailer line or hide text; Cs
@@ -284,6 +294,8 @@ export interface PrSectionInput {
   entryPaths?: ReadonlyMap<string, string>
   /** The branch's editor comment threads (comments.json), or null when they could not be read. */
   threads?: readonly CommentThread[] | null
+  /** The reviewer's verdict (branch.json); a submit has none, as it clears the last verdict. */
+  review?: BranchReview
 }
 
 /**
@@ -311,6 +323,37 @@ function editorLabel(editor: CleanEditor): string {
 function editorLinker(branch: string | undefined, editorUrl: string | undefined) {
   return (entryPath?: string): string | undefined =>
     branch && editorUrl ? markdownHref(editorDeepLink(editorUrl, branch, entryPath)) : undefined
+}
+
+const REVIEW_NOT_A_GITHUB_REVIEW = 'Approval in CanopyCMS is not a GitHub review.'
+
+/** The UTC minute as `date time UTC`, or undefined for a timestamp that is not a date. */
+function reviewTime(at: unknown): string | undefined {
+  const time = typeof at === 'string' ? new Date(at) : undefined
+  return time && !Number.isNaN(time.getTime())
+    ? `${time.toISOString().slice(0, 16).replace('T', ' ')} UTC`
+    : undefined
+}
+
+/**
+ * The reviewer's verdict between its markers. The name is a cleaned code span, so it cannot
+ * mention, reference an issue, carry HTML or spell a marker; the id is never written, and a
+ * name that is only the id counts as none.
+ */
+export function buildReviewBlock(review: BranchReview | undefined): string {
+  const verdict =
+    review?.state === 'approved'
+      ? 'Approved'
+      : review?.state === 'changes-requested'
+        ? 'Changes requested'
+        : undefined
+  let status = 'Not yet reviewed in CanopyCMS.'
+  if (review && verdict) {
+    const name = sanitizeDisplayName(personName(review.by.userId, review.by.name))
+    const when = reviewTime(review.at)
+    status = `${verdict} in CanopyCMS by ${name ? codeSpan(name) : 'a reviewer'}${when ? ` on ${when}` : ''}.`
+  }
+  return `${PR_REVIEW_START}\n${status}\n${REVIEW_NOT_A_GITHUB_REVIEW}\n${PR_REVIEW_END}`
 }
 
 const MAX_LISTED_THREADS = 50
@@ -404,6 +447,7 @@ function renderPrSection(
   input: PrSectionInput,
   layout: SectionLayout,
   commentsBlock: string,
+  reviewBlock: string,
 ): string {
   const parts: string[] = []
 
@@ -418,6 +462,8 @@ function renderPrSection(
   if (others.length > 0) {
     parts.push(`Also edited by: ${others.map(editorLabel).join(', ')}`)
   }
+
+  parts.push(reviewBlock)
 
   const link = editorLinker(input.branch, input.editorUrl)
   const branchLink = link()
@@ -480,13 +526,15 @@ export function buildPrSection(input: PrSectionInput): string {
     input.branch,
     input.editorUrl,
   )
-  const size = (l: SectionLayout) => renderPrSection(input, l, block).length - block.length
+  const reviewBlock = buildReviewBlock(input.review)
+  const size = (l: SectionLayout) =>
+    renderPrSection(input, l, block, reviewBlock).length - block.length
   const layout: SectionLayout = { entryLinks: true, listed: MAX_LISTED_ENTRIES, description }
   const fits = (l: SectionLayout) => size(l) <= MAX_SECTION_LENGTH
 
-  if (fits(layout)) return renderPrSection(input, layout, block)
+  if (fits(layout)) return renderPrSection(input, layout, block, reviewBlock)
   layout.entryLinks = false
-  if (fits(layout)) return renderPrSection(input, layout, block)
+  if (fits(layout)) return renderPrSection(input, layout, block, reviewBlock)
   // The description's separator is two newlines.
   const room = MAX_SECTION_LENGTH - size({ ...layout, description: '' }) - 2
   if (room > 0) {
@@ -494,11 +542,12 @@ export function buildPrSection(input: PrSectionInput): string {
       input,
       { ...layout, description: truncateUnits(description, room) },
       block,
+      reviewBlock,
     )
   }
   layout.description = ''
   while (layout.listed > 0 && !fits(layout)) layout.listed = Math.max(0, layout.listed - 10)
-  return renderPrSection(input, layout, block)
+  return renderPrSection(input, layout, block, reviewBlock)
 }
 
 /**
@@ -545,4 +594,23 @@ export function mergeCommentsBlock(
   const end = start < 0 ? -1 : body.indexOf(PR_COMMENTS_END, start)
   if (start < 0 || end < 0 || end > section.end) return undefined
   return body.slice(0, start) + block + body.slice(end + PR_COMMENTS_END.length)
+}
+
+/**
+ * `existing` with the review block inside its canopycms section replaced by `block`, or
+ * undefined when the section or its block is missing (a PR body written before the block
+ * existed, or edited by hand): the next submit writes it. Markers are found as in
+ * mergeCommentsBlock.
+ */
+export function mergeReviewBlock(
+  existing: string | null | undefined,
+  block: string,
+): string | undefined {
+  const body = existing ?? ''
+  const section = findPrSection(body)
+  if (!section) return undefined
+  const start = body.indexOf(PR_REVIEW_START, section.start)
+  const end = start < 0 ? -1 : body.indexOf(PR_REVIEW_END, start)
+  if (start < 0 || end < 0 || end > section.end) return undefined
+  return body.slice(0, start) + block + body.slice(end + PR_REVIEW_END.length)
 }
