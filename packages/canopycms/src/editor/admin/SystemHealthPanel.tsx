@@ -253,6 +253,7 @@ function BranchNamespaceAlert({
   own: AdminStatusData['branchNamespace']
   gateway: string | undefined
 }) {
+  if (own === undefined) return null
   if (!own.ok) {
     return (
       <Alert

@@ -191,8 +191,9 @@ export interface AdminStatusData {
   /**
    * The branch namespace this process resolves for the branches it creates, or why it cannot.
    * System health compares it with the GitHub gateway's (`workerStatus.gatewayBranchNamespace`).
+   * Optional on the wire, so an editor reading an older API shows nothing rather than failing.
    */
-  branchNamespace: { ok: true; namespace: string } | { ok: false; error: string }
+  branchNamespace?: { ok: true; namespace: string } | { ok: false; error: string }
   /** Build of the API process answering this request. */
   build: BuildIdentity
   /** Whether `media` is configured; without it every upload returns 501. */

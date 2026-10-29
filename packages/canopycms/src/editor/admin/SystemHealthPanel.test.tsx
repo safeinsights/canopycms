@@ -721,6 +721,16 @@ describe('SystemHealthPanel', () => {
       expect(alert.textContent).toContain('it must end with "/"')
     })
 
+    it('shows nothing for a status from an API that does not report its namespace', async () => {
+      const { branchNamespace: _omitted, ...older } = statusWithGateway('editor-prod/')
+      mockClient.admin.status.mockResolvedValueOnce(mockSuccess(older))
+
+      renderPanel()
+
+      await waitFor(() => expect(screen.getByText('Worker: alive')).toBeTruthy())
+      expect(screen.queryByTestId('branch-namespace-alert')).toBeNull()
+    })
+
     it.each([
       ['the gateway writes the same namespace', 'canopycms/prod/'],
       ['the gateway has not said yet', undefined],
