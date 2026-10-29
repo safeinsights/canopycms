@@ -204,6 +204,12 @@ export interface BaseSchemaHold {
   expired?: true
 }
 
+/** Branches the GitHub gateway will not publish, by ref: at most 50 `names`, of `count` in all. */
+export interface UnpublishableBranchesReport {
+  names: string[]
+  count: number
+}
+
 /**
  * Wire shape of the worker's self-reported status file (worker-status.json, under
  * the task queue dir), written by the CmsWorker daemon. Read-only here: GET
@@ -281,6 +287,11 @@ export interface WorkerStatusReport {
    * Branch creation refuses a short name equal to one.
    */
   gatewayProtectedBranches?: string[]
+  /**
+   * Editor branches the GitHub gateway will not publish, as of the last git sync that could ask
+   * it; absent when there are none (worker/unpublishable-branches.ts).
+   */
+  unpublishableBranches?: UnpublishableBranchesReport
   /**
    * Present while the schema gate holds the base branch, and on the cycle a hold expires. Carried
    * into a restarted worker's first snapshot, so the bound survives restarts.

@@ -226,7 +226,7 @@ interface TokenBound {
 function addUserData(
   userData: ec2.UserData,
   bounds: TokenBound[],
-  protectedBranchCount: number,
+  counts: { protectedBranches: number; legacyBranches: number },
   ...lines: string[]
 ): void {
   userData.addCommands(...lines)
@@ -244,9 +244,10 @@ function addUserData(
   if (bytes > USER_DATA_MAX_BYTES) {
     throw new Error(
       `CanopyCmsService: the worker's user data could reach ${bytes} bytes, over the ` +
-        `${USER_DATA_MAX_BYTES} EC2 accepts; protectedBranches has ${protectedBranchCount} ` +
-        `entries. Protect branches with fewer, wider * patterns, or shorten the other names ` +
-        `passed in (secret ARNs and fields, branches, the repository, the worker log group).`,
+        `${USER_DATA_MAX_BYTES} EC2 accepts; protectedBranches has ${counts.protectedBranches} ` +
+        `entries and legacyBranches has ${counts.legacyBranches}. Protect branches with fewer, ` +
+        `wider * patterns, list fewer legacyBranches, or shorten the other names passed in ` +
+        `(secret ARNs and fields, branches, the repository, the worker log group).`,
     )
   }
 }
@@ -477,6 +478,61 @@ export function resolveBranchNamespaceProp(
     }
   }
   return namespace
+}
+
+/**
+ * The most `legacyBranches` entries the gateway takes (`MAX_LEGACY_BRANCHES`,
+ * packages/canopycms/src/worker/branch-policy.ts). A local constant: this module imports nothing
+ * from core.
+ */
+const MAX_LEGACY_BRANCHES = 1024
+
+/**
+ * Refuse `legacyBranches` the GitHub gateway would refuse at boot in `namespace`, which would
+ * crash-loop it (`legacyBranchProblem` and the `BranchPolicy` constructor,
+ * packages/canopycms/src/worker/branch-policy.ts): more than {@link MAX_LEGACY_BRANCHES} entries,
+ * a repeated entry, and any entry that is not an exact branch name held to git's rules and the
+ * gateway's (`assertGatewayBranchName`), so none holds a `*`. No entry may be a settings branch,
+ * which the gateway pushes unlisted, start with the namespace, which it already writes, or be
+ * named after part of it, since git then holds no branch in it. A comma separates entries in the
+ * env file, so none may hold one. cms-deploy.test.ts holds this copy and core's to
+ * packages/canopycms/src/worker/legacy-branch-fixtures.ts; add a case there when you change
+ * either copy.
+ * @internal Exported for tests.
+ */
+export function assertValidLegacyBranches(entries: readonly string[], namespace: string): string[] {
+  if (entries.length > MAX_LEGACY_BRANCHES) {
+    throw new Error(
+      `CanopyCmsService: legacyBranches has ${entries.length} entries; the most it takes is ${MAX_LEGACY_BRANCHES}.`,
+    )
+  }
+  const seen = new Set<string>()
+  return entries.map((entry) => {
+    const reject = (why: string): never => {
+      throw new Error(
+        `CanopyCmsService: invalid legacyBranches entry ${JSON.stringify(entry)} -- ${why}.`,
+      )
+    }
+    if (entry.includes(',')) reject('it contains a comma, which separates entries')
+    if (entry.includes('*'))
+      reject('an entry is an exact branch name, and * is not a wildcard here')
+    assertGatewayBranchName('legacyBranches entry', entry)
+    assertValidGitBranchName('legacyBranches entry', entry)
+    if (entry.startsWith('canopycms-settings-')) {
+      reject('it is a settings branch, which the gateway pushes without being listed')
+    }
+    if (entry.startsWith(namespace)) {
+      reject(`it starts with the branch namespace ${namespace}, so it is already in the namespace`)
+    }
+    if (namespace.startsWith(`${entry}/`)) {
+      reject(
+        `it is a branch named after part of the branch namespace ${namespace}, so git can hold no branch in it`,
+      )
+    }
+    if (seen.has(entry)) reject('it is listed twice')
+    seen.add(entry)
+    return entry
+  })
 }
 
 /**
@@ -1156,6 +1212,18 @@ export interface CanopyCmsServiceProps {
   branchNamespace?: string
 
   /**
+   * Exact names of branches from before the branch namespace that editors are still working on,
+   * which the gateway may still push, delete and open pull requests from (default: none). Every
+   * other branch outside the namespace is refused, bar the settings branch. No entry may hold a
+   * `*` or a comma, start with the resolved `branchNamespace` or be named after part of it, or
+   * repeat. At most 1024 entries, and fewer when long: synth refuses any set that could take the
+   * worker's user data past EC2's 16 KiB. Stamped, comma-separated, into the GitHub gateway's
+   * `CANOPYCMS_LEGACY_BRANCHES`, and validated at synth. Remove an entry once its branch is
+   * merged or deleted.
+   */
+  legacyBranches?: string[]
+
+  /**
    * Deployment name (default: 'prod'). Namespaces the settings branch
    * (`canopycms-settings-{deploymentName}`) so this stack's CMS Lambda/worker
    * don't fight another CanopyCMS deployment over the same orphan settings
@@ -1460,6 +1528,7 @@ export class CanopyCmsService extends Construct {
       deploymentName,
       { baseBranch, settingsBranch },
     )
+    const legacyBranches = assertValidLegacyBranches(props.legacyBranches ?? [], branchNamespace)
 
     const workerCapacity: WorkerCapacity = props.workerCapacity ?? { type: 'on-demand' }
     const workerInstanceTypes =
@@ -2087,6 +2156,10 @@ export class CanopyCmsService extends Construct {
       // Only the gateway enforces it, and a split worker refuses it.
       envEntries.push(['CANOPYCMS_PROTECTED_BRANCHES', protectedBranches.join(','), 'gateway'])
     }
+    if (legacyBranches.length > 0) {
+      // Only the gateway enforces it, and a split worker refuses it.
+      envEntries.push(['CANOPYCMS_LEGACY_BRANCHES', legacyBranches.join(','), 'gateway'])
+    }
     const envFile = (readers: readonly EnvReader[]) =>
       envEntries
         .filter(([, , reader]) => readers.includes(reader))
@@ -2113,7 +2186,7 @@ export class CanopyCmsService extends Construct {
           .filter(([, value]) => Token.isUnresolved(value))
           .map(([, value]) => ({ token: value, bytes: ENV_TOKEN_MAX_BYTES })),
       ],
-      protectedBranches.length,
+      { protectedBranches: protectedBranches.length, legacyBranches: legacyBranches.length },
       ...withoutShellComments(
         '#!/bin/bash',
         'set -euo pipefail',

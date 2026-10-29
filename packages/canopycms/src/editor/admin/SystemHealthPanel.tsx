@@ -47,7 +47,7 @@ import type { DuplicateContentId } from '../../content-id-index'
 import type { OperatingMode } from '../../operating-mode'
 import type { Task, CorruptTaskFile } from '../../task-queue'
 import type { BranchHealthEntry, DuplicateIdScan } from '../../branch-health'
-import type { BaseRefreshReport, BaseSchemaHold } from '../../types'
+import type { BaseRefreshReport, BaseSchemaHold, UnpublishableBranchesReport } from '../../types'
 import { escapeForLog } from '../../utils/escape-text'
 import { branchStatusPresentation } from '../branch-status'
 
@@ -279,6 +279,55 @@ function BranchNamespaceAlert({
         gateway writes only branches starting <Code>{escapeForLog(gateway)}</Code>. A developer sets
         branchNamespace, or CANOPYCMS_BRANCH_NAMESPACE, to the same value for both.
       </Text>
+    </Alert>
+  )
+}
+
+/**
+ * Editor branches the GitHub gateway will not publish, by ref, which is what a developer lists
+ * (worker/unpublishable-branches.ts). Names come from branch metadata the CMS Lambda can write, so
+ * each is shown escaped.
+ */
+function UnpublishableBranchesAlert({
+  report,
+  namespace,
+}: {
+  report: UnpublishableBranchesReport
+  namespace: string | undefined
+}) {
+  const unlisted = report.count - report.names.length
+  return (
+    <Alert
+      color="orange"
+      icon={<IconAlertTriangle size={16} />}
+      title={`${plural(report.count, 'branch')} cannot be published`}
+      data-testid="unpublishable-branches-alert"
+    >
+      <Stack gap={4}>
+        <Text size="sm">
+          The GitHub gateway refuses to push each branch below, so submitting it for review fails.
+          Either it is outside the branch namespace
+          {namespace !== undefined && (
+            <>
+              {' '}
+              <Code>{escapeForLog(namespace)}</Code>
+            </>
+          )}{' '}
+          and legacyBranches does not list it, or an entry in protectedBranches matches it.
+        </Text>
+        <Text size="sm">
+          A developer lists each branch from outside the namespace in legacyBranches
+          (CANOPYCMS_LEGACY_BRANCHES on the GitHub gateway). Otherwise, an editor re-enters its
+          changes by hand in a new branch, which is created inside the namespace. A protected branch
+          stays unpublishable unless its protectedBranches entry changes.
+        </Text>
+        <Group gap={4}>
+          {report.names.map((name) => (
+            <Code key={name}>{escapeForLog(name)}</Code>
+          ))}
+          {unlisted > 0 && <Text size="sm">and {unlisted} more</Text>}
+        </Group>
+      </Stack>
     </Alert>
   )
 }
@@ -563,6 +612,13 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
 
       {lastGitSync?.tracked && lastGitSync.tracked.diverged.length > 0 && (
         <DivergedBranchesAlert names={lastGitSync.tracked.diverged} />
+      )}
+
+      {status.workerStatus?.unpublishableBranches && (
+        <UnpublishableBranchesAlert
+          report={status.workerStatus.unpublishableBranches}
+          namespace={status.workerStatus.gatewayBranchNamespace}
+        />
       )}
 
       {status.workerStatus?.lastGitSyncError && (

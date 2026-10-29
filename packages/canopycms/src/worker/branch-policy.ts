@@ -171,13 +171,26 @@ export function protectedPatternProblem(pattern: string): string | null {
 }
 
 /**
- * Why `entry` cannot be a `legacyBranches` entry, or null. An entry is an exact branch name: a `*`
- * would admit names no one listed, and one alone would switch the namespace off.
+ * Why `entry` cannot be a `legacyBranches` entry, whatever the namespace, or null. An entry is an
+ * exact branch name git can push: a `*` would admit names no one listed, and one alone would
+ * switch the namespace off. A comma separates entries in `CANOPYCMS_LEGACY_BRANCHES`. The CDK's
+ * `assertValidLegacyBranches` holds a copy of these rules and the constructor's, both held to
+ * worker/legacy-branch-fixtures.ts.
  * @internal Exported for tests.
  */
 export function legacyBranchProblem(entry: string): string | null {
   if (entry.includes('*')) return 'an entry is an exact branch name, and * is not a wildcard here'
-  return protectedPatternProblem(entry)
+  if (entry.includes(',')) return 'it contains a comma, which separates entries'
+  if (entry.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX)) {
+    return 'it is a settings branch, which the gateway pushes without being listed'
+  }
+  const problem = protectedPatternProblem(entry)
+  if (problem !== null) return problem
+  if (entry === 'HEAD' || entry === '@') return `git reserves ${JSON.stringify(entry)}`
+  if (entry.split('/').some((part) => part.startsWith('.') || part.endsWith('.lock'))) {
+    return "a part of it starts with '.' or ends with '.lock', which git refuses"
+  }
+  return null
 }
 
 /**
@@ -386,11 +399,14 @@ export class BranchPolicy {
     }
   }
 
+  /** Whether `branch` is in the namespace itself, not merely writable as settings or legacy. */
+  namespaceHolds(branch: string): boolean {
+    return branch.startsWith(this.namespace)
+  }
+
   /** Whether the gateway may write `branch` at all: the namespace, the settings branch, the list. */
   inNamespace(branch: string): boolean {
-    return (
-      branch.startsWith(this.namespace) || branch === this.settingsBranch || this.legacy.has(branch)
-    )
+    return this.namespaceHolds(branch) || branch === this.settingsBranch || this.legacy.has(branch)
   }
 
   /**
@@ -536,6 +552,26 @@ export class BranchPolicy {
     }
     return name
   }
+}
+
+/**
+ * Whether the gateway that described its policy as `policy` would take a plain push of `branch`:
+ * `BranchPolicy.assertPushAllowed`'s rules, for a reader that has only the description, with
+ * GitHub's default as last read. A test holds the two equal.
+ */
+export function publishesBranch(policy: BranchPolicyDescription, branch: string): boolean {
+  const settings =
+    branch.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX) || branch === policy.settingsBranch
+  const protectedMatch =
+    policy.configured.some((entry) =>
+      entry.includes('*')
+        ? !settings && matchesBranchPattern(entry, branch)
+        : sameBranch(entry, branch),
+    ) ||
+    (policy.githubDefault !== null && sameBranch(policy.githubDefault, branch))
+  if (protectedMatch) return false
+  if (settings) return branch === policy.settingsBranch
+  return branch.startsWith(policy.namespace) || policy.legacy.includes(branch)
 }
 
 /** Refuse pull request text over its cap; `refusing` opens the message, `branch` names its head. */

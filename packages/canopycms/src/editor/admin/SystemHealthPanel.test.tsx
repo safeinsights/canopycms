@@ -744,6 +744,89 @@ describe('SystemHealthPanel', () => {
     })
   })
 
+  describe('Overview tab: unpublishable branches', () => {
+    const statusWithUnpublishable = (
+      names: string[],
+      count = names.length,
+      namespace: string | null = 'canopycms/prod/',
+    ): AdminStatusData => {
+      const status = makeStatusWithSync()
+      if (!status.workerStatus) throw new Error('expected a worker status')
+      status.workerStatus.unpublishableBranches = { names, count }
+      if (namespace === null) delete status.workerStatus.gatewayBranchNamespace
+      else status.workerStatus.gatewayBranchNamespace = namespace
+      return status
+    }
+
+    it('lists each branch by its full ref, says why and what to do', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(statusWithUnpublishable(['spring', 'cms/old/fix-typos'])),
+      )
+
+      renderPanel()
+
+      const alert = await screen.findByTestId('unpublishable-branches-alert')
+      expect(alert.textContent).toContain('2 branches cannot be published')
+      expect(alert.textContent).toContain('outside the branch namespace canopycms/prod/')
+      expect(alert.textContent).toContain('legacyBranches does not list it')
+      expect(alert.textContent).toContain('CANOPYCMS_LEGACY_BRANCHES on the GitHub gateway')
+      expect(alert.textContent).toContain('new branch, which is created inside the namespace')
+      expect(alert.textContent).toContain('protectedBranches')
+      expect(alert.textContent).toContain('spring')
+      expect(alert.textContent).toContain('cms/old/fix-typos')
+      expect(alert.textContent).not.toContain('more')
+    })
+
+    it('still says why when the gateway has not named its namespace', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(statusWithUnpublishable(['spring'], 1, null)),
+      )
+
+      renderPanel()
+
+      const alert = await screen.findByTestId('unpublishable-branches-alert')
+      expect(alert.textContent).toContain('1 branch cannot be published')
+      expect(alert.textContent).toContain('outside the branch namespace and legacyBranches')
+    })
+
+    it('says how many more there are than it lists', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(statusWithUnpublishable(['spring'], 51)),
+      )
+
+      renderPanel()
+
+      const alert = await screen.findByTestId('unpublishable-branches-alert')
+      expect(alert.textContent).toContain('51 branches cannot be published')
+      expect(alert.textContent).toContain('and 50 more')
+    })
+
+    it('shows a hostile branch name or namespace escaped, never as markup or hidden characters', async () => {
+      const markup = '<img src=x onerror="alert(1)">'
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(statusWithUnpublishable([markup, 'spring-\u202eevil'], 2, 'ns\u200b/')),
+      )
+
+      renderPanel()
+
+      const alert = await screen.findByTestId('unpublishable-branches-alert')
+      expect(alert.querySelector('img')).toBeNull()
+      expect(alert.textContent).toContain(markup)
+      expect(alert.textContent).toContain('spring-\\u{202e}evil')
+      expect(alert.textContent).toContain('ns\\u{200b}/')
+      expect(alert.textContent).not.toMatch(/[\u202e\u200b]/)
+    })
+
+    it('shows no alert when every branch publishes', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(mockSuccess(makeStatusWithSync()))
+
+      renderPanel()
+
+      await waitFor(() => expect(screen.getByText('Worker: alive')).toBeTruthy())
+      expect(screen.queryByTestId('unpublishable-branches-alert')).toBeNull()
+    })
+  })
+
   describe('Overview tab: base branch refresh', () => {
     it('shows a skipped base refresh, its dirty files, and the tracked-state fix', async () => {
       mockClient.admin.status.mockResolvedValueOnce(

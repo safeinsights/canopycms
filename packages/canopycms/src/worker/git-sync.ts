@@ -47,6 +47,7 @@ import {
   sharedRepoGit,
 } from './shared-repo-git'
 import { reapplySparseCones } from './sparse-cone'
+import { findUnpublishableBranches } from './unpublishable-branches'
 import {
   readEditorWork,
   settleStaleMirror,
@@ -683,17 +684,22 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
 
     await cleanupOldTasks(ctx.taskDir, undefined, ctx.log)
 
-    // For System health's comparison with the namespace the CMS creates branches in, and the
-    // names creation refuses. A gateway that cannot answer leaves the last values standing.
+    // For System health: the namespace it compares with the one the CMS creates branches in, the
+    // names creation refuses, and the branches the gateway would refuse to publish, read after the
+    // rebase cycle, which archives merged branches. A gateway that cannot answer leaves the last
+    // values standing.
     try {
       const { branchPolicy } = await ctx.github().health(ctx.shutdownSignal())
+      const report = ctx.ensureStatusReport()
       if (branchPolicy.namespace !== '') {
-        const report = ctx.ensureStatusReport()
         report.gatewayBranchNamespace = branchPolicy.namespace
         report.gatewayProtectedBranches = branchPolicy.configured.filter((n) => !n.includes('*'))
       }
+      const unpublishable = await findUnpublishableBranches(ctx, branchPolicy)
+      if (unpublishable.count > 0) report.unpublishableBranches = unpublishable
+      else delete report.unpublishableBranches
     } catch (err) {
-      workerLogWarn(`Could not read the GitHub gateway's branch namespace: ${getErrorMessage(err)}`)
+      workerLogWarn(`Could not read the GitHub gateway's branch policy: ${getErrorMessage(err)}`)
     }
 
     // [C1] Sweep branch directories the admin purge action trashed more than

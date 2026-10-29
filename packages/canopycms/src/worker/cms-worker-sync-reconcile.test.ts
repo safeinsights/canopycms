@@ -36,6 +36,7 @@ import { mockConsole, openBareRepo, useLocalGitHubGateway } from '../test-utils'
 import { branchProvisioningLockName, tryAcquireProvisioningLock } from '../utils/provisioning-lock'
 import type { WorkerStatusReport } from '../types'
 import { CmsWorker } from './cms-worker'
+import type { GitHubGateway } from './github-gateway'
 import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
 
 /**
@@ -233,12 +234,15 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
 
-  /** A branch workspace at `dirName`, as the Lambda publishes one: a clone with branch.json. */
-  const giveWorkspace = async (dirName: string) => {
+  /**
+   * A branch workspace at `dirName`, as the Lambda publishes one: a clone with branch.json, whose
+   * `name` is the ref.
+   */
+  const giveWorkspace = async (dirName: string, name = dirName) => {
     const branchPath = path.join(workspacePath, 'content-branches', dirName)
     await fs.mkdir(path.join(branchPath, '.git'), { recursive: true })
     await getBranchMetadataFileManager(branchPath, path.dirname(branchPath)).save({
-      branch: { name: dirName },
+      branch: { name },
     })
   }
 
@@ -253,10 +257,11 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
     })
     // Point the GitHub fetch/push URL at the local bare fixture instead of a
     // real GitHub URL (same technique as cms-worker.test.ts's syncGit suite).
-    useLocalGitHubGateway(worker, { remoteUrl: () => githubPath })
+    gateway = useLocalGitHubGateway(worker, { remoteUrl: () => githubPath })
     ;(worker as unknown as { running: boolean }).running = true
     return worker
   }
+  let gateway: GitHubGateway
 
   describe('the gateway branch namespace in the status report', () => {
     beforeEach(() => {
@@ -284,6 +289,41 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
       await makeWorker({ protectedBranches: ['release', 'deploy-*'] }).syncGit()
 
       expect((await readStatus()).gatewayProtectedBranches).toEqual(['release', 'main'])
+    })
+
+    it('reports, then stops reporting, an editor branch the gateway will not publish', async () => {
+      await giveWorkspace('old-unprefixed')
+      await giveWorkspace('canopycms-prod-fresh', 'canopycms/prod/fresh')
+
+      const worker = makeWorker()
+      await worker.syncGit()
+      expect((await readStatus()).unpublishableBranches).toEqual({
+        names: ['old-unprefixed'],
+        count: 1,
+      })
+
+      await fs.rm(path.join(workspacePath, 'content-branches', 'old-unprefixed'), {
+        recursive: true,
+      })
+      await worker.syncGit()
+      expect((await readStatus()).unpublishableBranches).toBeUndefined()
+    })
+
+    it('leaves the last report standing while the gateway cannot describe its policy', async () => {
+      await giveWorkspace('old-unprefixed')
+      const worker = makeWorker()
+      await worker.syncGit()
+
+      vi.spyOn(gateway, 'health').mockRejectedValue(new Error('The GitHub gateway is unreachable'))
+      await fs.rm(path.join(workspacePath, 'content-branches', 'old-unprefixed'), {
+        recursive: true,
+      })
+      await worker.syncGit()
+
+      expect((await readStatus()).unpublishableBranches).toEqual({
+        names: ['old-unprefixed'],
+        count: 1,
+      })
     })
   })
 

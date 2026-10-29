@@ -13,6 +13,7 @@ import {
   legacyBranchProblem,
   matchesBranchPattern,
   protectedPatternProblem,
+  publishesBranch,
   pushRefusalMessage,
   DEFAULT_BRANCH_NAMESPACE,
 } from './branch-policy'
@@ -634,6 +635,80 @@ describe('BranchPolicy: building the namespace', () => {
     )
     for (const name of ['', '-x', 'refs/heads/x']) {
       expect(() => new BranchPolicy({ settingsBranch: name })).toThrow('Invalid settings branch')
+    }
+  })
+})
+
+describe('publishesBranch', () => {
+  const policies = [
+    new BranchPolicy(),
+    new BranchPolicy({
+      baseBranch: 'release/v2',
+      protectedBranches: ['canopycms/prod/keep-*', 'Hot*', 'old'],
+      settingsBranch: 'canopycms-settings-prod',
+      legacyBranches: ['old', 'spring', 'feature/x', 'canopycms-prod-legacy'],
+    }),
+    // A namespace of the adopter's own: the description's, never the default.
+    new BranchPolicy({
+      namespace: 'editor-production/',
+      settingsBranch: 'site-settings',
+      protectedBranches: ['*-prod'],
+      legacyBranches: ['canopycms/prod/old'],
+    }),
+    // A glob never takes in this deployment's own settings branch.
+    new BranchPolicy({
+      namespace: 'cms/',
+      settingsBranch: 'canopycms-settings-prod',
+      protectedBranches: ['*-prod'],
+    }),
+  ]
+  const names = [
+    'main',
+    'Main',
+    'release/v2',
+    'release-v2',
+    'canopycms/prod/spring',
+    'canopycms/prod/keep-me',
+    'canopycms-prod-spring',
+    'canopycms-prod-legacy',
+    'canopycms/prodigy',
+    'CanopyCMS/prod/x',
+    'canopycms/prod/old',
+    'editor-production/spring',
+    'editor-production/x-prod',
+    'editor-production',
+    'cms/spring',
+    'cms/a-prod',
+    'Cms/spring',
+    'spring',
+    'Spring',
+    'feature/x',
+    'feature-x',
+    'old',
+    'Hotfix',
+    'canopycms-settings-prod',
+    'canopycms-settings-staging',
+    'site-settings',
+    'release-prod',
+  ]
+
+  it("answers from a policy's description exactly as the policy decides a plain push", async () => {
+    for (const policy of policies) {
+      // Records GitHub's default, which describe() then carries.
+      await policy.isProtected('anything', defaultIs('main'))
+      const description = policy.describe()
+      for (const name of names) {
+        const pushes = await policy
+          .assertPushAllowed(name, undefined, defaultIs('main'), (reason) => new Error(reason))
+          .then(
+            () => true,
+            () => false,
+          )
+        expect(
+          publishesBranch(description, name),
+          `${name} under ${JSON.stringify(description)}`,
+        ).toBe(pushes)
+      }
     }
   })
 })
