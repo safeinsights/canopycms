@@ -1857,7 +1857,7 @@ How the CanopyCMS editor works from a content editor's perspective.
 
 Navigate to your editor URL (e.g. `/edit`), sign in, and select or create a branch to work on. The branch is your workspace: the branch bar holds the pill, status, unsaved count, "Save all" and "Submit for review"; the entry header holds the open entry's name and "Save".
 
-> In production the editor opens on the base branch by default. That branch is browsable but read-only — click "New branch…" in the branch bar to start editing. See [Submitting for Review](#submitting-for-review).
+> In production the editor opens on `defaultActiveBranch`, else on the base branch, which is browsable but read-only — click "New branch…" in the branch bar to start editing. See [Submitting for Review](#submitting-for-review).
 
 ### Working with Branches
 
