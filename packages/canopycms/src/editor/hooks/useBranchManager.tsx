@@ -435,6 +435,8 @@ export interface UseBranchManagerReturn {
   branches: BranchListItem[]
   branchSummaries: BranchSummary[]
   currentBranch: BranchListItem | undefined
+  /** What a person is shown for the listed or pending branch whose full name is `name`, else `name`. */
+  branchLabelOf: (name: string) => string
   /** The listed branch `name` opens, resolved as `currentBranch` is. */
   listedBranch: (name: string) => BranchListItem | undefined
   /** The full name of the listed branch `name` opens, else `name` sanitized. */
@@ -675,7 +677,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const listedName = (name: string): string => listedBranch(name)?.name ?? sanitizeBranchName(name)
 
   // What a dialog or toast calls the listed branch `name`; the keys, lookups and requests keep `name`.
-  const shownName = (name: string): string => {
+  const branchLabelOf = (name: string): string => {
     const found = latest.current.branches.find((b) => b.name === name)
     return found ? displayBranchName(found) : name
   }
@@ -894,7 +896,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
       const unsaved = checking && (await checking.finally(() => options.setBusy(false)))
       return new Promise<void>((resolve, reject) => {
         showSubmitConfirmation(
-          shownName(branchNameToSubmit),
+          branchLabelOf(branchNameToSubmit),
           unsaved,
           async () => {
             // A listing that arrived while the dialog was open may show the branch already
@@ -955,7 +957,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
       () =>
         new Promise<void>((resolve, reject) => {
           showWithdrawConfirmation(
-            shownName(branchNameToWithdraw),
+            branchLabelOf(branchNameToWithdraw),
             pullRequestOf(branchNameToWithdraw),
             async () => {
               options.setBusy(true)
@@ -994,7 +996,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
       () =>
         new Promise<void>((resolve, reject) => {
           showApproveConfirmation(
-            shownName(branchNameToApprove),
+            branchLabelOf(branchNameToApprove),
             pullRequestOf(branchNameToApprove),
             async () => {
               options.setBusy(true)
@@ -1011,7 +1013,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               } catch (err) {
                 await reportReviewFailure(err, 'approve', branchNameToApprove, {
                   fallback: 'Failed to approve branch',
-                  label: `${EDITOR_ACTIONS.approve} "${shownName(branchNameToApprove)}"`,
+                  label: `${EDITOR_ACTIONS.approve} "${branchLabelOf(branchNameToApprove)}"`,
                   retry: () =>
                     void handleApprove(branchNameToApprove, returnFocusTo).catch(() => {}),
                 })
@@ -1037,7 +1039,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
       () =>
         new Promise<void>((resolve) => {
           showRequestChangesConfirmation(
-            shownName(branchNameForChanges),
+            branchLabelOf(branchNameForChanges),
             pullRequestOf(branchNameForChanges),
             noteDrafts.current.get(branchNameForChanges) ?? '',
             (draft) => {
@@ -1072,7 +1074,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               } catch (err) {
                 await reportReviewFailure(err, 'request-changes', branchNameForChanges, {
                   fallback: 'Failed to request changes',
-                  label: `${EDITOR_ACTIONS.requestChanges} on "${shownName(branchNameForChanges)}"`,
+                  label: `${EDITOR_ACTIONS.requestChanges} on "${branchLabelOf(branchNameForChanges)}"`,
                   note: note.trim() || undefined,
                   retry: () =>
                     void handleRequestChanges(branchNameForChanges, returnFocusTo).catch(() => {}),
@@ -1126,7 +1128,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
       () =>
         new Promise<void>((resolve) => {
           showDeleteConfirmation(
-            shownName(branchNameToDelete),
+            branchLabelOf(branchNameToDelete),
             pullRequestOf(branchNameToDelete),
             async () => {
               options.setBusy(true)
@@ -1227,6 +1229,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     branches,
     branchSummaries,
     currentBranch,
+    branchLabelOf,
     listedBranch,
     listedName,
     urlBranchName,

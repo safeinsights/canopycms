@@ -1775,6 +1775,15 @@ describe('useBranchManager', () => {
       await waitFor(() => expect(writtenBranches()).toEqual(['spring']))
     })
 
+    it('labels a listed branch by its short name, and a name it does not list as given', async () => {
+      branchesOf(spring)
+      const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+      await waitFor(() => expect(result.current.branches).toHaveLength(2))
+
+      expect(result.current.branchLabelOf(spring.name)).toBe('spring')
+      expect(result.current.branchLabelOf('canopycms/local/gone')).toBe('canopycms/local/gone')
+    })
+
     it('is left as the link wrote it until the listing resolves the branch', async () => {
       mockClient.branches.list.mockReturnValue(new Promise(() => {}))
       renderHook(() => useBranchManager({ ...defaultOptions, initialBranch: spring.name }), {

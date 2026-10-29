@@ -440,7 +440,7 @@ describe('the editor on a namespace branch named by its short name', () => {
       expect(within(screen.getByTestId('branch-dropdown-button')).getByText('spring')).toBeTruthy(),
     )
 
-    window.history.replaceState({}, '', '/?branch=gone')
+    window.history.replaceState({}, '', `/?branch=${encodeURIComponent('canopycms/local/gone')}`)
     act(() => {
       window.dispatchEvent(new PopStateEvent('popstate'))
     })
@@ -448,7 +448,9 @@ describe('the editor on a namespace branch named by its short name', () => {
     await waitFor(() =>
       expect(notifications.show).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: expect.stringContaining("so you're still on “spring”."),
+          message:
+            'Branch “canopycms/local/gone” no longer exists or you can no longer open it, ' +
+            "so you're still on “spring”.",
         }),
       ),
     )

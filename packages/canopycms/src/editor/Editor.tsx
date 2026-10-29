@@ -418,6 +418,7 @@ const EditorContent: React.FC<EditorProps> = ({
     branches,
     branchSummaries,
     currentBranch,
+    branchLabelOf,
     listedBranch,
     listedName,
     urlBranchName,
@@ -714,7 +715,7 @@ const EditorContent: React.FC<EditorProps> = ({
     const listed = listedBranch(branch)
     if (branches.length > 0 && !listed) {
       notifications.show({
-        message: `Branch “${branch}” no longer exists or you can no longer open it, so you're still on “${branchLabel}”.`,
+        message: `Branch “${branchLabelOf(branch)}” no longer exists or you can no longer open it, so you're still on “${branchLabel}”.`,
         color: 'yellow',
       })
       throw new Error(`Branch ${branch} is not listed`)
