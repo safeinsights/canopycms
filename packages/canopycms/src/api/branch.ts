@@ -379,6 +379,15 @@ export const createBranchHandler = async (
         }
       }
     }
+    // The handler answers any `/:branch` segment in the settings range as not found
+    // (http/handler.ts), so a branch with such a short name could never be opened.
+    if (isSettingsBranchName(shortName, strategy.getSettingsBranchName(config))) {
+      return {
+        ok: false,
+        status: 400,
+        error: `"${shortName}" is a name CanopyCMS keeps for its settings. Choose a different name.`,
+      }
+    }
 
     // Reject the base branch name outright, even before the base branch is
     // provisioned. No recorded fork point exists yet for a not-yet-created

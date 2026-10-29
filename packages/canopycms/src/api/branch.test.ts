@@ -457,16 +457,41 @@ describe('branch api', () => {
       )
     })
 
-    it('creates a typed settings-like name inside the namespace, where no settings branch is', async () => {
-      for (const [typed, created] of [
-        ['canopycms-settings-local', 'canopycms/local/canopycms-settings-local'],
-        ['canopycms/settings-local', 'canopycms/local/canopycms-settings-local'],
-        ['settings-prod', 'canopycms/local/settings-prod'],
-      ]) {
+    it.each([
+      ['canopycms-settings-local', 'canopycms-settings-local'],
+      ['canopycms/settings-local', 'canopycms-settings-local'],
+      ['canopycms-settings-anything', 'canopycms-settings-anything'],
+    ])(
+      'refuses the typed name "%s", whose short name the handler keeps for settings',
+      async (typed, short) => {
         const res = await createBranch(baseCtx, asU1, { branch: unsafeAsBranchName(typed) })
-        expect(res.ok).toBe(true)
-        expect(res.data?.branch.name).toBe(created)
-      }
+        expect(res.ok).toBe(false)
+        expect(res.status).toBe(400)
+        expect(res.error).toBe(
+          `"${short}" is a name CanopyCMS keeps for its settings. Choose a different name.`,
+        )
+      },
+    )
+
+    it('refuses a short name equal to a configured settings branch', async () => {
+      const ctx = createMockApiContext({
+        services: {
+          config: { mode: 'dev', settingsBranch: 'site-settings' } as any,
+          registry: mockRegistry as any,
+        },
+      })
+      const res = await createBranch(ctx, asU1, { branch: unsafeAsBranchName('site-settings') })
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(400)
+      expect(res.error).toBe(
+        '"site-settings" is a name CanopyCMS keeps for its settings. Choose a different name.',
+      )
+    })
+
+    it('creates a settings-like name outside the settings range', async () => {
+      const res = await createBranch(baseCtx, asU1, { branch: unsafeAsBranchName('settings-prod') })
+      expect(res.ok).toBe(true)
+      expect(res.data?.branch.name).toBe('canopycms/local/settings-prod')
     })
 
     it.each(['admin', 'assets', 'branches'])(
