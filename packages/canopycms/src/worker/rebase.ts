@@ -487,9 +487,10 @@ async function carryForwardRewrittenHistory(
     branchRef: string
     publishedSha: string | null
     preRebaseHead: string
+    gatewayPolicy: BranchPolicyDescription | undefined
   },
 ): Promise<void> {
-  const { branchPath, branchDir, branchRef, publishedSha, preRebaseHead } = args
+  const { branchPath, branchDir, branchRef, publishedSha, preRebaseHead, gatewayPolicy } = args
   if (publishedSha !== null) {
     if (publishedSha === preRebaseHead) {
       // ARMING GUARD: remote.git holds EXACTLY what this clone just rebased
@@ -520,7 +521,7 @@ async function carryForwardRewrittenHistory(
         return
       }
       if (await forcePublishToLocalRemote(ctx, branchPath, branchRef, publishedSha)) {
-        await enqueueGitHubPush(ctx, branchRef)
+        await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
       }
     } else {
       const divergence =
@@ -981,6 +982,7 @@ async function rebaseOneBranch(
           branchRef,
           headSha: (await branchGit.revparse(['HEAD'])).trim(),
           marker: metaFile.branch.historyRewrittenFrom,
+          gatewayPolicy,
         })
       }
 
@@ -1142,6 +1144,7 @@ async function rebaseOneBranch(
         branchRef,
         publishedSha,
         preRebaseHead,
+        gatewayPolicy,
       })
 
       return { kind: 'rebased' }
