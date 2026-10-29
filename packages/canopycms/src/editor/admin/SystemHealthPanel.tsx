@@ -36,6 +36,7 @@ import { IconAlertCircle, IconAlertTriangle } from '@tabler/icons-react'
 import { openConfirm } from '../utils/confirm-modal'
 import { focusReturnProps } from '../utils/focus-return'
 import { formatRelativeTime } from '../relative-time'
+import { EDITOR_ACTIONS } from '../copy'
 import {
   useSystemHealth,
   type UseSystemHealthReturn,
@@ -339,8 +340,8 @@ function UnpublishableBranchesAlert({
             <Text size="sm" data-testid="unpublishable-listable">
               A developer lists each branch from outside the namespace in legacyBranches
               (CANOPYCMS_LEGACY_BRANCHES on the GitHub gateway), and takes a protected one out of
-              protectedBranches. Otherwise, an editor re-enters its changes by hand in a new branch,
-              which is created inside the namespace.
+              protectedBranches, or makes another branch GitHub&apos;s default. Otherwise, an editor
+              re-enters its changes by hand in a new branch, which is created inside the namespace.
             </Text>
             <BranchRefs branches={listable} />
           </>
@@ -348,8 +349,9 @@ function UnpublishableBranchesAlert({
         {blocking.length > 0 && (
           <>
             <Text size="sm" data-testid="unpublishable-blocking">
-              Delete each of these branches in the CMS, and by hand on GitHub too if it is there:
-              while one exists, no branch in the namespace can be created or published.
+              Delete each of these branches in the CMS, and by hand on GitHub too if it is there.
+              One in review needs {EDITOR_ACTIONS.withdrawFromReview} first. While one exists, no
+              branch in the namespace can be created or published.
             </Text>
             <BranchRefs branches={blocking} />
           </>

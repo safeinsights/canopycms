@@ -784,6 +784,9 @@ describe('SystemHealthPanel', () => {
         "the base branch, GitHub's default branch, or a match for an entry in protectedBranches",
       )
       expect(alert.textContent).toContain('CANOPYCMS_LEGACY_BRANCHES on the GitHub gateway')
+      expect(alert.textContent).toContain(
+        "takes a protected one out of protectedBranches, or makes another branch GitHub's default.",
+      )
       expect(alert.textContent).toContain('new branch, which is created inside the namespace')
       expect(alert.textContent).toContain('spring')
       expect(alert.textContent).toContain('cms/old/fix-typos')
@@ -817,7 +820,7 @@ describe('SystemHealthPanel', () => {
       const alert = await screen.findByTestId('unpublishable-branches-alert')
       const blocking = await screen.findByTestId('unpublishable-blocking')
       expect(blocking.textContent).toContain(
-        'Delete each of these branches in the CMS, and by hand on GitHub too if it is there: while one exists, no branch in the namespace can be created or published.',
+        'Delete each of these branches in the CMS, and by hand on GitHub too if it is there. One in review needs Withdraw from review first. While one exists, no branch in the namespace can be created or published.',
       )
       expect(blocking.nextElementSibling?.textContent).toBe('canopycms<b>')
       expect(alert.querySelector('b')).toBeNull()
