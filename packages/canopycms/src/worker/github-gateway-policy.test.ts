@@ -576,6 +576,39 @@ describe('reading a pull request by number', () => {
   )
 })
 
+describe('a pull request read after the default branch read expired', () => {
+  it('withholds the body of one whose head is the default as last read when the re-read fails, answering its merge state', async () => {
+    const octokit = octokitStub()
+    octokit.repos.get.mockResolvedValue({ data: { default_branch: 'canopycms/prod/feature' } })
+    octokit.pulls.get.mockResolvedValue({
+      data: {
+        ...pullRequestHead('canopycms/prod/feature'),
+        merged: true,
+        merged_at: '2026-10-29T10:00:00Z',
+        state: 'closed',
+        body: 'Notes',
+      },
+    })
+    const github = gateway({ octokit: octokit as unknown as Octokit })
+    const now = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
+    await github.getPullRequest(2)
+    expect(octokit.repos.get).toHaveBeenCalledTimes(1)
+
+    clock.mockReturnValue(now + DEFAULT_BRANCH_TTL_MS)
+    octokit.repos.get.mockRejectedValue(await octokitErrorFor(502, { message: 'Bad Gateway' }))
+
+    expect(await github.getPullRequest(2)).toEqual({
+      merged: true,
+      merged_at: '2026-10-29T10:00:00Z',
+      state: 'closed',
+      node_id: 'PR_2',
+      body: null,
+    })
+    expect(octokit.repos.get).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe('branch names', () => {
   const request = (head: string, base = 'main') => ({ head, base, title: 'T', body: 'B' })
 

@@ -1057,7 +1057,8 @@ class LocalGitHubGateway implements GitHubGateway {
    * Pull request `number`'s merge state, for any number, and its body only when its head is a
    * branch of this repository in the namespace itself and not protected: neither a legacy branch,
    * the settings branch, nor a `protectedBranches` match, whoever opened the pull request. When
-   * GitHub's default branch cannot be read, the configured protected set alone decides. The
+   * GitHub's default branch cannot be read, the configured protected set and the default as last
+   * read decide. The
    * number comes from the worker, which a compromised CMS Lambda can steer; the head is GitHub's
    * record.
    */
@@ -1075,13 +1076,14 @@ class LocalGitHubGateway implements GitHubGateway {
           ours = !(await this.policy.isProtected(head, () => this.readDefaultBranch(reach, signal)))
         } catch (err) {
           // `isProtected` reads GitHub only for a head the configured set (the base branch and
-          // `protectedBranches`) does not cover. The merge poll needs the merge state, so an
-          // unread default branch leaves the body to that set: `updatePullRequest` judges the head
-          // again before writing it.
+          // each `protectedBranches` entry) does not cover. The merge poll needs the merge state,
+          // so an unread default branch leaves the body to that set and to the default as last
+          // read, however old: `updatePullRequest` judges the head again before writing it.
           if (signal?.aborted) throw err
+          if (this.policy.matchesLastReadDefault(head)) ours = false
           gatewayLogWarn(
             `Could not read GitHub's default branch for pull request #${number} ` +
-              `(${redactEgress(getErrorMessage(err))}); judging its head by the configured protected set`,
+              `(${redactEgress(getErrorMessage(err))}); judging its head by the configured protected set and the default as last read`,
           )
         }
       }

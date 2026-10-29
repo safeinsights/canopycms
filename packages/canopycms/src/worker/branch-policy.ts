@@ -425,6 +425,15 @@ export class BranchPolicy {
   }
 
   /**
+   * Whether `branch` is GitHub's default branch as last read, even once that read has expired:
+   * what protection is judged by when a fresh read fails.
+   */
+  matchesLastReadDefault(branch: string): boolean {
+    const name = this.githubDefault?.name ?? null
+    return name !== null && sameBranch(name, branch)
+  }
+
+  /**
    * Refuse a push to a protected branch, a leased push to a settings branch, a push to another
    * deployment's settings branch, and a push outside the namespace.
    */
