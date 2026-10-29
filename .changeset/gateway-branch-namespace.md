@@ -29,7 +29,7 @@ worker contract 3, which an older template's roll gate refuses. Roll the worker 
 namespace. Stacks sharing a repository keep `{deployment}` in one template. Then list every open
 branch outside the namespace, as [`legacyBranches`](./legacy-branches-and-unpublishable-warning.md)
 describes. Until listed, a branch's publishes, pull request updates and deletion fail permanently,
-naming the list. Rolling the worker back can rename namespace branches so editors cannot open them;
-redeploying this release's worker restores their names on its next sync. Submit none meanwhile: a
-submit pushes it, without its earlier commits, under its directory name, which this release
-publishes only once `legacyBranches` lists it.
+naming the list. Rolling the worker back can rename namespace branches, breaking their links; this
+release's worker restores the names on its next sync. Submit none while rolled back: that pushes the
+branch under its directory name, without its earlier commits, which this release publishes only if
+`legacyBranches` lists it.
