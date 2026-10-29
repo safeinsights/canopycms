@@ -36,7 +36,7 @@ import {
   ContentWriteLockBusyError,
   DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS,
 } from '../utils/content-write-lock'
-import { getErrorMessage, isNodeError, isNotFoundError } from '../utils/error'
+import { getErrorMessage, isNodeError, isNotFoundError, sanitizeErrorMessage } from '../utils/error'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
 import { baseBranchOf } from '../utils/base-branch'
@@ -415,6 +415,10 @@ const repairBranchDirHandler = async (
       : { ok: false, status: 409, error: 'No metadata file -- use purge for orphans' }
   }
 
+  const checkedOut = await checkedOutBranch(dirPath)
+  if (!checkedOut.ok) return { ok: false, status: 409, error: checkedOut.error }
+  const branchName = checkedOut.branch
+
   // Zero-retry provisioning lock, mirroring purge's: fails fast (409) on
   // genuine live contention instead of hanging the request.
   // Held until the `finally` below, AFTER save() completes.
@@ -461,10 +465,6 @@ const repairBranchDirHandler = async (
       }
     }
 
-    // Prefer the clone's actual checked-out branch over the
-    // (possibly sanitized) directory name -- see resolveRepairedBranchName.
-    const branchName = await resolveRepairedBranchName(dirPath, params.dirName)
-
     // Lock released above (we're outside the withOccFileLock callback now) --
     // save() takes its own hold on the same lock internally. Its defaults
     // path fabricates the rest of BranchMetadata and invalidates the
@@ -500,27 +500,40 @@ const repairBranchDirHandler = async (
 }
 
 /**
- * Best-effort read of the branch actually checked out in the
- * clone at `dirPath`, falling back to `dirName` on any failure (no `.git`,
- * detached HEAD, corrupt repo, etc.). Workspace directory names are
- * sanitized (slashes stripped, see paths/branch.ts's `sanitizeBranchName`),
- * so a branch named `feature/foo` lives in a directory named `feature-foo`
- * -- writing `dirName` as `branch.name` would make later push/PR tasks
- * target the wrong ref.
+ * The branch checked out in the clone at `dirPath`, which repair records as `branch.name`, or why
+ * there is none. Nothing else names the branch: the directory is its key, which a ref's `/`s do
+ * not survive, and a guessed name would send later pushes and PRs to the wrong ref.
  */
-async function resolveRepairedBranchName(dirPath: string, dirName: string): Promise<string> {
+async function checkedOutBranch(
+  dirPath: string,
+): Promise<{ ok: true; branch: string } | { ok: false; error: string }> {
+  const cannot = 'Cannot repair this branch: '
+  const then = ' Check out its branch in the clone, then repair again, or purge the directory.'
   const hasGitDir = await fs
     .stat(path.join(dirPath, '.git'))
     .then(() => true)
     .catch(() => false)
-  if (!hasGitDir) return dirName
-
+  if (!hasGitDir) {
+    return {
+      ok: false,
+      error: `${cannot}the directory holds no git clone, so the branch it belongs to is unknown.${then}`,
+    }
+  }
   try {
-    const current = await simpleGit({ baseDir: dirPath }).revparse(['--abbrev-ref', 'HEAD'])
-    const trimmed = current.trim()
-    return trimmed || dirName
-  } catch {
-    return dirName
+    // `-q` makes a detached HEAD a quiet failure, which simple-git resolves as empty output.
+    const branch = (
+      await simpleGit({ baseDir: dirPath }).raw(['symbolic-ref', '--short', '-q', 'HEAD'])
+    ).trim()
+    if (branch) return { ok: true, branch }
+    return {
+      ok: false,
+      error: `${cannot}its clone has no branch checked out (a detached HEAD), so the branch it belongs to is unknown.${then}`,
+    }
+  } catch (err: unknown) {
+    return {
+      ok: false,
+      error: `${cannot}git could not read the clone's checked-out branch (${sanitizeErrorMessage(getErrorMessage(err))}).${then}`,
+    }
   }
 }
 
