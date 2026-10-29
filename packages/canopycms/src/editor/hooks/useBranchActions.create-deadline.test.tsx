@@ -10,7 +10,11 @@ import { notifications } from '@mantine/notifications'
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import { CanopyApiClient } from '../../api/client'
 import { ApiTimeoutError } from '../../api/request-deadline'
-import { CREATE_BRANCH_DEADLINE_MS, CREATE_TIMED_OUT_MESSAGE } from './create-branch-request'
+import {
+  CREATE_BRANCH_DEADLINE_MS,
+  CREATE_TIMED_OUT_MESSAGE,
+  type CreateRefusal,
+} from './create-branch-request'
 import { useBranchActions } from './useBranchActions'
 import {
   createApiClientWrapper,
@@ -74,11 +78,11 @@ describe('useBranchActions create past the deadline', () => {
     )
   }
 
-  async function createAfterDeadline(): Promise<boolean | undefined> {
+  async function createAfterDeadline(): Promise<boolean | CreateRefusal | undefined> {
     const { result } = renderHook(() => useBranchActions(options), {
       wrapper: createApiClientWrapper(mockClient),
     })
-    let created: boolean | undefined
+    let created: boolean | CreateRefusal | undefined
     await act(async () => {
       const pending = result.current.handleCreateBranch({ name: 'feature/x' })
       await vi.advanceTimersByTimeAsync(CREATE_BRANCH_DEADLINE_MS)

@@ -7,7 +7,7 @@ import { useDraftManager, type UnsavedSummary } from './useDraftManager'
 import type { EditorEntry } from '../Editor'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../../paths/test-utils'
 import type { MockApiClient } from '../../api/__test__/mock-client'
-import { CREATE_BRANCH_DEADLINE_MS } from './create-branch-request'
+import { CREATE_BRANCH_DEADLINE_MS, type CreateRefusal } from './create-branch-request'
 import {
   setupMockApiClient,
   setupMockLocation,
@@ -238,7 +238,7 @@ describe('useBranchActions', () => {
 
     const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
 
-    let created: boolean | undefined
+    let created: boolean | CreateRefusal | undefined
     await act(async () => {
       created = await result.current.handleCreateBranch({ name: 'new-branch' })
     })
@@ -452,7 +452,7 @@ describe('useBranchActions', () => {
     })
     const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
 
-    let created: boolean | undefined
+    let created: boolean | CreateRefusal | undefined
     await act(async () => {
       created = await result.current.handleCreateBranch({ name: 'new-branch' })
     })
