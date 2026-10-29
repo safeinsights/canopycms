@@ -31,6 +31,8 @@ vi.mock('@mantine/notifications', async (importOriginal) => {
 
 afterEach(() => {
   cleanup()
+  // clearAllMocks keeps an implementation, so one test's autoConfirm would answer the next's.
+  vi.mocked(modals.openConfirmModal).mockReset()
   vi.clearAllMocks()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
