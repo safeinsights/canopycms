@@ -99,6 +99,7 @@ import { createMockApiContext, createMockBranchContext, createMockRegistry } fro
 import * as authorization from '../authorization'
 import { unsafeAsBranchName } from '../paths/test-utils'
 import { BranchWorkspaceManager } from '../branch-workspace'
+import { BranchDirOccupiedError } from '../branch-provisioning'
 import type { BranchRegistry } from '../branch-registry'
 import type { CanopyConfig } from '../config'
 import type { GitHubService } from '../github-service'
@@ -367,6 +368,7 @@ describe('branch api', () => {
     expect(res.ok).toBe(false)
     expect(res.status).toBe(400)
     expect(res.error).toBe('Cannot create a branch with the base branch name')
+    expect(res.code).toBe('BRANCH_NAME_REFUSED')
   })
 
   it('rejects creating a branch whose workspace already exists (409), naming its short name', async () => {
@@ -415,6 +417,7 @@ describe('branch api', () => {
       '"feature-test" would clash with the existing branch "canopycms-local-feature-test". ' +
         'Choose a different name.',
     )
+    expect(res.code).toBe('BRANCH_NAME_REFUSED')
   })
 
   it('names a namespace branch holding the key by its short name', async () => {
@@ -432,6 +435,7 @@ describe('branch api', () => {
     expect(res.error).toBe(
       '"feature-test" would clash with the existing branch "feature/test". Choose a different name.',
     )
+    expect(res.code).toBe('BRANCH_NAME_REFUSED')
   })
 
   it('refuses a provisioning that finds another branch under the key, naming that branch', async () => {
@@ -454,6 +458,26 @@ describe('branch api', () => {
       '"feature-test" would clash with the existing branch "canopycms-local-feature-test". ' +
         'Choose a different name.',
     )
+    expect(res.code).toBe('BRANCH_NAME_REFUSED')
+  })
+
+  it('refuses a name whose workspace directory holds a repository it did not create', async () => {
+    vi.mocked(BranchWorkspaceManager).mockImplementationOnce(function () {
+      return {
+        provisionBranch: async () => {
+          throw new BranchDirOccupiedError('canopycms-local-feature-test')
+        },
+      }
+    } as unknown as typeof BranchWorkspaceManager)
+    const ctx = createMockApiContext({
+      branchContext: createMockBranchContext({ branchName: 'main', createdBy: 'system' }),
+      services: { registry: createMockRegistry([]) as unknown as BranchRegistry },
+    })
+
+    const res = await createBranch(ctx, asU1, { branch: unsafeAsBranchName('feature-test') })
+    expect(res.status).toBe(409)
+    expect(res.error).toContain("A directory named 'canopycms-local-feature-test' already exists")
+    expect(res.code).toBe('BRANCH_NAME_REFUSED')
   })
 
   describe('a create naming an existing branch that its own creator just made', () => {
@@ -520,6 +544,7 @@ describe('branch api', () => {
       expect(res.error).toBe(
         'Cannot create content branch with settings branch name (git branch name collision)',
       )
+      expect(res.code).toBe('BRANCH_NAME_REFUSED')
     })
 
     it.each([
@@ -535,6 +560,7 @@ describe('branch api', () => {
         expect(res.error).toBe(
           `"${short}" is a name CanopyCMS keeps for its settings. Choose a different name.`,
         )
+        expect(res.code).toBe('BRANCH_NAME_REFUSED')
       },
     )
 
@@ -551,6 +577,7 @@ describe('branch api', () => {
       expect(res.error).toBe(
         '"site-settings" is a name CanopyCMS keeps for its settings. Choose a different name.',
       )
+      expect(res.code).toBe('BRANCH_NAME_REFUSED')
     })
 
     it('creates a settings-like name outside the settings range', async () => {
@@ -568,6 +595,7 @@ describe('branch api', () => {
         expect(res.error).toBe(
           `"${typed}" is a name CanopyCMS uses for itself. Choose a different name.`,
         )
+        expect(res.code).toBe('BRANCH_NAME_REFUSED')
       },
     )
 
