@@ -292,6 +292,32 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
       expect((await readStatus()).gatewayProtectedBranches).toEqual(['release', 'main'])
     })
 
+    it('records the namespace and protected names when the cycle fails after reading them', async () => {
+      // A branch workspace, so the rebase cycle reaches the step made to fail.
+      await giveWorkspace('spring')
+      const worker = makeWorker({ protectedBranches: ['release'] })
+      let healthRead = false
+      const readHealth = gateway.health.bind(gateway)
+      vi.spyOn(gateway, 'health').mockImplementation(async (signal) => {
+        const health = await readHealth(signal)
+        healthRead = true
+        return health
+      })
+      const internals = worker as unknown as { ensureSettingsBranch(): string }
+      const settingsBranch = internals.ensureSettingsBranch.bind(worker)
+      vi.spyOn(internals, 'ensureSettingsBranch').mockImplementation(() => {
+        if (healthRead) throw new Error('a later step failed')
+        return settingsBranch()
+      })
+
+      await expect(worker.syncGit()).rejects.toThrow('a later step failed')
+
+      const status = await readStatus()
+      expect(status.lastGitSyncError?.message).toContain('a later step failed')
+      expect(status.gatewayBranchNamespace).toBe('canopycms/prod/')
+      expect(status.gatewayProtectedBranches).toEqual(['release', 'main'])
+    })
+
     it('reports, then stops reporting, an editor branch the gateway will not publish', async () => {
       await giveWorkspace('old-unprefixed')
       await giveWorkspace('canopycms-prod-fresh', 'canopycms/prod/fresh')

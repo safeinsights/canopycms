@@ -690,20 +690,28 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     }
     const branchPolicy =
       health && health.branchPolicy.namespace !== '' ? health.branchPolicy : undefined
+    // The namespace System health compares with the one the CMS creates branches in, and the
+    // names creation refuses. Written at once, as the catch below writes on a failure: branch
+    // creation waits for the namespace (api/branch.ts), so it must not wait on the rest of the
+    // cycle succeeding. Without a policy the last values stand.
+    if (branchPolicy) {
+      const report = ctx.ensureStatusReport()
+      report.gatewayBranchNamespace = branchPolicy.namespace
+      report.gatewayProtectedBranches = branchPolicy.configured.filter((n) => !n.includes('*'))
+      await writeWorkerStatus(ctx.taskDir, report).catch((writeErr) =>
+        workerLogError('Failed to write worker status:', getErrorMessage(writeErr)),
+      )
+    }
     const rebaseSummary = await runRebaseCycle(ctx, branchPolicy)
     if (stoppedForDrain(ctx, 'the cleanup sweeps')) return
 
     await cleanupOldTasks(ctx.taskDir, undefined, ctx.log)
 
-    // For System health: the namespace it compares with the one the CMS creates branches in, the
-    // names creation refuses, and the branches the gateway would refuse to publish, read after the
-    // rebase cycle, which archives merged branches and restores renamed ones. Without a policy the
-    // last values stand; a fatal error, or a branches directory or branch.json that cannot be
-    // read, leaves the last report.
+    // For System health: the branches the gateway would refuse to publish, read after the rebase
+    // cycle, which archives merged branches and restores renamed ones. Without a policy, a fatal
+    // error, or a branches directory or branch.json that cannot be read, the last report stands.
     if (health && branchPolicy) {
       const report = ctx.ensureStatusReport()
-      report.gatewayBranchNamespace = branchPolicy.namespace
-      report.gatewayProtectedBranches = branchPolicy.configured.filter((n) => !n.includes('*'))
       if (health.fatalError === null) {
         try {
           const unpublishable = await findUnpublishableBranches(ctx, branchPolicy)
