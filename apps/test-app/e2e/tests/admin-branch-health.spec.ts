@@ -115,7 +115,7 @@ test.describe('Admin Branch Health', () => {
     page,
   }) => {
     const dirName = `broken-${Date.now()}`
-    await seedCorruptBranchDir(dirName)
+    await seedCorruptBranchDir(dirName, { checkedOut: dirName })
 
     const adminPage = await openBranchesTab(page)
     await expect(adminPage.branchRow(dirName)).toContainText('Corrupt metadata')
@@ -139,10 +139,9 @@ test.describe('Admin Branch Health', () => {
       .toBe(true)
 
     // Poll rather than read once: the server archives the corrupt file
-    // (fs.rename) under one lock hold, RELEASES the lock, resolves the
-    // repaired branch name (a git spawn), and only then re-acquires the lock
-    // to write the fresh branch.json (repairBranchDirHandler). Between the
-    // rename and that write, branch.json does not exist -- a single
+    // (fs.rename) under one lock hold, RELEASES the lock, and only then
+    // re-acquires it to write the fresh branch.json (repairBranchDirHandler).
+    // Between the rename and that write, branch.json does not exist -- a single
     // readBranchMetadata here can land in the window and throw ENOENT.
     //
     // Expected createdBy is NOT the fixture's 'test-admin' label from
