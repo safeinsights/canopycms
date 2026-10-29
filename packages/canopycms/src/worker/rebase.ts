@@ -130,6 +130,10 @@ export async function pollMergeState(
 ): Promise<void> {
   const prNumber = metaFile?.branch.pullRequestNumber
   if (!prNumber) return
+  // Recorded only on the branch.json this poll read: never one created since, nor another
+  // branch's that shares the key.
+  const sameBranch = (current: BranchMetadataFile | null) =>
+    current?.branch.name === metaFile?.branch.name
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), ctx.taskTimeoutMs)
@@ -140,10 +144,13 @@ export async function pollMergeState(
       const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
       // GitHub's actual merge time when available; buildMergedBranchUpdate
       // falls back to "now" when merged_at is absent.
-      await meta.save({
-        branch: buildMergedBranchUpdate(data.merged_at ? new Date(data.merged_at) : undefined),
-      })
-      workerLog(`  PR #${prNumber} for ${branchDir} is merged -> archived`)
+      const saved = await meta.saveIf(
+        {
+          branch: buildMergedBranchUpdate(data.merged_at ? new Date(data.merged_at) : undefined),
+        },
+        sameBranch,
+      )
+      if (saved) workerLog(`  PR #${prNumber} for ${branchDir} is merged -> archived`)
       return
     }
 
@@ -154,8 +161,8 @@ export async function pollMergeState(
     if (currentMeta?.branch.pullRequestState === newState) return
 
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
-    await meta.save({ branch: { pullRequestState: newState } })
-    workerLog(`  PR #${prNumber} for ${branchDir}: pullRequestState -> ${newState}`)
+    const saved = await meta.saveIf({ branch: { pullRequestState: newState } }, sameBranch)
+    if (saved) workerLog(`  PR #${prNumber} for ${branchDir}: pullRequestState -> ${newState}`)
   } catch (err) {
     // Non-fatal: transient GitHub/network errors are retried next cycle.
     workerLogWarn(`  Failed to poll PR #${prNumber} for ${branchDir}: ${getErrorMessage(err)}`)
@@ -175,7 +182,7 @@ export async function pollMergeState(
  * paths: a corrupt branch.json, lock contention or any other save failure must
  * never abort the per-branch iteration. One of the two call sites is inside the
  * outer per-branch catch with no further catch around it, so the WHOLE method
- * is wrapped, not just the load.
+ * is wrapped, not just the load. It updates an existing branch.json only, never creating one.
  */
 async function recordRebaseFailure(
   ctx: RebaseContext,
@@ -209,9 +216,10 @@ async function recordRebaseFailure(
     const firstAt = sameMessage ? prior.firstAt : nowIso
 
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
-    await meta.save({
-      branch: { rebaseFailure: { message: redactedMessage, firstAt, lastAt: nowIso } },
-    })
+    await meta.saveIf(
+      { branch: { rebaseFailure: { message: redactedMessage, firstAt, lastAt: nowIso } } },
+      (current) => current !== null,
+    )
   } catch (err) {
     // Includes BranchMetadataCorruptError from the load above (a save() against
     // the same corrupt file would just throw again): recording is best-effort
@@ -498,7 +506,7 @@ async function carryForwardRewrittenHistory(
       // reconcilePendingRewrite() completes on a later cycle. Pushing first
       // would leave remote.git rewritten, GitHub stale and nothing recorded --
       // unrecoverable, and diagnosed as a false "another deployment" collision.
-      await markHistoryRewritten(ctx, branchPath, branchDir, publishedSha)
+      await markHistoryRewritten(ctx, branchPath, branchRef, publishedSha)
       if (await forcePublishToLocalRemote(ctx, branchPath, branchRef, publishedSha)) {
         await enqueueGitHubPush(ctx, branchRef)
       }
@@ -1029,14 +1037,19 @@ async function rebaseOneBranch(
           ? `  Rebased ${branchDir} (kept branch version for ${conflictIdsDeduped.length} conflicting file(s))`
           : `  Rebased ${branchDir} successfully`,
       )
-      await meta.update((existing) => ({
-        branch: {
-          ...recordConflicts(existing?.branch.conflictFiles, conflictIdsDeduped),
-          // The cycle completed, so clear any prior failure record regardless
-          // of the conflict outcome.
-          rebaseFailure: undefined,
-        },
-      }))
+      // Recorded only on the branch.json this cycle read, never one created or replaced since.
+      await meta.update((existing) =>
+        existing !== null && existing.branch.name === metaFile?.branch.name
+          ? {
+              branch: {
+                ...recordConflicts(existing.branch.conflictFiles, conflictIdsDeduped),
+                // The cycle completed, so clear any prior failure record regardless
+                // of the conflict outcome.
+                rebaseFailure: undefined,
+              },
+            }
+          : null,
+      )
       didRebase = true
 
       await carryForwardRewrittenHistory(ctx, {

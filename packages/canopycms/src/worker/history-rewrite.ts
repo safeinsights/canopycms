@@ -61,28 +61,32 @@ export async function readPublishedSha(
 }
 
 /**
- * Record that this worker rewrote `expectedSha` out of a branch's already
- * published history (see BranchMetadata.historyRewrittenFrom).
+ * Record that this worker rewrote `expectedSha` out of `branchRef`'s already
+ * published history (see BranchMetadata.historyRewrittenFrom), on a branch.json
+ * whose `name` is `branchRef` only: it never creates one, nor marks another
+ * branch's that shares the key.
  *
  * Set-once: an existing marker is LEFT ALONE. Across two rebases before any
  * GitHub push lands, GitHub still holds the commit the FIRST rebase replaced,
  * so advancing the marker would aim the lease at a commit GitHub never had and
  * permanently wedge the branch.
  *
- * Re-reads metadata rather than trusting the caller's snapshot: the task loop
- * runs concurrently with syncGit() and may have cleared the marker while this
- * branch was rebasing.
+ * Decided against the metadata on disk inside the write's lock, not the
+ * caller's snapshot: the task loop runs concurrently with syncGit() and may
+ * have cleared the marker while this branch was rebasing.
  */
 export async function markHistoryRewritten(
   ctx: Pick<HistoryRewriteContext, 'contentBranchesPath'>,
   branchPath: string,
-  branchDir: string,
+  branchRef: string,
   expectedSha: string,
 ): Promise<void> {
-  const current = await BranchMetadataFileManager.loadOnly(branchPath)
-  if (typeof current?.branch.historyRewrittenFrom === 'string') return
   const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
-  await meta.save({ branch: { historyRewrittenFrom: expectedSha } })
+  await meta.saveIf(
+    { branch: { historyRewrittenFrom: expectedSha } },
+    (current) =>
+      current?.branch.name === branchRef && typeof current.branch.historyRewrittenFrom !== 'string',
+  )
 }
 
 /**
@@ -107,8 +111,12 @@ export async function clearHistoryRewrittenMarker(
   try {
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
     // Explicit undefined clears the key -- save()'s merge only overwrites
-    // keys present in the update (same pattern as rebaseFailure).
-    await meta.save({ branch: { historyRewrittenFrom: undefined } })
+    // keys present in the update (same pattern as rebaseFailure). Only a
+    // marker is cleared, so no branch.json is ever created here.
+    await meta.saveIf(
+      { branch: { historyRewrittenFrom: undefined } },
+      (current) => typeof current?.branch.historyRewrittenFrom === 'string',
+    )
   } catch (err) {
     workerLogWarn(
       `  Failed to clear history-rewrite marker for ${branchDir}: ${getErrorMessage(err)}`,
