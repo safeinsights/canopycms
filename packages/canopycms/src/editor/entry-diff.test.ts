@@ -362,7 +362,8 @@ describe('computeEntryDiff on long lists', () => {
     const after = { ...before, data: { ...before.data, team: [...items.slice(1), items[0]] } }
     const started = Date.now()
     const { changes } = computeEntryDiff({ fields, before, after })
-    expect(Date.now() - started).toBeLessThan(1000)
+    // ~40ms here; the quadratic table this replaced took ~1s.
+    expect(Date.now() - started).toBeLessThan(400)
     expect(summary(changes)).toEqual([['moved', 'Team › Person 0']])
   })
 })
