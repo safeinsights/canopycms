@@ -102,7 +102,7 @@ const requestChangesHandler = async (
       )
       warning = NOTE_NOT_SAVED_WARNING
     }
-    if (!warning) await syncPrComments(ctx, branchContext)
+    if (!warning) await syncPrComments(ctx, { ...branchContext, branch: updated.branch })
   }
 
   return {

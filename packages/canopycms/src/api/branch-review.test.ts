@@ -335,7 +335,11 @@ describe('branch review api - requestChanges', () => {
       const res = await run({ note: 'Fix the intro.' })
       expect(res.ok).toBe(true)
       expect(mockSyncPrComments).toHaveBeenCalledTimes(1)
-      expect(mockSyncPrComments.mock.calls[0]?.[1]).toMatchObject({ branchRoot })
+      // The branch as the status write left it, so a PR number recorded meanwhile is seen.
+      expect(mockSyncPrComments.mock.calls[0]?.[1]).toMatchObject({
+        branchRoot,
+        branch: { status: 'editing' },
+      })
     })
 
     it('rejects a note over 2,000 characters at the endpoint boundary, after trimming', () => {
