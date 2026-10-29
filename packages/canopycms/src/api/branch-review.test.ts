@@ -36,8 +36,12 @@ vi.mock('../branch-metadata', () => ({
   })),
 }))
 
+const mockSyncPrComments = vi.hoisted(() => vi.fn().mockResolvedValue(undefined))
+vi.mock('./pr-comment-sync', () => ({ syncPrComments: mockSyncPrComments }))
+
 beforeEach(() => {
   disk.status = 'submitted'
+  mockSyncPrComments.mockClear()
 })
 
 import { requestChanges, approveBranch } from './branch-review'
@@ -319,8 +323,20 @@ describe('branch review api - requestChanges', () => {
         expect(res.ok).toBe(true)
         const { threads } = await new CommentStore(branchRoot).load()
         expect(Object.keys(threads)).toHaveLength(0)
+        expect(mockSyncPrComments).not.toHaveBeenCalled()
       },
     )
+
+    it("updates the pull request's comment summary once the note is saved", async () => {
+      mockSyncPrComments.mockImplementationOnce(async () => {
+        const { threads } = await new CommentStore(branchRoot).load()
+        expect(Object.values(threads)).toHaveLength(1)
+      })
+      const res = await run({ note: 'Fix the intro.' })
+      expect(res.ok).toBe(true)
+      expect(mockSyncPrComments).toHaveBeenCalledTimes(1)
+      expect(mockSyncPrComments.mock.calls[0]?.[1]).toMatchObject({ branchRoot })
+    })
 
     it('rejects a note over 2,000 characters at the endpoint boundary, after trimming', () => {
       const validate = (note: string) =>
@@ -353,6 +369,7 @@ describe('branch review api - requestChanges', () => {
       expect(res.data?.branch).toBeDefined()
       expect(res.data?.warning).toBe("Changes were requested, but your note couldn't be saved.")
       expect(consoleSpy).toHaveErrored('disk full')
+      expect(mockSyncPrComments).not.toHaveBeenCalled()
       consoleSpy.restore()
     })
   })
