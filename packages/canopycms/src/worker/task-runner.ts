@@ -539,8 +539,8 @@ export async function executeTask(
       }
       const pr = await ctx.github().getPullRequest(prNumber, signal)
       if (pr.state !== 'open') return { updated: false, skipped: 'not-open' }
-      // Withheld: GitHub reports the head outside the namespace (a legacy branch, or a pull
-      // request the CMS did not open), so the body is not the CMS's to rewrite.
+      // Withheld: GitHub reports the head outside the namespace (a legacy branch, say), protected,
+      // or in another repository, so the body is not the CMS's to rewrite.
       if (pr.body === null) {
         workerLog(`Not updating PR #${prNumber} for ${branch}: the gateway withholds its body`)
         return { updated: false, skipped: 'body-withheld' }

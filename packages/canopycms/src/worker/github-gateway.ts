@@ -154,8 +154,9 @@ export type GitHubPullRequest = Pick<
 > & {
   /**
    * The pull request's body, `''` when it has none. `null` when the gateway withholds it: the
-   * head is outside its namespace or in another repository, so the body is not the CMS's to read
-   * or rewrite (`LocalGitHubGateway.getPullRequest`).
+   * head is outside its namespace, protected, or in another repository, so the body is not the
+   * CMS's to read or rewrite (`LocalGitHubGateway.getPullRequest`). A pull request a person opened
+   * from a branch in the namespace has its body answered.
    */
   body: string | null
 }
@@ -1054,18 +1055,23 @@ class LocalGitHubGateway implements GitHubGateway {
 
   /**
    * Pull request `number`'s merge state, for any number, and its body only when its head is a
-   * branch of this repository in the namespace itself: neither a legacy branch nor the settings
-   * branch, and never a human's pull request. The number comes from the worker, which a
-   * compromised CMS Lambda can steer; the head is GitHub's record.
+   * branch of this repository in the namespace itself and not protected: neither a legacy branch,
+   * the settings branch, nor a `protectedBranches` match, whoever opened the pull request. The
+   * number comes from the worker, which a compromised CMS Lambda can steer; the head is GitHub's
+   * record.
    */
   getPullRequest(number: number, signal?: AbortSignal): Promise<GitHubPullRequest> {
     return this.credentialed(signal, async (reach) => {
       const { data } = await this.api(reach, () =>
         this.octokit.pulls.get({ ...this.repo, pull_number: number, request: { signal } }),
       )
-      // By id, as `assertOwnPullRequest` compares; a deleted fork has no repo.
+      const head = data.head.ref
+      // By id, as `assertOwnPullRequest` compares; a deleted fork has no repo. A protected head is
+      // one the gateway refuses to update the pull request of, so its body is withheld too.
       const ours =
-        data.head.repo?.id === data.base.repo.id && this.policy.namespaceHolds(data.head.ref)
+        data.head.repo?.id === data.base.repo.id &&
+        this.policy.namespaceHolds(head) &&
+        !(await this.policy.isProtected(head, () => this.readDefaultBranch(reach, signal)))
       return {
         merged: data.merged,
         merged_at: data.merged_at,

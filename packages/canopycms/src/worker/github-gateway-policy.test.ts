@@ -519,6 +519,11 @@ describe('reading a pull request by number', () => {
     ['on the legacy list', pullRequestHead('spring'), { legacyBranches: ['spring'] }],
     ['the settings branch', pullRequestHead('canopycms-settings-prod'), {}],
     ['protected, outside the namespace', pullRequestHead('main'), {}],
+    [
+      'protected, inside the namespace',
+      pullRequestHead('canopycms/prod/keep-1'),
+      { protectedBranches: ['canopycms/prod/keep-*'] },
+    ],
     ['in a fork', pullRequestHead('canopycms/prod/feature', 2002), {}],
     ['in a deleted fork', pullRequestHead('canopycms/prod/feature', null), {}],
   ] as const)(

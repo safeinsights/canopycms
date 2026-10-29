@@ -50,7 +50,7 @@ const addComment = () =>
 /** A PR body as a submit writes it, under some human text. */
 const submittedBody = `Notes\n\n${buildPrSection({ changedPaths: ['a.md'] })}`
 
-const render = (body: string | null | undefined = submittedBody, warn = vi.fn()) =>
+const render = (body: string = submittedBody, warn = vi.fn()) =>
   renderPrCommentsBody({ branchRoot, branch: 'feature/x', body, warn })
 
 describe('renderPrCommentsBody', () => {
@@ -103,10 +103,10 @@ describe('renderPrCommentsBody', () => {
     expect(body).not.toContain(PR_COMMENTS_START)
   })
 
-  it('writes nothing for a body with no canopycms section, or no body', async () => {
+  it('writes nothing for a body with no canopycms section, or an empty body', async () => {
     await seedBranch('approved', approved)
     expect(await render('rewritten by a human')).toBeUndefined()
-    expect(await render(null)).toBeUndefined()
+    expect(await render('')).toBeUndefined()
   })
 
   const withApprovedBody = () =>
