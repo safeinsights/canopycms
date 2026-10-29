@@ -489,7 +489,9 @@ const EditorContent: React.FC<EditorProps> = ({
   const branchNotAvailable = !!branchNameState && branchBarState === 'not-available'
 
   // Set once the branch actions below exist; they depend on the drafts, which depend on the entries.
-  const switchBranchRef = useRef<(branch: string) => Promise<void>>(async () => {})
+  const switchBranchRef = useRef<(branch: string, superseded: () => boolean) => Promise<void>>(
+    async () => {},
+  )
   // Set once the changes read exists; it waits on the panel state, declared after the entries.
   const reloadChangesRef = useRef<(branch: string) => void>(() => {})
 
@@ -541,7 +543,7 @@ const EditorContent: React.FC<EditorProps> = ({
       buildPreviewRoute(entry, { previewBaseByCollection, contentRoot }),
     setBusy: setEntriesLoading,
     branchBarState,
-    switchBranch: (branch) => switchBranchRef.current(branch),
+    switchBranch: (branch, superseded) => switchBranchRef.current(branch, superseded),
     // A short name in the URL is no switch to another branch.
     sameBranch: (a, b) => listedName(a) === listedName(b),
     urlBranchName,
@@ -710,7 +712,7 @@ const EditorContent: React.FC<EditorProps> = ({
     userId: userContext?.userId,
   })
   // Only a Back or Forward calls this: it switches to the listed name, replacing the entry it arrived at.
-  switchBranchRef.current = async (branch) => {
+  switchBranchRef.current = async (branch, superseded) => {
     const listed = listedBranch(branch)
     if (branches.length > 0 && !listed) {
       notifications.show({
@@ -719,7 +721,7 @@ const EditorContent: React.FC<EditorProps> = ({
       })
       throw new Error(`Branch ${branch} is not listed`)
     }
-    await handleBranchChange(listed?.name ?? branch, { push: false })
+    await handleBranchChange(listed?.name ?? branch, { push: false, superseded })
   }
 
   // 5. Comment system (depends on branchNameState)

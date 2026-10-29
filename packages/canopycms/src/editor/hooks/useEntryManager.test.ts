@@ -999,7 +999,7 @@ describe('useEntryManager', () => {
       window.dispatchEvent(new PopStateEvent('popstate'))
     })
 
-    expect(switchBranch).toHaveBeenCalledWith('feature')
+    expect(switchBranch).toHaveBeenCalledWith('feature', expect.any(Function))
     await waitFor(() => expect(replaceState).toHaveBeenCalled())
     const url = new URL(String(replaceState.mock.calls.at(-1)?.[2]))
     expect(url.searchParams.get('branch')).toBe('main')

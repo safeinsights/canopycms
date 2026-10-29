@@ -28,8 +28,14 @@ export interface UseBranchActionsOptions {
 }
 
 export interface UseBranchActionsReturn {
-  /** `push: false` for a switch a Back or Forward makes, which arrived at its history entry already. */
-  handleBranchChange: (branch: string | null, options?: { push?: boolean }) => Promise<void>
+  /**
+   * `push: false` for a switch a Back or Forward makes, which arrived at its history entry already;
+   * it rejects instead once its `superseded()` holds.
+   */
+  handleBranchChange: (
+    branch: string | null,
+    options?: { push?: boolean; superseded?: () => boolean },
+  ) => Promise<void>
   /** True when nothing is unsaved or the user accepted the warning. Run before any in-flight UI. */
   confirmCreate: () => Promise<boolean>
   handleCreateBranch: (branch: {
@@ -105,11 +111,15 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
     })
   }
 
-  const handleBranchChange = async (next: string | null, change: { push?: boolean } = {}) => {
+  const handleBranchChange = async (
+    next: string | null,
+    change: { push?: boolean; superseded?: () => boolean } = {},
+  ) => {
     if (!next || next === options.branchName) return
 
     const confirmed = await confirmIfDirty('Switch branches anyway?')
     if (!confirmed) throw new Error('User cancelled branch switch')
+    if (change.superseded?.()) throw new Error('A later history move superseded the branch switch')
 
     performBranchSwitch(next, undefined, change.push ?? true)
   }

@@ -87,8 +87,11 @@ export interface UseEntryManagerOptions {
   setBusy: (busy: boolean) => void
   /** The bar's row: a failed load is toasted after 'loading' ends, and never on 'not-available'. */
   branchBarState?: BranchBarStatus['value']
-  /** Switches to the branch a Back or Forward reached; rejects when the switch does not happen. */
-  switchBranch?: (branch: string) => Promise<void>
+  /**
+   * Switches to the branch a Back or Forward reached; rejects when the switch does not happen,
+   * which it must not once `superseded()` holds: a later move has the URL.
+   */
+  switchBranch?: (branch: string, superseded: () => boolean) => Promise<void>
   /**
    * Whether two names open one branch, as a short name and its full name do. A change of
    * `branchName` between two such names is no switch: the open entry stays. Defaults to comparing
@@ -1054,7 +1057,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
         }
         entryAfterBranchChangeRef.current = { branch, entry }
         if (!hasSyncedFromUrl.current) initialUrlEntry.current = entry
-        switchBranch(branch).catch(() => {
+        switchBranch(branch, () => move !== historyMovesRef.current).catch(() => {
           if (move === historyMovesRef.current) entryAfterBranchChangeRef.current = undefined
           stay()
         })

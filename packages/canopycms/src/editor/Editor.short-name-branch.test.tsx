@@ -561,6 +561,39 @@ describe('the editor on a namespace branch named by its short name', () => {
     expect(emptied).toEqual([])
   })
 
+  it('drops a confirmed switch from a Back that a later Back onto the open branch overtook', async () => {
+    window.history.replaceState({}, '', '/?branch=spring')
+    stubApi({ status: 'editing', userId: 'author-1' })
+    renderEditor('spring')
+    await waitFor(async () => expect((await titleBox()).value).toBe('hello title'))
+    fireEvent.change(await titleBox(), { target: { value: 'Drafted on spring' } })
+    await waitFor(() =>
+      expect(window.localStorage.getItem(`canopycms:drafts:${SPRING}`)).toContain(
+        'Drafted on spring',
+      ),
+    )
+
+    window.history.replaceState(window.history.state, '', '/?branch=main')
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    await waitFor(() => expect(modals.openConfirmModal).toHaveBeenCalled())
+    const confirm = vi.mocked(modals.openConfirmModal).mock.calls.at(-1)?.[0]
+    const entryOnSpring = `/?branch=spring&entry=${encodeURIComponent(hello.path)}`
+    window.history.replaceState(window.history.state, '', entryOnSpring)
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    await act(async () => {
+      confirm?.onConfirm?.()
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+
+    expect(`${window.location.pathname}${window.location.search}`).toBe(entryOnSpring)
+    expect(within(screen.getByTestId('branch-dropdown-button')).getByText('spring')).toBeTruthy()
+    expect((await titleBox()).value).toBe('Drafted on spring')
+  })
+
   it('holds a Submit from the branches drawer while Save all runs', async () => {
     autoConfirm()
     let release!: () => void
