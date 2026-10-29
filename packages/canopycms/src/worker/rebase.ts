@@ -938,7 +938,11 @@ async function rebaseOneBranch(
         if (currentMeta?.branch.rebaseFailure === undefined) {
           return { kind: 'none' }
         }
-        await meta.save({ branch: { rebaseFailure: undefined } })
+        const storedName = currentMeta.branch.name
+        await meta.saveIf(
+          { branch: { rebaseFailure: undefined } },
+          (existing) => existing?.branch.name === storedName,
+        )
         return { kind: 'none' }
       }
 
