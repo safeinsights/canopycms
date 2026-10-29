@@ -417,6 +417,23 @@ describe('branch api', () => {
     )
   })
 
+  it('names a namespace branch holding the key by its short name', async () => {
+    const registry = createMockRegistry([])
+    registry.getByKey.mockResolvedValue(
+      createMockBranchContext({ branchName: 'canopycms/local/feature/test', createdBy: 'u1' }),
+    )
+    const ctx = createMockApiContext({
+      branchContext: createMockBranchContext({ branchName: 'main', createdBy: 'system' }),
+      services: { registry: registry as unknown as BranchRegistry },
+    })
+
+    const res = await createBranch(ctx, asU1, { branch: unsafeAsBranchName('feature-test') })
+    expect(res.status).toBe(409)
+    expect(res.error).toBe(
+      '"feature-test" would clash with the existing branch "feature/test". Choose a different name.',
+    )
+  })
+
   it('refuses a provisioning that finds another branch under the key, naming that branch', async () => {
     const holder = createMockBranchContext({
       branchName: 'canopycms-local-feature-test',

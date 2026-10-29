@@ -624,8 +624,8 @@ const existingBranchResponse = (
   if (existing.branch.name !== named.name) {
     return nameRefused(
       409,
-      `"${named.shortName}" would clash with the existing branch "${existing.branch.name}". ` +
-        'Choose a different name.',
+      `"${named.shortName}" would clash with the existing branch ` +
+        `"${shortNameOf(ctx.services.config, existing.branch.name)}". Choose a different name.`,
     )
   }
   if (isCreatorsRecentBranch(existing.branch, req.user.userId)) {
