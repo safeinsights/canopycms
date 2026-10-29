@@ -16,7 +16,7 @@ row: Editors' branches are created in the branch namespace
 (`spring-update`) is what the branch listing returns as `shortName`, what `?branch=` links in pull
 request bodies carry, and what a pull request without a title is named after (`Submit
 spring-update`); `?branch=` and the API's `/:branch` segment accept it or the full name. A branch
-outside the namespace is reached by its full name, or only as `refs/heads/<name>` when a
+outside the namespace is reached by its full name, or only by its exact form, `~<name>`, when a
 namespace branch's short name is that name. Creation refuses a short name that another branch already has (the
 base, the active branch, a branch outside the namespace, an exact name the gateway protects), one equal to
 an API route (`admin`, `assets`, …), one kept for settings (`canopycms-settings-…` or the settings
