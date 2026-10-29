@@ -258,6 +258,11 @@ export interface WorkerStatusReport {
     workerStartedAt?: string
   }
   /**
+   * The branch namespace the GitHub gateway writes, as of the last git sync that could ask it.
+   * System health compares it with the namespace the CMS creates branches in.
+   */
+  gatewayBranchNamespace?: string
+  /**
    * Present while the schema gate holds the base branch, and on the cycle a hold expires. Carried
    * into a restarted worker's first snapshot, so the bound survives restarts.
    */

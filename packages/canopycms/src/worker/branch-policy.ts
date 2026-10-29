@@ -4,10 +4,11 @@
  * Lambda can write, so nothing here takes a branch to protect, or one to allow, from a request.
  */
 import {
-  CMS_BRANCH_PREFIX,
-  RESERVED_SETTINGS_BRANCH_PREFIX,
-  sanitizeBranchName,
-} from '../paths/branch-name'
+  DEFAULT_BRANCH_NAMESPACE_TEMPLATE,
+  branchNamespaceProblem,
+  resolveBranchNamespaceTemplate,
+} from '../operating-mode/branch-namespace'
+import { RESERVED_SETTINGS_BRANCH_PREFIX, sanitizeBranchName } from '../paths/branch-name'
 
 /**
  * How long GitHub's default branch, once read, is taken to be still the default.
@@ -69,14 +70,21 @@ const PROTECTED_WHY =
   'lists), which the CanopyCMS worker never changes. Nothing in CanopyCMS queues this; find out ' +
   'what wrote this task.'
 
-const OUTSIDE_NAMESPACE_WHY =
-  `it is outside the CanopyCMS branch namespace (names starting ${CMS_BRANCH_PREFIX}), and is ` +
-  "neither this deployment's settings branch nor on its legacyBranches list. CanopyCMS creates " +
-  'every branch it edits in that namespace; a branch made before it reaches GitHub only once ' +
+const outsideNamespaceWhy = (namespace: string) =>
+  `it is outside this deployment's branch namespace (names starting ${namespace}), and is ` +
+  'neither its settings branch nor on its legacyBranches list. CanopyCMS creates every branch ' +
+  'it edits in that namespace; a branch made before it reaches GitHub only once ' +
   'legacyBranches lists it.'
 
-/** Why the policy refuses to push `branch`, for `reason`. */
-export function pushRefusalMessage(branch: string, reason: PushPolicyRefusal): string {
+/**
+ * Why the policy refuses to push `branch`, for `reason`, in `namespace`.
+ * @internal Exported for tests.
+ */
+export function pushRefusalMessage(
+  branch: string,
+  reason: PushPolicyRefusal,
+  namespace: string,
+): string {
   const refusing = `Refusing to push ${JSON.stringify(branch)} to GitHub`
   switch (reason) {
     case 'protected':
@@ -93,7 +101,7 @@ export function pushRefusalMessage(branch: string, reason: PushPolicyRefusal): s
         "match the CMS's own settings branch; if they do, find out what asked for this push."
       )
     case 'outside-namespace':
-      return `${refusing}: ${OUTSIDE_NAMESPACE_WHY}`
+      return `${refusing}: ${outsideNamespaceWhy(namespace)}`
   }
 }
 
@@ -150,12 +158,7 @@ export function protectedPatternProblem(pattern: string): string | null {
  */
 export function legacyBranchProblem(entry: string): string | null {
   if (entry.includes('*')) return 'an entry is an exact branch name, and * is not a wildcard here'
-  const named = protectedPatternProblem(entry)
-  if (named !== null) return named
-  if (entry.startsWith(CMS_BRANCH_PREFIX)) {
-    return `it starts with ${CMS_BRANCH_PREFIX}, so it is already in the namespace`
-  }
-  return null
+  return protectedPatternProblem(entry)
 }
 
 /**
@@ -188,7 +191,23 @@ export const MAX_PROTECTED_BRANCHES = 1024
 /** The most `legacyBranches` entries a policy takes. */
 export const MAX_LEGACY_BRANCHES = 1024
 
+/**
+ * The namespace a policy enforces when it is given none: the default template's, for the default
+ * deployment name.
+ * @internal Exported for tests.
+ */
+export const DEFAULT_BRANCH_NAMESPACE = resolveBranchNamespaceTemplate(
+  DEFAULT_BRANCH_NAMESPACE_TEMPLATE,
+  'prod',
+  'the default',
+)
+
 export interface BranchPolicyOptions {
+  /**
+   * The namespace this gateway writes (`CANOPYCMS_BRANCH_NAMESPACE` resolved,
+   * operating-mode/branch-namespace.ts). Default {@link DEFAULT_BRANCH_NAMESPACE}.
+   */
+  namespace?: string
   /** The configured base branch (`CANOPYCMS_BASE_BRANCH`); never one read from the workspace. */
   baseBranch?: string
   /** Further protected names and `*` globs (`CANOPYCMS_PROTECTED_BRANCHES`). */
@@ -212,7 +231,7 @@ export interface BranchPolicyDescription {
   configured: string[]
   /** GitHub's default branch as last read; null before a read or for a repository with none. */
   githubDefault: string | null
-  /** `CMS_BRANCH_PREFIX`. */
+  /** The namespace the gateway writes. */
   namespace: string
   legacy: string[]
   settingsBranch: string | null
@@ -234,11 +253,11 @@ export type DefaultBranchReader = () => Promise<string | null>
  * and an operation that joined it from outside one would wait on that session.
  *
  * Nothing outside the namespace is written: a push, deletion or pull request head must start with
- * `CMS_BRANCH_PREFIX`, be this deployment's settings branch, or be a `legacyBranches` entry,
- * compared exactly. Sanitized equivalence, right for the protected set where matching more refuses
- * more, would let an allow-list admit more. The protected set wins inside the namespace too.
- * The prefix is fixed in code, so nothing the CMS Lambda can reach widens it. It contains the
- * settings prefix, so a default settings branch is in the namespace too.
+ * the namespace, be this deployment's settings branch, or be a `legacyBranches` entry, compared
+ * exactly. Sanitized equivalence, right for the protected set where matching more refuses more,
+ * would let an allow-list admit more. The protected set wins inside the namespace too. The
+ * namespace comes from the gateway's own configuration, never a request; the base and settings
+ * branches must lie outside it, and a legacy entry inside it is refused as pointless.
  *
  * Settings branches are pushed plainly or not at all: no lease, no deletion, no pull request.
  * One is a name with the reserved prefix or this deployment's settings branch. Only this
@@ -247,6 +266,8 @@ export type DefaultBranchReader = () => Promise<string | null>
 export class BranchPolicy {
   private readonly exact: string[]
   private readonly globs: string[]
+  /** The namespace the gateway writes. */
+  readonly namespace: string
   private readonly settingsBranch: string | null
   private readonly legacy: ReadonlySet<string>
   private readonly now: () => number
@@ -254,6 +275,24 @@ export class BranchPolicy {
 
   constructor(options: BranchPolicyOptions = {}) {
     this.now = options.now ?? (() => Date.now())
+    this.namespace = options.namespace ?? DEFAULT_BRANCH_NAMESPACE
+    const namespaceProblem = branchNamespaceProblem(this.namespace)
+    if (namespaceProblem !== null) {
+      throw new Error(
+        `Invalid branch namespace ${JSON.stringify(this.namespace)}: ${namespaceProblem}`,
+      )
+    }
+    for (const [what, name] of [
+      ['base branch', options.baseBranch],
+      ['settings branch', options.settingsBranch],
+    ] as const) {
+      if (name?.startsWith(this.namespace)) {
+        throw new Error(
+          `The ${what} ${JSON.stringify(name)} is inside the branch namespace ${JSON.stringify(this.namespace)}, ` +
+            'which holds only the branches editors create; choose a namespace it is outside',
+        )
+      }
+    }
     const entries = [...(options.protectedBranches ?? [])]
     if (entries.length > MAX_PROTECTED_BRANCHES) {
       throw new Error(
@@ -286,7 +325,9 @@ export class BranchPolicy {
       )
     }
     for (const entry of legacy) {
-      const problem = legacyBranchProblem(entry)
+      const problem = entry.startsWith(this.namespace)
+        ? `it starts with ${this.namespace}, so it is already in the namespace`
+        : legacyBranchProblem(entry)
       if (problem !== null) {
         throw new Error(`Invalid legacyBranches entry ${JSON.stringify(entry)}: ${problem}`)
       }
@@ -302,7 +343,7 @@ export class BranchPolicy {
     return {
       configured: [...this.exact, ...this.globs],
       githubDefault: this.githubDefault?.name ?? null,
-      namespace: CMS_BRANCH_PREFIX,
+      namespace: this.namespace,
       legacy: [...this.legacy],
       settingsBranch: this.settingsBranch,
     }
@@ -311,9 +352,7 @@ export class BranchPolicy {
   /** Whether the gateway may write `branch` at all: the namespace, the settings branch, the list. */
   inNamespace(branch: string): boolean {
     return (
-      branch.startsWith(CMS_BRANCH_PREFIX) ||
-      branch === this.settingsBranch ||
-      this.legacy.has(branch)
+      branch.startsWith(this.namespace) || branch === this.settingsBranch || this.legacy.has(branch)
     )
   }
 
@@ -332,14 +371,16 @@ export class BranchPolicy {
     branch: string,
     lease: string | undefined,
     readDefault: DefaultBranchReader,
-    refuse: (reason: PushPolicyRefusal) => Error,
+    refuse: (reason: PushPolicyRefusal, message: string) => Error,
   ): Promise<void> {
-    if (await this.isProtected(branch, readDefault)) throw refuse('protected')
+    const refusal = (reason: PushPolicyRefusal) =>
+      refuse(reason, pushRefusalMessage(branch, reason, this.namespace))
+    if (await this.isProtected(branch, readDefault)) throw refusal('protected')
     if (this.isSettings(branch)) {
-      if (lease !== undefined) throw refuse('settings')
-      if (branch !== this.settingsBranch) throw refuse('other-settings')
+      if (lease !== undefined) throw refusal('settings')
+      if (branch !== this.settingsBranch) throw refusal('other-settings')
     }
-    if (!this.inNamespace(branch)) throw refuse('outside-namespace')
+    if (!this.inNamespace(branch)) throw refusal('outside-namespace')
   }
 
   /** Refuse to delete a protected branch, a settings branch, or one outside the namespace. */
@@ -365,7 +406,7 @@ export class BranchPolicy {
         'delete',
         branch,
         'outside-namespace',
-        `${deleting(branch)}: ${OUTSIDE_NAMESPACE_WHY}`,
+        `${deleting(branch)}: ${outsideNamespaceWhy(this.namespace)}`,
       )
     }
   }
@@ -414,7 +455,7 @@ export class BranchPolicy {
         'pull-request',
         head,
         'outside-namespace',
-        `${refusing}: ${OUTSIDE_NAMESPACE_WHY}`,
+        `${refusing}: ${outsideNamespaceWhy(this.namespace)}`,
       )
     }
   }

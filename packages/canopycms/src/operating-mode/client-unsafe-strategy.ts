@@ -5,6 +5,7 @@
 
 import path from 'node:path'
 import { ProdClientSafeStrategy, DevClientSafeStrategy } from './client-safe-strategy'
+import { resolveBranchNamespace } from './branch-namespace'
 import { resolveDeploymentName } from './deployment-name'
 import type { OperatingMode, ClientUnsafeStrategy, RemoteUrlConfig } from './types'
 import type { CanopyConfig } from '../config'
@@ -61,6 +62,10 @@ class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrateg
   }): string {
     if (config.settingsBranch) return config.settingsBranch
     return `canopycms-settings-${resolveDeploymentName(config, 'prod')}`
+  }
+
+  getBranchNamespace(config: { branchNamespace?: string; deploymentName?: string }): string {
+    return resolveBranchNamespace(config, 'prod')
   }
 
   getSettingsRoot(sourceRoot?: string): string {
@@ -126,6 +131,10 @@ class DevStrategy extends DevClientSafeStrategy implements ClientUnsafeStrategy 
   }): string {
     if (config.settingsBranch) return config.settingsBranch
     return `canopycms-settings-${resolveDeploymentName(config, 'local')}`
+  }
+
+  getBranchNamespace(config: { branchNamespace?: string; deploymentName?: string }): string {
+    return resolveBranchNamespace(config, 'local')
   }
 
   getSettingsRoot(sourceRoot?: string): string {

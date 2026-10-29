@@ -307,6 +307,8 @@ export interface LocalGitHubGatewayOptions extends GatewayInstanceOptions {
   protectedBranches?: readonly string[]
   /** This deployment's settings branch, the only settings branch the gateway pushes. */
   settingsBranch?: string
+  /** The branch namespace it writes, resolved (operating-mode/branch-namespace.ts). */
+  branchNamespace?: string
   /** Branches outside the namespace it may still write: exact names (worker/branch-policy.ts). */
   legacyBranches?: readonly string[]
   /**
@@ -384,6 +386,7 @@ class LocalGitHubGateway implements GitHubGateway {
       protectedBranches: options.protectedBranches,
       settingsBranch: options.settingsBranch,
       legacyBranches: options.legacyBranches,
+      namespace: options.branchNamespace,
     })
   }
 

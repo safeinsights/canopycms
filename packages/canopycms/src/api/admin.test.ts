@@ -82,6 +82,32 @@ describe('admin api', () => {
       })
     })
 
+    describe('branch namespace', () => {
+      it('reports the namespace this process creates branches in', async () => {
+        vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', '')
+        vi.stubEnv('CANOPYCMS_BRANCH_NAMESPACE', '')
+        const named = createMockApiContext({
+          services: {
+            config: { mode: 'prod', branchNamespace: 'editor-{deployment}/' } as CanopyConfig,
+          },
+        })
+        const result = await statusHandler(named, req)
+        expect(result.data?.branchNamespace).toEqual({ ok: true, namespace: 'editor-prod/' })
+        vi.unstubAllEnvs()
+      })
+
+      it('reports an invalid namespace, and still answers 200', async () => {
+        vi.stubEnv('CANOPYCMS_BRANCH_NAMESPACE', 'no-slash')
+        const result = await statusHandler(ctx, req)
+        expect(result.status).toBe(200)
+        expect(result.data?.branchNamespace).toEqual({
+          ok: false,
+          error: expect.stringContaining('it must end with "/"'),
+        })
+        vi.unstubAllEnvs()
+      })
+    })
+
     describe('image processing', () => {
       it('reports image processing as available when sharp loads', async () => {
         const result = await statusHandler(ctx, req)

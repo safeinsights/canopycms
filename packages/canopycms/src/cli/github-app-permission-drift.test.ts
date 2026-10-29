@@ -220,7 +220,7 @@ function task(action: TaskAction): Task {
   return {
     id: 't1',
     action,
-    payload: { branch: 'canopycms-content/a', pullRequestNumber: 7, title: 'T', body: 'B' },
+    payload: { branch: 'canopycms/prod/content/a', pullRequestNumber: 7, title: 'T', body: 'B' },
   } as unknown as Task
 }
 
@@ -253,7 +253,7 @@ async function observeEverything(): Promise<Coverage> {
         state: 'open',
         merged: false,
         draft: false,
-        head: { ref: 'canopycms-content/a', repo: { id: 1 } },
+        head: { ref: 'canopycms/prod/content/a', repo: { id: 1 } },
         base: { ref: 'main', repo: { id: 1 } },
       },
     },

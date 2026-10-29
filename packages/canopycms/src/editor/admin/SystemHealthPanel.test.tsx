@@ -47,6 +47,7 @@ function makeStatus(overrides: Partial<AdminStatusData> = {}): AdminStatusData {
     build: { canopycmsVersion: '1.2.3', sourceRevision: 'abcdef0123456789abcdef' },
     assetStore: { configured: true },
     imageProcessing: { available: true },
+    branchNamespace: { ok: true, namespace: 'canopycms/prod/' },
     ...overrides,
   }
 }
@@ -680,6 +681,56 @@ describe('SystemHealthPanel', () => {
 
       await waitFor(() => expect(screen.getByText('Worker: alive')).toBeTruthy())
       expect(screen.queryByTestId('diverged-branches-alert')).toBeNull()
+    })
+  })
+
+  describe('Overview tab: branch namespace', () => {
+    const statusWithGateway = (
+      gateway: string | undefined,
+      own: AdminStatusData['branchNamespace'] = { ok: true, namespace: 'canopycms/prod/' },
+    ): AdminStatusData => {
+      const status = makeStatusWithSync()
+      if (!status.workerStatus) throw new Error('expected a worker status')
+      if (gateway !== undefined) status.workerStatus.gatewayBranchNamespace = gateway
+      return { ...status, branchNamespace: own }
+    }
+
+    it('says new branches cannot be published when the gateway writes another namespace', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(mockSuccess(statusWithGateway('editor-prod/')))
+
+      renderPanel()
+
+      const alert = await screen.findByTestId('branch-namespace-alert')
+      expect(alert.textContent).toContain('New branches cannot be published')
+      expect(alert.textContent).toContain('creates branches starting canopycms/prod/')
+      expect(alert.textContent).toContain('writes only branches starting editor-prod/')
+      expect(alert.textContent).toContain('CANOPYCMS_BRANCH_NAMESPACE')
+    })
+
+    it("says why this process's namespace is not valid", async () => {
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(
+          statusWithGateway('canopycms/prod/', { ok: false, error: 'it must end with "/"' }),
+        ),
+      )
+
+      renderPanel()
+
+      const alert = await screen.findByTestId('branch-namespace-alert')
+      expect(alert.textContent).toContain('The branch namespace is not valid')
+      expect(alert.textContent).toContain('it must end with "/"')
+    })
+
+    it.each([
+      ['the gateway writes the same namespace', 'canopycms/prod/'],
+      ['the gateway has not said yet', undefined],
+    ])('shows nothing when %s', async (_label, gateway) => {
+      mockClient.admin.status.mockResolvedValueOnce(mockSuccess(statusWithGateway(gateway)))
+
+      renderPanel()
+
+      await waitFor(() => expect(screen.getByText('Worker: alive')).toBeTruthy())
+      expect(screen.queryByTestId('branch-namespace-alert')).toBeNull()
     })
   })
 

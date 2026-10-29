@@ -22,6 +22,7 @@ import {
   sanitizeBranchName,
   RESERVED_SETTINGS_BRANCH_PREFIX,
 } from '../paths/branch-name'
+import { resolveBranchNamespace } from '../operating-mode/branch-namespace'
 import { resolveDeploymentName } from '../operating-mode/deployment-name'
 import type { BaseRefreshReport, WorkerShutdownRecord, WorkerStatusReport } from '../types'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
@@ -96,8 +97,8 @@ export {
   type GitHubGatewayServerOptions,
 } from './github-gateway-http'
 export { GitHubGatewayUnreachableError } from './github-gateway-wire'
-// A gateway that failed to boot still describes the namespace it would have enforced.
-export { CMS_BRANCH_PREFIX } from '../paths/branch-name'
+// The split gateway resolves its branch namespace as the in-process one does.
+export { resolveBranchNamespace } from '../operating-mode/branch-namespace'
 // A gateway that failed to boot still serves the instance operations.
 export { GatewayInstance, type GatewayInstanceOptions } from './gateway-instance'
 // The gateway process's scrubbed log lines, and the exact scrubs for the secrets it holds that
@@ -150,7 +151,8 @@ export interface CmsWorkerConfig extends GitHubAuthConfig {
    * A GitHub gateway to use instead of building the in-process one: a client of a gateway another
    * process serves (`connectGitHubGateway`), which holds the credential, the protected set and the
    * mirror. Exclusive with `githubToken`, `githubAppAuth`, `refreshGitHubToken`,
-   * `protectedBranches` and `legacyBranches`, which configure the in-process one.
+   * `protectedBranches`, `legacyBranches` and `branchNamespace`, which configure the in-process
+   * one.
    */
   githubGateway?: GitHubGateway
   /** GitHub owner (e.g., 'acme') */
@@ -174,10 +176,15 @@ export interface CmsWorkerConfig extends GitHubAuthConfig {
    */
   protectedBranches?: readonly string[]
   /**
-   * Branches outside the `canopycms-` namespace the in-process gateway may still write: exact
-   * names of branches from before the namespace. See worker/branch-policy.ts.
+   * Branches outside the namespace the in-process gateway may still write: exact names of
+   * branches from before the namespace. See worker/branch-policy.ts.
    */
   legacyBranches?: readonly string[]
+  /**
+   * The in-process gateway's branch namespace template (`CANOPYCMS_BRANCH_NAMESPACE` wins);
+   * resolved as operating-mode/branch-namespace.ts says.
+   */
+  branchNamespace?: string
   /**
    * Names THIS worker's own settings branch
    * (`canopycms-settings-{deploymentName}`, default 'prod' — ProdStrategy's
@@ -1537,6 +1544,7 @@ export class CmsWorker {
     if (this.config.refreshGitHubToken !== undefined) conflicting.push('refreshGitHubToken')
     if ((this.config.protectedBranches?.length ?? 0) > 0) conflicting.push('protectedBranches')
     if ((this.config.legacyBranches?.length ?? 0) > 0) conflicting.push('legacyBranches')
+    if (this.config.branchNamespace !== undefined) conflicting.push('branchNamespace')
     if (conflicting.length > 0) {
       throw new Error(
         `CmsWorker: githubGateway is exclusive with ${conflicting.join(', ')}, which configure the ` +
@@ -1570,6 +1578,7 @@ export class CmsWorker {
       protectedBranches: this.config.protectedBranches,
       settingsBranch: this.ensureSettingsBranch(),
       legacyBranches: this.config.legacyBranches,
+      branchNamespace: resolveBranchNamespace(this.config, 'prod'),
     }
   }
 

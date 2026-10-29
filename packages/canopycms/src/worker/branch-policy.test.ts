@@ -14,6 +14,7 @@ import {
   matchesBranchPattern,
   protectedPatternProblem,
   pushRefusalMessage,
+  DEFAULT_BRANCH_NAMESPACE,
 } from './branch-policy'
 
 const defaultIs = (name: string | null) => vi.fn(async () => name)
@@ -270,7 +271,7 @@ describe('BranchPolicy: refusals', () => {
     await expect(
       policy.assertPushAllowed('canopycms-settings-prod', 'a'.repeat(40), read, refusePush),
     ).rejects.toThrow('push refused: settings')
-    await policy.assertPushAllowed('canopycms-feature', 'a'.repeat(40), read, refusePush)
+    await policy.assertPushAllowed('canopycms/prod/feature', 'a'.repeat(40), read, refusePush)
   })
 
   it("refuses to delete GitHub's default branch, the base, a listed branch or a settings branch", async () => {
@@ -287,7 +288,7 @@ describe('BranchPolicy: refusals', () => {
       expect(caught).toBeInstanceOf(GatewayRefusalError)
       expect(caught).toMatchObject({ operation: 'delete', branch, reason })
     }
-    await policy.assertDeleteAllowed('canopycms-feature', read)
+    await policy.assertDeleteAllowed('canopycms/prod/feature', read)
   })
 
   it('refuses a pull request from a protected or settings head, never for its base', async () => {
@@ -301,7 +302,7 @@ describe('BranchPolicy: refusals', () => {
     }
     // The base is whatever the branch was created from, protected or not.
     await policy.assertPullRequestAllowed(
-      { head: 'canopycms-feature', title: 'T', body: 'B' },
+      { head: 'canopycms/prod/feature', title: 'T', body: 'B' },
       read,
     )
   })
@@ -312,7 +313,7 @@ describe('BranchPolicy: refusals', () => {
 
     await policy.assertPullRequestAllowed(
       {
-        head: 'canopycms-feature',
+        head: 'canopycms/prod/feature',
         title: 't'.repeat(MAX_PULL_REQUEST_TITLE_LENGTH),
         body: 'b'.repeat(MAX_PULL_REQUEST_BODY_LENGTH),
       },
@@ -323,7 +324,7 @@ describe('BranchPolicy: refusals', () => {
       { body: 'b'.repeat(MAX_PULL_REQUEST_BODY_LENGTH + 1) },
     ]) {
       await expect(
-        policy.assertPullRequestAllowed({ head: 'canopycms-feature', ...text }, read),
+        policy.assertPullRequestAllowed({ head: 'canopycms/prod/feature', ...text }, read),
       ).rejects.toMatchObject({ reason: 'too-long' })
     }
   })
@@ -360,8 +361,15 @@ describe('BranchPolicy: the namespace', () => {
   it('writes a branch in the namespace, and nothing outside it', async () => {
     const policy = new BranchPolicy({ settingsBranch: 'canopycms-settings-prod' })
 
-    expect(await verdicts(policy, 'canopycms-spring-update')).toEqual(all('ok'))
-    for (const outside of ['feature', 'release/1', 'deploy-staging', 'cms-x']) {
+    expect(await verdicts(policy, 'canopycms/prod/spring-update')).toEqual(all('ok'))
+    expect(await verdicts(policy, 'canopycms/prod/release/1')).toEqual(all('ok'))
+    for (const outside of [
+      'feature',
+      'release/1',
+      'deploy-staging',
+      'cms-x',
+      'canopycms-feature',
+    ]) {
       expect(await verdicts(policy, outside)).toEqual(all('outside-namespace'))
     }
   })
@@ -370,11 +378,13 @@ describe('BranchPolicy: the namespace', () => {
     const policy = new BranchPolicy()
 
     for (const lookalike of [
-      'CanopyCMS-x',
-      'Canopycms-x',
-      'canopycms',
-      'canopycms_x',
-      'xcanopycms-x',
+      'canopycms/prod',
+      'canopycms/Prod/x',
+      'CanopyCMS/prod/x',
+      'canopycms/prod-eu/x',
+      'canopycms-prod-x',
+      'canopycms_prod/x',
+      'xcanopycms/prod/x',
     ]) {
       expect(await verdicts(policy, lookalike)).toEqual(all('outside-namespace'))
     }
@@ -392,12 +402,12 @@ describe('BranchPolicy: the namespace', () => {
 
   it('still refuses a protected branch inside the namespace or on the legacy list', async () => {
     const policy = new BranchPolicy({
-      baseBranch: 'canopycms-main',
-      protectedBranches: ['canopycms-keep-*', 'old'],
-      legacyBranches: ['old'],
+      baseBranch: 'trunk',
+      protectedBranches: ['canopycms/prod/keep-*', 'old'],
+      legacyBranches: ['old', 'trunk'],
     })
 
-    for (const branch of ['canopycms-main', 'canopycms-keep-me', 'old']) {
+    for (const branch of ['trunk', 'canopycms/prod/keep-me', 'old']) {
       expect(await verdicts(policy, branch)).toEqual(all('protected'))
     }
   })
@@ -446,16 +456,55 @@ describe('BranchPolicy: the namespace', () => {
     expect(policy.describe()).toEqual({
       configured: ['main'],
       githubDefault: null,
-      namespace: 'canopycms-',
+      namespace: 'canopycms/prod/',
       legacy: ['spring'],
       settingsBranch: 'canopycms-settings-prod',
     })
   })
 
   it('names the way out in an outside-namespace refusal', () => {
-    expect(pushRefusalMessage('spring', 'outside-namespace')).toMatch(
-      /^Refusing to push "spring" to GitHub: it is outside the CanopyCMS branch namespace \(names starting canopycms-\).*legacyBranches/,
+    expect(pushRefusalMessage('spring', 'outside-namespace', 'canopycms/prod/')).toMatch(
+      /^Refusing to push "spring" to GitHub: it is outside this deployment's branch namespace \(names starting canopycms\/prod\/\).*legacyBranches/,
     )
+  })
+
+  it('names the configured namespace in a refusal, for every operation', async () => {
+    const policy = new BranchPolicy({ namespace: 'editor-production/' })
+    const read = defaultIs('main')
+    const outside =
+      /outside this deployment's branch namespace \(names starting editor-production\/\)/
+
+    await expect(
+      policy.assertPushAllowed('spring', undefined, read, (reason, message) => new Error(message)),
+    ).rejects.toThrow(outside)
+    await expect(policy.assertDeleteAllowed('spring', read)).rejects.toThrow(outside)
+    await expect(policy.assertPullRequestAllowed({ head: 'spring' }, read)).rejects.toThrow(outside)
+  })
+
+  it('enforces a custom namespace instead of the default one', async () => {
+    const policy = new BranchPolicy({
+      namespace: 'editor-production/',
+      settingsBranch: 'canopycms-settings-prod',
+    })
+
+    expect(policy.namespace).toBe('editor-production/')
+    expect(policy.describe().namespace).toBe('editor-production/')
+    expect(await verdicts(policy, 'editor-production/spring')).toEqual(all('ok'))
+    expect(await verdicts(policy, 'editor-production/a/b')).toEqual(all('ok'))
+    for (const outside of [
+      'canopycms/prod/spring',
+      'editor-production',
+      'editor-production-x/spring',
+      'Editor-Production/spring',
+      'editor-staging/spring',
+    ]) {
+      expect(await verdicts(policy, outside)).toEqual(all('outside-namespace'))
+    }
+  })
+
+  it('defaults to DEFAULT_BRANCH_NAMESPACE', () => {
+    expect(DEFAULT_BRANCH_NAMESPACE).toBe('canopycms/prod/')
+    expect(new BranchPolicy().namespace).toBe(DEFAULT_BRANCH_NAMESPACE)
   })
 })
 
@@ -467,7 +516,6 @@ describe('legacyBranchProblem', () => {
   it.each([
     ['a wildcard', '*', /exact branch name/],
     ['a glob', 'release/*', /exact branch name/],
-    ['a name already in the namespace', 'canopycms-spring', /already in the namespace/],
     ['a settings branch', 'canopycms-settings-prod', /settings branch/],
     ['a leading dash', '-x', /starts with '-'/],
     ['an empty name', '', /1 to/],
@@ -487,6 +535,59 @@ describe('BranchPolicy: building the namespace', () => {
     expect(() => new BranchPolicy({ legacyBranches: entries(MAX_LEGACY_BRANCHES + 1) })).toThrow(
       `legacyBranches has ${MAX_LEGACY_BRANCHES + 1} entries; the most it takes is ${MAX_LEGACY_BRANCHES}`,
     )
+  })
+
+  it.each([
+    ['no trailing slash', 'editor-production', /must end with "\/"/],
+    ['an empty namespace', '', /must end with "\/"/],
+    ['a settings branch prefix', 'canopycms-settings-x/', /settings branches/],
+    ['a space', 'editor production/', /printable ASCII/],
+    ['a leading refs/', 'refs/heads/x/', /refs\//],
+  ])('refuses a namespace with %s', (_label, namespace, why) => {
+    expect(() => new BranchPolicy({ namespace })).toThrow(
+      `Invalid branch namespace ${JSON.stringify(namespace)}: `,
+    )
+    expect(() => new BranchPolicy({ namespace })).toThrow(why)
+  })
+
+  it.each([
+    ['base branch', { baseBranch: 'editor-production/main' }],
+    ['settings branch', { settingsBranch: 'editor-production/settings' }],
+  ])('refuses a %s inside the namespace', (what, options) => {
+    expect(() => new BranchPolicy({ namespace: 'editor-production/', ...options })).toThrow(
+      new RegExp(`The ${what} ".*" is inside the branch namespace "editor-production\\/"`),
+    )
+    expect(() => new BranchPolicy(options)).not.toThrow()
+  })
+
+  it('takes a base or settings branch that merely lookalikes the namespace', () => {
+    expect(
+      () =>
+        new BranchPolicy({
+          baseBranch: 'canopycms/prod',
+          settingsBranch: 'canopycms/prod-settings',
+        }),
+    ).not.toThrow()
+  })
+
+  it('refuses a legacy entry inside the namespace, as already in it', () => {
+    expect(() => new BranchPolicy({ legacyBranches: ['canopycms/prod/spring'] })).toThrow(
+      /Invalid legacyBranches entry "canopycms\/prod\/spring": it starts with canopycms\/prod\/, so it is already in the namespace/,
+    )
+    expect(
+      () =>
+        new BranchPolicy({
+          namespace: 'editor-production/',
+          legacyBranches: ['editor-production/x'],
+        }),
+    ).toThrow(/already in the namespace/)
+    // Under another namespace the same name is simply a legacy branch.
+    expect(
+      new BranchPolicy({
+        namespace: 'editor-production/',
+        legacyBranches: ['canopycms/prod/spring'],
+      }).describe().legacy,
+    ).toEqual(['canopycms/prod/spring'])
   })
 
   it('refuses an invalid or repeated legacy entry, and an invalid settings branch', () => {

@@ -21,7 +21,7 @@ import {
 import { getTaskQueueDir } from '../task-queue/task-queue-config'
 import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
 import type { BuildIdentity, WorkerStatusReport } from '../types'
-import type { OperatingMode } from '../operating-mode'
+import { operatingStrategy, type OperatingMode } from '../operating-mode'
 import type { SchemaIssue } from '../schema/types'
 import { defineEndpoint } from './route-builder'
 import { getErrorMessage, isNotFoundError, redactCredentials } from '../utils/error'
@@ -188,6 +188,11 @@ export interface AdminStatusData {
   settingsWorkspaceError?: string
   /** What the base branch's schema leaves out under this process's code; absent when nothing. */
   schemaIssues?: SchemaIssue[]
+  /**
+   * The branch namespace this process resolves for the branches it creates, or why it cannot.
+   * System health compares it with the GitHub gateway's (`workerStatus.gatewayBranchNamespace`).
+   */
+  branchNamespace: { ok: true; namespace: string } | { ok: false; error: string }
   /** Build of the API process answering this request. */
   build: BuildIdentity
   /** Whether `media` is configured; without it every upload returns 501. */
@@ -307,6 +312,7 @@ const getAdminStatusHandler = async (
         ...(statusReadError ? { statusReadError } : {}),
         ...(settingsWorkspaceError ? { settingsWorkspaceError } : {}),
         ...(schemaIssues.length > 0 ? { schemaIssues } : {}),
+        branchNamespace: resolveOwnBranchNamespace(ctx),
         build: getBuildIdentity(),
         assetStore: { configured: !!ctx.assetStore },
         imageProcessing,
@@ -314,6 +320,16 @@ const getAdminStatusHandler = async (
     }
   } catch (err) {
     return { ok: false, status: 500, error: getErrorMessage(err) }
+  }
+}
+
+/** This process's branch namespace, as an answer rather than a throw. */
+function resolveOwnBranchNamespace(ctx: ApiContext): AdminStatusData['branchNamespace'] {
+  try {
+    const { config } = ctx.services
+    return { ok: true, namespace: operatingStrategy(config.mode).getBranchNamespace(config) }
+  } catch (err) {
+    return { ok: false, error: getErrorMessage(err) }
   }
 }
 
@@ -443,6 +459,7 @@ const getAdminStatus = defineEndpoint({
     build: { canopycmsVersion: '0.0.0' },
     assetStore: { configured: false },
     imageProcessing: { available: true },
+    branchNamespace: { ok: true, namespace: 'canopycms/prod/' },
   },
   guards: ['admin'] as const,
   handler: getAdminStatusHandler,

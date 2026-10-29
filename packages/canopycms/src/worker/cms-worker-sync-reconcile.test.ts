@@ -242,13 +242,14 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
     })
   }
 
-  const makeWorker = () => {
+  const makeWorker = (extra: { branchNamespace?: string } = {}) => {
     const worker = new CmsWorker({
       workspacePath,
       githubOwner: 'test-owner',
       githubRepo: 'test-repo',
       githubToken: 'fake-token',
       baseBranch: 'main',
+      ...extra,
     })
     // Point the GitHub fetch/push URL at the local bare fixture instead of a
     // real GitHub URL (same technique as cms-worker.test.ts's syncGit suite).
@@ -256,6 +257,29 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
     ;(worker as unknown as { running: boolean }).running = true
     return worker
   }
+
+  describe('the gateway branch namespace in the status report', () => {
+    beforeEach(() => {
+      // The worker resolves its namespace from these first.
+      vi.stubEnv('CANOPYCMS_BRANCH_NAMESPACE', '')
+      vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', '')
+    })
+    afterEach(() => {
+      vi.unstubAllEnvs()
+    })
+
+    it('records the default namespace the gateway writes after a sync', async () => {
+      await makeWorker().syncGit()
+
+      expect((await readStatus()).gatewayBranchNamespace).toBe('canopycms/prod/')
+    })
+
+    it('records the configured namespace, which is what System health compares', async () => {
+      await makeWorker({ branchNamespace: 'editor-production/' }).syncGit()
+
+      expect((await readStatus()).gatewayBranchNamespace).toBe('editor-production/')
+    })
+  })
 
   it('does not delete a branch that exists only in remote.git (unpushed editor work)', async () => {
     // Never reaches GitHub -- simulates GitManager.push() landing editor
