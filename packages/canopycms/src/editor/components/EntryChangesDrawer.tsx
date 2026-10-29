@@ -6,7 +6,7 @@
  * and jsdiff stay out of the editor's first chunk.
  */
 
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   Badge,
@@ -203,7 +203,7 @@ const MarkedText: React.FC<{ parts: readonly DiffPart[]; side: Side; unit: 'line
   const total = runs.reduce((n, run) => n + run.value.length, 0)
   const marked = runs.reduce((n, run) => n + (run.mark ? run.value.length : 0), 0)
   const mark: Mark = side === 'before' ? 'removed' : 'added'
-  const whole = marked > 0 && (total === 0 || marked / total > WHOLE_LINE_SHARE)
+  const whole = runs.some((run) => run.mark) && (total === 0 || marked / total > WHOLE_LINE_SHARE)
   return (
     <>
       {whole && (
@@ -215,8 +215,8 @@ const MarkedText: React.FC<{ parts: readonly DiffPart[]; side: Side; unit: 'line
         if (!run.mark) return <React.Fragment key={i}>{run.value}</React.Fragment>
         const Tag = run.mark === 'removed' ? 'del' : 'ins'
         const style = run.mark === 'removed' ? REMOVED_STYLE : ADDED_STYLE
-        // Whitespace alone has nothing for a line to cross; its tint and mark carry it.
-        const shown = /^\s+$/.test(run.value) ? { ...style, textDecoration: 'none' } : style
+        // Whitespace alone, or a blank line's label, has nothing for a line to cross.
+        const shown = /^\s*$/.test(run.value) ? { ...style, textDecoration: 'none' } : style
         return (
           <Tag key={i} style={shown}>
             {!whole && (
@@ -249,22 +249,24 @@ const LINE_GRID: React.CSSProperties = {
   columnGap: 'var(--mantine-spacing-xs)',
 }
 
-/** Consecutive one-sided rows past this many show only RUN_SHOWN of them until asked. */
+/** Consecutive changed rows of one kind past this many show only RUN_SHOWN of them until asked. */
 const LONG_RUN = 50
 const RUN_SHOWN = 20
 
-/** `rows` split into runs: each long run of lines added (or removed) alone is its own segment. */
+type RunKind = 'added' | 'removed' | 'changed'
+
+/** `rows` split into runs: each long run of lines added, removed or changed is its own segment. */
 const rowSegments = (
   rows: readonly DiffRow[],
-): Array<{ rows: readonly DiffRow[]; long?: 'added' | 'removed' }> => {
-  const oneSide = (row: DiffRow) =>
-    row.kind !== 'change' ? undefined : !row.before ? 'added' : !row.after ? 'removed' : undefined
-  const segments: Array<{ rows: readonly DiffRow[]; long?: 'added' | 'removed' }> = []
+): Array<{ rows: readonly DiffRow[]; long?: RunKind }> => {
+  const kindOf = (row: DiffRow): RunKind | undefined =>
+    row.kind !== 'change' ? undefined : !row.before ? 'added' : !row.after ? 'removed' : 'changed'
+  const segments: Array<{ rows: readonly DiffRow[]; long?: RunKind }> = []
   let plain: DiffRow[] = []
   for (let i = 0; i < rows.length; ) {
-    const side = oneSide(rows[i])
+    const side = kindOf(rows[i])
     let end = i + 1
-    while (side && end < rows.length && oneSide(rows[end]) === side) end++
+    while (side && end < rows.length && kindOf(rows[end]) === side) end++
     if (side && end - i > LONG_RUN) {
       if (plain.length > 0) segments.push({ rows: plain })
       plain = []
@@ -278,14 +280,25 @@ const rowSegments = (
   return segments
 }
 
-/** A long run's first rows, then the button that shows the rest. */
+/** A long run's first rows, then the button that shows the rest and moves focus to them. */
 const LongRun: React.FC<{
   rows: readonly DiffRow[]
-  side: 'added' | 'removed'
-  renderRows: (rows: readonly DiffRow[]) => React.ReactNode
+  side: RunKind
+  renderRows: RenderRows
 }> = ({ rows, side, renderRows }) => {
   const [expanded, setExpanded] = useState(false)
-  if (expanded) return <>{renderRows(rows)}</>
+  const firstNew = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    if (expanded) firstNew.current?.focus()
+  }, [expanded])
+  if (expanded) {
+    return (
+      <>
+        {renderRows(rows.slice(0, RUN_SHOWN))}
+        {renderRows(rows.slice(RUN_SHOWN), firstNew)}
+      </>
+    )
+  }
   return (
     <>
       {renderRows(rows.slice(0, RUN_SHOWN))}
@@ -298,8 +311,18 @@ const LongRun: React.FC<{
   )
 }
 
+/**
+ * Renders rows; the first one's first text cell takes `focusRef` and `tabIndex={-1}`, so focus
+ * can land on it.
+ */
+type RenderRows = (rows: readonly DiffRow[], focusRef?: React.Ref<HTMLElement>) => React.ReactNode
+
+/** The props that make a row's first text cell a focus target, when `i` is the first row's. */
+const focusTarget = (i: number, focusRef?: React.Ref<HTMLElement>) =>
+  i === 0 && focusRef ? { ref: focusRef as React.Ref<HTMLDivElement>, tabIndex: -1 } : {}
+
 /** Two columns from `md`: an unchanged line is read once, from Before. */
-const twoColumnRows = (rows: readonly DiffRow[]): React.ReactNode =>
+const twoColumnRows: RenderRows = (rows, focusRef) =>
   rows.map((row, i) => {
     if (row.kind === 'skipped') {
       return <Skipped key={i} count={row.count} style={{ gridColumn: '1 / -1' }} />
@@ -309,7 +332,7 @@ const twoColumnRows = (rows: readonly DiffRow[]): React.ReactNode =>
       return (
         <React.Fragment key={i}>
           <Gutter />
-          <Text size="sm" style={TEXT_STYLE}>
+          <Text size="sm" style={TEXT_STYLE} {...focusTarget(i, focusRef)}>
             {text}
           </Text>
           <Gutter />
@@ -322,11 +345,11 @@ const twoColumnRows = (rows: readonly DiffRow[]): React.ReactNode =>
     return (
       <React.Fragment key={i}>
         <Gutter sign={row.before ? '−' : undefined} />
-        <Text size="sm" style={TEXT_STYLE}>
+        <Text size="sm" style={TEXT_STYLE} {...focusTarget(row.before ? i : -1, focusRef)}>
           {row.before ? <MarkedText parts={row.before} side="before" unit="line" /> : null}
         </Text>
         <Gutter sign={row.after ? '+' : undefined} />
-        <Text size="sm" style={TEXT_STYLE}>
+        <Text size="sm" style={TEXT_STYLE} {...focusTarget(row.before ? -1 : i, focusRef)}>
           {row.after ? <MarkedText parts={row.after} side="after" unit="line" /> : null}
         </Text>
       </React.Fragment>
@@ -334,7 +357,7 @@ const twoColumnRows = (rows: readonly DiffRow[]): React.ReactNode =>
   })
 
 /** One column below `md`, with − and + gutters. */
-const oneColumnRows = (rows: readonly DiffRow[]): React.ReactNode =>
+const oneColumnRows: RenderRows = (rows, focusRef) =>
   rows.flatMap((row, i) => {
     if (row.kind === 'skipped') {
       return [<Skipped key={i} count={row.count} style={{ gridColumn: '1 / -1' }} />]
@@ -342,7 +365,7 @@ const oneColumnRows = (rows: readonly DiffRow[]): React.ReactNode =>
     if (row.kind === 'same') {
       return [
         <Gutter key={`${i}g`} />,
-        <Text key={i} size="sm" style={TEXT_STYLE}>
+        <Text key={i} size="sm" style={TEXT_STYLE} {...focusTarget(i, focusRef)}>
           {row.text || '\u00a0'}
         </Text>,
       ]
@@ -352,7 +375,12 @@ const oneColumnRows = (rows: readonly DiffRow[]): React.ReactNode =>
       if (!parts) return []
       return [
         <Gutter key={`${i}${side}g`} sign={side === 'before' ? '−' : '+'} />,
-        <Text key={`${i}${side}`} size="sm" style={TEXT_STYLE}>
+        <Text
+          key={`${i}${side}`}
+          size="sm"
+          style={TEXT_STYLE}
+          {...focusTarget(side === 'before' || !row.before ? i : -1, focusRef)}
+        >
           <MarkedText parts={parts} side={side} unit="line" />
         </Text>,
       ]
@@ -438,12 +466,31 @@ const Thumbnail: React.FC<{ src: string }> = ({ src }) => {
 /** Text on one side only; more than LONG_TEXT_LINES lines show COLLAPSED_LINES until asked. */
 const LongText: React.FC<{ text: string }> = ({ text }) => {
   const [expanded, setExpanded] = useState(false)
+  const firstNew = useRef<HTMLSpanElement>(null)
+  useEffect(() => {
+    if (expanded) firstNew.current?.focus()
+  }, [expanded])
   const lines = text.split('\n')
-  const collapsed = !expanded && lines.length > LONG_TEXT_LINES
+  const long = lines.length > LONG_TEXT_LINES
+  const collapsed = !expanded && long
   return (
     <Stack gap={4} align="flex-start">
       <Text size="sm" style={TEXT_STYLE}>
-        {collapsed ? lines.slice(0, COLLAPSED_LINES).join('\n') : text}
+        {!long ? (
+          text
+        ) : (
+          <>
+            {lines.slice(0, COLLAPSED_LINES).join('\n')}
+            {expanded && (
+              <>
+                {'\n'}
+                <span ref={firstNew} tabIndex={-1}>
+                  {lines.slice(COLLAPSED_LINES).join('\n')}
+                </span>
+              </>
+            )}
+          </>
+        )}
       </Text>
       {collapsed && (
         <Button size="compact-sm" variant="subtle" onClick={() => setExpanded(true)}>

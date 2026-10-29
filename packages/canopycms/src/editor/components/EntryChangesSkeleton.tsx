@@ -1,12 +1,12 @@
 'use client'
 
-import React from 'react'
-import { Skeleton, Stack, VisuallyHidden } from '@mantine/core'
-
 /**
  * The "Show changes" drawer's loading state, shared by the drawer and by the fallback that
  * LazyEntryChangesDrawer shows while the drawer's own chunk loads.
  */
+
+import React from 'react'
+import { Skeleton, Stack, VisuallyHidden } from '@mantine/core'
 
 /** The summary line's placeholder, with the words a screen reader hears in its status region. */
 export const LoadingSummary: React.FC = () => (

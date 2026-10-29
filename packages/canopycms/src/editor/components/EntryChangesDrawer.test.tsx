@@ -416,6 +416,38 @@ describe('EntryChangesDrawer marks', () => {
     expect(cards.map((c) => textOf(c).includes('Added'))).toEqual([true, true])
   })
 
+  it('collapses a long run of changed line pairs like one-sided runs', async () => {
+    const lines = (word: string) =>
+      Array.from({ length: 60 }, (_, i) => `${word} line ${i + 1}`).join('\n')
+    one({ notes: lines('Old') }, { notes: lines('New') }, [
+      { name: 'notes', type: 'markdown', label: 'Notes' },
+    ])
+    const grid = within(await card()).getByTestId('entry-change-line-grid')
+    expect(textOf(grid)).toContain('end of removal line 20')
+    expect(textOf(grid)).not.toContain('end of removal line 21')
+    await userEvent.click(within(grid).getByRole('button', { name: 'Show all 60 changed lines' }))
+    expect(textOf(grid)).toContain('end of addition line 60')
+  })
+
+  it('moves focus to the first newly shown line after "Show all" in a line diff', async () => {
+    const inserted = Array.from({ length: 60 }, (_, i) => `Inserted ${i + 1}`).join('\n')
+    one({ notes: 'Start\nEnd' }, { notes: `Start\n${inserted}\nEnd` }, [
+      { name: 'notes', type: 'markdown', label: 'Notes' },
+    ])
+    const grid = within(await card()).getByTestId('entry-change-line-grid')
+    await userEvent.click(within(grid).getByRole('button', { name: 'Show all 60 added lines' }))
+    expect(textOf(document.activeElement)).toBe('Added line: Inserted 21')
+  })
+
+  it('moves focus to the first newly shown line after "Show all" in a long text', async () => {
+    const body = Array.from({ length: 250 }, (_, i) => `Line ${i + 1}`).join('\n')
+    one(null, { notes: body }, [{ name: 'notes', type: 'markdown', label: 'Notes' }])
+    const shown = await card()
+    await userEvent.click(within(shown).getByRole('button', { name: 'Show all 250 lines' }))
+    expect(textOf(document.activeElement).startsWith('Line 51\nLine 52')).toBe(true)
+    expect(textOf(document.activeElement)).not.toContain('Line 50\n')
+  })
+
   it('collapses a long new body after 50 lines until asked', async () => {
     const body = Array.from({ length: 250 }, (_, i) => `Line ${i + 1}`).join('\n')
     one(null, { notes: body }, [{ name: 'notes', type: 'markdown', label: 'Notes' }])
@@ -455,6 +487,21 @@ describe('EntryChangesDrawer blank lines and line breaks', () => {
     show('a\n\nb', 'a\nx\nb')
     const card = within(await waitFor(drawer)).getByTestId('entry-change-card')
     expect(card.querySelector('del')?.textContent).toContain('(blank line)')
+  })
+
+  it('says a changed blank line is a line, with nothing struck through', async () => {
+    show('a\n\nb', 'a\nx\nb')
+    const card = within(await waitFor(drawer)).getByTestId('entry-change-card')
+    expect(textOf(card)).toContain('Removed line: (blank line)')
+    expect(textOf(card)).not.toContain('Removed: (blank line)')
+    expect(card.querySelector('del')?.getAttribute('style')).toContain('text-decoration: none')
+  })
+
+  it('says a line that became blank as an added blank line', async () => {
+    show('a\nx\nb', 'a\n\nb')
+    const card = within(await waitFor(drawer)).getByTestId('entry-change-card')
+    expect(textOf(card)).toContain('Added line: (blank line)')
+    expect(card.querySelector('ins')?.getAttribute('style')).toContain('text-decoration: none')
   })
 
   it('says a line break was added at the end', async () => {
