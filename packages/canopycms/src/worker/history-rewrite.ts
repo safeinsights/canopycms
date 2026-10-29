@@ -74,19 +74,25 @@ export async function readPublishedSha(
  * Decided against the metadata on disk inside the write's lock, not the
  * caller's snapshot: the task loop runs concurrently with syncGit() and may
  * have cleared the marker while this branch was rebasing.
+ *
+ * Resolves whether `branchRef`'s branch.json now holds a marker, set here or kept by set-once.
+ * When it does not, the caller publishes nothing: a rewrite pushed without its marker leaves
+ * remote.git rewritten and the queued GitHub push failing with a false divergence diagnosis.
  */
 export async function markHistoryRewritten(
   ctx: Pick<HistoryRewriteContext, 'contentBranchesPath'>,
   branchPath: string,
   branchRef: string,
   expectedSha: string,
-): Promise<void> {
+): Promise<boolean> {
   const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
-  await meta.saveIf(
-    { branch: { historyRewrittenFrom: expectedSha } },
-    (current) =>
-      current?.branch.name === branchRef && typeof current.branch.historyRewrittenFrom !== 'string',
-  )
+  let marked = false
+  await meta.update((current) => {
+    marked = current?.branch.name === branchRef
+    if (!marked || typeof current?.branch.historyRewrittenFrom === 'string') return null
+    return { branch: { historyRewrittenFrom: expectedSha } }
+  })
+  return marked
 }
 
 /**
@@ -106,20 +112,22 @@ export async function markHistoryRewritten(
 export async function clearHistoryRewrittenMarker(
   ctx: Pick<HistoryRewriteContext, 'contentBranchesPath'>,
   branchPath: string,
-  branchDir: string,
+  branchRef: string,
 ): Promise<void> {
   try {
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
     // Explicit undefined clears the key -- save()'s merge only overwrites
     // keys present in the update (same pattern as rebaseFailure). Only a
-    // marker is cleared, so no branch.json is ever created here.
+    // marker on `branchRef`'s own branch.json is cleared, so none is ever created here.
     await meta.saveIf(
       { branch: { historyRewrittenFrom: undefined } },
-      (current) => typeof current?.branch.historyRewrittenFrom === 'string',
+      (current) =>
+        current?.branch.name === branchRef &&
+        typeof current.branch.historyRewrittenFrom === 'string',
     )
   } catch (err) {
     workerLogWarn(
-      `  Failed to clear history-rewrite marker for ${branchDir}: ${getErrorMessage(err)}`,
+      `  Failed to clear history-rewrite marker for ${branchRef}: ${getErrorMessage(err)}`,
     )
   }
 }

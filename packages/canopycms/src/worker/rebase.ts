@@ -182,13 +182,15 @@ export async function pollMergeState(
  * paths: a corrupt branch.json, lock contention or any other save failure must
  * never abort the per-branch iteration. One of the two call sites is inside the
  * outer per-branch catch with no further catch around it, so the WHOLE method
- * is wrapped, not just the load. It updates an existing branch.json only, never creating one.
+ * is wrapped, not just the load. It updates an existing branch.json only, never creating one,
+ * and, given `branchRef`, only the one whose `name` is that ref.
  */
 async function recordRebaseFailure(
   ctx: RebaseContext,
   branchPath: string,
   branchDir: string,
   message: string,
+  branchRef?: string,
 ): Promise<void> {
   const RECORD_REFRESH_MS = 60 * 60 * 1000 // 1 hour
 
@@ -218,7 +220,8 @@ async function recordRebaseFailure(
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
     await meta.saveIf(
       { branch: { rebaseFailure: { message: redactedMessage, firstAt, lastAt: nowIso } } },
-      (current) => current !== null,
+      (current) =>
+        current !== null && (branchRef === undefined || current.branch.name === branchRef),
     )
   } catch (err) {
     // Includes BranchMetadataCorruptError from the load above (a save() against
@@ -506,7 +509,13 @@ async function carryForwardRewrittenHistory(
       // reconcilePendingRewrite() completes on a later cycle. Pushing first
       // would leave remote.git rewritten, GitHub stale and nothing recorded --
       // unrecoverable, and diagnosed as a false "another deployment" collision.
-      await markHistoryRewritten(ctx, branchPath, branchRef, publishedSha)
+      if (!(await markHistoryRewritten(ctx, branchPath, branchRef, publishedSha))) {
+        workerLogWarn(
+          `  ${branchDir}: rebased, but its branch.json is gone or names another branch than ` +
+            `${branchRef}, so the rewrite is not published`,
+        )
+        return
+      }
       if (await forcePublishToLocalRemote(ctx, branchPath, branchRef, publishedSha)) {
         await enqueueGitHubPush(ctx, branchRef)
       }
@@ -516,7 +525,7 @@ async function carryForwardRewrittenHistory(
         `clone never had (a direct push to the branch?). Left untouched -- reconcile it ` +
         `before submitting again.`
       workerLogWarn(`  ${branchDir}: ${divergence}`)
-      await recordRebaseFailure(ctx, branchPath, branchDir, divergence)
+      await recordRebaseFailure(ctx, branchPath, branchDir, divergence, branchRef)
     }
   }
 }

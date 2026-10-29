@@ -465,6 +465,25 @@ describe('CmsWorker.rebaseActiveBranches() on a branch.json that changes mid-cyc
     await rebaseWith(setup.workspacePath, () => fs.rm(branchJson(setup.branchPath)))
 
     expect(await exists(branchJson(setup.branchPath))).toBe(false)
+    // A rewrite with no marker to lease against is never published.
+    expect(await queuedPushBranches(setup.workspacePath)).toEqual([])
+  })
+
+  it("records no divergence on another branch's branch.json that took its place", async () => {
+    const setup = await createPublishSetup(tmpDir, 'feature-replaced')
+    await setup.commitToBranch({ 'entry.md': 'editor v1\n' }, 'editor work')
+    await setup.submit()
+    await setup.foreignPushToBranch({ 'reviewer.md': 'reviewer note\n' }, 'reviewer fixup')
+    await setup.advanceBase({ 'base2.txt': 'moved on\n' })
+    await writeMeta(setup.branchPath, setup.contentBranchesPath)
+    let replaced = ''
+
+    await rebaseWith(setup.workspacePath, async () => {
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, { name: 'feature/replaced' })
+      replaced = await fs.readFile(branchJson(setup.branchPath), 'utf-8')
+    })
+
+    expect(await fs.readFile(branchJson(setup.branchPath), 'utf-8')).toBe(replaced)
   })
 
   it("records nothing on another branch's branch.json that took its place", async () => {
@@ -484,5 +503,6 @@ describe('CmsWorker.rebaseActiveBranches() on a branch.json that changes mid-cyc
     })
 
     expect(await fs.readFile(branchJson(setup.branchPath), 'utf-8')).toBe(replaced)
+    expect(await queuedPushBranches(setup.workspacePath)).toEqual([])
   })
 })

@@ -34,7 +34,7 @@ describe('the history-rewrite marker', () => {
       historyRewrittenFrom: 'a'.repeat(40),
     })
 
-    await clearHistoryRewrittenMarker(ctx, branchPath, 'canopycms-prod-spring')
+    await clearHistoryRewrittenMarker(ctx, branchPath, 'canopycms/prod/spring')
     const cleared = await read()
     expect(cleared?.name).toBe('canopycms/prod/spring')
     expect(cleared?.historyRewrittenFrom).toBeUndefined()
@@ -46,9 +46,19 @@ describe('the history-rewrite marker', () => {
     await fs.rm(file)
 
     await markHistoryRewritten(ctx, branchPath, 'canopycms/prod/spring', 'a'.repeat(40))
-    await clearHistoryRewrittenMarker(ctx, branchPath, 'canopycms-prod-spring')
+    await clearHistoryRewrittenMarker(ctx, branchPath, 'canopycms/prod/spring')
 
     await expect(fs.stat(file)).rejects.toThrow()
+  })
+
+  it("clears no marker on another branch's branch.json sharing the key", async () => {
+    const ctx = { contentBranchesPath }
+    await markHistoryRewritten(ctx, branchPath, 'canopycms/prod/spring', 'a'.repeat(40))
+
+    await clearHistoryRewrittenMarker(ctx, branchPath, 'canopycms-prod-spring')
+
+    const meta = await BranchMetadataFileManager.loadOnly(branchPath)
+    expect(meta?.branch.historyRewrittenFrom).toBe('a'.repeat(40))
   })
 
   it("marks no branch.json that is another branch's sharing the key", async () => {
