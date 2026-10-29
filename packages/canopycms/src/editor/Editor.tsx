@@ -56,6 +56,7 @@ import { PermissionManager } from './PermissionManager'
 import { SystemHealthPanel } from './admin/SystemHealthPanel'
 // Import directly from helpers to avoid server-only code in authorization barrel
 import { isAdmin, isPrivileged, isReviewer } from '../authorization/helpers'
+import { reviewRoleOf } from '../authorization/review-role'
 import { fieldBreadcrumb } from './field-breadcrumb'
 import type { CommentThread } from '../comment-store'
 import {
@@ -103,6 +104,7 @@ import { ReferencedByList, referencedDeleteMessage } from './components/Referenc
 import type { EntryReferencedBy } from '../api/entries'
 import { NoEditPermissionNotice } from './components/NoEditPermissionNotice'
 import { BranchNotAvailableNotice } from './components/BranchNotAvailableNotice'
+import { BranchesLoadFailedNotice } from './components/BranchesLoadFailedNotice'
 import { ReadOnlyDraftNotice } from './components/ReadOnlyDraftNotice'
 import { UnavailableEntryNotice } from './components/UnavailableEntryNotice'
 import { unavailableSchemaRefs } from './unavailable-entry-type'
@@ -403,6 +405,9 @@ const EditorContent: React.FC<EditorProps> = ({
     labels: [],
   }))
   const applySubmitStampsRef = useRef<(stamped: readonly StampedEntry[]) => void>(() => {})
+  // Reloads the open branch's comments after a request for changes, whose note is a comment; the
+  // comment system is built further down.
+  const reloadCommentsRef = useRef<(branch: string) => void>(() => {})
   const {
     branchName: branchNameState,
     setBranchName,
@@ -413,6 +418,7 @@ const EditorContent: React.FC<EditorProps> = ({
     addCreatedBranch,
     handleSubmit,
     handleWithdraw,
+    handleApprove,
     handleRequestChanges,
     handleDelete,
     handleReloadBranchData,
@@ -425,6 +431,7 @@ const EditorContent: React.FC<EditorProps> = ({
     // The draft manager comes later, as it depends on this hook's branch.
     getUnsaved: () => resolveUnsavedRef.current(),
     onStamped: (stamped) => applySubmitStampsRef.current(stamped),
+    onChangesRequested: (branch) => reloadCommentsRef.current(branch),
   })
 
   // Content mutations (add/delete/rename/reorder entries) are locked whenever the
@@ -444,6 +451,20 @@ const EditorContent: React.FC<EditorProps> = ({
   // No lock reason is true yet while the list is unanswered; once it has failed, or answered
   // without this branch, the lock says which.
   const branchPending = !currentBranch && !branchesLoaded && !branchesLoadFailed
+  // The same inputs EditorHeader gives its own check, for the lock copy that names the way forward.
+  const branchReviewRole = reviewRoleOf(
+    {
+      status: currentBranch?.status,
+      createdBy: currentBranch?.createdBy,
+      users: currentBranch?.access.allowedUsers,
+      groups: currentBranch?.access.allowedGroups,
+      isProtected: currentBranch?.isProtected ?? true,
+      pullRequestState: currentBranch?.pullRequestState,
+    },
+    userContext,
+  )
+  const branchReviewing = branchReviewRole === 'reviewing'
+  const branchPullRequestClosed = branchReviewRole === 'reviewing-closed'
   const branchMissing = !currentBranch && branchesLoaded
   // The bar's lock-state row, with the inputs EditorHeader gets, for the states that must agree.
   const branchBarState = branchBarStatus({
@@ -524,6 +545,8 @@ const EditorContent: React.FC<EditorProps> = ({
   // load, for a branch the list lags in granting, shows as usual.
   const branchShowsNotAvailable =
     branchNotAvailable && !entriesInitializing && entriesState.length === 0
+  // An unpinned editor takes its branch from the branch list, so without the list it has none.
+  const branchListFailed = !branchNameState && branchesLoadFailed
 
   // The content overlay and a maximized preview hide the form; `navigatorOpen` is only the
   // overlay's. Anything that focuses something in the form reveals it first. Opening an entry
@@ -696,6 +719,7 @@ const EditorContent: React.FC<EditorProps> = ({
     handleJumpToField,
     handleJumpToEntry,
     handleJumpToBranch,
+    loadComments,
   } = useCommentSystem({
     branchName: branchNameState,
     selectedPath,
@@ -708,6 +732,11 @@ const EditorContent: React.FC<EditorProps> = ({
     onCommentsChange: setCommentsForBranchSummaries,
     onRevealForm: revealForm,
   })
+
+  reloadCommentsRef.current = (branch) => {
+    if (sanitizeBranchName(branch) === sanitizeBranchName(branchNameState))
+      void loadComments(branch)
+  }
 
   const {
     groupsData,
@@ -1928,6 +1957,8 @@ const EditorContent: React.FC<EditorProps> = ({
         {/* The form pane beside it offers Switch branch…, so this one only says why. */}
         {!currentEntry && branchShowsNotAvailable ? (
           <BranchNotAvailableNotice align="center" data-testid="preview-branch-not-available" />
+        ) : branchListFailed ? (
+          <BranchesLoadFailedNotice align="center" data-testid="preview-branches-load-failed" />
         ) : (
           <Text size="sm" c="dimmed">
             {!branchNameState && busy
@@ -1967,8 +1998,8 @@ const EditorContent: React.FC<EditorProps> = ({
 
   const openBranchManager = (options?: { create?: boolean }) => {
     openBranchesDrawer(options?.create === true)
-    // Always retry, not only when branchless. Opening the manager is
-    // the one in-app retry for a failed branches fetch, and the fetch
+    // Always retry, not only when branchless. Besides the form pane's Retry on a
+    // branchless start, opening the manager retries a failed branches fetch, and the fetch
     // is terminal on its own: SWRProvider sets shouldRetryOnError and
     // revalidateOnFocus false, and useBranchesData's refreshInterval
     // is 0 without data. Reloading is idempotent.
@@ -2103,6 +2134,8 @@ const EditorContent: React.FC<EditorProps> = ({
                   branchReadOnly: currentBranch?.readOnly,
                   branchWriteBlocked: branchContentLocked,
                   branchMissing,
+                  reviewing: branchReviewing,
+                  pullRequestClosed: branchPullRequestClosed,
                 })
           }
           dirtyPaths={dirtyPaths}
@@ -2159,6 +2192,7 @@ const EditorContent: React.FC<EditorProps> = ({
               draftStorageFailed={draftStorageFailed}
               userContext={userContext}
               branchCreatedBy={currentBranch?.createdBy}
+              branchPullRequestState={currentBranch?.pullRequestState}
               branchAccess={currentBranch?.access}
               // Fail-closed for the same reason branchContentLocked above is:
               // isProtected/writeBlocked gate real actions in EditorHeader and EntryHeader
@@ -2197,6 +2231,16 @@ const EditorContent: React.FC<EditorProps> = ({
               onWithdraw={(returnFocusTo) => {
                 if (branchNameState && !isSaveAllRunning()) {
                   handleWithdraw(branchNameState, returnFocusTo).catch(console.error)
+                }
+              }}
+              onApprove={(returnFocusTo) => {
+                if (branchNameState && !isSaveAllRunning()) {
+                  handleApprove(branchNameState, returnFocusTo).catch(console.error)
+                }
+              }}
+              onRequestChanges={(returnFocusTo) => {
+                if (branchNameState && !isSaveAllRunning()) {
+                  handleRequestChanges(branchNameState, returnFocusTo).catch(console.error)
                 }
               }}
             />
@@ -2264,6 +2308,8 @@ const EditorContent: React.FC<EditorProps> = ({
                 branchLoading={branchLoading}
                 branchPending={branchPending}
                 branchMissing={branchMissing}
+                branchReviewing={branchReviewing}
+                branchPullRequestClosed={branchPullRequestClosed}
                 onCollectionOpen={(path) => revealInContentPanel({ kind: 'collection', path })}
                 onEntryReveal={() =>
                   currentEntry && revealInContentPanel({ kind: 'entry', path: currentEntry.path })
@@ -2316,6 +2362,15 @@ const EditorContent: React.FC<EditorProps> = ({
                           align="center"
                           onSwitchBranch={() => openBranchManager()}
                           data-testid="form-branch-not-available"
+                        />
+                      </Center>
+                    ) : branchListFailed ? (
+                      <Center h="100%">
+                        <BranchesLoadFailedNotice
+                          align="center"
+                          onRetry={() => void loadBranches().catch(console.error)}
+                          retrying={busy}
+                          data-testid="form-branches-load-failed"
                         />
                       </Center>
                     ) : !currentEntry ? (
@@ -2470,7 +2525,12 @@ const EditorContent: React.FC<EditorProps> = ({
                     if (name === branchNameState && isSaveAllRunning()) return
                     handleWithdraw(name).catch((err) => console.error(err))
                   }}
+                  onApprove={(name) => {
+                    if (name === branchNameState && isSaveAllRunning()) return
+                    handleApprove(name).catch((err) => console.error(err))
+                  }}
                   onRequestChanges={(name) => {
+                    if (name === branchNameState && isSaveAllRunning()) return
                     handleRequestChanges(name).catch((err) => console.error(err))
                   }}
                   onDelete={(name) => {

@@ -82,7 +82,7 @@ describe('GIT_CONFIG_GLOBAL', () => {
     await fs.writeFile(path.join(seedPath, 'b.txt'), 'b')
     await seed.add('.')
     await seed.commit('b')
-    await seed.raw(['push', '-q', remoteGitPath, 'HEAD:refs/heads/feature'])
+    await seed.raw(['push', '-q', remoteGitPath, 'HEAD:refs/heads/canopycms-feature'])
     const sha = (await seed.revparse(['HEAD'])).trim()
     const github = createLocalGitHubGateway({
       githubOwner: 'o',
@@ -100,7 +100,7 @@ describe('GIT_CONFIG_GLOBAL', () => {
     await github.fetch({ have: [] })
     await pushToGitHub(
       { github: () => github, remoteGitPath, taskTimeoutMs: 30_000 },
-      { branch: 'feature', prerequisiteBranches: ['feature'] },
+      { branch: 'canopycms-feature', prerequisiteBranches: ['canopycms-feature'] },
       async () => sha,
     )
 

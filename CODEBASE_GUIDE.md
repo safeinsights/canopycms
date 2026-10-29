@@ -133,6 +133,7 @@ Route handlers, one file per endpoint namespace:
 - `admin.ts` — admin status (incl. sharp availability) and task-queue endpoints, and the single `ADMIN_ROUTES` export
 - `admin-branch-health.ts` — admin branch-health scan, purge and repair endpoints; see [ARCHITECTURE.md](ARCHITECTURE.md#admin-observability-and-recovery-api)
 - `github-sync.ts` — `syncSubmitPr` / `syncConvertToDraft` / `syncDeleteRemoteBranch`: direct GitHub call or queued task; see [GitHub Sync](#github-sync-direct-vs-async)
+- `pr-comment-sync.ts` — `syncPrComments`: re-renders a PR's editor-comment summary after a comment change, directly or as one queued task per branch
 
 Support files:
 
@@ -185,6 +186,7 @@ and [Auth Caching](ARCHITECTURE.md#auth-caching-cachingauthplugin).
 - `path.ts` — path-level permissions: `checkPathAccess`, `resolveDefaultPathAccess`
 - `protected-branch.ts` — `getBranchProtection`, the single source of truth for protected-base-branch policy
 - `helpers.ts` — `isAdmin`, `isReviewer`, `isPrivileged`, and `isLockedOutOfBranch` (the browser-safe branch-lockdown check)
+- `review-role.ts` — `reviewRoleOf` / `isReviewerOfOthersReview`, `REQUEST_CHANGES_NOTE_MAX_LENGTH`
 - `types.ts` — `BranchAccessResult`, `ContentAccessResult`, `PermissionPath`
 - `validation.ts` — permission-path validation against traversal
 - `settings-file-store.ts` — `mutateSettingsJsonFile`, the shared cross-host layered-lock mutation helper
@@ -552,7 +554,7 @@ Manager hooks, in `editor/hooks/` — see
 
 - `useBranchManager.tsx` — branch state; adopts the server's `defaultBranch` when unpinned; overlays just-created branches
 - `useBranchActions.tsx` — switch and create behind the unsaved-changes confirm; adopts server-sanitized names
-- `create-branch-request.ts` — `requestBranchCreate`: a 90 s create deadline, settled by the branch list
+- `create-branch-request.ts` — `requestBranchCreate`: a 150 s create deadline, settled by the branch list
 - `useEntryManager.ts` — loading/saving, `readEntryValue`, `adoptEntryVersion`, `listAllEntries` cursors, Back/Forward (`editor-history.ts`)
 - `useDraftManager.ts` — `localStorage` draft overlay, discard confirmation, per-entry field errors; `singleSaving`/`lastSaved`; verifies restored drafts; `applySubmitStamps`; `handleSaveAll` (outcomes in `save-all.ts`)
 - `useSchemaManager.ts` — schema mutations, returning result objects
@@ -701,6 +703,8 @@ All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 - `settings-branch-utils.ts` — settings branch helpers
 - `github-service.ts` — GitHub API integration: `createOrUpdatePullRequest`, `createCanopyOctokit`, `isRefAlreadyGoneError`, the rate-limit retry predicates
 - `submission-attribution.ts` — sanitized editor identity, `describeEditors`: `Edited-by:` / `Co-authored-by:` commit trailers and the PR body's marker-delimited section
+- `editor-url.ts` — the editor URL PR bodies link to, and its deep links
+- `pr-comments.ts` — the PR body's editor-comment summary, re-rendered from comments.json
 
 Key types: `BranchContext` (branch state plus `branchRoot` / `baseRoot`), `BranchMetadata`,
 `BranchPaths`, `SyncStatus` (`synced`, `pending-sync`, `sync-failed`).
@@ -756,7 +760,7 @@ immediately; without one they enqueue a task for the worker; a submit marks the 
 **Location**: `packages/canopycms/src/services.ts`
 
 - `commitFiles()` — commit specific files, for admin changes to permissions and groups
-- `submitBranch()` — the submit workflow: checkout, stamp new entries, status, commit all (with editor trailers), push; returns `changedPaths`, `editors` and `stamped` (`NothingToSubmitError` when empty)
+- `submitBranch()` — the submit workflow: checkout, stamp new entries, status, commit all (with editor trailers), push; returns `changedPaths`, `editors`, `entryPaths` (for the PR's editor links) and `stamped` (`NothingToSubmitError` when empty)
 - `commitToSettingsBranch()` — commit and push the settings branch (never a PR)
 - `getSettingsBranchRoot()` — resolve the settings workspace root, ensuring it exists
 
@@ -774,15 +778,15 @@ prefer the branch's recorded `context.branch.baseBranch` over the config value. 
 - `validation.ts` — security validation: `parseLogicalPath`, `parsePhysicalPath`, `parseBranchName`, `parseContentId`, `parseSlug`
 - `resolve.ts` — `resolveLogicalPath`
 - `branch.ts` — branch workspace path resolution; imports `node:fs` and the mode strategies, so server-only
-- `branch-name.ts` — the dependency-free home of `sanitizeBranchName`, `RESERVED_SETTINGS_BRANCH_PREFIX`, `isSettingsBranchName` and `RESERVED_ROUTE_BRANCH_NAMES`
+- `branch-name.ts` — the dependency-free home of `sanitizeBranchName`, `RESERVED_SETTINGS_BRANCH_PREFIX`, `isSettingsBranchName`, `CMS_BRANCH_PREFIX` and `cmsBranchName`
 - `index.ts` — the barrel, which re-exports `branch.ts` and so is not client-safe
 - `test-utils.ts` — test-only casts `unsafeAsBranchName` and `unsafeAsSlug`, not exported from the barrel
 
 **Client-bundle boundary**: import `sanitizeBranchName` from `branch-name.ts`, never the barrel or
 `branch.ts`; `pnpm lint:bundle` enforces it — see
-[DEVELOPING.md](DEVELOPING.md#client-bundle-boundary-check). Which branch names are reserved, and
-why the list is hand-maintained rather than derived, is in
-[ARCHITECTURE.md](ARCHITECTURE.md#reserved-branch-names).
+[DEVELOPING.md](DEVELOPING.md#client-bundle-boundary-check). How editors' branch names form,
+and what keeps them clear of routes and settings branches, is in
+[ARCHITECTURE.md](ARCHITECTURE.md#branch-names).
 
 The branded types: `LogicalPath` (content-relative, no embedded IDs, used for every collection
 path), `PhysicalPath` (filesystem paths that may carry embedded IDs), `BranchName`,
@@ -854,6 +858,7 @@ in `server.ts` and `client.ts`. See
 - `atomic-write.ts` — atomic writes via temp file plus rename, for NFS and EFS
 - `content-serialize.ts` — `serializeYaml` / `serializeFrontmatter`, source-preserving writes
 - `markdown-body-splice.ts` — `preserveMarkdownSource`, its body half
+- `markdown-restyle.ts` — `restyleMarkdown`: edited blocks to Prettier's markers, in place
 - `yaml-source-splice.ts` — `spliceSource`, its YAML half
 - `json-source-splice.ts` — `serializeJson`, the JSON half
 - `body-field.ts` — `isBody` validation (`findReservedBodyFieldName`), link-only data (`linkOnlyReferenceData`)

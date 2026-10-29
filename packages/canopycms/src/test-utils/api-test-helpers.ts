@@ -211,7 +211,12 @@ export function createMockServices(options: MockServicesOptions = {}): CanopySer
     commitFiles: options.commitFiles ?? vi.fn().mockResolvedValue(undefined),
     submitBranch:
       options.submitBranch ??
-      vi.fn().mockResolvedValue({ changedPaths: [], editors: [], stamped: [] }),
+      vi.fn().mockResolvedValue({
+        changedPaths: [],
+        editors: [],
+        entryPaths: new Map(),
+        stamped: [],
+      }),
     commitToSettingsBranch:
       options.commitToSettingsBranch ??
       vi.fn().mockResolvedValue({ committed: true, pushed: true }),

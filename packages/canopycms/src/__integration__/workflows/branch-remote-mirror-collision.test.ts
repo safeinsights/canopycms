@@ -53,10 +53,12 @@ describe('Branch creation: remote-mirror collision guard (L2)', () => {
       await simpleGit({ baseDir: workspace.seedPath }).raw([
         'push',
         'origin',
-        'main:refs/heads/local-leftover',
+        'main:refs/heads/canopycms-local-leftover',
       ])
 
-      const res = await client.post('/api/canopycms/branches', { branch: 'local-leftover' })
+      const res = await client.post('/api/canopycms/branches', {
+        branch: 'canopycms-local-leftover',
+      })
       expect(res.status).toBe(200)
     })
 
@@ -69,9 +71,10 @@ describe('Branch creation: remote-mirror collision guard (L2)', () => {
       await simpleGit({ baseDir: workspace.seedPath }).raw([
         'push',
         'origin',
-        `main:${GITHUB_TRACKING_REF_PREFIX}tracked-only-branch`,
+        `main:${GITHUB_TRACKING_REF_PREFIX}canopycms-tracked-only-branch`,
       ])
 
+      // Typed without the prefix: the collision is on the prefixed name the create makes.
       const res = await client.post('/api/canopycms/branches', { branch: 'tracked-only-branch' })
       expect(res.status).toBe(409)
       const body = await res.json<BranchListItemResponse>()
@@ -79,10 +82,12 @@ describe('Branch creation: remote-mirror collision guard (L2)', () => {
     })
 
     it('proceeds (200) when the requested name is absent from both namespaces', async () => {
-      const res = await client.post('/api/canopycms/branches', { branch: 'brand-new-branch' })
+      const res = await client.post('/api/canopycms/branches', {
+        branch: 'canopycms-brand-new-branch',
+      })
       expect(res.status).toBe(200)
       const body = await res.json<BranchListItemResponse>()
-      expect(body.data?.branch.name).toBe('brand-new-branch')
+      expect(body.data?.branch.name).toBe('canopycms-brand-new-branch')
     })
 
     it('creating a branch heals an ORPHANED stale head (present in refs/heads/* only, no tracking ref, no registry entry)', async () => {
@@ -99,17 +104,19 @@ describe('Branch creation: remote-mirror collision guard (L2)', () => {
       await simpleGit({ baseDir: workspace.seedPath }).raw([
         'push',
         'origin',
-        'main:refs/heads/orphaned-head',
+        'main:refs/heads/canopycms-orphaned-head',
       ])
 
-      const res = await client.post('/api/canopycms/branches', { branch: 'orphaned-head' })
+      const res = await client.post('/api/canopycms/branches', {
+        branch: 'canopycms-orphaned-head',
+      })
       expect(res.status).toBe(200)
 
       const mirrorRefs = await simpleGit({
         baseDir: workspace.remotePath,
         config: ['safe.bareRepository=all'],
       }).raw(['for-each-ref', '--format=%(refname)', 'refs/heads/'])
-      expect(mirrorRefs).not.toContain('refs/heads/orphaned-head')
+      expect(mirrorRefs).not.toContain('refs/heads/canopycms-orphaned-head')
     })
 
     it('deleting a branch removes its stale head from the mirror but preserves the tracking ref, so the name is cleanly reusable', async () => {
@@ -127,43 +134,59 @@ describe('Branch creation: remote-mirror collision guard (L2)', () => {
         config: ['safe.bareRepository=all'],
       })
 
-      const created = await client.post('/api/canopycms/branches', { branch: 'reused-name' })
+      const created = await client.post('/api/canopycms/branches', {
+        branch: 'canopycms-reused-name',
+      })
       expect(created.status).toBe(200)
 
       // Simulate the branch having been published (its head exists in the
       // mirror at a tip that is NOT an ancestor of base, like a squash-merged
       // branch) and still present in GitHub's view (tracking ref).
       const seedGit = simpleGit({ baseDir: workspace.seedPath })
-      await seedGit.raw(['checkout', '-b', 'reused-name'])
+      await seedGit.raw(['checkout', '-b', 'canopycms-reused-name'])
       await fs.writeFile(path.join(workspace.seedPath, 'divergent.md'), 'old branch tip\n', 'utf8')
       await seedGit.add(['divergent.md'])
       await seedGit.commit('old branch tip')
-      await seedGit.raw(['push', 'origin', 'reused-name:refs/heads/reused-name'])
-      await seedGit.raw(['push', 'origin', `reused-name:${GITHUB_TRACKING_REF_PREFIX}reused-name`])
+      await seedGit.raw([
+        'push',
+        'origin',
+        'canopycms-reused-name:refs/heads/canopycms-reused-name',
+      ])
+      await seedGit.raw([
+        'push',
+        'origin',
+        `canopycms-reused-name:${GITHUB_TRACKING_REF_PREFIX}canopycms-reused-name`,
+      ])
       await seedGit.raw(['checkout', 'main'])
 
-      const deleted = await client.delete('/api/canopycms/reused-name')
+      const deleted = await client.delete('/api/canopycms/canopycms-reused-name')
       expect(deleted.status).toBe(200)
 
       const refs = (await mirrorGit.raw(['for-each-ref', '--format=%(refname)', 'refs/'])).split(
         '\n',
       )
-      expect(refs).not.toContain('refs/heads/reused-name')
+      expect(refs).not.toContain('refs/heads/canopycms-reused-name')
       // GitHub's view is NOT ours to erase: while the branch still exists on
       // GitHub, the create-time check below must keep matching it.
-      expect(refs).toContain(`${GITHUB_TRACKING_REF_PREFIX}reused-name`)
+      expect(refs).toContain(`${GITHUB_TRACKING_REF_PREFIX}canopycms-reused-name`)
 
       // And with the tracking ref still present, an immediate recreate is
       // correctly refused as a remote collision (the honest, actionable
       // outcome) rather than accepted and later failing at publish time.
-      const recreate = await client.post('/api/canopycms/branches', { branch: 'reused-name' })
+      const recreate = await client.post('/api/canopycms/branches', {
+        branch: 'canopycms-reused-name',
+      })
       expect(recreate.status).toBe(409)
 
       // Once GitHub's side is gone too (branch deleted there; syncGit's
       // --prune drops the tracking ref), the name is fully reusable.
-      await mirrorGit.raw(['update-ref', '-d', `${GITHUB_TRACKING_REF_PREFIX}reused-name`])
+      await mirrorGit.raw([
+        'update-ref',
+        '-d',
+        `${GITHUB_TRACKING_REF_PREFIX}canopycms-reused-name`,
+      ])
       const recreateAfterPrune = await client.post('/api/canopycms/branches', {
-        branch: 'reused-name',
+        branch: 'canopycms-reused-name',
       })
       expect(recreateAfterPrune.status).toBe(200)
     })
@@ -223,10 +246,12 @@ describe('Branch creation: remote-mirror collision guard (L2)', () => {
 
       // A throw/rejection here (from our guard OR anything downstream) would
       // fail this await outright -- there is no try/catch masking it.
-      const res = await client.post('/api/canopycms/branches', { branch: 'no-remote-branch' })
+      const res = await client.post('/api/canopycms/branches', {
+        branch: 'canopycms-no-remote-branch',
+      })
       expect(res.status).toBe(200)
       const body = await res.json<BranchListItemResponse>()
-      expect(body.data?.branch.name).toBe('no-remote-branch')
+      expect(body.data?.branch.name).toBe('canopycms-no-remote-branch')
     })
   })
 })

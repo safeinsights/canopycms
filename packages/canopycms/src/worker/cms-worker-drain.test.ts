@@ -311,7 +311,7 @@ describe("CmsWorker.stop() kills an aborted task's git push", () => {
     await fs.writeFile(path.join(seedPath, 'file.txt'), 'hello')
     await seedGit.add(['file.txt'])
     await seedGit.commit('seed')
-    await seedGit.raw(['push', remoteGitPath, 'HEAD:refs/heads/feature'])
+    await seedGit.raw(['push', remoteGitPath, 'HEAD:refs/heads/canopycms-feature'])
   })
 
   afterEach(async () => {
@@ -323,11 +323,11 @@ describe("CmsWorker.stop() kills an aborted task's git push", () => {
   it('a submit whose push the drain aborts is released, not stamped as pushed, and stays submitted', async () => {
     const workspacePath = path.join(tmpDir, 'workspace')
     const contentBranchesPath = path.join(workspacePath, 'content-branches')
-    const branchPath = path.join(contentBranchesPath, 'feature')
+    const branchPath = path.join(contentBranchesPath, 'canopycms-feature')
     await fs.mkdir(branchPath, { recursive: true })
     const meta = getBranchMetadataFileManager(branchPath, contentBranchesPath)
     const submittedAt = '2026-10-09T00:00:00.000Z'
-    await meta.save({ branch: { name: 'feature', status: 'submitted', submittedAt } })
+    await meta.save({ branch: { name: 'canopycms-feature', status: 'submitted', submittedAt } })
 
     const worker = new CmsWorker({
       workspacePath,
@@ -345,7 +345,7 @@ describe("CmsWorker.stop() kills an aborted task's git push", () => {
     const taskDir = path.join(workspacePath, '.tasks')
     const id = await enqueueTask(taskDir, {
       action: 'push-and-create-or-update-pr',
-      payload: { branch: 'feature', submittedAt },
+      payload: { branch: 'canopycms-feature', submittedAt },
     })
 
     void w.trackOperation('task queue', worker.processTaskQueue())
@@ -379,7 +379,9 @@ describe("CmsWorker.stop() kills an aborted task's git push", () => {
     const controller = new AbortController()
     setTimeout(() => controller.abort(), 300)
     const started = Date.now()
-    await expect(w.pushBranchToGitHub('feature', controller.signal)).rejects.toThrow(/[Aa]bort/)
+    await expect(w.pushBranchToGitHub('canopycms-feature', controller.signal)).rejects.toThrow(
+      /[Aa]bort/,
+    )
     expect(Date.now() - started).toBeLessThan(2500)
   })
 })

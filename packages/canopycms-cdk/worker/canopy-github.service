@@ -45,7 +45,7 @@ StateDirectoryMode=0700
 # 0640 root:canopy-github: the secrets, unreadable to the worker.
 EnvironmentFile=/opt/canopy-worker/gateway.env
 # What this unit provides; a bundle needing more refuses to start.
-Environment=CANOPYCMS_WORKER_CONTRACT=2
+Environment=CANOPYCMS_WORKER_CONTRACT=3
 # Sandbox. Writable: the state dir and a private /tmp. No view of EFS,
 # which the gateway checks at boot, as it checks that cores are not
 # piped to a helper and that its core limit is zero.

@@ -538,6 +538,8 @@ export interface CanopyConfig {
   sourceRoot?: SourceRoot
   /** Deployment prefix the host app is served under — see {@link CanopyConfigInput.basePath}. */
   basePath?: string
+  /** The editor page's public URL — see {@link CanopyConfigInput.editorUrl}. */
+  editorUrl?: string
   /** HTTP status of an unauthenticated API response — see {@link CanopyConfigInput.unauthenticatedStatus}. */
   unauthenticatedStatus?: 401 | 419
   /** What a production build does on a dangling reference — see {@link CanopyConfigInput.danglingReferences}. */
@@ -615,6 +617,13 @@ export interface CanopyConfigInput {
    * silently filter out every entry (zero static params, a build that goes green with no pages).
    */
   basePath?: string
+  /**
+   * The absolute URL of the page that mounts the Editor (e.g. `https://cms.example.org/edit`),
+   * for the editor links in pull request bodies. Unset, the URL the editor reports on submit is
+   * used when its host is the one the request was addressed to (`X-Forwarded-Host`, else `Host`);
+   * set this when a proxy in front of the CMS sets neither to the editor's public host.
+   */
+  editorUrl?: string
   /**
    * HTTP status of an API response to a request with no accepted session. Default 401.
    *
@@ -700,17 +709,12 @@ export type FlatSchemaItem =
  * Client config - subset safe for browser (DRY - derived from CanopyConfig)
  * Use flatSchema for O(1) cached access to the flattened schema structure.
  * Schema is loaded from .collection.json files on the server and provided as flatSchema.
+ * It names no branch: the config evaluated in the browser lacks the server's environment, so an
+ * editor no `?branch=` or `branchName` pins adopts the branches API's `defaultBranch`.
  */
 export type CanopyClientConfig = Pick<
   CanopyConfig,
-  | 'defaultBaseBranch'
-  | 'defaultActiveBranch'
-  | 'contentRoot'
-  | 'editor'
-  | 'mode'
-  | 'entryLinkUrl'
-  | 'basePath'
-  | 'mdxAllow'
+  'contentRoot' | 'editor' | 'mode' | 'entryLinkUrl' | 'basePath' | 'mdxAllow'
 > & {
   flatSchema: FlatSchemaItem[]
 }

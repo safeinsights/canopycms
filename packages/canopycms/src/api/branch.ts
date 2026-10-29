@@ -21,9 +21,9 @@ import { isNotFoundError, getErrorMessage, sanitizeErrorMessage } from '../utils
 import { filePathExists } from '../utils/fs'
 import { isNetworkRemoteUrl } from '../utils/git'
 import {
+  parseCreatedBranchName,
   sanitizeBranchName,
   RESERVED_SETTINGS_BRANCH_PREFIX,
-  RESERVED_ROUTE_BRANCH_NAMES,
   isSettingsBranchName,
 } from '../paths'
 import { GitManager } from '../git-manager'
@@ -85,7 +85,11 @@ export interface BranchListItem extends BranchMetadata {
  * list-item shape (server-computed flags included) so the editor can show the
  * result without waiting for a listing that may lag behind it.
  */
-export type BranchListItemResponse = ApiResponse<{ branch: BranchListItem }>
+export type BranchListItemResponse = ApiResponse<{
+  branch: BranchListItem
+  /** Set when the request succeeded but a secondary effect failed; show it to the user. */
+  warning?: string
+}>
 
 /** Response type for listing branches */
 export type BranchListResponse = ApiResponse<{
@@ -272,7 +276,11 @@ export const createBranchHandler = async (
   body: z.infer<typeof createBranchBodySchema>,
 ): Promise<BranchListItemResponse> => {
   return log.timed('api', 'createBranch', async () => {
-    const branchName = body.branch
+    // Every branch an editor creates is in the namespace the GitHub gateway writes
+    // (worker/branch-policy.ts), whatever was typed.
+    const named = parseCreatedBranchName(body.branch)
+    if (!named.ok) return { ok: false, status: 400, error: named.error }
+    const branchName = named.name
     log.debug('api', 'Create branch request', {
       branchName,
       userId: req.user.userId,
@@ -280,20 +288,13 @@ export const createBranchHandler = async (
 
     // Scope note: the remote-mirror check further down applies ONLY to this
     // user-facing creation path; http/handler.ts's auto-create (base/active
-    // branches) and loadOrCreateBranchContext provision known names. The two
-    // settings-branch checks below give this path a specific 400; every
-    // provisioning path, this one included, also refuses a settings branch in
+    // branches) and loadOrCreateBranchContext provision known names. parseCreatedBranchName's
+    // reserved-prefix rule and the configured-name check below give this path a specific 400;
+    // every provisioning path, this one included, also refuses a settings branch in
     // BranchWorkspaceManager.openOrCreateBranch.
 
-    // Prevent git branch name collision with the settings branch. Settings
-    // live in a separate directory but share the same git remote, and
-    // openOrCreateBranch (branch-workspace.ts) uses the SANITIZED name as the
-    // actual git branch name. parseBranchName (via branchNameSchema) permits
-    // '/', so a raw-string comparison here let a request for
-    // "canopycms/settings-prod" sail past this check while
-    // sanitizeBranchName() collapsed it to "canopycms-settings-prod" --
-    // creating a content branch whose real git ref WAS the settings branch.
-    // Comparing sanitized forms on both sides closes that bypass.
+    // Settings live in a separate directory but share the git remote, so a content branch may not
+    // take the settings branch's ref. Compared sanitized, the form git and disk use.
     const strategy = operatingStrategy(ctx.services.config.mode)
     const sanitizedRequested = sanitizeBranchName(branchName)
     if (strategy.usesSeparateSettingsBranch()) {
@@ -305,39 +306,6 @@ export const createBranchHandler = async (
           error:
             'Cannot create content branch with settings branch name (git branch name collision)',
         }
-      }
-    }
-
-    // Reserve the WHOLE canopycms-settings- namespace, not just this
-    // deployment's own settings branch name. Two CanopyCMS deployments can
-    // share one GitHub repo, each with its own settings branch under this
-    // prefix; the worker (worker/git-sync.ts) treats any
-    // `canopycms-settings-*` ref specially (orphan-branch reconcile/push
-    // logic), so another deployment's settings branch is a real name that
-    // must not be claimable as a content branch here either.
-    if (sanitizedRequested.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX)) {
-      return {
-        ok: false,
-        status: 400,
-        error: `Branch names starting with "${RESERVED_SETTINGS_BRANCH_PREFIX}" are reserved for CanopyCMS settings branches`,
-      }
-    }
-
-    // Reject names that collide with a static top-level API route namespace --
-    // the router prefers a literal segment over `:branch`, so such a branch
-    // would be unreachable through its own routes (see
-    // RESERVED_ROUTE_BRANCH_NAMES). Checked on both the raw and sanitized form
-    // for the same reason as the settings-branch guard above: the raw name is
-    // what lands in the `/:branch` URL segment, the sanitized name is what
-    // becomes the actual git ref.
-    if (
-      RESERVED_ROUTE_BRANCH_NAMES.includes(branchName) ||
-      RESERVED_ROUTE_BRANCH_NAMES.includes(sanitizedRequested)
-    ) {
-      return {
-        ok: false,
-        status: 400,
-        error: `Branch name "${branchName}" is reserved: it collides with the /${branchName} API route namespace`,
       }
     }
 

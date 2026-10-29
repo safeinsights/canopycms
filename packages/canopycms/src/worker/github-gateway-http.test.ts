@@ -60,7 +60,13 @@ function fakeGateway(): FakeGateway {
       fatalError: null,
       preflight: 'not-an-app' as const,
       clerkConfigured: false,
-      protectedBranches: { configured: ['main'], githubDefault: 'main' },
+      branchPolicy: {
+        configured: ['main'],
+        githubDefault: 'main',
+        namespace: 'canopycms-',
+        legacy: [],
+        settingsBranch: null,
+      },
     })),
     defaultBranch: vi.fn(async () => 'main'),
     isProtectedBranch: vi.fn(async () => false),
@@ -78,6 +84,7 @@ function fakeGateway(): FakeGateway {
       merged_at: null,
       state: 'open' as const,
       node_id: 'PR_1',
+      body: 'B',
     })),
     createOrUpdatePullRequest: vi.fn(async () => ({
       number: 1,
@@ -791,6 +798,7 @@ describe('operations across the socket', () => {
       merged_at: null,
       state: 'open',
       node_id: 'PR_1',
+      body: 'B',
     })
     expect(
       await client.createOrUpdatePullRequest({
@@ -825,7 +833,8 @@ describe('operations across the socket', () => {
       merged_at: '2026-01-01T00:00:00Z',
       state: 'closed' as const,
       node_id: 'PR_2',
-      body: 'a body the worker never reads',
+      body: null,
+      title: 'a title the worker never reads',
     }
     gateway.getPullRequest.mockResolvedValue(full)
     await serve(gateway)
@@ -835,6 +844,7 @@ describe('operations across the socket', () => {
       merged_at: '2026-01-01T00:00:00Z',
       state: 'closed',
       node_id: 'PR_2',
+      body: null,
     })
   })
 
@@ -1562,21 +1572,31 @@ describe('the instance operations over the socket', () => {
       fatalError: null,
       preflight: 'not-an-app' as const,
       clerkConfigured: false,
-      protectedBranches: { configured: entries, githubDefault: 'main' },
+      branchPolicy: {
+        configured: entries,
+        githubDefault: 'main',
+        namespace: 'canopycms-',
+        legacy: [],
+        settingsBranch: null,
+      },
     })
     await serve(gateway)
     const client = connectGitHubGateway(socketPath)
 
-    expect((await client.health()).protectedBranches.configured).toHaveLength(
-      MAX_PROTECTED_BRANCHES + 1,
-    )
+    expect((await client.health()).branchPolicy.configured).toHaveLength(MAX_PROTECTED_BRANCHES + 1)
 
     gateway.health.mockResolvedValue({
       ready: true,
       fatalError: null,
       preflight: 'not-an-app' as const,
       clerkConfigured: false,
-      protectedBranches: { configured: [...entries, 'one-more'], githubDefault: 'main' },
+      branchPolicy: {
+        configured: [...entries, 'one-more'],
+        githubDefault: 'main',
+        namespace: 'canopycms-',
+        legacy: [],
+        settingsBranch: null,
+      },
     })
     await expect(client.health()).rejects.toThrow(/health answer does not fit/)
   })

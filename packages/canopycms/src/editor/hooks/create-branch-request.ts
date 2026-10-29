@@ -1,10 +1,15 @@
 import type { BranchListItem, CreateBranchBody } from '../../api/branch'
 import { isCreatorsRecentBranch } from '../../api/branch-create-window'
 import { isApiTimeoutError, isNonApiResponse, type CanopyApiClient } from '../../api/client'
-import { sanitizeBranchName } from '../../paths/branch-name'
+import { GATEWAY_MAX_TIMEOUT_MS } from '../../api/request-deadline'
+import { cmsBranchName, sanitizeBranchName } from '../../paths/branch-name'
 
-/** @internal Exported for tests. Past the 60 s a Lambda behind CloudFront gets, so its 504 lands first. */
-export const CREATE_BRANCH_DEADLINE_MS = 90_000
+/**
+ * @internal Exported for tests. Past the gateway's limit, so its 504 lands first, and under
+ * `REQUEST_TIMEOUT_MS.long`. The limit comes from `request-deadline` directly: a test that mocks
+ * `api/client` would otherwise lose it at module load.
+ */
+export const CREATE_BRANCH_DEADLINE_MS = GATEWAY_MAX_TIMEOUT_MS + 30_000
 
 /** @internal Exported for tests. */
 export const CREATE_TIMED_OUT_MESSAGE =
@@ -62,7 +67,7 @@ async function findListedBranch(
   apiClient: Pick<CanopyApiClient, 'branches'>,
   requested: string,
 ): Promise<BranchListItem | undefined> {
-  const name = sanitizeBranchName(requested)
+  const name = cmsBranchName(requested)
   try {
     const listing = await apiClient.branches.list()
     if (!listing.ok) return undefined

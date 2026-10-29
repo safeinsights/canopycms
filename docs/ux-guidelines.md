@@ -15,6 +15,8 @@ One word per idea, everywhere. New UI takes the verbs from `EDITOR_ACTIONS` in
 | **Refresh from server**   | Replacing the open entry with its saved copy                   | Reload entry                                |
 | **Submit for review**     | Committing the branch and opening its pull request             | Submit branch, Publish                      |
 | **Withdraw from review**  | Taking a submitted branch back for editing                     | Withdraw branch                             |
+| **Approve**               | A reviewer signing off a submitted branch                      | Accept, LGTM                                |
+| **Review**                | Opening a submitted branch to review it                        | Inspect                                     |
 | **Request changes**       | A reviewer sending a branch back to its editor                 | Reject                                      |
 | **Switch branch**         | Opening another branch                                         | Change branch, Change / Manage              |
 | **New branch**            | Creating a branch                                              | Create branch, except as its form's confirm |
@@ -42,7 +44,8 @@ from `packages/canopycms/src/editor/branch-lock.ts`.
   asks for more input ("Change URL…"). None on a command that acts at once or only opens a
   confirm or a menu ("Delete branch", "Add section"); never three ASCII dots.
 - **One primary action per card, by role**: on the open branch's card, a reviewer of someone
-  else's submission sees "Request changes" and anyone else its workflow action; other cards
+  else's submission sees "Approve" and "Request changes" (the latter alone once approved), and
+  anyone else its workflow action; another branch in review shows them "Review"; others
   show "Open".
 - **Dismissing a dialog** that mixes staged and immediate changes: "Discard changes" while edits
   are staged, "Close" after an immediate save, otherwise "Cancel".

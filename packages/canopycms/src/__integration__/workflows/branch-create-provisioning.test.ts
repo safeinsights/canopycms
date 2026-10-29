@@ -32,7 +32,7 @@ describe('POST /branches over provisioning outcomes', () => {
   const clientAs = (role: 'editor' | 'reviewer') =>
     createApiClient({ config: workspace.config, authPlugin: createMockAuthPlugin(role) })
 
-  /** Another host publishes `feat` between this request's build and its rename. */
+  /** Another host publishes `canopycms-feat` between this request's build and its rename. */
   const competitorPublishesFirst = (createdBy: string) =>
     setProvisioningTestHooks({
       beforePublish: async ({ stagingPath, finalPath }) => {
@@ -47,7 +47,10 @@ describe('POST /branches over provisioning outcomes', () => {
 
   const readAccess = async () =>
     JSON.parse(
-      await fs.readFile(path.join(baseRoot, 'feat', '.canopy-meta', 'branch.json'), 'utf8'),
+      await fs.readFile(
+        path.join(baseRoot, 'canopycms-feat', '.canopy-meta', 'branch.json'),
+        'utf8',
+      ),
     ).branch.access
 
   it('409s when another request published the name first, leaving that branch as it was', async () => {
@@ -55,7 +58,7 @@ describe('POST /branches over provisioning outcomes', () => {
     const client = await clientAs('editor')
 
     const res = await client.post('/api/canopycms/branches', {
-      branch: 'feat',
+      branch: 'canopycms-feat',
       access: { allowedUsers: [TEST_USERS.editor.userId] },
     })
 
@@ -70,7 +73,7 @@ describe('POST /branches over provisioning outcomes', () => {
     competitorPublishesFirst(TEST_USERS.editor.userId)
     const client = await clientAs('editor')
 
-    const res = await client.post('/api/canopycms/branches', { branch: 'feat' })
+    const res = await client.post('/api/canopycms/branches', { branch: 'canopycms-feat' })
 
     expect(res.status).toBe(200)
     const body = await res.json<BranchListItemResponse>()
@@ -79,11 +82,11 @@ describe('POST /branches over provisioning outcomes', () => {
 
   it('answers a repeated create with the same branch for its creator and a 409 for anyone else', async () => {
     const editor = await clientAs('editor')
-    const first = await editor.post('/api/canopycms/branches', { branch: 'feat' })
+    const first = await editor.post('/api/canopycms/branches', { branch: 'canopycms-feat' })
     expect(first.status).toBe(200)
     const created = (await first.json<BranchListItemResponse>()).data?.branch
 
-    const retry = await editor.post('/api/canopycms/branches', { branch: 'feat' })
+    const retry = await editor.post('/api/canopycms/branches', { branch: 'canopycms-feat' })
     expect(retry.status).toBe(200)
     expect((await retry.json<BranchListItemResponse>()).data?.branch.createdAt).toBe(
       created?.createdAt,
@@ -92,13 +95,13 @@ describe('POST /branches over provisioning outcomes', () => {
     const other = await (
       await clientAs('reviewer')
     ).post('/api/canopycms/branches', {
-      branch: 'feat',
+      branch: 'canopycms-feat',
     })
     expect(other.status).toBe(409)
   })
 
   it('503s while the name holds a fresh, unfinished clone', async () => {
-    const finalPath = path.join(baseRoot, 'feat')
+    const finalPath = path.join(baseRoot, 'canopycms-feat')
     await fs.mkdir(baseRoot, { recursive: true })
     await simpleGit().raw([
       'clone',
@@ -111,11 +114,11 @@ describe('POST /branches over provisioning outcomes', () => {
     ])
     const client = await clientAs('editor')
 
-    const res = await client.post('/api/canopycms/branches', { branch: 'feat' })
+    const res = await client.post('/api/canopycms/branches', { branch: 'canopycms-feat' })
 
     expect(res.status).toBe(503)
     expect((await res.json<BranchListItemResponse>()).error).toBe(
-      "Branch 'feat' is still being set up. Try again in a minute.",
+      "Branch 'canopycms-feat' is still being set up. Try again in a minute.",
     )
   })
 })

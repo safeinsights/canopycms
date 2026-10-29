@@ -706,8 +706,9 @@ describe('CmsWorker.syncGit() stale branch copies', () => {
       githubRepo: 'test-repo',
       githubToken: 'fake-token',
       baseBranch: 'main',
-      settingsBranch: 'not a valid ref',
     })
+    // The gateway is built first, naming the default settings branch; only the sync's own
+    // resolution then fails.
     useLocalGitHubGateway(worker, { remoteUrl: () => githubPath, fetchCoalesceMs: 0 })
     ;(worker as unknown as { running: boolean }).running = true
     ;(worker as unknown as { ensureSettingsBranch: () => string }).ensureSettingsBranch = () => {

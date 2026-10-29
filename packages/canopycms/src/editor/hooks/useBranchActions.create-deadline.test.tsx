@@ -29,7 +29,7 @@ vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
 vi.mock('@mantine/modals', () => ({ modals: { openConfirmModal: vi.fn() } }))
 
 const listedBranch = {
-  name: 'feature-x',
+  name: 'canopycms-feature-x',
   status: 'editing' as const,
   access: {},
   createdBy: 'user1',
@@ -96,8 +96,8 @@ describe('useBranchActions create past the deadline', () => {
 
     expect(await createAfterDeadline()).toBe(true)
     expect(options.onBranchCreated).toHaveBeenCalledWith(listedBranch)
-    expect(options.setBranchName).toHaveBeenCalledWith('feature-x')
-    expect(options.onBranchSwitch).toHaveBeenCalledWith('feature-x')
+    expect(options.setBranchName).toHaveBeenCalledWith('canopycms-feature-x')
+    expect(options.onBranchSwitch).toHaveBeenCalledWith('canopycms-feature-x')
   })
 
   it("stays put and reports a conflict when the listed branch is another user's", async () => {
@@ -110,7 +110,7 @@ describe('useBranchActions create past the deadline', () => {
 
     expect(await createAfterDeadline()).toBe(false)
     expect(notifications.show).toHaveBeenCalledWith({
-      message: 'A branch named "feature-x" already exists',
+      message: 'A branch named "canopycms-feature-x" already exists',
       color: 'red',
     })
     expect(options.onBranchCreated).not.toHaveBeenCalled()
@@ -156,6 +156,6 @@ describe('useBranchActions create past the deadline', () => {
 
     expect(await createAfterDeadline()).toBe(true)
     expect(mockClient.branches.list).toHaveBeenCalledTimes(1)
-    expect(options.setBranchName).toHaveBeenCalledWith('feature-x')
+    expect(options.setBranchName).toHaveBeenCalledWith('canopycms-feature-x')
   })
 })

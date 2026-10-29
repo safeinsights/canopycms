@@ -73,11 +73,11 @@ describe('defaultBranchAccess: deny', () => {
 
     // Reading the branch must work -- under the old behavior every one of
     // these 403'd on a branch the user had just created themselves.
-    const statusRes = await editorClient.get('/api/canopycms/feature-editor-owned/status')
+    const statusRes = await editorClient.get('/api/canopycms/canopycms-feature-editor-owned/status')
     expect(statusRes.status).toBe(200)
 
     const writeRes = await editorClient.put(
-      '/api/canopycms/feature-editor-owned/content/posts/hello-world',
+      '/api/canopycms/canopycms-feature-editor-owned/content/posts/hello-world',
       {
         collection: 'content/posts',
         slug: 'hello-world',
@@ -94,7 +94,7 @@ describe('defaultBranchAccess: deny', () => {
     expect(writeRes.status).toBe(200)
 
     const readRes = await editorClient.get(
-      '/api/canopycms/feature-editor-owned/content/posts/hello-world',
+      '/api/canopycms/canopycms-feature-editor-owned/content/posts/hello-world',
     )
     expect(readRes.status).toBe(200)
   })
@@ -108,7 +108,7 @@ describe('defaultBranchAccess: deny', () => {
     })
     expect(createRes.status).toBe(200)
 
-    const res = await editorClient.get('/api/canopycms/feature-admin-owned/status')
+    const res = await editorClient.get('/api/canopycms/canopycms-feature-admin-owned/status')
     expect(res.status).toBe(403)
   })
 
@@ -121,9 +121,9 @@ describe('defaultBranchAccess: deny', () => {
       title: 'Submit me',
     })
 
-    await saveSamplePost(editorClient, 'feature-submit-me')
+    await saveSamplePost(editorClient, 'canopycms-feature-submit-me')
 
-    const res = await editorClient.post('/api/canopycms/feature-submit-me/submit', {
+    const res = await editorClient.post('/api/canopycms/canopycms-feature-submit-me/submit', {
       title: 'Submit me',
       description: 'Submitted by the branch creator under default deny.',
     })

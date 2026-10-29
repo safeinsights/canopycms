@@ -1,9 +1,13 @@
 /**
  * The GitHub gateway's branch policy: what it never does to GitHub, whatever the worker asks. The
  * task queue, remote.git and every branch's metadata are on the shared workspace, which the CMS
- * Lambda can write, so nothing here takes a branch to protect from a request.
+ * Lambda can write, so nothing here takes a branch to protect, or one to allow, from a request.
  */
-import { RESERVED_SETTINGS_BRANCH_PREFIX, sanitizeBranchName } from '../paths/branch-name'
+import {
+  CMS_BRANCH_PREFIX,
+  RESERVED_SETTINGS_BRANCH_PREFIX,
+  sanitizeBranchName,
+} from '../paths/branch-name'
 
 /**
  * How long GitHub's default branch, once read, is taken to be still the default.
@@ -28,7 +32,17 @@ export const MAX_PULL_REQUEST_BODY_LENGTH = 65_536
 
 export type GatewayOperation = 'push' | 'delete' | 'pull-request'
 
-export type RefusalReason = 'invalid' | 'protected' | 'settings' | 'not-a-commit' | 'too-long'
+export type RefusalReason =
+  | 'invalid'
+  | 'protected'
+  | 'settings'
+  | 'other-settings'
+  | 'outside-namespace'
+  | 'not-a-commit'
+  | 'too-long'
+
+/** The refusals {@link BranchPolicy.assertPushAllowed} makes. */
+export type PushPolicyRefusal = 'protected' | 'settings' | 'other-settings' | 'outside-namespace'
 
 /**
  * Something the gateway refuses to do for any caller. No CanopyCMS flow asks for it, so no retry
@@ -54,6 +68,34 @@ const PROTECTED_WHY =
   "it is protected (the base branch, GitHub's default branch, or a name protectedBranches " +
   'lists), which the CanopyCMS worker never changes. Nothing in CanopyCMS queues this; find out ' +
   'what wrote this task.'
+
+const OUTSIDE_NAMESPACE_WHY =
+  `it is outside the CanopyCMS branch namespace (names starting ${CMS_BRANCH_PREFIX}), and is ` +
+  "neither this deployment's settings branch nor on its legacyBranches list. CanopyCMS creates " +
+  'every branch it edits in that namespace; a branch made before it reaches GitHub only once ' +
+  'legacyBranches lists it.'
+
+/** Why the policy refuses to push `branch`, for `reason`. */
+export function pushRefusalMessage(branch: string, reason: PushPolicyRefusal): string {
+  const refusing = `Refusing to push ${JSON.stringify(branch)} to GitHub`
+  switch (reason) {
+    case 'protected':
+      return `${refusing}: ${PROTECTED_WHY}`
+    case 'settings':
+      return (
+        `${refusing} under a lease: a settings branch only ever fast-forwards. Find out what ` +
+        'set a history-rewrite marker on it.'
+      )
+    case 'other-settings':
+      return (
+        `${refusing}: it is a settings branch, and not this deployment's, which is the only one ` +
+        'this gateway pushes. Check that CANOPYCMS_DEPLOYMENT_NAME and CANOPYCMS_SETTINGS_BRANCH ' +
+        "match the CMS's own settings branch; if they do, find out what asked for this push."
+      )
+    case 'outside-namespace':
+      return `${refusing}: ${OUTSIDE_NAMESPACE_WHY}`
+  }
+}
 
 /**
  * Why `branch` is not a name the gateway takes, before git sees it, or null. Printable ASCII only,
@@ -102,6 +144,21 @@ export function protectedPatternProblem(pattern: string): string | null {
 }
 
 /**
+ * Why `entry` cannot be a `legacyBranches` entry, or null. An entry is an exact branch name: a `*`
+ * would admit names no one listed, and one alone would switch the namespace off.
+ * @internal Exported for tests.
+ */
+export function legacyBranchProblem(entry: string): string | null {
+  if (entry.includes('*')) return 'an entry is an exact branch name, and * is not a wildcard here'
+  const named = protectedPatternProblem(entry)
+  if (named !== null) return named
+  if (entry.startsWith(CMS_BRANCH_PREFIX)) {
+    return `it starts with ${CMS_BRANCH_PREFIX}, so it is already in the namespace`
+  }
+  return null
+}
+
+/**
  * Whether `name` matches `pattern`, where `*` matches any run of characters. Never a regex.
  * @internal Exported for tests.
  */
@@ -128,20 +185,44 @@ export function matchesBranchPattern(pattern: string, name: string): boolean {
  */
 export const MAX_PROTECTED_BRANCHES = 1024
 
+/** The most `legacyBranches` entries a policy takes. */
+export const MAX_LEGACY_BRANCHES = 1024
+
 export interface BranchPolicyOptions {
   /** The configured base branch (`CANOPYCMS_BASE_BRANCH`); never one read from the workspace. */
   baseBranch?: string
   /** Further protected names and `*` globs (`CANOPYCMS_PROTECTED_BRANCHES`). */
   protectedBranches?: readonly string[]
+  /**
+   * This deployment's settings branch, the only one pushed. Without it no settings branch is.
+   */
+  settingsBranch?: string
+  /**
+   * Branches outside the namespace that may still be written: exact names, from before the
+   * namespace (`CANOPYCMS_LEGACY_BRANCHES`).
+   */
+  legacyBranches?: readonly string[]
   /** Test seam: the clock {@link DEFAULT_BRANCH_TTL_MS} is measured on. */
   now?: () => number
+}
+
+/** What {@link BranchPolicy.describe} answers, which the gateway's health carries. */
+export interface BranchPolicyDescription {
+  /** The protected set's configured names and globs, the base branch included. */
+  configured: string[]
+  /** GitHub's default branch as last read; null before a read or for a repository with none. */
+  githubDefault: string | null
+  /** `CMS_BRANCH_PREFIX`. */
+  namespace: string
+  legacy: string[]
+  settingsBranch: string | null
 }
 
 /** Reads GitHub's default branch: null for a repository with none. */
 export type DefaultBranchReader = () => Promise<string | null>
 
 /**
- * The protected set and the settings rules.
+ * The protected set, the namespace and the settings rules.
  *
  * A branch is protected when it is the configured base branch, GitHub's default branch or a
  * `protectedBranches` entry, compared case-sensitively as GitHub compares refs. An exact entry
@@ -152,14 +233,22 @@ export type DefaultBranchReader = () => Promise<string | null>
  * Reads are not shared between concurrent callers, because a push reads inside a mirror session
  * and an operation that joined it from outside one would wait on that session.
  *
+ * Nothing outside the namespace is written: a push, deletion or pull request head must start with
+ * `CMS_BRANCH_PREFIX`, be this deployment's settings branch, or be a `legacyBranches` entry,
+ * compared exactly. Sanitized equivalence, right for the protected set where matching more refuses
+ * more, would let an allow-list admit more. The protected set wins inside the namespace too.
+ * The prefix is fixed in code, so nothing the CMS Lambda can reach widens it. It contains the
+ * settings prefix, so a default settings branch is in the namespace too.
+ *
  * Settings branches are pushed plainly or not at all: no lease, no deletion, no pull request.
- * One is a name with the reserved prefix, the task runner's own test (`isSettingsBranch`): branch
- * creation refuses the prefix, while a configured settings name without it could be a content
- * branch's.
+ * One is a name with the reserved prefix or this deployment's settings branch. Only this
+ * deployment's is pushed: another deployment sharing the repository owns its own.
  */
 export class BranchPolicy {
   private readonly exact: string[]
   private readonly globs: string[]
+  private readonly settingsBranch: string | null
+  private readonly legacy: ReadonlySet<string>
   private readonly now: () => number
   private githubDefault: { name: string | null; readAt: number } | null = null
 
@@ -180,14 +269,52 @@ export class BranchPolicy {
     if (options.baseBranch !== undefined) entries.push(options.baseBranch)
     this.exact = entries.filter((entry) => !entry.includes('*'))
     this.globs = entries.filter((entry) => entry.includes('*'))
+
+    const settingsBranch = options.settingsBranch
+    if (settingsBranch !== undefined) {
+      const problem = branchNameProblem(settingsBranch)
+      if (problem !== null) {
+        throw new Error(`Invalid settings branch ${JSON.stringify(settingsBranch)}: ${problem}`)
+      }
+    }
+    this.settingsBranch = settingsBranch ?? null
+
+    const legacy = options.legacyBranches ?? []
+    if (legacy.length > MAX_LEGACY_BRANCHES) {
+      throw new Error(
+        `legacyBranches has ${legacy.length} entries; the most it takes is ${MAX_LEGACY_BRANCHES}`,
+      )
+    }
+    for (const entry of legacy) {
+      const problem = legacyBranchProblem(entry)
+      if (problem !== null) {
+        throw new Error(`Invalid legacyBranches entry ${JSON.stringify(entry)}: ${problem}`)
+      }
+    }
+    if (new Set(legacy).size !== legacy.length) {
+      throw new Error('legacyBranches lists a branch more than once')
+    }
+    this.legacy = new Set(legacy)
   }
 
-  /** The protected set as it stands: configured names and globs, and GitHub's default as last read. */
-  describe(): { configured: string[]; githubDefault: string | null } {
+  /** The policy as it stands. */
+  describe(): BranchPolicyDescription {
     return {
       configured: [...this.exact, ...this.globs],
       githubDefault: this.githubDefault?.name ?? null,
+      namespace: CMS_BRANCH_PREFIX,
+      legacy: [...this.legacy],
+      settingsBranch: this.settingsBranch,
     }
+  }
+
+  /** Whether the gateway may write `branch` at all: the namespace, the settings branch, the list. */
+  inNamespace(branch: string): boolean {
+    return (
+      branch.startsWith(CMS_BRANCH_PREFIX) ||
+      branch === this.settingsBranch ||
+      this.legacy.has(branch)
+    )
   }
 
   /** Whether `branch` is protected; GitHub's default is read only when nothing else matches. */
@@ -197,18 +324,25 @@ export class BranchPolicy {
     return githubDefault !== null && sameBranch(githubDefault, branch)
   }
 
-  /** Refuse a push to a protected branch, or a leased push to a settings branch. */
+  /**
+   * Refuse a push to a protected branch, a leased push to a settings branch, a push to another
+   * deployment's settings branch, and a push outside the namespace.
+   */
   async assertPushAllowed(
     branch: string,
     lease: string | undefined,
     readDefault: DefaultBranchReader,
-    refuse: (reason: 'protected' | 'settings') => Error,
+    refuse: (reason: PushPolicyRefusal) => Error,
   ): Promise<void> {
     if (await this.isProtected(branch, readDefault)) throw refuse('protected')
-    if (lease !== undefined && this.isSettings(branch)) throw refuse('settings')
+    if (this.isSettings(branch)) {
+      if (lease !== undefined) throw refuse('settings')
+      if (branch !== this.settingsBranch) throw refuse('other-settings')
+    }
+    if (!this.inNamespace(branch)) throw refuse('outside-namespace')
   }
 
-  /** Refuse to delete a protected branch or a settings branch. */
+  /** Refuse to delete a protected branch, a settings branch, or one outside the namespace. */
   async assertDeleteAllowed(branch: string, readDefault: DefaultBranchReader): Promise<void> {
     if (this.isSettings(branch)) {
       throw new GatewayRefusalError(
@@ -226,12 +360,20 @@ export class BranchPolicy {
         `${deleting(branch)}: ${PROTECTED_WHY}`,
       )
     }
+    if (!this.inNamespace(branch)) {
+      throw new GatewayRefusalError(
+        'delete',
+        branch,
+        'outside-namespace',
+        `${deleting(branch)}: ${OUTSIDE_NAMESPACE_WHY}`,
+      )
+    }
   }
 
   /**
-   * Refuse a pull request whose head is protected or a settings branch, or whose text is over its
-   * cap. The base is not restricted: a branch keeps the base it was created from after the
-   * adopter moves theirs, and a pull request merges nothing by itself.
+   * Refuse a pull request whose head is protected, a settings branch or outside the namespace, or
+   * whose text is over its cap. The base is not restricted: a branch keeps the base it was created
+   * from after the adopter moves theirs, and a pull request merges nothing by itself.
    */
   async assertPullRequestAllowed(
     request: { head: string; title?: string; body?: string },
@@ -239,12 +381,24 @@ export class BranchPolicy {
   ): Promise<void> {
     const { head } = request
     assertPullRequestText(openingFrom(head), head, request)
+    await this.assertPullRequestHeadAllowed(openingFrom(head), head, readDefault)
+  }
+
+  /**
+   * Refuse a pull request head the gateway may not open one from, or act on one with. `refusing`
+   * opens the message and names `head`, which the rest calls "it".
+   */
+  async assertPullRequestHeadAllowed(
+    refusing: string,
+    head: string,
+    readDefault: DefaultBranchReader,
+  ): Promise<void> {
     if (this.isSettings(head)) {
       throw new GatewayRefusalError(
         'pull-request',
         head,
         'settings',
-        `${openingFrom(head)}: it is a settings branch, which never gets one`,
+        `${refusing}: it is a settings branch, which never gets one`,
       )
     }
     if (await this.isProtected(head, readDefault)) {
@@ -252,13 +406,21 @@ export class BranchPolicy {
         'pull-request',
         head,
         'protected',
-        `${openingFrom(head)}: ${PROTECTED_WHY}`,
+        `${refusing}: ${PROTECTED_WHY}`,
+      )
+    }
+    if (!this.inNamespace(head)) {
+      throw new GatewayRefusalError(
+        'pull-request',
+        head,
+        'outside-namespace',
+        `${refusing}: ${OUTSIDE_NAMESPACE_WHY}`,
       )
     }
   }
 
   private isSettings(branch: string): boolean {
-    return branch.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX)
+    return branch.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX) || branch === this.settingsBranch
   }
 
   private matchesConfigured(branch: string): boolean {

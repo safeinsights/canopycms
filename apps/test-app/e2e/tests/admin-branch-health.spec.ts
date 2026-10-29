@@ -60,14 +60,11 @@ async function refreshBranchesTab(adminPage: AdminPage): Promise<void> {
 /**
  * The dirName the server currently considers `isBaseBranch`.
  *
- * NOT necessarily `'main'`: dev mode's effective base branch is
- * `config.defaultBaseBranch ?? 'main'`, and `defaultBaseBranch` is left unset
- * in the test app, so on a checkout whose git HEAD branch isn't literally
- * named `main` (true for this very worktree, e.g. `test/e2e-coverage-sweep`)
- * the server auto-provisions a SEPARATE sanitized-git-branch-named directory
- * and flags THAT one `isBaseBranch`, while the fixtures' own `main` content
- * branch (created explicitly by `ensureMainBranch`) stays a perfectly healthy
- * but non-base branch. Asserting the "base" badge must therefore look up
+ * NOT necessarily `'main'`: dev mode's base branch is the checkout's git HEAD branch when
+ * `defaultBaseBranch` is unset, as in the test app, so on a checkout whose HEAD branch isn't
+ * `main` the server provisions a separate directory for it and flags THAT one `isBaseBranch`,
+ * while `main`, the test app's active branch (provisioned by `ensureMainBranch`), stays a
+ * healthy but non-base branch. Asserting the "base" badge must therefore look up
  * whichever entry the scan actually flagged, not assume the literal name.
  */
 async function getBaseBranchDirName(page: Page): Promise<string> {
@@ -93,7 +90,7 @@ test.describe('Admin Branch Health', () => {
   })
 
   test('lists the base branch and a healthy created branch', async ({ page }) => {
-    const branchName = `healthy-${Date.now()}`
+    const branchName = `canopycms-healthy-${Date.now()}`
     await createBranchViaAPI(BASE_URL, branchName, 'admin')
 
     const adminPage = await openBranchesTab(page)
@@ -263,7 +260,7 @@ test.describe('Admin Branch Health', () => {
   test('rebase-failure indicator shows while editing, suppressed once submitted (A13)', async ({
     page,
   }) => {
-    const branchName = `rebase-fail-${Date.now()}`
+    const branchName = `canopycms-rebase-fail-${Date.now()}`
     await createBranchViaAPI(BASE_URL, branchName, 'admin')
 
     const now = new Date().toISOString()
@@ -285,10 +282,11 @@ test.describe('Admin Branch Health', () => {
   test('mark-merged is offered and works from approved, not just submitted (A14)', async ({
     page,
   }) => {
-    const branchName = `merge-approved-${Date.now()}`
-    await createBranchViaAPI(BASE_URL, branchName, 'admin')
-    await saveHomeChangeViaAPI(BASE_URL, branchName, 'admin')
-    const submitRes = await submitBranchViaAPI(BASE_URL, branchName, 'admin')
+    const branchName = `canopycms-merge-approved-${Date.now()}`
+    // The editor makes the branch: its creator cannot approve it.
+    await createBranchViaAPI(BASE_URL, branchName, 'editor')
+    await saveHomeChangeViaAPI(BASE_URL, branchName, 'editor')
+    const submitRes = await submitBranchViaAPI(BASE_URL, branchName, 'editor')
     expect(submitRes.ok).toBe(true)
     const approveRes = await approveBranchViaAPI(BASE_URL, branchName, 'admin')
     expect(approveRes.ok).toBe(true)
@@ -310,7 +308,7 @@ test.describe('Admin Branch Health', () => {
   test('duplicate content IDs: the badge opens its own confirmation; cancel changes nothing, confirm archives the duplicate', async ({
     page,
   }) => {
-    const branchName = `dup-ids-${Date.now()}`
+    const branchName = `canopycms-dup-ids-${Date.now()}`
     await createBranchViaAPI(BASE_URL, branchName, 'admin')
     const { keptFile, droppedFile } = await seedDuplicateContentId(branchName)
     const repairRequests: string[] = []

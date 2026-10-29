@@ -28,6 +28,8 @@ import {
   GatewayRefusalError,
   MAX_BRANCH_NAME_LENGTH,
   branchNameProblem,
+  pushRefusalMessage,
+  type PushPolicyRefusal,
 } from './branch-policy'
 import { gatewayLog, gatewayLogError, gatewayLogWarn, redactEgress } from './gateway-egress'
 import { mirrorGitOptions, mirrorPins, quarantinePins } from './shared-repo-git'
@@ -668,13 +670,14 @@ async function assertOwnDirectory(dir: string): Promise<void> {
 }
 
 /**
- * A push the worker never makes: to a name that is not a plain branch name, to a protected branch
- * (`BranchPolicy`), to a settings branch under a lease, or of an object that is not a commit.
+ * A push the worker never makes: to a name that is not a plain branch name, one the policy refuses
+ * (`BranchPolicy.assertPushAllowed`, which owns those messages), or of an object that is not a
+ * commit.
  */
 export class RefusedPushError extends GatewayRefusalError {
   constructor(
     branch: string,
-    reason: 'invalid' | 'protected' | 'settings' | 'not-a-commit',
+    reason: 'invalid' | PushPolicyRefusal | 'not-a-commit',
     sha?: string,
   ) {
     super(
@@ -683,16 +686,11 @@ export class RefusedPushError extends GatewayRefusalError {
       reason,
       reason === 'invalid'
         ? `Refusing to push ${JSON.stringify(branch)} to GitHub: it is not a valid branch name.`
-        : reason === 'protected'
-          ? `Refusing to push "${branch}" to GitHub: it is protected (the base branch, GitHub's ` +
-            `default branch, or a name protectedBranches lists), which the CanopyCMS worker never ` +
-            `pushes. Nothing in CanopyCMS queues such a push; find out what wrote this task.`
-          : reason === 'settings'
-            ? `Refusing to push "${branch}" to GitHub under a lease: a settings branch only ever ` +
-              `fast-forwards. Find out what set a history-rewrite marker on it.`
-            : `Refusing to push "${branch}" to GitHub: ${sha ?? 'the object asked for'} is not a ` +
-              `commit, and a branch can only point at one. Find out what put it at ` +
-              `refs/heads/${branch} in remote.git.`,
+        : reason === 'not-a-commit'
+          ? `Refusing to push "${branch}" to GitHub: ${sha ?? 'the object asked for'} is not a ` +
+            `commit, and a branch can only point at one. Find out what put it at ` +
+            `refs/heads/${branch} in remote.git.`
+          : pushRefusalMessage(branch, reason),
     )
     this.name = 'RefusedPushError'
   }

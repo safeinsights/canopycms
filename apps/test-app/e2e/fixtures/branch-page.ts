@@ -3,9 +3,9 @@ import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from './timeouts'
 // Isomorphic/dependency-free module (see its own doc comment) -- safe to
 // import directly in test code, same convention test-workspace.ts already
 // uses for other package internals (e.g. resource-generation.ts).
-import { sanitizeBranchName } from '../../../../packages/canopycms/src/paths/branch-name'
+import { cmsBranchName } from '../../../../packages/canopycms/src/paths/branch-name'
 
-export { sanitizeBranchName }
+export { cmsBranchName }
 
 /**
  * A branch list entry as returned by GET /api/canopycms/branches.
@@ -49,7 +49,7 @@ export async function findProtectedBranch(
 }
 
 /** A workflow or admin action on a branch card; each lives on the card or in its "…" menu. */
-export type BranchAction = 'submit' | 'withdraw' | 'request-changes' | 'delete'
+export type BranchAction = 'submit' | 'withdraw' | 'approve' | 'request-changes' | 'delete'
 
 /** What a user sees of an action: usable, shown but not usable, or not offered at all. */
 export type BranchActionState = 'enabled' | 'disabled' | 'absent'
@@ -357,9 +357,6 @@ export class BranchPage {
     await confirmButton.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
     await confirmButton.click()
   }
-
-  // NOTE: No approve-branch-button exists in the UI. Branch approval happens
-  // outside the editor (via GitHub PR). Only request-changes is available for reviewers.
 
   /**
    * Request changes on a submitted branch (reviewer action), confirming the dialog.

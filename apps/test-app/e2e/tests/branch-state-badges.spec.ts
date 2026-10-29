@@ -1,7 +1,7 @@
 import { BASE_URL } from '../fixtures/base-url'
 import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
-import { BranchPage, findProtectedBranch, sanitizeBranchName } from '../fixtures/branch-page'
+import { BranchPage, cmsBranchName, findProtectedBranch } from '../fixtures/branch-page'
 import { switchUser, installE2EFlag } from '../fixtures/test-users'
 import { STANDARD_TIMEOUT } from '../fixtures/timeouts'
 import {
@@ -51,7 +51,7 @@ test.describe('Branch State Badges', () => {
   test('sync badges: pending-sync and sync-failed render, absent on a fresh branch, visible to non-admins (B1/B2)', async ({
     page,
   }) => {
-    const branchName = `sync-badge-${Date.now()}`
+    const branchName = `canopycms-sync-badge-${Date.now()}`
 
     await test.step('create branch as editor', async () => {
       const res = await createBranchViaAPI(BASE_URL, branchName, 'editor')
@@ -105,7 +105,7 @@ test.describe('Branch State Badges', () => {
   })
 
   test('conflicts badge in the branch list shows the conflict count (B3)', async () => {
-    const branchName = `conflicts-badge-${Date.now()}`
+    const branchName = `canopycms-conflicts-badge-${Date.now()}`
 
     await test.step('create branch and seed a conflict flag', async () => {
       const res = await createBranchViaAPI(BASE_URL, branchName, 'admin')
@@ -174,7 +174,7 @@ test.describe('Branch State Badges', () => {
   test('status lock: submitted branch shows its read-only status + disabled save; server 403s writes; withdraw restores editing (B6/B7)', async ({
     page,
   }) => {
-    const branchName = `status-lock-${Date.now()}`
+    const branchName = `canopycms-status-lock-${Date.now()}`
 
     await test.step('create branch and switch to it', async () => {
       const res = await createBranchViaAPI(BASE_URL, branchName, 'admin')
@@ -247,13 +247,14 @@ test.describe('Branch State Badges', () => {
   })
 
   test('merged badge appears once the branch is archived with a mergedAt (B8)', async () => {
-    const branchName = `merged-badge-${Date.now()}`
+    const branchName = `canopycms-merged-badge-${Date.now()}`
 
     await test.step('create, submit, approve, then mark merged', async () => {
-      const createRes = await createBranchViaAPI(BASE_URL, branchName, 'admin')
+      // The editor makes the branch: its creator cannot approve it.
+      const createRes = await createBranchViaAPI(BASE_URL, branchName, 'editor')
       expect(createRes.ok).toBe(true)
-      await saveHomeChangeViaAPI(BASE_URL, branchName, 'admin')
-      const submitRes = await submitBranchViaAPI(BASE_URL, branchName, 'admin')
+      await saveHomeChangeViaAPI(BASE_URL, branchName, 'editor')
+      const submitRes = await submitBranchViaAPI(BASE_URL, branchName, 'editor')
       expect(submitRes.ok).toBe(true)
       const approveRes = await approveBranchViaAPI(BASE_URL, branchName, 'admin')
       expect(approveRes.ok).toBe(true)
@@ -277,13 +278,14 @@ test.describe('Branch State Badges', () => {
   })
 
   test('approve transition is reflected in the branch list status badge (B14)', async () => {
-    const branchName = `approve-flow-${Date.now()}`
+    const branchName = `canopycms-approve-flow-${Date.now()}`
 
     await test.step('create, submit, approve via API', async () => {
-      const createRes = await createBranchViaAPI(BASE_URL, branchName, 'admin')
+      // The editor makes the branch: its creator cannot approve it.
+      const createRes = await createBranchViaAPI(BASE_URL, branchName, 'editor')
       expect(createRes.ok).toBe(true)
-      await saveHomeChangeViaAPI(BASE_URL, branchName, 'admin')
-      const submitRes = await submitBranchViaAPI(BASE_URL, branchName, 'admin')
+      await saveHomeChangeViaAPI(BASE_URL, branchName, 'editor')
+      const submitRes = await submitBranchViaAPI(BASE_URL, branchName, 'editor')
       expect(submitRes.ok).toBe(true)
       const approveRes = await approveBranchViaAPI(BASE_URL, branchName, 'admin')
       expect(approveRes.ok).toBe(true)
@@ -301,7 +303,7 @@ test.describe('Branch State Badges', () => {
   test('branch row renders a relative "Updated" timestamp with an absolute-time tooltip (B11)', async ({
     page,
   }) => {
-    const branchName = `relative-time-${Date.now()}`
+    const branchName = `canopycms-relative-time-${Date.now()}`
     const res = await createBranchViaAPI(BASE_URL, branchName, 'admin')
     expect(res.ok).toBe(true)
 
@@ -341,7 +343,8 @@ test.describe('Branch State Badges', () => {
     // server; only the create-branch REQUEST would fail, never reaching the
     // sanitize-and-adopt path this test exercises.
     const rawName = `feature/My-Branch-${Date.now()}`
-    const sanitized = sanitizeBranchName(rawName)
+    // The created name is the sanitized one in the canopycms- namespace.
+    const sanitized = cmsBranchName(rawName)
     expect(sanitized).not.toBe(rawName)
 
     await editorPage.goto()

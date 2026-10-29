@@ -264,54 +264,25 @@ export async function recordMainBaseline(): Promise<void> {
 
 /**
  * Ensure the main branch workspace is initialized by calling the API.
- * This creates the branch if it doesn't exist.
+ * It provisions 'main', the test app's active branch, if it is not there yet.
  * @param baseUrl - Base URL of the test app (e.g., 'http://localhost:5174')
  */
 export async function ensureMainBranch(baseUrl: string): Promise<void> {
   return log.timed('workspace', 'ensureMainBranch', async () => {
     log.info('workspace', 'Ensuring main branch exists', { baseUrl })
 
-    // Try to create the main branch - this is idempotent
-    log.debug('workspace', 'Calling create branch API')
-    const response = await fetch(`${baseUrl}/api/canopycms/branches`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ branch: 'main' }),
+    // 'main' is the test app's active branch (canopycms.config.ts), which the API provisions
+    // lazily when a request names it (http/handler.ts). waitForWorkspace below decides; a failed
+    // answer is logged first, so its reason is not lost to that wait's timeout.
+    const response = await fetch(`${baseUrl}/api/canopycms/main/entries`).catch((err: unknown) => {
+      log.error('workspace', 'Provisioning request failed', { error: String(err) })
+      return null
     })
-
-    log.debug('workspace', 'API response received', {
-      ok: response.ok,
-      status: response.status,
-    })
-
-    // 200 = created, or branch already exists with appropriate response
-    if (!response.ok) {
-      const body = await response.text()
-      // Ignore if branch already exists (might return different status codes)
-      if (body.includes('already exists') || response.status === 409) {
-        log.debug('workspace', 'Branch already exists (idempotent)')
-        // Continue to wait for workspace - it may still be initializing
-      } else if (body.includes('Cannot create a branch with the base branch name')) {
-        // Benign on checkouts whose git base branch IS 'main' (CI runs on a
-        // detached PR ref, so dev-mode base detection falls back to 'main'):
-        // branch protection refuses the explicit create, but the CMS 'main'
-        // workspace is exactly the base workspace the system auto-provisions.
-        // Auto-provisioning is LAZY (getBranchContext creates the base
-        // workspace when a request references it — http/handler.ts), so issue
-        // one branch-scoped request to trigger it, then fall through to
-        // waitForWorkspace below.
-        log.debug('workspace', "'main' is the protected base branch (auto-provisioning)")
-        await fetch(`${baseUrl}/api/canopycms/main/entries`).catch(() => {})
-      } else {
-        // Non-idempotent failure: throw error
-        log.error('workspace', 'Failed to create main branch', {
-          status: response.status,
-          body,
-        })
-        throw new Error(`Failed to ensure main branch: ${response.status} ${body}`)
-      }
+    if (response && !response.ok) {
+      log.error('workspace', 'Provisioning request refused', {
+        status: response.status,
+        body: await response.text().catch(() => ''),
+      })
     }
 
     // NEW: Wait for workspace to be fully initialized (whether created or already exists)

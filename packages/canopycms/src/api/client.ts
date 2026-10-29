@@ -16,7 +16,7 @@ import type { OperatingMode } from '../operating-mode/types'
 
 import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, CreateBranchBody, UpdateBranchAccessBody } from './branch'
 import type { BranchChangesResponse } from './branch-changes'
-import type { BranchMergeResponse, SubmitBranchResponse } from './branch-status'
+import type { BranchMergeResponse, RequestChangesBody, SubmitBranchBody, SubmitBranchResponse } from './branch-status'
 import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from './comments'
 import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse, RenameEntryBody, RenameEntryResponse, ValidateReferencesBody, WriteContentBody } from './content'
 import type { ReferenceOptionsResponse } from './reference-options'
@@ -117,8 +117,8 @@ export class CanopyApiClient {
     },
 
     /** POST /:branch/request-changes */
-    requestChanges: (params: Record<string, string>, options?: RequestOptions): Promise<BranchListItemResponse> => {
-      return this.request('POST', this.buildPath('/:branch/request-changes', params), undefined, 'standard', options)
+    requestChanges: (params: Record<string, string>, body: RequestChangesBody, options?: RequestOptions): Promise<BranchListItemResponse> => {
+      return this.request('POST', this.buildPath('/:branch/request-changes', params), body, 'standard', options)
     },
 
     /** POST /:branch/approve */
@@ -137,8 +137,8 @@ export class CanopyApiClient {
     },
 
     /** POST /:branch/submit */
-    submit: (params: Record<string, string>, options?: RequestOptions): Promise<SubmitBranchResponse> => {
-      return this.request('POST', this.buildPath('/:branch/submit', params), undefined, 'long', options)
+    submit: (params: Record<string, string>, body: SubmitBranchBody, options?: RequestOptions): Promise<SubmitBranchResponse> => {
+      return this.request('POST', this.buildPath('/:branch/submit', params), body, 'long', options)
     },
   }
 
