@@ -7,6 +7,7 @@ import { SWRConfig } from 'swr'
 import { defineCanopyConfig, type EntrySchema } from '../config'
 import { CanopyEditorPage } from './CanopyEditorPage'
 import { mockConsole, type MockConsole } from '../test-utils/console-spy'
+import { exactBranchSegment } from '../paths/validation'
 
 vi.mock('@mantine/modals', () => ({
   ModalsProvider: ({ children }: { children: React.ReactNode }) => children,
@@ -24,6 +25,8 @@ vi.mock('./PreviewFrame', () => ({
 
 /** The deployment's base, which only the server knows; the bundle never names it. */
 const SERVER_DEFAULT = 'tier-base'
+/** The segment requests name it by once it is listed: the exact form. */
+const SERVER_DEFAULT_SEGMENT = encodeURIComponent(exactBranchSegment(SERVER_DEFAULT))
 
 const schema: EntrySchema = [{ name: 'title', type: 'string', label: 'Title', isTitle: true }]
 
@@ -163,10 +166,10 @@ describe('CanopyEditorPage starting branch', () => {
 
     await waitFor(() =>
       expect(fetchMock.mock.calls.map(([input]) => String(input))).toContain(
-        `/api/canopycms/${SERVER_DEFAULT}/entries?limit=200`,
+        `/api/canopycms/${SERVER_DEFAULT_SEGMENT}/entries?limit=200`,
       ),
     )
-    expect(new Set(requestedBranches(fetchMock))).toEqual(new Set([SERVER_DEFAULT]))
+    expect(new Set(requestedBranches(fetchMock))).toEqual(new Set([SERVER_DEFAULT_SEGMENT]))
   })
 
   it('opens the entry ?entry= names, on the server default branch', async () => {
@@ -175,10 +178,10 @@ describe('CanopyEditorPage starting branch', () => {
 
     await waitFor(() =>
       expect(fetchMock.mock.calls.map(([input]) => String(input))).toContain(
-        `/api/canopycms/${SERVER_DEFAULT}/content/content/posts/other`,
+        `/api/canopycms/${SERVER_DEFAULT_SEGMENT}/content/content/posts/other`,
       ),
     )
-    expect(new Set(requestedBranches(fetchMock))).toEqual(new Set([SERVER_DEFAULT]))
+    expect(new Set(requestedBranches(fetchMock))).toEqual(new Set([SERVER_DEFAULT_SEGMENT]))
   })
 
   it('says the branch list failed, and opens the server default once Retry loads it', async () => {
@@ -196,11 +199,11 @@ describe('CanopyEditorPage starting branch', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     await waitFor(() =>
       expect(fetchMock.mock.calls.map(([input]) => String(input))).toContain(
-        `/api/canopycms/${SERVER_DEFAULT}/entries?limit=200`,
+        `/api/canopycms/${SERVER_DEFAULT_SEGMENT}/entries?limit=200`,
       ),
     )
     expect(screen.queryByTestId('form-branches-load-failed')).toBeNull()
-    expect(new Set(requestedBranches(fetchMock))).toEqual(new Set([SERVER_DEFAULT]))
+    expect(new Set(requestedBranches(fetchMock))).toEqual(new Set([SERVER_DEFAULT_SEGMENT]))
   })
 
   it('opens the branch ?branch= names, whatever the server default', async () => {
@@ -209,5 +212,6 @@ describe('CanopyEditorPage starting branch', () => {
 
     await waitFor(() => expect(requestedBranches(fetchMock)).toContain('feature'))
     expect(requestedBranches(fetchMock)).not.toContain(SERVER_DEFAULT)
+    expect(requestedBranches(fetchMock)).not.toContain(SERVER_DEFAULT_SEGMENT)
   })
 })

@@ -1085,7 +1085,7 @@ describe('changed on this branch', () => {
     fireEvent.click(changedRadio())
     expect(await screen.findByTestId('entry-nav-item-hello')).toBeTruthy()
     expect(screen.queryByTestId('entry-nav-item-second')).toBeNull()
-    expect(changesRequests[0]).toMatch(/\/main\/changes$/)
+    expect(changesRequests[0]).toMatch(/\/~main\/changes$/)
   })
 
   it('reads with the panel closed while an entry is open, so its header can offer Show changes', async () => {
@@ -1095,7 +1095,7 @@ describe('changed on this branch', () => {
     stubApi({ changedEntries: [helloChanged] })
     renderEditor()
     expect(await screen.findByTestId('entry-show-changes')).toBeTruthy()
-    expect(changesRequests).toEqual(['/api/canopycms/main/changes'])
+    expect(changesRequests).toEqual(['/api/canopycms/~main/changes'])
   })
 
   it('reloads after a save', async () => {

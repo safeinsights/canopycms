@@ -52,6 +52,13 @@ describe('resolveBranchParam', () => {
     expect(await resolved('canopycms/local/spring')).toBe('canopycms/local/spring')
   })
 
+  it('names a branch nested deeper in the namespace by its full name, never by a short name', async () => {
+    await workspace('canopycms/local/a/b')
+    expect(await resolved('a/b')).toBeNull()
+    expect(await resolved('canopycms/local/a/b')).toBe('canopycms/local/a/b')
+    expect(shortNameOf(config, 'canopycms/local/a/b')).toBe('canopycms/local/a/b')
+  })
+
   it('resolves a branch outside the namespace by its full name only', async () => {
     await workspace('legacy/update')
     expect(await resolved('legacy/update')).toBe('legacy/update')
@@ -64,15 +71,41 @@ describe('resolveBranchParam', () => {
     await workspace('spring')
     expect(await resolved('spring')).toBe('canopycms/local/spring')
     expect(await resolved('canopycms/local/spring')).toBe('canopycms/local/spring')
-    expect(await resolved('refs/heads/spring')).toBe('spring')
-    expect(await resolved('refs/heads/canopycms/local/spring')).toBe('canopycms/local/spring')
+    expect(await resolved('~spring')).toBe('spring')
+    expect(await resolved('~canopycms~local~spring')).toBe('canopycms/local/spring')
   })
 
   it('never resolves the exact form by a short name, or by a key that is not the name', async () => {
     await workspace('canopycms/local/summer')
     await workspace('canopycms-local-autumn')
-    expect(await resolved('refs/heads/summer')).toBeNull()
-    expect(await resolved('refs/heads/canopycms/local/autumn')).toBeNull()
+    expect(await resolved('~summer')).toBeNull()
+    expect(await resolved('~canopycms~local~autumn')).toBeNull()
+  })
+
+  it('resolves the exact form before the base and active branches, to its own branch only', async () => {
+    // As after `git checkout -b spring` in dev: the active branch takes the namespace branch's
+    // short name, and the base has a namespace branch named after it.
+    await workspace('main')
+    await workspace('spring')
+    await workspace('canopycms/local/spring')
+    await workspace('canopycms/local/main')
+    const active = { defaultActiveBranch: 'spring' }
+    expect(await resolved('spring', active)).toBe('spring')
+    expect(await resolved('~canopycms~local~spring', active)).toBe('canopycms/local/spring')
+    expect(await resolved('~spring', active)).toBe('spring')
+    expect(await resolved('~canopycms~local~main', active)).toBe('canopycms/local/main')
+    expect(await resolved('~main', active)).toBe('main')
+  })
+
+  it('resolves a malformed exact form to no branch, whatever its other readings name', async () => {
+    await workspace('main')
+    await workspace('spring')
+    await workspace('canopycms/local/spring')
+    for (const param of ['~', '~~spring', '~spring~', '~canopycms~~local~spring']) {
+      expect(await resolved(param)).toBeNull()
+    }
+    // A `/` is no part of the form, so `~canopycms/local/spring` names nothing either.
+    expect(await resolved('~canopycms/local/spring')).toBeNull()
   })
 
   it('refuses a workspace whose stored name is not the ref its key was built from', async () => {

@@ -1224,12 +1224,12 @@ describe('useEntryManager', () => {
     // The listing's resolution: `spring` opens the namespace branch, its exact form the outside one.
     const opens: Record<string, string> = {
       spring: NAMESPACED,
-      'refs/heads/spring': 'spring',
+      '~spring': 'spring',
       [NAMESPACED]: NAMESPACED,
     }
     const listedOptions = {
       sameBranch: (url: string, branchName: string) => (opens[url] ?? url) === branchName,
-      urlBranchName: (name: string): string => (name === 'spring' ? 'refs/heads/spring' : 'spring'),
+      urlBranchName: (name: string): string => (name === 'spring' ? '~spring' : 'spring'),
     }
     const entry1: EditorEntry = {
       ...mockEntry,

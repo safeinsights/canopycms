@@ -11,6 +11,7 @@ import { editorLayoutStorageKey } from './hooks/useEditorLayout'
 import { CANOPY_PREVIEW_MESSAGE, CANOPY_PREVIEW_READY } from './preview-bridge'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../paths/test-utils'
 import { mockConsole } from '../test-utils/console-spy'
+import { plainBranchPath } from '../test-utils/branch-wire'
 
 const renderWithProviders = (ui: React.ReactElement) =>
   render(
@@ -187,9 +188,10 @@ const stubApi = () => {
         )
       }
       if (url.includes('/content/content/posts/') && (init?.method ?? 'GET') === 'GET') {
-        if (url in settled) return Promise.resolve(settled[url]())
+        const read = plainBranchPath(url)
+        if (read in settled) return Promise.resolve(settled[read]())
         return new Promise<Response>((resolve) => {
-          ;(held[url] ??= []).push(resolve)
+          ;(held[read] ??= []).push(resolve)
         })
       }
       return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))

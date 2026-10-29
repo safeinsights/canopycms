@@ -9,7 +9,8 @@ import { loadBranchContext } from './branch-metadata'
 import type { CanopyConfig } from './config'
 import { operatingStrategy } from './operating-mode'
 import { namesNoWorkspace } from './paths/branch'
-import { branchShortName, exactBranchName } from './paths/branch-name'
+import { branchShortName } from './paths/branch-name'
+import { exactBranchName, isExactBranchForm } from './paths/validation'
 import type { BranchContext } from './types'
 import { BaseBranchUnresolvedError, baseBranchOf } from './utils/base-branch'
 
@@ -53,10 +54,12 @@ export function shortNameOf(config: BranchParamConfig, name: string): string {
 }
 
 /**
- * The workspace `param` names, or null. `refs/heads/<name>` (`EXACT_BRANCH_PREFIX`) names only
- * the branch whose branch.json `name` is `<name>`. Any other `param`, in order:
+ * The workspace `param` names, or null. A `param` in the exact form (`exactBranchSegment`,
+ * `~canopycms~prod~spring`) names only the branch whose branch.json `name` it decodes to, and a
+ * malformed one names none. Any other `param`, in order:
  * 1. the base or configured active branch, exactly, so no namespace branch ever shadows it;
- * 2. the namespace branch whose short name is `param`, when its branch.json `name` is that ref;
+ * 2. the namespace branch whose short name is `param` (which holds no `/`), when its branch.json
+ *    `name` is that ref;
  * 3. a branch outside the namespace by its full name, when its `name` is `param`. A namespace
  *    branch's full ref resolves here too. A branch outside the namespace that step 2 shadows
  *    opens only by the exact form.
@@ -70,8 +73,9 @@ export async function resolveBranchParam(
   const load = (branchName: string) =>
     loadBranchContext({ branchName, mode: config.mode, basePathOverride: options.basePathOverride })
 
-  const exact = exactBranchName(param)
-  if (exact !== null) {
+  if (isExactBranchForm(param)) {
+    const exact = exactBranchName(param)
+    if (exact === null) return null
     const named = await load(exact)
     return named?.branch.name === exact ? named : null
   }
@@ -79,7 +83,9 @@ export async function resolveBranchParam(
   if (namesBaseOrActive(param, config)) return load(param)
 
   const namespace = cmsBranchNamespace(config)
-  if (namespace !== null) {
+  // A short name holding a `/` is a full name (`branchShortName`), so a `param` with one names no
+  // namespace branch by the part after the namespace.
+  if (namespace !== null && !param.includes('/')) {
     const ref = `${namespace}${param}`
     // A ref past a filename's length can still leave `param` naming a branch outside it.
     const inNamespace = await load(ref).catch((err: unknown) => {

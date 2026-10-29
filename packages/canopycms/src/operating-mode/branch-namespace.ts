@@ -10,7 +10,7 @@
  * environment, never from anything the CMS Lambda can write.
  */
 import { RESERVED_SETTINGS_BRANCH_PREFIX, sanitizeBranchName } from '../paths/branch-name'
-import { parseBranchName } from '../paths/validation'
+import { parseBranchRef } from '../paths/validation'
 import { canopyLogWarn } from '../utils/logger'
 import { resolveDeploymentName } from './deployment-name'
 
@@ -47,7 +47,7 @@ export function branchNamespaceProblem(namespace: string): string | null {
   if (/^(?:refs|heads|tags|remotes)\//i.test(namespace)) {
     return "it starts with 'refs/', 'heads/', 'tags/' or 'remotes/'"
   }
-  const parsed = parseBranchName(sample)
+  const parsed = parseBranchRef(sample)
   if (!parsed.ok) return `a branch in it would be refused (${parsed.error})`
   if (sample.split('/').some((part) => part.startsWith('.') || part.endsWith('.lock'))) {
     return "a part of it starts with '.' or ends with '.lock'"

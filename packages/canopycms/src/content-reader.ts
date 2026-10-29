@@ -11,6 +11,7 @@ import {
   type Slug,
 } from './paths'
 import { trimSlashes } from './paths/normalize'
+import { exactBranchName, isExactBranchForm } from './paths/validation'
 import { computeEntryUrl, isIndexSlug } from './utils/entry-url'
 import { type OperatingMode } from './operating-mode'
 import type { CanopyServices } from './services'
@@ -171,17 +172,19 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       throw err
     })
     if (existing) return existing
-    if (allowCreateBranch) {
+    // The exact form provisions the branch its full name names; a malformed one names none.
+    const named = isExactBranchForm(branchName) ? exactBranchName(branchName) : branchName
+    if (allowCreateBranch && named !== null) {
       const context = await loadOrCreateBranchContext({
         config: services.config,
-        branchName,
+        branchName: named,
         mode: operatingMode,
         basePathOverride,
         createdBy,
         remoteUrl: services.config.defaultRemoteUrl,
       })
       // A workspace already at this name's key that holds another branch is that branch's.
-      if (context.branch.name === branchName) return context
+      if (context.branch.name === named) return context
     }
     throw new ContentStoreError(`Branch not found: ${branchName}`, 'NOT_FOUND')
   }

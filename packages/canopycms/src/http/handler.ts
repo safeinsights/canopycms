@@ -17,7 +17,8 @@ import { BRANCH_METADATA_CORRUPT_MESSAGE } from '../branch-metadata-error'
 import { resolveCanopyUser } from '../resolve-canopy-user'
 import { authResultToCanopyUser } from '../user'
 import { isAdmin } from '../authorization'
-import { exactBranchName, isSettingsBranchName } from '../paths/branch-name'
+import { isSettingsBranchName } from '../paths/branch-name'
+import { exactBranchName } from '../paths/validation'
 import { clientOperatingStrategy, operatingStrategy } from '../operating-mode'
 import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from '../utils/error'
 // canopyLogError, not console.error: this is shared code and not guaranteed to
@@ -81,14 +82,16 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
       // refreshActiveBranch() update takes effect immediately.
       const baseBranch = baseBranchOf(services.config)
       const activeBranch = services.config.defaultActiveBranch ?? baseBranch
+      // The exact form names its full name's branch, and the editor sends a name holding a `/` so.
+      const named = exactBranchName(branch) ?? branch
       const shouldAutoCreate =
         clientOperatingStrategy(operatingMode).supportsBranching() &&
-        (branch === baseBranch || branch === activeBranch)
+        (named === baseBranch || named === activeBranch)
 
       if (shouldAutoCreate) {
         const manager = new BranchWorkspaceManager(services.config)
         const context = await manager.openOrCreateBranch({
-          branchName: branch,
+          branchName: named,
           mode: operatingMode,
           createdBy: SYSTEM_USER_ID,
         })
@@ -117,7 +120,7 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
     // submit pushes under the settings name, which settings provisioning then refuses,
     // leaving settings unavailable.
     // Not found, like any branch the caller cannot resolve, even a workspace left on disk. The
-    // exact form (`refs/heads/<name>`) names the same branch, so it is refused by that name.
+    // exact form (`exactBranchSegment`) names the same branch, so it is refused by that name.
     getBranchContext: (branch, opts) =>
       isSettingsBranchName(exactBranchName(branch) ?? branch, settingsBranch)
         ? Promise.resolve(null)

@@ -6,6 +6,7 @@
 import type { CanopyRequest } from '../../http/types'
 import { BranchWorkspaceManager } from '../../branch-workspace'
 import { resolveBranchParam } from '../../branch-param'
+import { exactBranchName } from '../../paths/validation'
 import { createCanopyRequestHandler } from '../../http/handler'
 import { createTestServices } from '../../config-test'
 import type { CreateCanopyServicesOptions } from '../../services'
@@ -27,6 +28,13 @@ export interface ApiClientOptions {
    * CreateCanopyServicesOptions.getSettingsBranchRoot.
    */
   getSettingsBranchRoot?: CreateCanopyServicesOptions['getSettingsBranchRoot']
+  /** Forwarded to the client: the editor's `/:branch` segment table (`ApiClientOptions.branchSegment`). */
+  branchSegment?: (branch: string) => string
+  /**
+   * Resolve branches as the handler does on its own, provisioning the base and the active branch,
+   * instead of this helper's base-only provisioning.
+   */
+  handlerBranchContext?: boolean
 }
 
 /**
@@ -51,39 +59,42 @@ export async function createApiClient(options: ApiClientOptions) {
   const handler = createCanopyRequestHandler({
     services,
     authPlugin: options.authPlugin,
-    getBranchContext: async (branchName: string, opts?: { loadSchema?: boolean }) => {
-      let context = await resolveBranchParam(branchName, services.config)
-      if (!context) {
-        // Mirror the production default getBranchContext: auto-provision the
-        // base/active workspace on first request, same as http/handler.ts's
-        // real default does (registry reads, etc. assume it already exists).
-        // Internal groups do NOT come from this branch — they're read from
-        // the settings workspace via resolveCanopyUser/getSettingsBranchRoot.
-        const baseBranch = services.config.defaultBaseBranch ?? 'main'
-        if (branchName !== baseBranch) {
-          return null
-        }
-        const manager = new BranchWorkspaceManager(services.config)
-        context = await manager.openOrCreateBranch({
-          branchName,
-          mode: services.config.mode,
-          createdBy: 'canopycms-system',
-        })
-      }
+    getBranchContext: options.handlerBranchContext
+      ? undefined
+      : async (branchName: string, opts?: { loadSchema?: boolean }) => {
+          let context = await resolveBranchParam(branchName, services.config)
+          if (!context) {
+            // Mirror the production default getBranchContext: auto-provision the
+            // base/active workspace on first request, same as http/handler.ts's
+            // real default does (registry reads, etc. assume it already exists).
+            // Internal groups do NOT come from this branch — they're read from
+            // the settings workspace via resolveCanopyUser/getSettingsBranchRoot.
+            const baseBranch = services.config.defaultBaseBranch ?? 'main'
+            const named = exactBranchName(branchName) ?? branchName
+            if (named !== baseBranch) {
+              return null
+            }
+            const manager = new BranchWorkspaceManager(services.config)
+            context = await manager.openOrCreateBranch({
+              branchName: named,
+              mode: services.config.mode,
+              createdBy: 'canopycms-system',
+            })
+          }
 
-      // Load per-branch schema if requested
-      if (opts?.loadSchema) {
-        const contentRootName = services.config.contentRoot || 'content'
-        const cached = await services.branchSchemaCache.getSchema(
-          context.branchRoot,
-          services.entrySchemaRegistry,
-          contentRootName,
-        )
-        context.flatSchema = cached.flatSchema
-      }
+          // Load per-branch schema if requested
+          if (opts?.loadSchema) {
+            const contentRootName = services.config.contentRoot || 'content'
+            const cached = await services.branchSchemaCache.getSchema(
+              context.branchRoot,
+              services.entrySchemaRegistry,
+              contentRootName,
+            )
+            context.flatSchema = cached.flatSchema
+          }
 
-      return context
-    },
+          return context
+        },
   })
 
   /**
@@ -133,6 +144,7 @@ export async function createApiClient(options: ApiClientOptions) {
   const client = new CanopyApiClient({
     baseUrl: '/api/canopycms',
     fetch: testFetch,
+    branchSegment: options.branchSegment,
   })
 
   /**

@@ -12,6 +12,7 @@ import { BranchProvisioningBusyError } from '../branch-provisioning'
 import { WORKER_NOT_READY_MESSAGE } from './worker-not-ready'
 import { resolveCanopyUser } from '../resolve-canopy-user'
 import { ANONYMOUS_USER } from '../user'
+import { exactBranchSegment } from '../paths/validation'
 
 // Mock the BranchWorkspaceManager to avoid git operations
 vi.mock('../branch-workspace', () => {
@@ -1061,7 +1062,7 @@ describe('buildContext: the settings branch is never a content branch', () => {
     ["an adopter's configured settings branch", 'site-settings'],
     ["another deployment's settings branch", 'canopycms-settings-other'],
   ])('answers 404 for %s by its exact form, resolving nothing', async (_label, name) => {
-    const exact = `refs/heads/${name}`
+    const exact = exactBranchSegment(name)
     const { response, created, resolved } = await request(exact, (config) => {
       config.deploymentName = 'acme'
       config.settingsBranch = 'site-settings'
@@ -1076,5 +1077,13 @@ describe('buildContext: the settings branch is never a content branch', () => {
     const { created } = await request('main')
 
     expect(created).toContain('main')
+  })
+
+  it('provisions the base named by its exact form as it does by its full name, never the form', async () => {
+    const plain = await request('main')
+    const exact = await request(exactBranchSegment('main'))
+
+    expect(exact.created).toEqual(plain.created)
+    expect(exact.created).not.toContain(exactBranchSegment('main'))
   })
 })

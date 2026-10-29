@@ -90,7 +90,10 @@ describe('BranchWorkspaceManager', () => {
     expect(context.branchRoot).toContain('.canopy-dev/content-branches/feature-foo')
   })
 
-  it('refuses a name git would not take as given, before anything is provisioned', async () => {
+  it.each([
+    ['a name git refuses', 'feature:foo'],
+    ['the exact form of a name', '~feature~foo'],
+  ])('refuses %s, before anything is provisioned', async (_label, branchName) => {
     const root = await tmpDir()
     const manager = new BranchWorkspaceManager(
       defineCanopyTestConfig({ defaultBaseBranch: 'main', schema: testSchema }),
@@ -98,7 +101,7 @@ describe('BranchWorkspaceManager', () => {
 
     await expect(
       manager.openOrCreateBranch({
-        branchName: 'feature:foo',
+        branchName,
         mode: 'dev',
         basePathOverride: root,
         createdBy: 'user-1',

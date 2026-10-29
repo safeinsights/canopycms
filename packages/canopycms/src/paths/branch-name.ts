@@ -40,25 +40,17 @@ export const RESERVED_SETTINGS_BRANCH_PREFIX = 'canopycms-settings-'
 
 /**
  * Branch `name`'s short name: the part after `namespace` for a branch in it, the full name for
- * any other. The server rebuilds the ref from it (branch-param.ts's `resolveBranchParam`); the
+ * any other, and for one whose remainder holds a `/`. So a short name holding a `/` is always a
+ * full name, which the editor's unlisted request segment (editor/branch-names.ts `unlistedSegment`)
+ * relies on. The server rebuilds the ref from it (branch-param.ts's `resolveBranchParam`); the
  * editor is never told the namespace.
  */
 export function branchShortName(name: string, namespace: string | null): string {
-  return namespace !== null && name.startsWith(namespace) && name.length > namespace.length
-    ? name.slice(namespace.length)
-    : name
-}
-
-/**
- * What a request or link puts before a branch's full name to name that branch and no other. A
- * branch outside the namespace named `spring` and the namespace branch `canopycms/prod/spring`
- * both answer to `spring`, which opens the namespace one; `refs/heads/spring` opens the other.
- */
-export const EXACT_BRANCH_PREFIX = 'refs/heads/'
-
-/** The full name `param` names exactly (`EXACT_BRANCH_PREFIX`), or null for any other form. */
-export function exactBranchName(param: string): string | null {
-  return param.startsWith(EXACT_BRANCH_PREFIX) ? param.slice(EXACT_BRANCH_PREFIX.length) : null
+  if (namespace === null || !name.startsWith(namespace) || name.length === namespace.length) {
+    return name
+  }
+  const rest = name.slice(namespace.length)
+  return rest.includes('/') ? name : rest
 }
 
 /**

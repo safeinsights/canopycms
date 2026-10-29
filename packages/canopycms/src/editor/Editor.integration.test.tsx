@@ -11,6 +11,7 @@ import { unsafeAsLogicalPath, unsafeAsContentId } from '../paths/test-utils'
 import { RESERVED_GROUPS } from '../authorization'
 import { mockConsole } from '../test-utils/console-spy'
 import { SYSTEM_USER_ID } from '../system-users'
+import { listedBranchPath, plainBranchPath } from '../test-utils/branch-wire'
 
 // Editor.tsx no longer wraps its own SWR cache (only CanopyEditor.tsx does,
 // via SWRProvider) -- these tests render <Editor> directly, so they need
@@ -234,12 +235,15 @@ describe('Editor integration', () => {
           }),
         )
       }
-      if (url === entryApiPath && (!init || !init.method || init.method === 'GET')) {
+      if (
+        plainBranchPath(url) === entryApiPath &&
+        (!init || !init.method || init.method === 'GET')
+      ) {
         return Promise.resolve(
           okJson({ ok: true, status: 200, data: { title: 'Loaded title', version: 100 } }),
         )
       }
-      if (url.startsWith(entryApiPath) && init?.method === 'PUT') {
+      if (plainBranchPath(url).startsWith(entryApiPath) && init?.method === 'PUT') {
         const body = JSON.parse(init.body as string)
         return Promise.resolve(okJson({ ok: true, status: 200, data: body.data }))
       }
@@ -288,7 +292,7 @@ describe('Editor integration', () => {
       expect(
         fetchMock.mock.calls.some(
           ([url, init]) =>
-            (url as string).startsWith(entryApiPath) &&
+            (url as string).startsWith(listedBranchPath(entryApiPath)) &&
             (init as RequestInit | undefined)?.method === 'PUT',
         ),
       ).toBe(true),
@@ -296,7 +300,7 @@ describe('Editor integration', () => {
 
     const saveCall = fetchMock.mock.calls.find(
       ([url, init]) =>
-        (url as string).startsWith(entryApiPath) &&
+        (url as string).startsWith(listedBranchPath(entryApiPath)) &&
         (init as RequestInit | undefined)?.method === 'PUT',
     )
     expect(saveCall).toBeTruthy()
@@ -347,7 +351,7 @@ describe('Editor integration', () => {
           okJson({ ok: true, status: 200, data: { branches: [branch], defaultBranch: 'main' } }),
         )
       }
-      if (url.endsWith('/api/canopycms/main/submit') && init?.method === 'POST') {
+      if (plainBranchPath(url).endsWith('/api/canopycms/main/submit') && init?.method === 'POST') {
         return Promise.resolve(
           okJson({
             ok: true,
@@ -423,7 +427,10 @@ describe('Editor integration', () => {
           }),
         )
       }
-      if (url === entryApiPath && (!init || !init.method || init.method === 'GET')) {
+      if (
+        plainBranchPath(url) === entryApiPath &&
+        (!init || !init.method || init.method === 'GET')
+      ) {
         return Promise.resolve(
           okJson({
             ok: true,
@@ -471,7 +478,8 @@ describe('Editor integration', () => {
     fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
     await waitFor(() => {
       const put = fetchMock.mock.calls.find(
-        ([url, init]) => String(url).startsWith(entryApiPath) && init?.method === 'PUT',
+        ([url, init]) =>
+          String(url).startsWith(listedBranchPath(entryApiPath)) && init?.method === 'PUT',
       )
       expect(JSON.parse(String(put?.[1]?.body))).toMatchObject({
         data: { title: 'Unsaved title', publishedAt: stamp },
@@ -588,7 +596,10 @@ describe('Editor integration', () => {
           }),
         )
       }
-      if (url === entryApiPath && (!init || !init.method || init.method === 'GET')) {
+      if (
+        plainBranchPath(url) === entryApiPath &&
+        (!init || !init.method || init.method === 'GET')
+      ) {
         return Promise.resolve(
           okJson({ ok: true, status: 200, data: { title: 'Loaded title', version: 100 } }),
         )
@@ -727,7 +738,10 @@ describe('Editor integration', () => {
           }),
         )
       }
-      if (url === entryApiPath && (!init || !init.method || init.method === 'GET')) {
+      if (
+        plainBranchPath(url) === entryApiPath &&
+        (!init || !init.method || init.method === 'GET')
+      ) {
         return Promise.resolve(
           okJson({ ok: true, status: 200, data: { title: 'Loaded title', version: 100 } }),
         )
@@ -870,17 +884,20 @@ describe('Editor integration', () => {
           }),
         )
       }
-      if (url === mainRead && (!init || !init.method || init.method === 'GET')) {
+      if (plainBranchPath(url) === mainRead && (!init || !init.method || init.method === 'GET')) {
         return mainReadReleased.then(() =>
           okJson({ ok: true, status: 200, data: { title: 'MAIN title', version: 100 } }),
         )
       }
-      if (url === featureRead && (!init || !init.method || init.method === 'GET')) {
+      if (
+        plainBranchPath(url) === featureRead &&
+        (!init || !init.method || init.method === 'GET')
+      ) {
         return Promise.resolve(
           okJson({ ok: true, status: 200, data: { title: 'FEATURE title', version: 200 } }),
         )
       }
-      if (url.startsWith(featureRead) && init?.method === 'PUT') {
+      if (plainBranchPath(url).startsWith(featureRead) && init?.method === 'PUT') {
         const body = JSON.parse(init.body as string)
         return Promise.resolve(
           okJson({ ok: true, status: 200, data: { ...body.data, version: 201 } }),
@@ -904,7 +921,7 @@ describe('Editor integration', () => {
       fetchMock.mock.calls.filter(([u, i]) => {
         const calledUrl = typeof u === 'string' ? u : u instanceof URL ? u.toString() : u.url
         const method = (i as RequestInit | undefined)?.method
-        return calledUrl === target && (!method || method === 'GET')
+        return plainBranchPath(calledUrl) === target && (!method || method === 'GET')
       }).length
 
     // main's read is in flight (and deliberately still unresolved).
@@ -920,7 +937,7 @@ describe('Editor integration', () => {
       expect(
         fetchMock.mock.calls.some(([u]) => {
           const calledUrl = typeof u === 'string' ? u : u instanceof URL ? u.toString() : u.url
-          return calledUrl.includes('/canopycms/feature/entries')
+          return calledUrl.includes(`${listedBranchPath('/api/canopycms/feature/')}entries`)
         }),
       ).toBe(true)
     })
@@ -967,7 +984,10 @@ describe('Editor integration', () => {
     const saveCall = await waitFor(() => {
       const call = fetchMock.mock.calls.find(([u, i]) => {
         const calledUrl = typeof u === 'string' ? u : u instanceof URL ? u.toString() : u.url
-        return calledUrl.startsWith(featureRead) && (i as RequestInit | undefined)?.method === 'PUT'
+        return (
+          calledUrl.startsWith(listedBranchPath(featureRead)) &&
+          (i as RequestInit | undefined)?.method === 'PUT'
+        )
       })
       expect(call).toBeTruthy()
       return call as [string, RequestInit]
@@ -1108,10 +1128,10 @@ describe('Editor integration', () => {
         )
       }
       if (
-        (url === entryAApiPath || url === entryBApiPath) &&
+        (plainBranchPath(url) === entryAApiPath || plainBranchPath(url) === entryBApiPath) &&
         (!init || !init.method || init.method === 'GET')
       ) {
-        return pending(url)
+        return pending(plainBranchPath(url))
       }
       return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))
     })
@@ -1147,7 +1167,9 @@ describe('Editor integration', () => {
     // Give the rejected loadEntry() promise a tick to propagate to the
     // effect's .catch() handler.
     await waitFor(() => {
-      expect(fetchMock.mock.calls.some(([u]) => u === entryBApiPath)).toBe(true)
+      expect(fetchMock.mock.calls.some(([u]) => plainBranchPath(String(u)) === entryBApiPath)).toBe(
+        true,
+      )
     })
 
     const { notifications } = await import('@mantine/notifications')
@@ -1296,10 +1318,13 @@ describe('Editor integration', () => {
           }),
         )
       }
-      if (url === entryApiPath && (!init || !init.method || init.method === 'GET')) {
+      if (
+        plainBranchPath(url) === entryApiPath &&
+        (!init || !init.method || init.method === 'GET')
+      ) {
         return Promise.resolve(okJson({ ok: true, status: 200, data: { title: 'Loaded title' } }))
       }
-      if (url.startsWith(entryApiPath) && init?.method === 'PUT') {
+      if (plainBranchPath(url).startsWith(entryApiPath) && init?.method === 'PUT') {
         const body = JSON.parse(init.body as string)
         return Promise.resolve(okJson({ ok: true, status: 200, data: body.data }))
       }
@@ -1324,7 +1349,7 @@ describe('Editor integration', () => {
         expect(
           fetchMock.mock.calls.some(
             ([url, init]) =>
-              url === entryApiPath &&
+              plainBranchPath(String(url)) === entryApiPath &&
               (!init || !(init as RequestInit).method || (init as RequestInit).method === 'GET'),
           ),
         ).toBe(true)
@@ -1468,10 +1493,13 @@ describe('Editor integration', () => {
           }),
         )
       }
-      if (url === entryApiPath && (!init || !init.method || init.method === 'GET')) {
+      if (
+        plainBranchPath(url) === entryApiPath &&
+        (!init || !init.method || init.method === 'GET')
+      ) {
         return Promise.resolve(okJson({ ok: false, status: 500, error: 'read failed' }, 500))
       }
-      if (url.startsWith(entryApiPath) && init?.method === 'PUT') {
+      if (plainBranchPath(url).startsWith(entryApiPath) && init?.method === 'PUT') {
         const body = JSON.parse(init.body as string)
         return Promise.resolve(okJson({ ok: true, status: 200, data: body.data }))
       }
@@ -1480,7 +1508,7 @@ describe('Editor integration', () => {
 
     vi.stubGlobal('fetch', fetchMock)
     const isPut = ([url, init]: Parameters<typeof fetchMock>) =>
-      String(url).startsWith(entryApiPath) && init?.method === 'PUT'
+      plainBranchPath(String(url)).startsWith(entryApiPath) && init?.method === 'PUT'
 
     try {
       renderWithProviders(
@@ -1640,7 +1668,10 @@ describe('Editor integration', () => {
           }),
         )
       }
-      if (url === entryApiPath && (!init || !init.method || init.method === 'GET')) {
+      if (
+        plainBranchPath(url) === entryApiPath &&
+        (!init || !init.method || init.method === 'GET')
+      ) {
         return Promise.resolve(okJson({ ok: true, status: 200, data: { title: 'Loaded title' } }))
       }
       return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))
@@ -1966,7 +1997,10 @@ describe('Editor integration', () => {
           }),
         )
       }
-      if (url === entryApiPath && (!init || !init.method || init.method === 'GET')) {
+      if (
+        plainBranchPath(url) === entryApiPath &&
+        (!init || !init.method || init.method === 'GET')
+      ) {
         return Promise.resolve(okJson({ ok: true, status: 200, data: { title: 'Loaded title' } }))
       }
       return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))

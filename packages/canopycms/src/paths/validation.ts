@@ -179,15 +179,67 @@ export function parseContentId(
 /** The longest branch name taken, in characters: names become directory names. */
 const MAX_BRANCH_NAME_LENGTH = 250
 
-/** Validate a branch name against git's ref rules and cast it to BranchName. */
+/**
+ * What starts a branch's exact form: `~`, then its full name with each `/` written `~`, so
+ * `canopycms/prod/spring` is `~canopycms~prod~spring` and a branch outside the namespace named
+ * `spring` is `~spring`. That branch and the namespace branch `canopycms/prod/spring` both answer
+ * to `spring`, which opens the namespace one; `~spring` opens the other. Git refuses `~` in a
+ * branch name, so no other name starts with it and the mapping reverses exactly, and
+ * `encodeURIComponent` leaves `~` alone, so a request path carries the form without `%2F`.
+ */
+const EXACT_BRANCH_MARK = '~'
+
+/** Whether `param` is in the exact form, well formed or not: no branch name starts with `~`. */
+export function isExactBranchForm(param: string): boolean {
+  return param.startsWith(EXACT_BRANCH_MARK)
+}
+
+/** The exact form of the branch whose full name is `fullName`. */
+export function exactBranchSegment(fullName: string): string {
+  return `${EXACT_BRANCH_MARK}${fullName.replaceAll('/', EXACT_BRANCH_MARK)}`
+}
+
+/**
+ * The full name the exact form `param` names, or null when `param` is no well-formed exact form:
+ * it starts with `~`, holds no `/`, and with each later `~` read as `/` names a branch
+ * `parseBranchRef` takes, which refuses an empty name or part (`~`, `~~a`, `~a~`).
+ */
+export function exactBranchName(param: string): string | null {
+  if (!isExactBranchForm(param) || param.includes('/')) return null
+  const named = parseBranchRef(
+    param.slice(EXACT_BRANCH_MARK.length).replaceAll(EXACT_BRANCH_MARK, '/'),
+  )
+  return named.ok ? named.name : null
+}
+
+/**
+ * Validate a branch named in a request, by a `/:branch` segment or `?branch=`, and cast it to
+ * BranchName: a name `parseBranchRef` takes, or a well-formed exact form of one.
+ */
 export function parseBranchName(
+  name: string,
+): { ok: true; name: BranchName } | { ok: false; error: string } {
+  if (typeof name === 'string' && isExactBranchForm(name)) {
+    return exactBranchName(name) === null
+      ? { ok: false, error: 'Branch name starts with "~" but names no branch' }
+      : { ok: true, name: name as BranchName }
+  }
+  return parseBranchRef(name)
+}
+
+/**
+ * Validate a branch's own name, the ref git and branch.json hold, against git's ref rules, except
+ * that an inner part may start with `.` or end `.lock` (`a/.b`, `a.lock/b`), and cast it to
+ * BranchName. It refuses every `~`, so the exact form is never one.
+ */
+export function parseBranchRef(
   name: string,
 ): { ok: true; name: BranchName } | { ok: false; error: string } {
   if (!name || typeof name !== 'string') {
     return { ok: false, error: 'Branch name is required' }
   }
 
-  // Length limit (branch names become directory names)
+  // Length limit (branch names become directory names).
   if (name.length > MAX_BRANCH_NAME_LENGTH) {
     return { ok: false, error: `Branch name too long (max ${MAX_BRANCH_NAME_LENGTH} characters)` }
   }
@@ -248,7 +300,7 @@ export function parseCreatedBranchName(
   typed: string,
   namespace = '',
 ): { ok: true; name: BranchName; shortName: string } | { ok: false; error: string } {
-  const valid = parseBranchName(typed)
+  const valid = parseBranchRef(typed)
   if (!valid.ok) return valid
   if (namespace !== '' && typed.startsWith(namespace)) {
     return {
@@ -256,7 +308,7 @@ export function parseCreatedBranchName(
       error: `Type only the branch's own name, without "${namespace}" in front: CanopyCMS adds it`,
     }
   }
-  // Without a leading '-' or '.', which the `/:branch` segment refuses (`parseBranchName`).
+  // Without a leading '-' or '.', which a branch name may not start with (`parseBranchRef`).
   const shortName = sanitizeBranchName(typed).replace(/^[-.]+/, '')
   // "_" alone would name a branch whose short name is no word at all.
   if (!/[a-zA-Z0-9]/.test(shortName)) {
@@ -269,7 +321,7 @@ export function parseCreatedBranchName(
       error: `Branch name too long (max ${MAX_BRANCH_NAME_LENGTH - namespace.length} characters)`,
     }
   }
-  const parsed = parseBranchName(ref)
+  const parsed = parseBranchRef(ref)
   return parsed.ok ? { ok: true, name: parsed.name, shortName } : parsed
 }
 

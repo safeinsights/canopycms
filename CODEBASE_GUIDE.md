@@ -533,7 +533,7 @@ Top-level components and helpers:
 - `theme.tsx` — theme, default control sizes
 - `branch-status.ts` — status labels and colours
 - `branch-lock.ts` — `branchBarStatus`, the bar's lock-state table; `describeBranchLock`
-- `branch-names.ts` — `displayBranchName`, `resolveListedBranch`, `branchUrlName`, `branchAddress`
+- `branch-names.ts` — `displayBranchName`, `resolveListedBranch`, `branchUrlName`, `branchAddress`, `requestSegments`
 - `copy.ts` — fixed action verbs
 - `platform.ts` — `modKeyLabel()`, ⌘ or Ctrl
 - `slug.ts` — `slugFromTitle`; `validateEntrySlug`, the one slug validator
@@ -694,7 +694,7 @@ All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 
 - `git-manager.ts` — the `simple-git` wrapper: `cloneRepo` / `cloneWorkspace` (`CloneRepoOptions`), `resolveCloneRemoteUrl`, `setSparseCone`, `repoExistsAt`, `gitChildEnv`, `addAllExceptCanopyState()`, `listBaseFiles`, `mergeBaseWithBase`, `diffNameStatusAgainst`, `bareRemoteBranchesInside`, `detectBaseBranch`, `resolveWorkspaceBaseBranch`
 - `branch-registry.ts` — branch tracking and listing over a generation-token snapshot cache, `getByKey`; quarantines a dir whose metadata will not load
-- `branch-param.ts` — `resolveBranchParam` (`refs/heads/<name>` first), `shortNameOf`
+- `branch-param.ts` — `resolveBranchParam` (the exact form first), `shortNameOf`
 - `branch-metadata.ts` — `branch.json` persistence under layered concurrency; `baseBranch` immutable; `buildMergedBranchUpdate`, `buildInitialBranchMetadata`; `update` (a computed save), `recordEditor`, `markEditorsCommitted`, `recordBranchEditor`
 - `branch-metadata-file.ts` — schema-checked `branch.json` reads; a deliberate leaf module
 - `branch-metadata-error.ts` — the corrupt-metadata error, node-free
@@ -780,10 +780,10 @@ prefer the branch's recorded `context.branch.baseBranch` over the config value. 
 - `types.ts` — the branded types plus the `ROOT_COLLECTION_ID` sentinel
 - `normalize.ts` — client-safe normalization: `createLogicalPath`, `createPhysicalPath`, the `unsafeAs*` casts
 - `normalize-server.ts` — the server-only normalization needing `node:path`
-- `validation.ts` — security validation: `parseLogicalPath`, `parsePhysicalPath`, `parseBranchName`, `parseContentId`, `parseSlug`
+- `validation.ts` — security validation: `parseLogicalPath`, `parsePhysicalPath`, `parseBranchName`, `parseBranchRef`, `exactBranchSegment` / `exactBranchName`, `parseContentId`, `parseSlug`
 - `resolve.ts` — `resolveLogicalPath`
 - `branch.ts` — branch workspace path resolution; imports `node:fs` and the mode strategies, so server-only
-- `branch-name.ts` — dependency-free home of `sanitizeBranchName`, `RESERVED_SETTINGS_BRANCH_PREFIX`, `isSettingsBranchName`, `branchShortName`, `exactBranchName`
+- `branch-name.ts` — dependency-free home of `sanitizeBranchName`, `RESERVED_SETTINGS_BRANCH_PREFIX`, `isSettingsBranchName`, `branchShortName`
 - `index.ts` — the barrel; re-exports `branch.ts`, so not client-safe
 - `test-utils.ts` — test-only casts `unsafeAsBranchName` and `unsafeAsSlug`, not exported from the barrel
 
@@ -944,6 +944,7 @@ the split.
 - `https-git-server.ts` — `startHttpsGitServer()`
 - `worker-gateway.ts` — `useLocalGitHubGateway()`, `fixtureCredential()`
 - `render-errors.ts` — `silenceReportedRenderErrors()`
+- `branch-wire.ts` — `listedBranchPath()`, `plainBranchPath()`
 - `index.ts` — exports
 
 ## Example App

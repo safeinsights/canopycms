@@ -161,14 +161,14 @@ describe('useBranchActions', () => {
     // A shadowed outside branch `spring` is open; its card hands the exact form, and `spring`
     // itself would open the namespace branch.
     const sameBranch = (next: string, branch: string) =>
-      (next === 'refs/heads/spring' ? 'spring' : `canopycms/local/${next}`) === branch
+      (next === '~spring' ? 'spring' : `canopycms/local/${next}`) === branch
     const { result } = renderHook(
       () => useBranchActions({ ...defaultOptions, branchName: 'spring', sameBranch }),
       { wrapper },
     )
 
     await act(async () => {
-      await result.current.handleBranchChange('refs/heads/spring')
+      await result.current.handleBranchChange('~spring')
     })
     expect(mockSetBranchName).not.toHaveBeenCalled()
 
