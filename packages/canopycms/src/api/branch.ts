@@ -438,7 +438,7 @@ export const createBranchHandler = async (
     // `exists`, mapped the same way below. Compared by key, the workspace directory.
     const existingBranch = await ctx.services.registry.getByKey(key)
     if (existingBranch) {
-      return existingBranchResponse(ctx, req, existingBranch)
+      return existingBranchResponse(ctx, req, existingBranch, named)
     }
 
     // L2: create-time collision check against this deployment's local
@@ -615,7 +615,7 @@ export const createBranchHandler = async (
       }
       throw err
     }
-    if (outcome.kind === 'exists') return existingBranchResponse(ctx, req, outcome.context)
+    if (outcome.kind === 'exists') return existingBranchResponse(ctx, req, outcome.context, named)
 
     log.debug('api', 'Branch created', { branchName: outcome.context.branch.name })
     return {
@@ -626,12 +626,26 @@ export const createBranchHandler = async (
   })
 }
 
-/** A create that names an existing branch: 409, unless it is that creator's recent retry. */
+/**
+ * A create whose key an existing workspace holds: 409, unless that workspace is the branch this
+ * create names (`named.name`) and the create is its creator's recent retry. A workspace with
+ * another stored name only shares the key, so answering with it would hand back another branch.
+ */
 const existingBranchResponse = (
   ctx: ApiContext,
   req: ApiRequest,
   existing: BranchContext,
+  named: { name: string; shortName: string },
 ): BranchListItemResponse => {
+  if (existing.branch.name !== named.name) {
+    return {
+      ok: false,
+      status: 409,
+      error:
+        `"${named.shortName}" would clash with the existing branch "${existing.branch.name}". ` +
+        'Choose a different name.',
+    }
+  }
   if (isCreatorsRecentBranch(existing.branch, req.user.userId)) {
     return {
       ok: true,
@@ -639,11 +653,7 @@ const existingBranchResponse = (
       data: { branch: toBranchListItem(ctx.services.config, existing.branch, req.user) },
     }
   }
-  return {
-    ok: false,
-    status: 409,
-    error: `A branch named "${shortNameOf(ctx.services.config, existing.branch.name)}" already exists`,
-  }
+  return { ok: false, status: 409, error: `A branch named "${named.shortName}" already exists` }
 }
 
 /** @internal Exported for tests. */

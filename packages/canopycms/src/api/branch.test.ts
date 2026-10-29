@@ -98,6 +98,7 @@ import { unsafeAsPermissionPath } from '../authorization/test-utils'
 import { createMockApiContext, createMockBranchContext, createMockRegistry } from '../test-utils'
 import * as authorization from '../authorization'
 import { unsafeAsBranchName } from '../paths/test-utils'
+import { BranchWorkspaceManager } from '../branch-workspace'
 import type { BranchRegistry } from '../branch-registry'
 import type { CanopyConfig } from '../config'
 import type { GitHubService } from '../github-service'
@@ -389,6 +390,52 @@ describe('branch api', () => {
     expect(res.ok).toBe(false)
     expect(res.status).toBe(409)
     expect(res.error).toBe('A branch named "feature-test" already exists')
+  })
+
+  it("refuses a create whose key another branch's workspace holds, naming that branch", async () => {
+    // A branch outside the namespace, stored under the name that is the new ref's key.
+    const registry = createMockRegistry([])
+    registry.getByKey.mockResolvedValue(
+      createMockBranchContext({
+        branchName: 'canopycms-local-feature-test',
+        createdBy: 'u1',
+        createdAt: new Date().toISOString(),
+      }),
+    )
+    const ctx = createMockApiContext({
+      branchContext: createMockBranchContext({ branchName: 'main', createdBy: 'system' }),
+      services: { registry: registry as unknown as BranchRegistry },
+    })
+
+    const res = await createBranch(ctx, asU1, { branch: unsafeAsBranchName('feature-test') })
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(409)
+    expect(res.error).toBe(
+      '"feature-test" would clash with the existing branch "canopycms-local-feature-test". ' +
+        'Choose a different name.',
+    )
+  })
+
+  it('refuses a provisioning that finds another branch under the key, naming that branch', async () => {
+    const holder = createMockBranchContext({
+      branchName: 'canopycms-local-feature-test',
+      createdBy: 'u1',
+      createdAt: new Date().toISOString(),
+    })
+    vi.mocked(BranchWorkspaceManager).mockImplementationOnce(function () {
+      return { provisionBranch: async () => ({ kind: 'exists', context: holder }) }
+    } as unknown as typeof BranchWorkspaceManager)
+    const ctx = createMockApiContext({
+      branchContext: createMockBranchContext({ branchName: 'main', createdBy: 'system' }),
+      services: { registry: createMockRegistry([]) as unknown as BranchRegistry },
+    })
+
+    const res = await createBranch(ctx, asU1, { branch: unsafeAsBranchName('feature-test') })
+    expect(res.status).toBe(409)
+    expect(res.error).toBe(
+      '"feature-test" would clash with the existing branch "canopycms-local-feature-test". ' +
+        'Choose a different name.',
+    )
   })
 
   describe('a create naming an existing branch that its own creator just made', () => {
