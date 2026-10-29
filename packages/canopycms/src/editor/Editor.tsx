@@ -531,7 +531,7 @@ const EditorContent: React.FC<EditorProps> = ({
     collections,
     resolvePreviewSrc: (entry) =>
       buildPreviewSrc(entry, {
-        branchName: branchNameState,
+        branchName: urlBranchName(branchNameState),
         previewBaseByCollection,
         previewPrefix,
         contentRoot,

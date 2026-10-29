@@ -279,6 +279,19 @@ describe('the editor on a namespace branch named by its short name', () => {
     expect(pushState).not.toHaveBeenCalled()
   })
 
+  it('frames the preview under the short name', async () => {
+    window.history.replaceState({}, '', `/?branch=${encodeURIComponent(SPRING)}`)
+    stubApi({ status: 'editing', userId: 'author-1' })
+    renderEditor(SPRING)
+    expect((await titleBox()).value).toBe('hello title')
+
+    await waitFor(() =>
+      expect(document.querySelector('iframe')?.getAttribute('src')).toBe(
+        '/posts/hello?branch=spring',
+      ),
+    )
+  })
+
   it('sends its requests under the short name, with no %2F in a path', async () => {
     window.history.replaceState({}, '', '/?branch=spring')
     const fetchMock = stubApi({ status: 'editing', userId: 'author-1' })
