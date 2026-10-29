@@ -435,7 +435,7 @@ describe('history across entries', () => {
     })
 
     await waitFor(() => expect(isOpen('world')).toBe(true))
-    await waitFor(() => expect(urlBranch()).toBe('canopycms/local/spring'))
+    await waitFor(() => expect(urlBranch()).toBe('spring'))
     expect(isOpen('world')).toBe(true)
     expect(notifications.show).not.toHaveBeenCalled()
   })

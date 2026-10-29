@@ -200,18 +200,33 @@ const autoConfirm = () =>
   })
 
 describe('the editor on a namespace branch named by its short name', () => {
-  it('takes the listed name into the URL, replacing the entry it opened on', async () => {
+  it('keeps the short name in the URL, writing nothing', async () => {
     window.history.replaceState({}, '', '/?branch=spring')
     const pushState = vi.spyOn(window.history, 'pushState')
+    const replaceState = vi.spyOn(window.history, 'replaceState')
     stubApi({ status: 'editing', userId: 'author-1' })
     renderEditor('spring')
 
-    await waitFor(() => expect(urlBranch()).toBe(SPRING))
+    expect((await titleBox()).value).toBe('hello title')
+    expect(urlBranch()).toBe('spring')
+    expect(pushState).not.toHaveBeenCalled()
+    expect(
+      replaceState.mock.calls.filter(([, , url]) => String(url).includes('canopycms')),
+    ).toEqual([])
+  })
+
+  it('rewrites a link carrying the full name to the short name, replacing the entry', async () => {
+    window.history.replaceState({}, '', `/?branch=${SPRING_SEGMENT}`)
+    const pushState = vi.spyOn(window.history, 'pushState')
+    stubApi({ status: 'editing', userId: 'author-1' })
+    renderEditor(SPRING)
+
+    await waitFor(() => expect(urlBranch()).toBe('spring'))
     expect((await titleBox()).value).toBe('hello title')
     expect(pushState).not.toHaveBeenCalled()
   })
 
-  it('keeps a draft made there for the branch reopened by its full name', async () => {
+  it('keeps a draft made on the short name for the branch reopened from the drawer', async () => {
     autoConfirm()
     window.history.replaceState({}, '', '/?branch=spring')
     stubApi({ status: 'editing', userId: 'author-1' })
@@ -231,7 +246,7 @@ describe('the editor on a namespace branch named by its short name', () => {
     await openBranchesDrawer()
     fireEvent.click(await screen.findByTestId(`switch-to-branch-button-${SPRING}`))
 
-    await waitFor(() => expect(urlBranch()).toBe(SPRING))
+    await waitFor(() => expect(urlBranch()).toBe('spring'))
     await waitFor(async () => expect((await titleBox()).value).toBe('Drafted on spring'))
   })
 

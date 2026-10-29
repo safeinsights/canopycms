@@ -90,6 +90,8 @@ export interface UseEntryManagerOptions {
    * sanitized forms.
    */
   sameBranch?: (a: string, b: string) => boolean
+  /** What `?branch=` carries for a branch (its short name); defaults to the name as given. */
+  urlBranchName?: (branch: string) => string
   /** Called when a Back or Forward has opened another entry. */
   onHistoryRestore?: () => void
   /**
@@ -348,6 +350,9 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   currentBranchRef.current = options.branchName
   const sameBranchRef = useRef(options.sameBranch ?? sameSanitizedName)
   sameBranchRef.current = options.sameBranch ?? sameSanitizedName
+  const urlBranchNameRef = useRef(options.urlBranchName)
+  urlBranchNameRef.current = options.urlBranchName
+  const urlBranchOf = (branch: string): string => urlBranchNameRef.current?.(branch) ?? branch
   // Read by the selection check, which runs only when the entries or the selection change.
   const resolvePreviewRouteRef = useRef(options.resolvePreviewRoute)
   resolvePreviewRouteRef.current = options.resolvePreviewRoute
@@ -990,7 +995,10 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     // Don't update URL until we've synced from it first
     if (!hasSyncedFromUrl.current) return
     if (window.location.pathname !== editorPathRef.current) return
-    writeEditorUrl(entryUrl(selectedPath, noEntryRequested.current, currentBranchRef.current), push)
+    writeEditorUrl(
+      entryUrl(selectedPath, noEntryRequested.current, urlBranchOf(currentBranchRef.current)),
+      push,
+    )
   }, [selectedPath])
 
   const entriesRef = useRef(entriesState)
@@ -1019,7 +1027,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
             const url = entryUrl(
               selectedPathRef.current,
               noEntryRequested.current,
-              currentBranchRef.current,
+              urlBranchOf(currentBranchRef.current),
             )
             writeEditorUrl(url, false)
           }

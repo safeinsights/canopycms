@@ -19,6 +19,7 @@ import { BRANCHES_KEY, fetchBranches, useBranchesData, type BranchesData } from 
 // which breaks adopters' production `next build` of the editor bundle.
 // paths/branch-name.ts is the dependency-free home of sanitizeBranchName.
 import { sanitizeBranchName } from '../../paths/branch-name'
+import { branchUrlName, resolveListedBranch } from '../branch-names'
 import { RetryToastMessage } from '../components/RetryToastMessage'
 import { isNonApiResponse } from '../../api/client'
 import { isGatewayFailure, isUnanswered, UnansweredError } from '../unanswered'
@@ -332,25 +333,6 @@ function mergePendingBranches(
 }
 
 /**
- * The listed branch `name` opens, in the order the server resolves a `?branch=`: the base or
- * active branch (`defaultBranch`) by its full name, then a namespace branch by its short name,
- * then any branch by its full name. Last, the sanitized form catches a deep link carrying a
- * name's raw, unsanitized form ("feature/x" for the persisted "feature-x"). A branch outside the
- * namespace lists its full name as its short name, so only a namespace branch matches the second.
- */
-export function resolveListedBranch<
-  B extends Pick<BranchListItem, 'name' | 'shortName' | 'isProtected'>,
->(branches: readonly B[], name: string, defaultBranch?: string): B | undefined {
-  const byName = branches.find((b) => b.name === name)
-  if (byName && (byName.isProtected || name === defaultBranch)) return byName
-  return (
-    branches.find((b) => b.shortName === name && b.name !== name) ??
-    byName ??
-    branches.find((b) => b.name === sanitizeBranchName(name))
-  )
-}
-
-/**
  * Applies one received listing to the pending branches: drops those it arrived
  * past the grace window for, and takes the listing's copy of the rest. Written
  * so a listing with no arrival time (NaN) drops nothing.
@@ -452,6 +434,10 @@ export interface UseBranchManagerReturn {
   branches: BranchListItem[]
   branchSummaries: BranchSummary[]
   currentBranch: BranchListItem | undefined
+  /** The full name of the listed branch `name` opens, else `name` sanitized. */
+  listedName: (name: string) => string
+  /** What `?branch=` carries for the branch `name` opens, else `name`. */
+  urlBranchName: (name: string) => string
   /** The listing failed and nothing earlier stands in for it. */
   branchesLoadFailed: boolean
   /** A listing has arrived, so a branch missing from it is not still loading. */
@@ -675,6 +661,13 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const listedName = (name: string): string =>
     resolveListedBranch(latest.current.branches, name, latest.current.branchesData?.defaultBranch)
       ?.name ?? sanitizeBranchName(name)
+
+  // The `?branch=` value for `name`: the listed branch's URL form, else `name` as given.
+  const urlBranchName = (name: string): string => {
+    const { branches: listed, branchesData: data } = latest.current
+    const found = resolveListedBranch(listed, name, data?.defaultBranch)
+    return found ? branchUrlName(listed, found, data?.defaultBranch) : name
+  }
 
   const pullRequestOf = (name: string): BranchPullRequest => {
     const b = latest.current.branches.find((x) => x.name === name)
@@ -1179,16 +1172,20 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
 
   // The editor's own page; a Back off it to a page of the host leaves that page's URL alone.
   const editorPathRef = useRef(typeof window === 'undefined' ? '' : window.location.pathname)
+  const shownBranch = currentBranch
+    ? branchUrlName(branches, currentBranch, branchesData?.defaultBranch)
+    : undefined
+  // Written once the listing resolves the branch, so a link's own form stays until then; a form
+  // other than the shown one (the full name, a raw name) is replaced, never pushed.
   useEffect(() => {
     if (typeof window === 'undefined') return
-    if (!branchName || window.location.pathname !== editorPathRef.current) return
+    if (!shownBranch || window.location.pathname !== editorPathRef.current) return
     const url = new URL(window.location.href)
-    const current = url.searchParams.get('branch')
-    if (current !== branchName) {
-      url.searchParams.set('branch', branchName)
+    if (url.searchParams.get('branch') !== shownBranch) {
+      url.searchParams.set('branch', shownBranch)
       writeEditorUrl(url.toString(), false)
     }
-  }, [branchName])
+  }, [shownBranch])
 
   return {
     branchName,
@@ -1196,6 +1193,8 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     branches,
     branchSummaries,
     currentBranch,
+    listedName,
+    urlBranchName,
     branchesLoadFailed: !!branchesError && !branchesData,
     branchesLoaded: !!branchesData,
     addCreatedBranch,

@@ -9,7 +9,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   branchActionOutcomeUnknown,
   CREATED_BRANCH_GRACE_MS,
-  resolveListedBranch,
   useBranchManager,
   UseBranchManagerOptions,
   withdrawPullRequestBullet,
@@ -584,37 +583,6 @@ describe('useBranchManager', () => {
       { branch: 'canopycms/local/spring' },
       expect.anything(),
     )
-  })
-
-  describe('resolveListedBranch', () => {
-    const listed = (name: string, shortName: string, isProtected = false) => ({
-      name,
-      shortName,
-      isProtected,
-    })
-    const outsideX = listed('x', 'x')
-    const namespaceX = listed('canopycms/prod/x', 'x')
-
-    it('opens the namespace branch a short name names before an outside branch of that name', () => {
-      expect(resolveListedBranch([outsideX, namespaceX], 'x')).toBe(namespaceX)
-      expect(resolveListedBranch([namespaceX, outsideX], 'x')).toBe(namespaceX)
-      expect(resolveListedBranch([outsideX, namespaceX], 'canopycms/prod/x')).toBe(namespaceX)
-    })
-
-    it('opens the base or active branch by its full name before any short name', () => {
-      const base = listed('main', 'main', true)
-      const active = listed('staging', 'staging')
-      const namespaceMain = listed('canopycms/prod/main', 'main')
-      const namespaceStaging = listed('canopycms/prod/staging', 'staging')
-      const branches = [namespaceMain, namespaceStaging, base, active]
-      expect(resolveListedBranch(branches, 'main', 'staging')).toBe(base)
-      expect(resolveListedBranch(branches, 'staging', 'staging')).toBe(active)
-    })
-
-    it('falls back to the sanitized form of a raw name', () => {
-      const sanitized = listed('feature-x', 'feature-x')
-      expect(resolveListedBranch([sanitized], 'feature/x')).toBe(sanitized)
-    })
   })
 
   it('leaves a deleted namespace branch opened by its short name', async () => {
@@ -1777,6 +1745,78 @@ describe('useBranchManager', () => {
     const calls = (window.history.replaceState as any).mock.calls
     const urlCall = calls.find((call: any) => call[2].includes('branch='))
     expect(urlCall).toBeTruthy()
+  })
+
+  describe('the branch in ?branch=', () => {
+    const spring: BranchListItem = {
+      ...mockBranches[1],
+      name: 'canopycms/local/spring',
+      shortName: 'spring',
+      status: 'editing',
+      isProtected: false,
+    }
+    const branchesOf = (...branches: BranchListItem[]) =>
+      mockClient.branches.list.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { branches: [mockBranches[0], ...branches], defaultBranch: 'main', users: [] },
+      })
+    const writtenBranches = () =>
+      vi
+        .mocked(window.history.replaceState)
+        .mock.calls.map(([, , url]) => new URL(String(url)).searchParams.get('branch'))
+
+    it('is the short name of the branch the state holds', async () => {
+      branchesOf(spring)
+      renderHook(() => useBranchManager({ ...defaultOptions, initialBranch: spring.name }), {
+        wrapper,
+      })
+
+      await waitFor(() => expect(writtenBranches()).toEqual(['spring']))
+    })
+
+    it('is left as the link wrote it until the listing resolves the branch', async () => {
+      mockClient.branches.list.mockReturnValue(new Promise(() => {}))
+      renderHook(() => useBranchManager({ ...defaultOptions, initialBranch: spring.name }), {
+        wrapper,
+      })
+
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(window.history.replaceState).not.toHaveBeenCalled()
+    })
+
+    it('is the full name when the short name would open another branch', async () => {
+      const shadowed: BranchListItem = {
+        ...spring,
+        name: 'canopycms/local/main',
+        shortName: 'main',
+      }
+      branchesOf(shadowed)
+      renderHook(() => useBranchManager({ ...defaultOptions, initialBranch: shadowed.name }), {
+        wrapper,
+      })
+
+      await waitFor(() => expect(writtenBranches()).toEqual(['canopycms/local/main']))
+    })
+
+    it('opens no branch for a raw name that a namespace branch shadows, and writes no URL', async () => {
+      const outside: BranchListItem = { ...spring, name: 'feature-y', shortName: 'feature-y' }
+      const namespaced: BranchListItem = {
+        ...spring,
+        name: 'canopycms/local/feature-y',
+        shortName: 'feature-y',
+      }
+      branchesOf(outside, namespaced)
+      const { result } = renderHook(
+        () => useBranchManager({ ...defaultOptions, initialBranch: 'feature/y' }),
+        { wrapper },
+      )
+
+      await waitFor(() => expect(result.current.branches).toHaveLength(3))
+      expect(result.current.currentBranch).toBeUndefined()
+      expect(result.current.branchName).toBe('feature/y')
+      expect(window.history.replaceState).not.toHaveBeenCalled()
+    })
   })
 
   it('leaves the URL alone once the page shown is not the editor', async () => {

@@ -18,6 +18,8 @@ export interface UseBranchActionsOptions {
   /** Receives the branch the server just created, so it can be shown before any listing includes it. */
   onBranchCreated: (branch: BranchListItem) => void
   onBranchSwitch?: (branch: string) => void
+  /** What `?branch=` carries for a branch (its short name); defaults to the name as given. */
+  urlBranchName?: (branch: string) => string
   /** The current user; a create the server never answered adopts only a listed branch they made. */
   userId?: string
 }
@@ -55,13 +57,13 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
   const apiClient = useApiClient()
   const [confirmOpen, setConfirmOpen] = useState(false)
 
-  const performBranchSwitch = (next: string) => {
+  const performBranchSwitch = (next: string, urlName?: string) => {
     options.setBranchName(next)
 
     // Its own history entry; a Back onto another branch already shows this URL, so writes nothing.
     if (typeof window !== 'undefined') {
       const url = new URL(window.location.href)
-      url.searchParams.set('branch', next)
+      url.searchParams.set('branch', urlName ?? options.urlBranchName?.(next) ?? next)
       writeEditorUrl(url.toString(), true)
     }
     options.onBranchSwitch?.(next)
@@ -138,7 +140,8 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
       const createdName = created?.name ?? (typed.ok ? typed.shortName : branch.name)
       notifications.show({ message: `Branch "${createdName}" created`, color: 'green' })
 
-      performBranchSwitch(createdName)
+      // A listing may not hold it yet, so its own short name stands in for the lookup.
+      performBranchSwitch(createdName, created?.shortName)
 
       // Not awaited: a listing can lag the create, and the switch must not wait
       // on it. loadBranches reports its own failures and never rejects.
