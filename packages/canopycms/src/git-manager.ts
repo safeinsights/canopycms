@@ -1350,12 +1350,13 @@ export class GitManager {
         allowNetworkRemoteInProd: options.allowNetworkRemoteInProd,
       })
 
-      // A content clone skips its own checkout because checkoutFreshClone runs
-      // the one checkout this workspace needs.
+      // No clone checks out: the checkout step below is the one checkout each
+      // workspace needs (checkoutFreshClone for content; createOrphanSettingsBranch
+      // for settings, which writes only the settings files, never the base tree).
       await step('clone', () =>
         GitManager.cloneWorkspace(remoteUrl, options.workspacePath, baseBranch, {
           remoteName,
-          noCheckout: options.branchType === 'content',
+          noCheckout: true,
           config: identity,
         }),
       )
@@ -2139,7 +2140,7 @@ export class GitManager {
     try {
       await this.createOrphanSettingsBranchInner(branchName, initialFiles)
     } finally {
-      // Both branches of Inner swap the working tree (checkout / checkout --orphan)
+      // Both branches of Inner swap the working tree (checkout / switch --orphan)
       await this.invalidateContentIndexes()
     }
   }
@@ -2187,9 +2188,12 @@ export class GitManager {
     // branchName is consumed as --orphan's literal argument value (like -b/-B
     // above), so it can't be reinterpreted as a flag; git's own ref-name
     // validation additionally rejects a leading-hyphen value here.
-    await this.git.raw(['checkout', '--orphan', branchName])
+    // `switch`, not `checkout`: `checkout --orphan` keeps HEAD's tree, and on a `--no-checkout`
+    // clone (no index) writes every base file into the working tree; `switch --orphan` starts
+    // from the empty tree either way.
+    await this.git.raw(['switch', '--orphan', branchName])
 
-    // The orphan starts from the base branch's index. `--sparse` also removes entries outside a
+    // A backstop for an index `switch` left behind. `--sparse` also removes entries outside a
     // sparse cone, which a plain `rm` leaves in the index, and so in the first commit.
     await this.git.raw(['rm', '-r', '-f', '-q', '--sparse', '--ignore-unmatch', '--', '.'])
     const leftover = (await this.git.raw(['ls-files'])).trim()

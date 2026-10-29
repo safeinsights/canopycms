@@ -23,7 +23,12 @@ import {
   type MirrorSession,
   type ReceivedBundle,
 } from './github-mirror'
-import { BranchPolicy, GatewayRefusalError, assertPullRequestText } from './branch-policy'
+import {
+  BranchPolicy,
+  GatewayRefusalError,
+  assertPullRequestText,
+  type BranchPolicyDescription,
+} from './branch-policy'
 import {
   gatewayLog,
   gatewayLogError,
@@ -145,7 +150,7 @@ export function describeMove(update: Extract<GitHubRefUpdate, { moved: true }>):
 /** The fields of a pull request the worker reads. */
 export type GitHubPullRequest = Pick<
   RestEndpointMethodTypes['pulls']['get']['response']['data'],
-  'merged' | 'merged_at' | 'state' | 'node_id'
+  'merged' | 'merged_at' | 'state' | 'node_id' | 'body'
 >
 
 export type GitHubCreateOrUpdatePullRequest = Omit<
@@ -269,8 +274,8 @@ export interface GitHubGatewayHealth {
   preflight: 'not-an-app' | 'verified' | 'unverified' | 'pending'
   /** Whether the gateway holds a Clerk secret key. */
   clerkConfigured: boolean
-  /** The protected set (worker/branch-policy.ts): configured names and globs, and GitHub's default as last read. */
-  protectedBranches: { configured: string[]; githubDefault: string | null }
+  /** The branch policy as it stands (`BranchPolicy.describe`). */
+  branchPolicy: BranchPolicyDescription
 }
 
 /** `GatewayInstanceOptions` carries the termination watch and the lifecycle completion. */
@@ -300,6 +305,10 @@ export interface LocalGitHubGatewayOptions extends GatewayInstanceOptions {
   baseBranch?: string
   /** Further branches it protects alike: names and `*` globs (worker/branch-policy.ts). */
   protectedBranches?: readonly string[]
+  /** This deployment's settings branch, the only settings branch the gateway pushes. */
+  settingsBranch?: string
+  /** Branches outside the namespace it may still write: exact names (worker/branch-policy.ts). */
+  legacyBranches?: readonly string[]
   /**
    * Fetches the auth provider's snapshot with the provider's key; its presence is
    * `health().clerkConfigured`. Without it, `authSnapshot()` throws.
@@ -373,6 +382,8 @@ class LocalGitHubGateway implements GitHubGateway {
     this.policy = new BranchPolicy({
       baseBranch: options.baseBranch,
       protectedBranches: options.protectedBranches,
+      settingsBranch: options.settingsBranch,
+      legacyBranches: options.legacyBranches,
     })
   }
 
@@ -659,7 +670,7 @@ class LocalGitHubGateway implements GitHubGateway {
       fatalError,
       preflight: this.preflight,
       clerkConfigured: this.options.authSnapshot !== undefined,
-      protectedBranches: this.policy.describe(),
+      branchPolicy: this.policy.describe(),
     }
   }
 
@@ -1017,7 +1028,9 @@ class LocalGitHubGateway implements GitHubGateway {
     signal?: AbortSignal,
   ): Promise<void> {
     return this.credentialed(signal, async (reach) => {
-      assertPullRequestText(`Refusing to update pull request #${number}`, `#${number}`, update)
+      const refusing = `Refusing to ${update.state === 'closed' ? 'close' : 'update'} pull request #${number}`
+      assertPullRequestText(refusing, `#${number}`, update)
+      await this.assertOwnPullRequest(reach, number, refusing, signal)
       await this.api(reach, () =>
         this.octokit.pulls.update({
           ...this.repo,
@@ -1044,6 +1057,39 @@ class LocalGitHubGateway implements GitHubGateway {
     return data
   }
 
+  /**
+   * Read pull request `number` and refuse it unless its head is a branch of this repository that
+   * a pull request may come from (`BranchPolicy.assertPullRequestHeadAllowed`). The number comes
+   * from the worker; the head is GitHub's record, which the worker cannot choose.
+   */
+  private async assertOwnPullRequest(
+    reach: GitHubReach,
+    number: number,
+    refusing: string,
+    signal?: AbortSignal,
+  ): Promise<GitHubPullRequest> {
+    const { data } = await this.api(reach, () =>
+      this.octokit.pulls.get({ ...this.repo, pull_number: number, request: { signal } }),
+    )
+    const head = data.head.ref
+    // By id, not name: the configured name keeps working after a rename or transfer, and the base
+    // repository is the one asked. A deleted fork has no repo.
+    if (data.head.repo?.id !== data.base.repo.id) {
+      throw new GatewayRefusalError(
+        'pull-request',
+        head,
+        'outside-namespace',
+        `${refusing}: its head is not a branch of this repository`,
+      )
+    }
+    await this.policy.assertPullRequestHeadAllowed(
+      `${refusing}, whose head is ${JSON.stringify(head)}`,
+      head,
+      () => this.readDefaultBranch(reach, signal),
+    )
+    return data
+  }
+
   createOrUpdatePullRequest(
     request: GitHubCreateOrUpdatePullRequest,
     signal?: AbortSignal,
@@ -1065,7 +1111,12 @@ class LocalGitHubGateway implements GitHubGateway {
   convertPullRequestToDraft(number: number, signal?: AbortSignal): Promise<void> {
     return this.credentialed(signal, async (reach) => {
       // The REST API cannot convert a PR to a draft; GraphQL can.
-      const pr = await this.pullRequest(reach, number, signal)
+      const pr = await this.assertOwnPullRequest(
+        reach,
+        number,
+        `Refusing to convert pull request #${number} to a draft`,
+        signal,
+      )
       await this.api(reach, () =>
         this.octokit.graphql(
           `mutation($id: ID!) { convertPullRequestToDraft(input: { pullRequestId: $id }) { pullRequest { isDraft } } }`,

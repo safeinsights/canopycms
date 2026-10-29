@@ -26,9 +26,9 @@ export function sanitizeBranchName(branchName: string): SanitizedBranchName {
  * Exported from this dependency-free module -- not rebuilt ad hoc at each call
  * site -- so every consumer of the namespace agrees on the exact string:
  * worker/git-sync.ts's `pushSettingsBranches` never pushes a
- * `canopycms-settings-*` branch this deployment doesn't own, and api/branch.ts's
- * `createBranchHandler` rejects a user-requested branch whose SANITIZED name
- * falls in this namespace.
+ * `canopycms-settings-*` branch this deployment doesn't own, and
+ * paths/validation.ts's `parseCreatedBranchName` refuses a typed branch name
+ * whose created name falls in this namespace.
  *
  * The WHOLE prefix is reserved, not just this deployment's own settings branch:
  * two deployments can share one GitHub repo, and a content branch landing on
@@ -37,6 +37,16 @@ export function sanitizeBranchName(branchName: string): SanitizedBranchName {
  * branch.
  */
 export const RESERVED_SETTINGS_BRANCH_PREFIX = 'canopycms-settings-'
+
+/** The namespace the GitHub gateway writes, and why it is fixed: worker/branch-policy.ts. */
+export const CMS_BRANCH_PREFIX = 'canopycms-'
+
+/** The branch a typed name creates, which the editor previews: sanitized, in the namespace. */
+export function cmsBranchName(typed: string): SanitizedBranchName {
+  const sanitized = sanitizeBranchName(typed)
+  if (sanitized.startsWith(CMS_BRANCH_PREFIX)) return sanitized
+  return sanitizeBranchName(`${CMS_BRANCH_PREFIX}${sanitized}`)
+}
 
 /**
  * Whether `branchName` is a settings branch, never a content branch: the reserved prefix, or the
@@ -49,28 +59,3 @@ export function isSettingsBranchName(branchName: string, settingsBranchName?: st
     (settingsBranchName !== undefined && sanitized === sanitizeBranchName(settingsBranchName))
   )
 }
-
-/**
- * Branch names that collide with a static top-level API route namespace.
- *
- * http/router.ts's `compareSpecificity` ranks a literal pattern segment above a
- * `:param`, so a branch named e.g. `admin` has its `/:branch/...` routes
- * shadowed by the static `/admin/...` ones -- and only partially, which is what
- * makes it confusing: bare `GET /admin` still reaches the branch handler, so the
- * branch looks half-alive while every nested route 404s or 403s.
- *
- * Listed rather than derived at runtime because api/validators.ts is imported
- * *by* the route modules, so importing the router here would cycle.
- * http/router.test.ts derives the same set from the live route table and asserts
- * it equals this constant, so a new top-level namespace fails that test until
- * this list is updated.
- */
-export const RESERVED_ROUTE_BRANCH_NAMES: readonly string[] = [
-  'admin',
-  'assets',
-  'branches',
-  'groups',
-  'permissions',
-  'users',
-  'whoami',
-]

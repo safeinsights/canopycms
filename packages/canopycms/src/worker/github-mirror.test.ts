@@ -126,14 +126,14 @@ afterEach(async () => {
 
 describe('GitHubMirror', () => {
   it("publishes exactly the commit it was asked for, though remote.git's branch has moved past it", async () => {
-    const published = await commitAndPush(remoteGitPath, 'refs/heads/feature', 'one.txt')
-    await commitAndPush(remoteGitPath, 'refs/heads/feature', 'two.txt')
+    const published = await commitAndPush(remoteGitPath, 'refs/heads/canopycms-feature', 'one.txt')
+    await commitAndPush(remoteGitPath, 'refs/heads/canopycms-feature', 'two.txt')
     const github = gateway()
-    // A bundle whose one head is `published` at refs/heads/feature, as the worker builds it.
+    // A bundle whose one head is `published` at refs/heads/canopycms-feature, as the worker builds it.
     const bundleRepo = path.join(root, 'bundle-source.git')
     await git('clone', '-q', '--bare', remoteGitPath, bundleRepo)
-    await git('--git-dir', bundleRepo, 'update-ref', 'refs/heads/feature', published)
-    const bundle = path.join(root, 'feature.bundle')
+    await git('--git-dir', bundleRepo, 'update-ref', 'refs/heads/canopycms-feature', published)
+    const bundle = path.join(root, 'canopycms-feature.bundle')
     await git(
       '--git-dir',
       bundleRepo,
@@ -141,25 +141,25 @@ describe('GitHubMirror', () => {
       'create',
       '-q',
       bundle,
-      'refs/heads/feature',
+      'refs/heads/canopycms-feature',
       '^main',
     )
 
     const answer = await github.push(
-      { branch: 'feature', sha: published, prerequisites: [] },
+      { branch: 'canopycms-feature', sha: published, prerequisites: [] },
       (await fs.open(bundle)).createReadStream(),
     )
 
     expect(answer).toMatchObject({ kind: 'pushed', moved: true, to: published })
-    expect(await tip(githubPath, 'refs/heads/feature')).toBe(published)
+    expect(await tip(githubPath, 'refs/heads/canopycms-feature')).toBe(published)
     expect(await refs(path.join(stateDirectory, 'github.git'))).not.toContain(
-      'refs/canopy/outgoing/feature',
+      'refs/canopy/outgoing/canopycms-feature',
     )
   })
 
   it('holds a lease: a push keyed to a commit GitHub is not at is refused as stale', async () => {
-    const first = await commitAndPush(githubPath, 'refs/heads/feature', 'one.txt')
-    const next = await commitAndPush(remoteGitPath, 'refs/heads/feature', 'two.txt')
+    const first = await commitAndPush(githubPath, 'refs/heads/canopycms-feature', 'one.txt')
+    const next = await commitAndPush(remoteGitPath, 'refs/heads/canopycms-feature', 'two.txt')
     const notGitHubsTip = (await seed.revparse(['HEAD~2'])).trim()
     expect(notGitHubsTip).not.toBe(first)
     // So the mirror holds `next`, which this test pushes directly, without the gateway's retry.
@@ -168,26 +168,26 @@ describe('GitHubMirror', () => {
 
     await expect(
       mirror.exclusive((m) =>
-        m.pushToGitHub(fixtureCredential(githubPath), 'feature', next, {
+        m.pushToGitHub(fixtureCredential(githubPath), 'canopycms-feature', next, {
           lease: notGitHubsTip,
           policy: new BranchPolicy(),
         }),
       ),
     ).rejects.toThrow(/stale info/)
-    expect(await tip(githubPath, 'refs/heads/feature')).toBe(first)
+    expect(await tip(githubPath, 'refs/heads/canopycms-feature')).toBe(first)
   })
 
   it('never reads the redirects, helper or hooks planted in remote.git', async () => {
-    const published = await commitAndPush(remoteGitPath, 'refs/heads/feature', 'one.txt')
+    const published = await commitAndPush(remoteGitPath, 'refs/heads/canopycms-feature', 'one.txt')
     const upstream = await commitAndPush(githubPath, 'refs/heads/main', 'upstream.txt')
     // After this test's own pushes into remote.git, which would run the hooks.
     await plantHostileRemoteGit()
     const github = gateway()
 
     await fetchGitHubIntoRemoteGit(transfer(github))
-    await pushVia(github, 'feature')
+    await pushVia(github, 'canopycms-feature')
 
-    expect(await tip(githubPath, 'refs/heads/feature')).toBe(published)
+    expect(await tip(githubPath, 'refs/heads/canopycms-feature')).toBe(published)
     expect(await tip(remoteGitPath, 'refs/remotes/github/main')).toBe(upstream)
     expect(await refs(attackerPath)).toEqual([])
     expect(await sentinelLines()).toEqual([])
@@ -345,30 +345,30 @@ describe('GitHubMirror', () => {
     const leftover = path.join(stateDirectory, 'incoming', 'push-AbC123')
     await fs.mkdir(leftover, { recursive: true })
     await git('init', '-q', '--bare', path.join(leftover, 'repo.git'))
-    const a = await commitAndPush(remoteGitPath, 'refs/heads/a', 'a.txt')
+    const a = await commitAndPush(remoteGitPath, 'refs/heads/canopycms-a', 'a.txt')
     await git(
       '--git-dir',
       path.join(leftover, 'repo.git'),
       'fetch',
       '-q',
       remoteGitPath,
-      `${a}:refs/canopy/outgoing/a`,
+      `${a}:refs/canopy/outgoing/canopycms-a`,
     )
-    await git('--git-dir', remoteGitPath, 'update-ref', '-d', 'refs/heads/a')
-    const published = await commitAndPush(remoteGitPath, 'refs/heads/a/b', 'b.txt')
+    await git('--git-dir', remoteGitPath, 'update-ref', '-d', 'refs/heads/canopycms-a')
+    const published = await commitAndPush(remoteGitPath, 'refs/heads/canopycms-a/b', 'b.txt')
 
     // A new gateway, as after a restart.
-    await pushVia(gateway(), 'a/b')
+    await pushVia(gateway(), 'canopycms-a/b')
 
-    expect(await tip(githubPath, 'refs/heads/a/b')).toBe(published)
+    expect(await tip(githubPath, 'refs/heads/canopycms-a/b')).toBe(published)
     expect(await fs.readdir(path.join(stateDirectory, 'incoming'))).toEqual([])
   })
 
   it('refuses a lease that is not an object ID', async () => {
-    const published = await commitAndPush(remoteGitPath, 'refs/heads/feature', 'one.txt')
+    const published = await commitAndPush(remoteGitPath, 'refs/heads/canopycms-feature', 'one.txt')
     await expect(
       mirror.exclusive((m) =>
-        m.pushToGitHub(fixtureCredential(githubPath), 'feature', published, {
+        m.pushToGitHub(fixtureCredential(githubPath), 'canopycms-feature', published, {
           lease: 'refs/heads/main',
           policy: new BranchPolicy(),
         }),
@@ -400,7 +400,7 @@ describe('GitHubMirror', () => {
   it('refuses a commit argument that is not an object ID', async () => {
     await expect(
       mirror.exclusive((m) =>
-        m.pushToGitHub(fixtureCredential(githubPath), 'feature', 'main:refs/heads/x', {
+        m.pushToGitHub(fixtureCredential(githubPath), 'canopycms-feature', 'main:refs/heads/x', {
           policy: new BranchPolicy(),
         }),
       ),

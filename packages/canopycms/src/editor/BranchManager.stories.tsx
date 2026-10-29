@@ -205,6 +205,7 @@ const logged = {
   onSubmit: (name: string) => console.log(`Submit ${name}`),
   onWithdraw: (name: string) => console.log(`Withdraw ${name}`),
   onDelete: (name: string) => console.log(`Delete ${name}`),
+  onApprove: (name: string) => console.log(`Approve ${name}`),
   onRequestChanges: (name: string) => console.log(`Request changes on ${name}`),
 }
 
@@ -241,7 +242,7 @@ export const CurrentBranchBlocked: Story = {
   },
 }
 
-/** A reviewer with someone else's submission open: Request changes leads, and Withdraw from review sits in the menu. */
+/** A reviewer with someone else's submission open: Approve leads with Request changes beside it, and Withdraw from review sits in the menu. */
 export const ReviewerOnSubmittedBranch: Story = {
   args: {
     ...logged,
@@ -249,4 +250,74 @@ export const ReviewerOnSubmittedBranch: Story = {
     currentBranchName: 'feature/docs',
     user: { userId: 'rita', groups: [RESERVED_GROUPS.REVIEWERS] },
   },
+}
+
+/** The same reviewer with another branch open: someone else's submission offers Review, and its menu holds Approve and Request changes. */
+export const ReviewerOnAnotherSubmittedBranch: Story = {
+  args: {
+    ...logged,
+    branches: reviewBranches,
+    currentBranchName: 'feature/landing',
+    user: { userId: 'rita', groups: [RESERVED_GROUPS.REVIEWERS] },
+  },
+}
+
+/** An approved branch open for its reviewer: only Request changes is left to offer, with Withdraw in the menu. */
+export const ReviewerOnApprovedBranch: Story = {
+  args: {
+    ...logged,
+    branches: reviewBranches.map((b) =>
+      b.name === 'feature/docs' ? { ...b, status: 'approved' } : b,
+    ),
+    currentBranchName: 'feature/docs',
+    user: { userId: 'rita', groups: [RESERVED_GROUPS.REVIEWERS] },
+  },
+}
+
+/** The pull request was closed on GitHub: Withdraw leads, and Approve and Request changes wait in the menu, blocked, with the reason once. */
+export const ReviewerOnClosedPullRequest: Story = {
+  args: {
+    ...logged,
+    branches: reviewBranches.map((b) => (b.name === 'fix/footer' ? { ...b, createdBy: 'bob' } : b)),
+    currentBranchName: 'fix/footer',
+    user: { userId: 'rita', groups: [RESERVED_GROUPS.REVIEWERS] },
+  },
+}
+
+/** An admin who made the submission is its author: Withdraw leads, and the menu offers no Approve or Request changes. */
+export const CreatorAdminOnSubmittedBranch: Story = {
+  args: {
+    ...logged,
+    branches: reviewBranches.map((b) =>
+      b.name === 'feature/docs' ? { ...b, createdBy: 'ada', access: { users: ['ada'] } } : b,
+    ),
+    currentBranchName: 'feature/docs',
+    user: { userId: 'ada', groups: [RESERVED_GROUPS.ADMINS] },
+  },
+}
+
+/** Type `text` into the branch-name field as a user would, so React sees the change. */
+async function typeBranchName(text: string): Promise<void> {
+  const input = document.querySelector<HTMLInputElement>('[data-testid="branch-name-input"]')
+  if (!input) return
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, text)
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+}
+
+/** The New branch form, empty: the field says the canopycms- prefix is added. */
+export const NewBranchForm: Story = {
+  args: { ...Default.args, startCreating: true },
+}
+
+/** A long name: the preview wraps below the field, which stays where it is. */
+export const NewBranchFormLongName: Story = {
+  args: NewBranchForm.args,
+  play: () => typeBranchName('Spring homepage refresh for the 2027 launch'),
+}
+
+/** A name that would be a settings branch: the field says why, and Create branch is off. */
+export const NewBranchFormRefusedName: Story = {
+  args: NewBranchForm.args,
+  play: () => typeBranchName('settings-prod'),
 }

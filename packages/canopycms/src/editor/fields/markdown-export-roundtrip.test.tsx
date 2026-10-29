@@ -152,6 +152,51 @@ it('writes an edited block in a Prettier-clean style', async () => {
   expect(await format(saved, { parser: 'markdown' })).toBe(saved)
 }, 30000)
 
+it('writes text typed in "Edit source" in the export style, as a one-line diff', async () => {
+  function Harness({ onChange }: { onChange: (value: string) => void }) {
+    const [value, setValue] = React.useState(BODY)
+    return (
+      <MarkdownField
+        label="Body"
+        value={value}
+        onChange={(next) => {
+          setValue(next)
+          onChange(next)
+        }}
+      />
+    )
+  }
+  const Wrapper = createApiClientWrapper(await setupMockApiClient())
+  const onChange = vi.fn()
+  render(
+    <CanopyCMSProvider>
+      <Wrapper>
+        <Harness onChange={onChange} />
+      </Wrapper>
+    </CanopyCMSProvider>,
+  )
+  const user = userEvent.setup()
+  await user.click(await screen.findByTestId('markdown-mode-toggle'))
+  const source = await screen.findByTestId('markdown-source-editor')
+  const end = BODY.indexOf('Final paragraph.') + 'Final paragraph.'.length
+  await user.type(source, ' Now *typed* as a\\_b.', {
+    initialSelectionStart: end,
+    initialSelectionEnd: end,
+  })
+
+  const sent: unknown = onChange.mock.calls.at(-1)?.[0]
+  if (typeof sent !== 'string') throw new Error('edit not emitted')
+  expect(sent).toContain('Final paragraph. Now *typed* as a\\_b.')
+  const saved = serializeFrontmatter(sent, { title: 'Hello' }, FILE, 'md')
+  const before = FILE.split('\n')
+  const after = saved.split('\n')
+  expect(after).toHaveLength(before.length)
+  expect(after.filter((line, i) => line !== before[i])).toEqual([
+    'Final paragraph. Now _typed_ as a_b.',
+  ])
+  expect(await format(saved, { parser: 'markdown' })).toBe(saved)
+}, 30000)
+
 it('saves a one-line edit to a body that opens as source as a one-line diff', async () => {
   const file = fs.readFileSync(
     path.join(__dirname, '__fixtures__/markdown-corpus/list-item-paragraphs.md'),

@@ -6,7 +6,7 @@ import { Alert, Box, Button, Text, Textarea, useComputedColorScheme } from '@man
 
 import type { EditorSubscription, MDXEditorMethods } from '@mdxeditor/editor'
 import { InsertEntryLink } from './entry-link'
-import { MARKDOWN_EXPORT_OPTIONS } from './markdown-export-options'
+import { MARKDOWN_EXPORT_OPTIONS } from '../../utils/markdown-export-options'
 import { createMarkdownFidelityPlugin } from './markdown-fidelity-visitors'
 import { MdxImageDialog } from './MdxImageDialog'
 import { createMdxJsxPlugins } from './mdx-jsx-support'

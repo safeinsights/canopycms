@@ -8,6 +8,7 @@ import {
   isValidContentId,
   parseContentId,
   parseBranchName,
+  parseCreatedBranchName,
   parseSlug,
 } from './validation'
 
@@ -497,5 +498,33 @@ describe('path validation utilities', () => {
         expect(result.error).toContain('too long')
       }
     })
+  })
+})
+
+describe('parseCreatedBranchName', () => {
+  it.each([
+    ['spring', 'canopycms-spring'],
+    ['feature/x', 'canopycms-feature-x'],
+    ['canopycms-spring', 'canopycms-spring'],
+    ['a'.repeat(240), `canopycms-${'a'.repeat(240)}`],
+  ])('creates %s as %s', (typed, created) => {
+    expect(parseCreatedBranchName(typed)).toEqual({ ok: true, name: created })
+  })
+
+  it.each([
+    ['a typed name git refuses', 'a..b', /cannot contain "\.\."/],
+    ['a name the prefix makes too long', 'a'.repeat(245), /in front it is over 250 characters/],
+    ['a settings name', 'settings-prod', /is reserved for CanopyCMS settings/],
+    [
+      'a settings name typed in full',
+      'canopycms-settings-prod',
+      /is reserved for CanopyCMS settings/,
+    ],
+    ['a name with no letter or digit', '日本', /at least one letter or digit/],
+    ['punctuation only', '%%', /at least one letter or digit/],
+  ])('refuses %s', (_label, typed, why) => {
+    const result = parseCreatedBranchName(typed)
+    expect(result.ok).toBe(false)
+    expect(result.ok ? '' : result.error).toMatch(why)
   })
 })

@@ -9,6 +9,8 @@ export const EDITOR_ACTIONS = {
   refreshFromServer: 'Refresh from server',
   submitForReview: 'Submit for review',
   withdrawFromReview: 'Withdraw from review',
+  approve: 'Approve',
+  review: 'Review',
   requestChanges: 'Request changes',
   switchBranch: 'Switch branch',
   newBranch: 'New branch',
@@ -27,3 +29,7 @@ export const EDITOR_ACTIONS = {
  */
 export const listFullReason = (maxItems: number, one = 'item', many = 'items'): string =>
   `This list holds at most ${maxItems} ${maxItems === 1 ? one : many}. Remove one to add another.`
+
+/** Why Approve and Request changes can't act: the pull request they act on is gone. */
+export const CLOSED_PULL_REQUEST_REASON =
+  'The pull request was closed on GitHub. Use "Withdraw from review", then submit it again to open a new one.'

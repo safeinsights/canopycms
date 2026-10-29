@@ -3,6 +3,7 @@ import type { Meta, StoryObj } from '@storybook/react'
 
 import { EditorHeader, type EditorHeaderProps } from './EditorHeader'
 import { EntryHeader, type EntryHeaderProps } from './EntryHeader'
+import { RESERVED_GROUPS } from '../../authorization/helpers'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../../paths/test-utils'
 
 const noop = () => {}
@@ -55,6 +56,8 @@ const meta: Meta<typeof Headers> = {
     saveAllProgress: null,
     onSubmit: noop,
     onWithdraw: noop,
+    onApprove: noop,
+    onRequestChanges: noop,
     hasUnsavedChanges: true,
     branchStatus: 'editing',
     userContext: { userId: 'user-1' },
@@ -340,4 +343,50 @@ export const NarrowArchived: Story = {
   parameters: phone,
   args: { ...Archived.args },
   play: openMenu('branch-actions-button'),
+}
+
+const reviewing = {
+  branchStatus: 'submitted',
+  branchWriteBlocked: true,
+  hasUnsavedChanges: false,
+  modifiedCount: 0,
+  userContext: { userId: 'rita', groups: [RESERVED_GROUPS.REVIEWERS] },
+  branchCreatedBy: 'someone-else',
+  branchAccess: { allowedUsers: ['someone-else'] },
+} as const satisfies Partial<HeadersProps>
+
+/** A reviewer of someone else's submission: Approve and Request changes take the place of Withdraw. */
+export const ReviewerOnSubmitted: Story = { args: reviewing }
+
+/** Approved, for its reviewer: only Request changes is left. */
+export const ReviewerOnApproved: Story = {
+  args: { ...reviewing, branchStatus: 'approved' },
+}
+
+/** The pull request was closed on GitHub: nothing to approve, so the reviewer's way forward is Withdraw. */
+export const ReviewerOnClosedPullRequest: Story = {
+  args: { ...reviewing, branchPullRequestState: 'closed' },
+}
+
+/** An admin who made the submission is its author: Withdraw, as ever. */
+export const CreatorAdminInReview: Story = {
+  args: {
+    ...reviewing,
+    userContext: { userId: 'ada', groups: [RESERVED_GROUPS.ADMINS] },
+    branchCreatedBy: 'ada',
+    branchAccess: { allowedUsers: ['ada'] },
+  },
+}
+
+/** A reviewer below `md`: Approve stays, with Request changes under its caret. */
+export const NarrowReviewerOnSubmitted: Story = {
+  parameters: phone,
+  args: reviewing,
+  play: openMenu('branch-actions-button'),
+}
+
+/** Approved, below `md`: Request changes alone. */
+export const NarrowReviewerOnApproved: Story = {
+  parameters: phone,
+  args: { ...reviewing, branchStatus: 'approved' },
 }

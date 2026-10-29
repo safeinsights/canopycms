@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { GatewayRefusalError, MAX_PROTECTED_BRANCHES } from './branch-policy'
+import { GatewayRefusalError, MAX_LEGACY_BRANCHES, MAX_PROTECTED_BRANCHES } from './branch-policy'
 import { GitHubPushError, MAX_FETCH_HAVE } from './github-gateway'
 import { GitHubTransientError, RefusedPushError } from './github-mirror'
 import { gatewayLogWarn, redactEgress } from './gateway-egress'
@@ -106,10 +106,13 @@ export const answers = {
       fatalError: message.nullable(),
       preflight: z.enum(['not-an-app', 'verified', 'unverified', 'pending']),
       clerkConfigured: z.boolean(),
-      protectedBranches: z
+      branchPolicy: z
         .object({
           configured: z.array(name).max(MAX_PROTECTED_BRANCHES + 1),
           githubDefault: name.nullable(),
+          namespace: name,
+          legacy: z.array(name).max(MAX_LEGACY_BRANCHES),
+          settingsBranch: name.nullable(),
         })
         .strict(),
     })
@@ -124,6 +127,7 @@ export const answers = {
       merged_at: z.string().max(64).nullable(),
       state: z.enum(['open', 'closed']),
       node_id: z.string().max(256),
+      body: pullRequestText.body.nullable(),
     })
     .strict(),
   createOrUpdatePullRequest: pullRequestRef.extend({ created: z.boolean() }).strict(),
@@ -261,7 +265,15 @@ const errorEnvelope = z.discriminatedUnion('kind', [
       push: z.boolean(),
       operation: z.enum(['push', 'delete', 'pull-request']),
       branch: name,
-      reason: z.enum(['invalid', 'protected', 'settings', 'not-a-commit', 'too-long']),
+      reason: z.enum([
+        'invalid',
+        'protected',
+        'settings',
+        'other-settings',
+        'outside-namespace',
+        'not-a-commit',
+        'too-long',
+      ]),
       message,
     })
     .strict(),

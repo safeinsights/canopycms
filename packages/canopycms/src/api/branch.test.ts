@@ -57,21 +57,23 @@ vi.mock('../task-queue/cms-task-queue', () => ({
 vi.mock('../branch-workspace', () => ({
   BranchWorkspaceManager: vi.fn().mockImplementation(function () {
     return {
-      provisionBranch: vi.fn().mockResolvedValue({
-        kind: 'created',
-        context: {
-          baseRoot: '/tmp/base',
-          branchRoot: '/tmp/base/feature-test',
-          branch: {
-            name: 'feature/test',
-            status: 'editing',
-            access: {},
-            createdBy: 'user-1',
-            createdAt: 'now',
-            updatedAt: 'now',
+      provisionBranch: vi
+        .fn()
+        .mockImplementation(async ({ branchName }: { branchName: string }) => ({
+          kind: 'created',
+          context: {
+            baseRoot: '/tmp/base',
+            branchRoot: `/tmp/base/${branchName}`,
+            branch: {
+              name: branchName,
+              status: 'editing',
+              access: {},
+              createdBy: 'user-1',
+              createdAt: 'now',
+              updatedAt: 'now',
+            },
           },
-        },
-      }),
+        })),
     }
   }),
 }))
@@ -90,7 +92,6 @@ import { unsafeAsPermissionPath } from '../authorization/test-utils'
 import { createMockApiContext, createMockBranchContext, createMockRegistry } from '../test-utils'
 import * as authorization from '../authorization'
 import { unsafeAsBranchName } from '../paths/test-utils'
-import { RESERVED_ROUTE_BRANCH_NAMES } from '../paths'
 import type { BranchRegistry } from '../branch-registry'
 import type { CanopyConfig } from '../config'
 import type { GitHubService } from '../github-service'
@@ -275,21 +276,21 @@ describe('branch api', () => {
     const res = await createBranch(
       baseCtx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: unsafeAsBranchName('feature/test') },
+      { branch: unsafeAsBranchName('canopycms-feature-test') },
     )
     expect(res.ok).toBe(true)
-    expect(res.data?.branch.name).toBe('feature/test')
+    expect(res.data?.branch.name).toBe('canopycms-feature-test')
   })
 
   it('returns the created branch as a list item carrying the server-computed flags', async () => {
     const res = await createBranch(
       baseCtx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: unsafeAsBranchName('feature/test') },
+      { branch: unsafeAsBranchName('canopycms-feature-test') },
     )
     expect(res.ok).toBe(true)
     expect(res.data?.branch).toMatchObject({
-      name: 'feature/test',
+      name: 'canopycms-feature-test',
       isProtected: false,
       readOnly: false,
       writeBlocked: false,
@@ -308,7 +309,7 @@ describe('branch api', () => {
     const res = await createBranch(
       baseCtx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: unsafeAsBranchName('feature/test') },
+      { branch: unsafeAsBranchName('canopycms-feature-test') },
     )
     expect(res.ok).toBe(false)
     expect(res.status).toBe(403)
@@ -332,7 +333,7 @@ describe('branch api', () => {
           groups: [RESERVED_GROUPS.ADMINS],
         },
       },
-      { branch: unsafeAsBranchName('feature/test') },
+      { branch: unsafeAsBranchName('canopycms-feature-test') },
     )
     expect(res.ok).toBe(true)
   })
@@ -350,16 +351,24 @@ describe('branch api', () => {
     const res = await createBranch(
       baseCtx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: unsafeAsBranchName('feature/test') },
+      { branch: unsafeAsBranchName('canopycms-feature-test') },
     )
 
     expect(res.ok).toBe(true)
     expect(permissionsLoader.loadPathPermissions).toHaveBeenCalled()
   })
 
-  it('rejects creating a branch with the base branch name (400)', async () => {
+  it('rejects creating a branch whose created name is the base branch name (400)', async () => {
+    // A created name always carries the namespace, so only a base branch inside it can collide.
+    const ctx = createMockApiContext({
+      branchContext: createMockBranchContext({ branchName: 'main', createdBy: 'system' }),
+      services: {
+        config: { defaultBaseBranch: 'canopycms-main', mode: 'dev' } as any,
+        registry: mockRegistry as any,
+      },
+    })
     const res = await createBranch(
-      baseCtx,
+      ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: unsafeAsBranchName('main') },
     )
@@ -375,7 +384,7 @@ describe('branch api', () => {
     // `access` object would otherwise field-merge into that branch's ACL).
     const registry = createMockRegistry([])
     registry.get.mockResolvedValue(
-      createMockBranchContext({ branchName: 'feature/test', createdBy: 'someone-else' }),
+      createMockBranchContext({ branchName: 'canopycms-feature-test', createdBy: 'someone-else' }),
     )
     const ctx = createMockApiContext({
       branchContext: createMockBranchContext({ branchName: 'main', createdBy: 'system' }),
@@ -385,7 +394,7 @@ describe('branch api', () => {
     const res = await createBranch(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: unsafeAsBranchName('feature/test') },
+      { branch: unsafeAsBranchName('canopycms-feature-test') },
     )
     expect(res.ok).toBe(false)
     expect(res.status).toBe(409)
@@ -400,7 +409,7 @@ describe('branch api', () => {
       const registry = createMockRegistry([])
       registry.get.mockResolvedValue(
         createMockBranchContext({
-          branchName: 'feature/test',
+          branchName: 'canopycms-feature-test',
           createdBy: existing.createdBy,
           createdAt: new Date(Date.now() - existing.ageMs).toISOString(),
         }),
@@ -412,7 +421,7 @@ describe('branch api', () => {
       return createBranch(
         ctx,
         { user: { type: 'authenticated', userId, groups: [] } },
-        { branch: unsafeAsBranchName('feature/test') },
+        { branch: unsafeAsBranchName('canopycms-feature-test') },
       )
     }
 
@@ -420,7 +429,7 @@ describe('branch api', () => {
       const res = await createAgainst({ createdBy: 'u1', ageMs: 60_000 }, 'u1')
       expect(res.ok).toBe(true)
       expect(res.status).toBe(200)
-      expect(res.data?.branch.name).toBe('feature/test')
+      expect(res.data?.branch.name).toBe('canopycms-feature-test')
       expect(res.data?.branch.createdBy).toBe('u1')
     })
 
@@ -461,6 +470,23 @@ describe('branch api', () => {
       )
       expect(res.ok).toBe(false)
       expect(res.status).toBe(400)
+      expect(res.error).toContain('is reserved for CanopyCMS settings')
+    })
+
+    it('rejects a typed name whose created name is a configured settings branch without the reserved prefix', async () => {
+      const ctx = createMockApiContext({
+        services: {
+          config: { mode: 'dev', settingsBranch: 'canopycms-site' } as any,
+          registry: mockRegistry as any,
+        },
+      })
+      const res = await createBranch(
+        ctx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        { branch: unsafeAsBranchName('site') },
+      )
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(400)
       expect(res.error).toBe(
         'Cannot create content branch with settings branch name (git branch name collision)',
       )
@@ -474,9 +500,7 @@ describe('branch api', () => {
       )
       expect(res.ok).toBe(false)
       expect(res.status).toBe(400)
-      expect(res.error).toBe(
-        'Cannot create content branch with settings branch name (git branch name collision)',
-      )
+      expect(res.error).toContain('is reserved for CanopyCMS settings')
     })
 
     it("rejects another deployment's settings branch name as a reserved-namespace collision", async () => {
@@ -490,7 +514,7 @@ describe('branch api', () => {
       )
       expect(res.ok).toBe(false)
       expect(res.status).toBe(400)
-      expect(res.error).toContain('reserved')
+      expect(res.error).toContain('is reserved for CanopyCMS settings')
     })
 
     it('rejects a raw name whose SANITIZED form (not its raw form) falls inside the reserved prefix', async () => {
@@ -504,57 +528,123 @@ describe('branch api', () => {
       )
       expect(res.ok).toBe(false)
       expect(res.status).toBe(400)
-      expect(res.error).toContain('reserved')
+      expect(res.error).toContain('is reserved for CanopyCMS settings')
     })
 
     it('still accepts a normal branch name', async () => {
       const res = await createBranch(
         baseCtx,
         { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-        { branch: unsafeAsBranchName('feature/totally-normal') },
+        { branch: unsafeAsBranchName('canopycms-feature-totally-normal') },
       )
       expect(res.ok).toBe(true)
     })
 
-    // The router prefers a literal path segment over `:branch`, so a branch
-    // named after a static top-level namespace has its own routes shadowed --
-    // and only partially, since bare `GET /admin` still reaches the branch
-    // handler. http/router.test.ts pins the list itself against the live routes.
-    it.each([...RESERVED_ROUTE_BRANCH_NAMES])(
-      'rejects "%s" because it collides with a static API route namespace',
-      async (name) => {
-        const res = await createBranch(
-          baseCtx,
-          { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-          { branch: unsafeAsBranchName(name) },
-        )
-        expect(res.ok).toBe(false)
-        expect(res.status).toBe(400)
-        expect(res.error).toContain('reserved')
-        expect(res.error).toContain(`/${name}`)
-      },
-    )
+    it.each([
+      ['admin', 'canopycms-admin'],
+      ['assets', 'canopycms-assets'],
+    ])('creates "%s" as %s, a name no route namespace can equal', async (typed, created) => {
+      const res = await createBranch(
+        baseCtx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        { branch: unsafeAsBranchName(typed) },
+      )
+      expect(res.ok).toBe(true)
+      expect(res.status).toBe(200)
+      expect(res.data?.branch.name).toBe(created)
+    })
 
     it('accepts names that merely contain or extend a reserved namespace', async () => {
-      for (const name of ['admin-docs', 'assets-2026', 'feature/admin']) {
+      for (const [name, created] of [
+        ['admin-docs', 'canopycms-admin-docs'],
+        ['assets-2026', 'canopycms-assets-2026'],
+        ['feature/admin', 'canopycms-feature-admin'],
+      ]) {
         const res = await createBranch(
           baseCtx,
           { user: { type: 'authenticated', userId: 'u1', groups: [] } },
           { branch: unsafeAsBranchName(name) },
         )
         expect(res.ok).toBe(true)
+        expect(res.data?.branch.name).toBe(created)
       }
     })
 
-    it('is case-sensitive, mirroring how the router matches path segments', async () => {
-      // `/Admin` does not match the static `/admin/...` routes, so `Admin` is
-      // not shadowed and must stay creatable.
+    it('keeps the case of a typed name', async () => {
+      // `Admin` is not folded to lower case; the namespace is added in front of it as typed.
       const res = await createBranch(
         baseCtx,
         { user: { type: 'authenticated', userId: 'u1', groups: [] } },
         { branch: unsafeAsBranchName('Admin') },
       )
       expect(res.ok).toBe(true)
+      expect(res.data?.branch.name).toBe('canopycms-Admin')
+    })
+  })
+
+  describe('the canopycms- namespace', () => {
+    const user: ApiRequest['user'] = { type: 'authenticated', userId: 'u1', groups: [] }
+    const create = (typed: string, ctx: ApiContext = baseCtx, as: ApiRequest['user'] = user) =>
+      createBranch(ctx, { user: as }, { branch: unsafeAsBranchName(typed) })
+
+    it('creates a typed name inside the namespace', async () => {
+      const res = await create('spring')
+      expect(res.status).toBe(200)
+      expect(res.ok).toBe(true)
+      expect(res.data?.branch.name).toBe('canopycms-spring')
+    })
+
+    it('does not double a name that already carries the namespace', async () => {
+      const res = await create('canopycms-spring')
+      expect(res.status).toBe(200)
+      expect(res.ok).toBe(true)
+      expect(res.data?.branch.name).toBe('canopycms-spring')
+    })
+
+    it('sanitizes the typed name into the created one', async () => {
+      const res = await create('feature/x')
+      expect(res.status).toBe(200)
+      expect(res.ok).toBe(true)
+      expect(res.data?.branch.name).toBe('canopycms-feature-x')
+    })
+
+    it('refuses a typed name the prefix pushes past the length limit, and takes one that fits', async () => {
+      const tooLong = await create('a'.repeat(245))
+      expect(tooLong.status).toBe(400)
+      expect(tooLong.ok).toBe(false)
+      expect(tooLong.error).toBe(
+        'Branch name too long: with "canopycms-" in front it is over 250 characters',
+      )
+
+      const fits = await create('a'.repeat(240))
+      expect(fits.status).toBe(200)
+      expect(fits.ok).toBe(true)
+      expect(fits.data?.branch.name).toBe(`canopycms-${'a'.repeat(240)}`)
+    })
+
+    it('refuses a typed name that would make a settings branch name, saying what to avoid', async () => {
+      const res = await create('settings-prod')
+      expect(res.status).toBe(400)
+      expect(res.ok).toBe(false)
+      expect(res.error).toContain('is reserved for CanopyCMS settings')
+      expect(res.error).toContain('"settings-"')
+    })
+
+    it('answers a typed name whose prefixed form exists as the existing-branch case does', async () => {
+      const registry = createMockRegistry([])
+      registry.get.mockResolvedValue(
+        createMockBranchContext({ branchName: 'canopycms-spring', createdBy: 'someone-else' }),
+      )
+      const ctx = createMockApiContext({
+        branchContext: createMockBranchContext({ branchName: 'main', createdBy: 'system' }),
+        services: { registry: registry as unknown as BranchRegistry },
+      })
+
+      const res = await create('spring', ctx)
+      expect(registry.get).toHaveBeenCalledWith('canopycms-spring')
+      expect(res.status).toBe(409)
+      expect(res.ok).toBe(false)
+      expect(res.error).toBe('A branch with this name already exists')
     })
   })
 

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BranchListItem } from '../../api/branch'
 import { IDEMPOTENT_CREATE_WINDOW_MS } from '../../api/branch-create-window'
 import { CanopyApiClient } from '../../api/client'
+import { GATEWAY_MAX_TIMEOUT_MS, REQUEST_TIMEOUT_MS } from '../../api/request-deadline'
 import {
   CREATE_BRANCH_DEADLINE_MS,
   CREATE_TIMED_OUT_MESSAGE,
@@ -14,6 +15,14 @@ interface FakeResponse {
   /** A JSON body; omitted for an HTML error page from in front of the API. */
   body?: unknown
 }
+
+describe('CREATE_BRANCH_DEADLINE_MS', () => {
+  it('is past the gateway limit, so its 504 lands first, and under the long class', () => {
+    expect(CREATE_BRANCH_DEADLINE_MS).toBe(150_000)
+    expect(CREATE_BRANCH_DEADLINE_MS).toBeGreaterThan(GATEWAY_MAX_TIMEOUT_MS)
+    expect(CREATE_BRANCH_DEADLINE_MS).toBeLessThan(REQUEST_TIMEOUT_MS.long)
+  })
+})
 
 /** The user making the create. */
 const me = 'u1'
@@ -70,12 +79,12 @@ describe('requestBranchCreate', () => {
   it('returns the created branch', async () => {
     const { apiClient, list } = client(async () => ({
       status: 200,
-      body: { ok: true, status: 200, data: { branch: branch('feature-x') } },
+      body: { ok: true, status: 200, data: { branch: branch('canopycms-feature-x') } },
     }))
 
     expect(await requestBranchCreate(apiClient, body, me)).toEqual({
       kind: 'created',
-      branch: branch('feature-x'),
+      branch: branch('canopycms-feature-x'),
     })
     expect(list).not.toHaveBeenCalled()
   })
@@ -96,7 +105,7 @@ describe('requestBranchCreate', () => {
   it('after the deadline, adopts the branch when the list shows it under its sanitized name', async () => {
     const { apiClient, list } = client(
       never,
-      vi.fn(async () => listing('main', 'feature-x')),
+      vi.fn(async () => listing('main', 'canopycms-feature-x')),
     )
 
     const outcome = requestBranchCreate(apiClient, body, me)
@@ -104,7 +113,20 @@ describe('requestBranchCreate', () => {
     expect(list).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(1)
 
-    expect(await outcome).toEqual({ kind: 'created', branch: branch('feature-x') })
+    expect(await outcome).toEqual({ kind: 'created', branch: branch('canopycms-feature-x') })
+  })
+
+  it('after the deadline, never adopts a branch with the typed name outside the namespace', async () => {
+    // The server created canopycms-feature-x; a feature-x left from before the namespace is not it.
+    const { apiClient } = client(
+      never,
+      vi.fn(async () => listing('main', 'feature-x')),
+    )
+
+    const outcome = requestBranchCreate(apiClient, body, me)
+    await vi.advanceTimersByTimeAsync(CREATE_BRANCH_DEADLINE_MS)
+
+    expect((await outcome).kind).toBe('failed')
   })
 
   it('after the deadline, says so plainly when the branch is not there', async () => {
@@ -157,11 +179,11 @@ describe('requestBranchCreate', () => {
   it('looks for the branch after a gateway timeout page from in front of the API', async () => {
     const found = client(
       async () => ({ status: 504 }),
-      vi.fn(async () => listing('feature-x')),
+      vi.fn(async () => listing('canopycms-feature-x')),
     )
     expect(await requestBranchCreate(found.apiClient, body, me)).toEqual({
       kind: 'created',
-      branch: branch('feature-x'),
+      branch: branch('canopycms-feature-x'),
     })
 
     const missing = client(async () => ({ status: 504 }))
@@ -175,29 +197,36 @@ describe('requestBranchCreate', () => {
   it("looks for the branch after a busy 503, and otherwise shows the server's message", async () => {
     const busy = async (): Promise<FakeResponse> => ({
       status: 503,
-      body: { ok: false, status: 503, error: "Branch 'feature-x' is being created. Try again." },
+      body: {
+        ok: false,
+        status: 503,
+        error: "Branch 'canopycms-feature-x' is being created. Try again.",
+      },
     })
 
     const missing = client(busy)
     expect(await requestBranchCreate(missing.apiClient, body, me)).toEqual({
       kind: 'failed',
-      message: "Branch 'feature-x' is being created. Try again.",
+      message: "Branch 'canopycms-feature-x' is being created. Try again.",
     })
     expect(missing.list).toHaveBeenCalledTimes(1)
 
     const found = client(
       busy,
-      vi.fn(async () => listing('feature-x')),
+      vi.fn(async () => listing('canopycms-feature-x')),
     )
     expect(await requestBranchCreate(found.apiClient, body, me)).toEqual({
       kind: 'created',
-      branch: branch('feature-x'),
+      branch: branch('canopycms-feature-x'),
     })
   })
 
   it("treats another user's branch of the same name as a conflict, not as this create", async () => {
-    const theirs = vi.fn(async () => listingOf([branch('feature-x', 'someone-else')]))
-    const conflict = { kind: 'failed', message: 'A branch named "feature-x" already exists' }
+    const theirs = vi.fn(async () => listingOf([branch('canopycms-feature-x', 'someone-else')]))
+    const conflict = {
+      kind: 'failed',
+      message: 'A branch named "canopycms-feature-x" already exists',
+    }
 
     const afterDeadline = client(never, theirs)
     const outcome = requestBranchCreate(afterDeadline.apiClient, body, me)
@@ -210,7 +239,11 @@ describe('requestBranchCreate', () => {
     const afterBusy = client(
       async () => ({
         status: 503,
-        body: { ok: false, status: 503, error: "Branch 'feature-x' is being created. Try again." },
+        body: {
+          ok: false,
+          status: 503,
+          error: "Branch 'canopycms-feature-x' is being created. Try again.",
+        },
       }),
       theirs,
     )
@@ -219,14 +252,17 @@ describe('requestBranchCreate', () => {
 
   it("treats the current user's branch as a conflict once it is older than the server's retry window", async () => {
     const created = Date.now() + CREATE_BRANCH_DEADLINE_MS
-    const mine = vi.fn(async () => listingOf([branch('feature-x', me, created)]))
-    const conflict = { kind: 'failed', message: 'A branch named "feature-x" already exists' }
+    const mine = vi.fn(async () => listingOf([branch('canopycms-feature-x', me, created)]))
+    const conflict = {
+      kind: 'failed',
+      message: 'A branch named "canopycms-feature-x" already exists',
+    }
 
     vi.setSystemTime(created + IDEMPOTENT_CREATE_WINDOW_MS - 1)
     const recent = client(async () => ({ status: 504 }), mine)
     expect(await requestBranchCreate(recent.apiClient, body, me)).toEqual({
       kind: 'created',
-      branch: branch('feature-x', me, created),
+      branch: branch('canopycms-feature-x', me, created),
     })
 
     vi.setSystemTime(created + IDEMPOTENT_CREATE_WINDOW_MS)
@@ -237,12 +273,12 @@ describe('requestBranchCreate', () => {
   it('adopts no listed branch when the current user is unknown', async () => {
     const { apiClient } = client(
       async () => ({ status: 504 }),
-      vi.fn(async () => listing('feature-x')),
+      vi.fn(async () => listing('canopycms-feature-x')),
     )
 
     expect(await requestBranchCreate(apiClient, body, undefined)).toEqual({
       kind: 'failed',
-      message: 'A branch named "feature-x" already exists',
+      message: 'A branch named "canopycms-feature-x" already exists',
     })
   })
 

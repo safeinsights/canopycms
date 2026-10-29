@@ -6,7 +6,7 @@
  * settings workspace must be refused loudly rather than silently wiping
  * permissions.json/groups.json — see ensureGitWorkspace's guard comment for
  * the full trace (createOrphanSettingsBranch on a name that isn't the current
- * branch runs `checkout --orphan` + `rm -rf .`).
+ * branch runs `switch --orphan` + `git rm`).
  *
  * Uses real git in a temp dir (initTestRepo), matching the harness pattern in
  * cms-worker-rebase.test.ts / __integration__ rather than mocking simple-git.
@@ -109,7 +109,7 @@ describe('SettingsWorkspaceManager rename guard', () => {
     expect(JSON.parse(stillThere)).toEqual({ acls: ['do-not-lose-me'] })
 
     // And the workspace must still be checked out on the ORIGINAL branch — proof
-    // that no `checkout --orphan canopycms-settings-new` ever ran.
+    // that no `switch --orphan canopycms-settings-new` ever ran.
     const status = await git.status()
     expect(status.current).toBe('canopycms-settings-old')
   })
@@ -907,5 +907,291 @@ describe('SettingsWorkspaceManager provisioning from the remote settings branch'
       clearStrategyCache()
       await resetModulesQuietly()
     }
+  }, 60_000)
+})
+
+describe('SettingsWorkspaceManager first clone', () => {
+  let tmpRoot: string | undefined
+
+  afterEach(async () => {
+    vi.restoreAllMocks()
+    vi.unstubAllEnvs()
+    if (tmpRoot) {
+      await fs.rm(tmpRoot, { recursive: true, force: true })
+      tmpRoot = undefined
+    }
+  })
+
+  const BRANCH = 'canopycms-settings-first'
+  const config = { ...baseConfig, defaultBaseBranch: 'main' } as CanopyConfig
+
+  async function setup() {
+    tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-settings-first-'))
+    const remoteUrl = await seedBareRemote(tmpRoot)
+    const settingsRoot = path.join(tmpRoot, 'settings')
+    const options = { settingsRoot, branchName: BRANCH, mode: 'dev' as const, remoteUrl }
+    return { root: tmpRoot, settingsRoot, options }
+  }
+
+  function deferred<T = void>() {
+    let resolve!: (value: T) => void
+    const promise = new Promise<T>((r) => {
+      resolve = r
+    })
+    return { promise, resolve }
+  }
+
+  /** A fresh module graph standing in for another process, with its own GitManager. */
+  async function loadProcess() {
+    await resetModulesQuietly()
+    const settings = await import('./settings-workspace')
+    const git = await import('./git-manager')
+    return { settings, GitManager: git.GitManager }
+  }
+
+  /** Resolves once a process has retried the build lock, i.e. found it held and is waiting. */
+  function waitingForBuildLock(settingsRoot: string): Promise<void> {
+    const target = settingsInitLockTarget(settingsRoot)
+    const waiting = deferred()
+    let attempts = 0
+    const mkdir = fs.mkdir.bind(fs)
+    vi.spyOn(fs, 'mkdir').mockImplementation(((dir: string, opts: unknown) => {
+      if (dir === target && ++attempts === 2) waiting.resolve()
+      return mkdir(dir, opts as Parameters<typeof fs.mkdir>[1])
+    }) as typeof fs.mkdir)
+    return waiting.promise
+  }
+
+  /**
+   * Records how many working-tree entries besides `.git` each checkout leaves, through a
+   * `post-checkout` hook set in a HOME of its own (gitChildEnv passes HOME through).
+   */
+  async function recordCheckouts(root: string): Promise<() => Promise<number[]>> {
+    const home = path.join(root, 'home')
+    const log = path.join(home, 'checkouts.log')
+    await fs.mkdir(path.join(home, 'hooks'), { recursive: true })
+    await fs.writeFile(path.join(home, '.gitconfig'), `[core]\n\thooksPath = ${home}/hooks\n`)
+    await fs.writeFile(
+      path.join(home, 'hooks', 'post-checkout'),
+      `#!/bin/sh\nls -A | grep -vx .git | wc -l | tr -d ' ' >> '${log}'\n`,
+      { mode: 0o755 },
+    )
+    vi.stubEnv('HOME', home)
+    return async () =>
+      (await fs.readFile(log, 'utf8').catch(() => '')).split('\n').filter(Boolean).map(Number)
+  }
+
+  it('creates the orphan settings branch without writing any of the base branch’s files', async () => {
+    const { root, settingsRoot, options } = await setup()
+    const checkouts = await recordCheckouts(root)
+
+    await new SettingsWorkspaceManager(config).ensureGitWorkspace(options)
+
+    expect(await checkouts()).toEqual([0])
+    expect((await simpleGit({ baseDir: settingsRoot }).status()).current).toBe(BRANCH)
+    expect(await fs.readdir(settingsRoot)).toEqual(['.git'])
+  }, 60_000)
+
+  it('checks out the remote settings branch without writing any of the base branch’s files', async () => {
+    const { root, settingsRoot, options } = await setup()
+    await new SettingsWorkspaceManager(config).ensureGitWorkspace(options)
+    await fs.writeFile(path.join(settingsRoot, 'groups.json'), '[]\n')
+    const git = simpleGit({ baseDir: settingsRoot })
+    await git.add('groups.json')
+    await git.commit('save groups')
+    await git.raw(['push', 'origin', `refs/heads/${BRANCH}:refs/heads/${BRANCH}`])
+    await fs.rename(settingsRoot, path.join(root, 'moved-aside'))
+    const fresh = await loadProcess()
+    const checkouts = await recordCheckouts(root)
+
+    await new fresh.settings.SettingsWorkspaceManager(config).ensureGitWorkspace(options)
+
+    expect(await checkouts()).toEqual([1])
+    expect(await fs.readdir(settingsRoot)).toEqual(['.git', 'groups.json'].sort())
+  }, 60_000)
+
+  it('makes a cold start that arrives mid-build wait for that build instead of cloning its own', async () => {
+    const { settingsRoot, options } = await setup()
+    const a = await loadProcess()
+    const b = await loadProcess()
+    const aCloning = deferred()
+    const gate = deferred()
+    const aClone = a.GitManager.cloneWorkspace.bind(a.GitManager)
+    vi.spyOn(a.GitManager, 'cloneWorkspace').mockImplementation(async (...args) => {
+      aCloning.resolve()
+      await gate.promise
+      return aClone(...args)
+    })
+    const bClone = vi.spyOn(b.GitManager, 'cloneWorkspace')
+
+    const first = new a.settings.SettingsWorkspaceManager(config).ensureGitWorkspace(options)
+    await aCloning.promise
+    const bWaiting = waitingForBuildLock(settingsRoot)
+    const second = new b.settings.SettingsWorkspaceManager(config).ensureGitWorkspace(options)
+    await bWaiting
+    gate.resolve()
+
+    await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined])
+    expect(bClone).not.toHaveBeenCalled()
+    expect((await simpleGit({ baseDir: settingsRoot }).status()).current).toBe(BRANCH)
+  }, 60_000)
+
+  it('sees the build it waited on through a cached absence of the root that opening the parent clears', async () => {
+    const { root, settingsRoot, options } = await setup()
+    const a = await loadProcess()
+    const b = await loadProcess()
+    const aCloning = deferred()
+    const gate = deferred()
+    const aClone = a.GitManager.cloneWorkspace.bind(a.GitManager)
+    vi.spyOn(a.GitManager, 'cloneWorkspace').mockImplementation(async (...args) => {
+      aCloning.resolve()
+      await gate.promise
+      return aClone(...args)
+    })
+    const bClone = vi.spyOn(b.GitManager, 'cloneWorkspace')
+    // B's client cached the root's absence before A published it; only opening the parent
+    // after the publish makes it look again.
+    let published = false
+    let stale = true
+    const rename = fs.rename.bind(fs)
+    vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+      await rename(from, to)
+      if (to === settingsRoot) published = true
+    })
+    const readdir = fs.readdir.bind(fs)
+    vi.spyOn(fs, 'readdir').mockImplementation((async (dir: string, opts?: unknown) => {
+      if (dir === root && published) stale = false
+      if (dir === settingsRoot && published && stale) {
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+      }
+      return readdir(dir, opts as undefined)
+    }) as typeof fs.readdir)
+
+    const first = new a.settings.SettingsWorkspaceManager(config).ensureGitWorkspace(options)
+    await aCloning.promise
+    const bWaiting = waitingForBuildLock(settingsRoot)
+    const second = new b.settings.SettingsWorkspaceManager(config).ensureGitWorkspace(options)
+    await bWaiting
+    gate.resolve()
+
+    await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined])
+    expect(published).toBe(true)
+    expect(bClone).not.toHaveBeenCalled()
+  }, 60_000)
+
+  it('builds in the waiting cold start when the build it waited on failed', async () => {
+    const { settingsRoot, options } = await setup()
+    const a = await loadProcess()
+    const b = await loadProcess()
+    const aCloning = deferred()
+    const gate = deferred()
+    vi.spyOn(a.GitManager, 'cloneWorkspace').mockImplementation(async () => {
+      aCloning.resolve()
+      await gate.promise
+      throw new Error('clone failed')
+    })
+    const bClone = vi.spyOn(b.GitManager, 'cloneWorkspace')
+
+    const first = new a.settings.SettingsWorkspaceManager(config).ensureGitWorkspace(options)
+    await aCloning.promise
+    const bWaiting = waitingForBuildLock(settingsRoot)
+    const second = new b.settings.SettingsWorkspaceManager(config).ensureGitWorkspace(options)
+    await bWaiting
+    gate.resolve()
+
+    await expect(first).rejects.toThrow('clone failed')
+    await expect(second).resolves.toBeUndefined()
+    expect(bClone).toHaveBeenCalledOnce()
+    expect((await simpleGit({ baseDir: settingsRoot }).status()).current).toBe(BRANCH)
+  }, 60_000)
+
+  it('builds its own once the wait runs out on a builder that died, and never serves the half-built clone', async () => {
+    const { root, settingsRoot, options } = await setup()
+    // What a builder killed mid-clone leaves: its live build marker and a partial staging clone.
+    await fs.mkdir(path.join(settingsInitLockTarget(settingsRoot), 'build'), { recursive: true })
+    const halfBuilt = path.join(root, '.prov-settings-dead00-20261028T000000Z')
+    await fs.mkdir(path.join(halfBuilt, '.git'), { recursive: true })
+    await fs.writeFile(path.join(halfBuilt, '.git', 'config.lock'), '')
+
+    const consoleSpy = mockConsole()
+    try {
+      await new SettingsWorkspaceManager(config, { buildWaitMs: 0 }).ensureGitWorkspace(options)
+      expect(consoleSpy).toHaveWarned(/settings workspace build did not finish within 0 ms/)
+    } finally {
+      consoleSpy.restore()
+    }
+
+    expect((await simpleGit({ baseDir: settingsRoot }).status()).current).toBe(BRANCH)
+    expect(await fs.readdir(halfBuilt)).toEqual(['.git'])
+  }, 60_000)
+
+  it('refuses, at its publish, a workspace another deployment published while it built', async () => {
+    const { settingsRoot, options } = await setup()
+    // A dead builder's marker sends both cold starts straight to their own builds.
+    await fs.mkdir(path.join(settingsInitLockTarget(settingsRoot), 'build'), { recursive: true })
+    const ours = await loadProcess()
+    const theirs = await loadProcess()
+    const cloning = deferred()
+    const gate = deferred()
+    const clone = ours.GitManager.cloneWorkspace.bind(ours.GitManager)
+    vi.spyOn(ours.GitManager, 'cloneWorkspace').mockImplementation(async (...args) => {
+      cloning.resolve()
+      await gate.promise
+      return clone(...args)
+    })
+    // The guard's first look after the other publish is answered from a stale cache.
+    let staleLooks = 0
+    const repoExistsAt = ours.GitManager.repoExistsAt.bind(ours.GitManager)
+    vi.spyOn(ours.GitManager, 'repoExistsAt').mockImplementation(async (at) =>
+      at === settingsRoot && staleLooks++ === 1 ? false : repoExistsAt(at),
+    )
+
+    const consoleSpy = mockConsole()
+    try {
+      const pending = new ours.settings.SettingsWorkspaceManager(config, {
+        buildWaitMs: 0,
+      }).ensureGitWorkspace(options)
+      await cloning.promise
+      await new theirs.settings.SettingsWorkspaceManager(config, {
+        buildWaitMs: 0,
+      }).ensureGitWorkspace({ ...options, branchName: 'canopycms-settings-other' })
+      gate.resolve()
+
+      await expect(pending).rejects.toThrow(/refusing to initialize settings workspace/)
+    } finally {
+      consoleSpy.restore()
+    }
+    expect(staleLooks).toBeGreaterThan(1)
+  }, 60_000)
+
+  it('drops its copy when the publish rename finds a workspace its stale view missed', async () => {
+    const { root, settingsRoot, options } = await setup()
+    const other = await loadProcess()
+    await new other.settings.SettingsWorkspaceManager(config).ensureGitWorkspace(options)
+    const head = await simpleGit({ baseDir: settingsRoot }).revparse(['HEAD'])
+
+    // This process's NFS client still reports the root absent, even in a listing of its parent,
+    // until its own publish reaches the server.
+    const fresh = await loadProcess()
+    let renamed = false
+    const readdir = fs.readdir.bind(fs)
+    vi.spyOn(fs, 'readdir').mockImplementation((async (dir: string, opts?: unknown) => {
+      if (dir === settingsRoot && !renamed) {
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+      }
+      const entries = await readdir(dir, opts as undefined)
+      return dir === root && !renamed ? entries.filter((name) => name !== 'settings') : entries
+    }) as typeof fs.readdir)
+    const rename = fs.rename.bind(fs)
+    vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+      if (to === settingsRoot) renamed = true
+      return rename(from, to)
+    })
+
+    await new fresh.settings.SettingsWorkspaceManager(config).ensureGitWorkspace(options)
+
+    expect(renamed).toBe(true)
+    expect(await simpleGit({ baseDir: settingsRoot }).revparse(['HEAD'])).toBe(head)
+    expect((await readdir(root)).filter((name) => name.startsWith('.prov-'))).toEqual([])
   }, 60_000)
 })

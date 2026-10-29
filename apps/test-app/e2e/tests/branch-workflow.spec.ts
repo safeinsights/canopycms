@@ -31,7 +31,7 @@ test.describe('Branch Lifecycle & Workflow', () => {
   test('complete happy path: create → edit → submit → approve → archive', async ({ page }) => {
     test.setTimeout(90000)
 
-    const branchName = `test-branch-${Date.now()}`
+    const branchName = `canopycms-test-branch-${Date.now()}`
 
     // Step 1: Set user to editor FIRST
     await switchUser(page, 'editor')
@@ -75,8 +75,9 @@ test.describe('Branch Lifecycle & Workflow', () => {
     // Wait for branch to appear for admin
     await branchPage.waitForBranchInList(branchName)
 
-    // Note: The actual approve workflow depends on the implementation
-    // For now, we verify the request changes button is visible (admin can request changes)
+    // The admin did not make this branch, so the card offers Review, with Approve and
+    // Request changes in its menu.
+    expect(await branchPage.isActionButtonVisible(branchName, 'approve')).toBe(true)
     const canRequestChanges = await branchPage.isActionButtonVisible(branchName, 'request-changes')
     expect(canRequestChanges).toBe(true)
 
@@ -88,7 +89,7 @@ test.describe('Branch Lifecycle & Workflow', () => {
     await editorPage.waitForReady()
     await branchPage.openBranchManager()
 
-    const branchName = `feature-branch-${Date.now()}`
+    const branchName = `canopycms-feature-branch-${Date.now()}`
     const title = 'Feature Branch'
     const description = 'Adding new feature with tests'
 
@@ -108,7 +109,7 @@ test.describe('Branch Lifecycle & Workflow', () => {
   })
 
   test('submit and withdraw flow', async ({ page }) => {
-    const branchName = `test-withdraw-${Date.now()}`
+    const branchName = `canopycms-test-withdraw-${Date.now()}`
 
     // Set user to editor FIRST
     await switchUser(page, 'editor')
@@ -148,7 +149,7 @@ test.describe('Branch Lifecycle & Workflow', () => {
   })
 
   test('refuses to submit a branch with nothing saved, leaving it editable', async ({ page }) => {
-    const branchName = `test-empty-submit-${Date.now()}`
+    const branchName = `canopycms-test-empty-submit-${Date.now()}`
 
     await switchUser(page, 'editor')
     const createResponse = await createBranchViaAPI(BASE_URL, branchName, 'editor')
@@ -166,7 +167,7 @@ test.describe('Branch Lifecycle & Workflow', () => {
   })
 
   test('request changes flow', async ({ page }) => {
-    const branchName = `test-request-changes-${Date.now()}`
+    const branchName = `canopycms-test-request-changes-${Date.now()}`
 
     // Set editor user first
     await switchUser(page, 'editor')
@@ -208,7 +209,7 @@ test.describe('Branch Lifecycle & Workflow', () => {
   })
 
   test('permission boundaries: non-reviewers are not offered request changes', async ({ page }) => {
-    const branchName = `test-permissions-${Date.now()}`
+    const branchName = `canopycms-test-permissions-${Date.now()}`
 
     // Set editor user and create/submit branch
     await switchUser(page, 'editor')
@@ -232,7 +233,7 @@ test.describe('Branch Lifecycle & Workflow', () => {
   })
 
   test("permission boundaries: admin can withdraw another user's branch", async ({ page }) => {
-    const branchName = `test-withdraw-perms-${Date.now()}`
+    const branchName = `canopycms-test-withdraw-perms-${Date.now()}`
 
     // Create and submit branch as editor
     await createBranchViaAPI(BASE_URL, branchName, 'editor')
@@ -256,7 +257,7 @@ test.describe('Branch Lifecycle & Workflow', () => {
   })
 
   test('branch deletion permissions', async ({ page }) => {
-    const branchName = `test-delete-${Date.now()}`
+    const branchName = `canopycms-test-delete-${Date.now()}`
 
     // Set user to editor FIRST, then create branch
     await switchUser(page, 'editor')
@@ -304,8 +305,8 @@ test.describe('Branch Lifecycle & Workflow', () => {
     await switchUser(page, 'editor')
 
     // Create multiple branches with different statuses via API
-    const editingBranch = `editing-${Date.now()}`
-    const submittedBranch = `submitted-${Date.now()}`
+    const editingBranch = `canopycms-editing-${Date.now()}`
+    const submittedBranch = `canopycms-submitted-${Date.now()}`
 
     await createBranchViaAPI(BASE_URL, editingBranch, 'editor')
     await createBranchViaAPI(BASE_URL, submittedBranch, 'editor')
