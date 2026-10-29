@@ -16,6 +16,7 @@ object on the shared filesystem would have failed every sync cycle until an oper
 repository. The worker now checks that each prerequisite of the bundle is a commit and indexes
 the pack itself, so the sync skips only the damaged branch, as it did on git 2.55. Three kinds of
 damage still stop every fetch, as they did on 2.55: a corrupt object in `remote.git` that the
-incoming pack also carries, a prerequisite whose object header is torn, and a corrupt object on
-the walk that picks what to fetch, before the first fetch has written its tracking refs
+incoming pack also carries, a prerequisite whose object header is torn, and a corrupt commit in
+a branch's first-parent history, which the fetch walks to tell GitHub what `remote.git` already
+has before the first fetch has written its tracking refs
 ([#1104](https://github.com/safeinsights/canopycms/issues/1104)).
