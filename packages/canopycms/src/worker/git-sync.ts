@@ -686,9 +686,9 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
 
     // For System health: the namespace it compares with the one the CMS creates branches in, the
     // names creation refuses, and the branches the gateway would refuse to publish, read after the
-    // rebase cycle, which archives merged branches. A gateway that cannot answer, or answers from
-    // a failed boot (no namespace, a fatal error), leaves the last values standing, as does a
-    // branches directory or branch.json that cannot be read.
+    // rebase cycle, which archives merged branches. A gateway that cannot answer, or answers with
+    // no namespace (a failed boot), leaves the last values standing; a fatal error, or a branches
+    // directory or branch.json that cannot be read, leaves the last report.
     let health: GitHubGatewayHealth | undefined
     try {
       health = await ctx.github().health(ctx.shutdownSignal())

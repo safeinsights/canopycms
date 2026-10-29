@@ -217,8 +217,8 @@ export type UnpublishableBranchReason = 'blocks-namespace' | 'unlistable'
 export interface UnpublishableBranch {
   name: string
   /**
-   * Absent when a `legacyBranches` entry would publish it, or when it is protected: by
-   * `protectedBranches`, as the base branch, or as GitHub's default branch.
+   * Absent when neither applies: a `legacyBranches` entry would then publish it unless it is
+   * protected, by `protectedBranches`, as the base branch, or as GitHub's default branch.
    */
   reason?: UnpublishableBranchReason
 }

@@ -154,8 +154,8 @@ export type GitHubPullRequest = Pick<
 > & {
   /**
    * The pull request's body, `''` when it has none. `null` when the gateway withholds it: the
-   * head is outside its namespace, protected, or in another repository, so the body is not the
-   * CMS's to read or rewrite (`LocalGitHubGateway.getPullRequest`). A pull request a person opened
+   * head is not in the namespace itself (a legacy or settings branch is not), is protected, or is
+   * in another repository (`LocalGitHubGateway.getPullRequest`). A pull request a person opened
    * from a branch in the namespace has its body answered.
    */
   body: string | null
@@ -1055,10 +1055,9 @@ class LocalGitHubGateway implements GitHubGateway {
 
   /**
    * Pull request `number`'s merge state, for any number, and its body only when its head is a
-   * branch of this repository in the namespace itself and not protected: neither a legacy branch,
-   * the settings branch, nor a `protectedBranches` match, whoever opened the pull request. When
-   * GitHub's default branch cannot be read, the configured protected set and the default as last
-   * read decide. The
+   * branch of this repository in the namespace itself (no legacy or settings branch) and not
+   * protected (`BranchPolicy.isProtected`), whoever opened the pull request. When GitHub's default
+   * branch cannot be read, the configured protected set and the default as last read decide. The
    * number comes from the worker, which a compromised CMS Lambda can steer; the head is GitHub's
    * record.
    */

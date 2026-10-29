@@ -691,9 +691,9 @@ each entry, and held there by a test that drives the worker's dispatch table and
 fails if a call is added that the set does not cover.
 
 Neither the App nor a token needs the workflows permission (the `workflow` scope,
-for a classic PAT). GitHub refuses a push only when it adds workflow content the
-repository does not already hold, so a content branch rebased onto a base branch
-that changed a workflow still publishes. In practice the refusal needs a workflow
+for a classic PAT). GitHub was seen to refuse a push only when it added workflow
+content the repository lacked, so a content branch rebased onto a base branch that
+changed a workflow still publishes. In practice the refusal needs a workflow
 edit made outside the editor, such as a direct push to a content branch that the
 worker's rebase then merges with a base change to the same file. That publish fails
 at once, and System health and the branch list name the workflow file.
@@ -1146,9 +1146,9 @@ bundle first:
   or the socket is open to group or others.
 - **`canopy-github.socket`**, between them: `/run/canopy-github/gateway.sock`, mode 0600, owned
   by `ec2-user`, so only the worker's user and root can connect. The worker asks the gateway for a fixed
-  set of operations (fetch, push, delete a branch, the pull request calls, the Clerk snapshot,
-  and the instance's termination notice and lifecycle action), and can do nothing else on
-  GitHub, Clerk or AWS.
+  set of operations (fetch, push, delete a branch, the pull request calls, default-branch reads,
+  the Clerk snapshot, and the instance's termination notice and lifecycle action), and can do
+  nothing else on GitHub, Clerk or AWS.
 
 Both units share the same sandbox, rated 0.6 (worker) and 1.6 (gateway) by
 `systemd-analyze security`: only their state directories, a private `/tmp` and, for the worker,
@@ -1347,22 +1347,22 @@ Manager:
 | EFS      | Read/write                           | Read/write                                      | None                                                                     |
 | AWS role | Its own execution role               | None: no route to the instance metadata service | The instance role                                                        |
 
-**The CMS Lambda receives public configuration only.** Pass the GitHub token and Clerk secret
-key to `CanopyCmsService` as `githubTokenSecretArn` / `clerkSecretKeySecretArn` (for App auth,
-`githubAppPrivateKeySecretArn` in place of the first); the gateway reads them at boot with the
-instance role. The Lambda's `environment` should carry nothing you would mind reading in the
-output of `aws lambda get-function-configuration`.
+**The CMS Lambda is meant to receive public configuration only.** Pass the GitHub token and
+Clerk secret key to `CanopyCmsService` as `githubTokenSecretArn` / `clerkSecretKeySecretArn` (for
+App auth, `githubAppPrivateKeySecretArn` in place of the first); the gateway reads them at boot
+with the instance role. The Lambda's `environment` should hold nothing you would mind seeing in
+`aws lambda get-function-configuration`.
 
 The Lambda holds no secrets **because nothing has built that path yet**: a Secrets Manager VPC
-endpoint is reachable from its `PRIVATE_ISOLATED` subnets, but the _interface_ kind carries an
-hourly and per-GB charge, unlike the free gateway kind `CanopyCmsService` adds for S3.
+endpoint would serve its `PRIVATE_ISOLATED` subnets, but the _interface_ kind carries an hourly
+and per-GB charge, unlike the free gateway kind `CanopyCmsService` adds for S3.
 
 The instance role is correspondingly narrow: EFS mount and write through the shared access
 point, Secrets Manager reads for its own secrets, SSM core, read on its bundle and instance
 files, its own lifecycle action, the describe calls the EFS mount and termination watch need,
 and write-only access to one CloudWatch log group. See [The worker instance](#the-worker-instance).
 
-Concretely, for Clerk: `CLERK_JWT_KEY` (a public PEM) belongs on the Lambda, and
+For Clerk: `CLERK_JWT_KEY` (a public PEM) belongs on the Lambda, and
 `CLERK_SECRET_KEY` (full Clerk API access) does not. CanopyCMS's own request authentication
 never reads the secret there: `createNextCanopyContext` wraps the Clerk plugin in
 `CachingAuthPlugin`, which checks each token with `verifyTokenOnly()` (the JWT key only) and
@@ -1383,43 +1383,44 @@ If the CMS Lambda is compromised, an attacker can read and write EFS content. It
 internet route: it reaches only EFS and the AWS services its role and VPC endpoints allow (the S3
 asset bucket, as deployed). It can write the git state the worker reads, and by racing the
 worker, may run a command as the worker. The worker has no network, no credential and no route to
-the instance metadata service. Only the GitHub gateway uses the GitHub credential, the Clerk
-secret key and the instance role. It cannot see EFS, and answers the worker only through [a fixed
-set of operations](#the-worker-instance), whose writes the Lambda can already request through the
-task queue.
+the instance metadata service. Among CanopyCMS's processes, only the GitHub gateway uses the
+GitHub credential, the Clerk secret key and the instance role. It cannot see EFS, and answers the
+worker only through [a fixed set of operations](#the-worker-instance), whose writes the Lambda can
+already request through the task queue.
 
 The gateway writes only branches in its namespace (`branchNamespace`, `canopycms/prod/` by
 default), its settings branch and `legacyBranches`, never the base branch, GitHub's default
 branch or a `protectedBranches` match. It acts only on pull requests from those heads in this
-repository, and reads a body only from a namespace head. There it can push any of the
+repository, and returns a body only for a namespace head. There it can push any of the
 repository's commits, force-push, delete and open pull requests, which run your workflows. So:
 
-- keep secrets a workflow could leak in an environment, never in repository or organization
-  secrets, which reach every branch. Set its deployment branches to "Selected branches and tags",
-  naming only protected branches the gateway cannot write, such as `main`: GitHub matches these
-  against `GITHUB_REF`, so no run on a namespace or legacy branch, or a pull request's
-  `refs/pull/N/merge`, gets them;
+- keep secrets a workflow could leak in an environment with required reviewers, never in
+  repository or organization secrets, which reach every branch. Set its deployment branches to
+  "Selected branches and tags", naming only protected branches the gateway cannot write, such as
+  `main`: GitHub matches these against `GITHUB_REF`, so no run on a namespace or legacy branch, or
+  a pull request's `refs/pull/N/merge`, gets them;
 - `pull_request_target`, `workflow_run`, `issue_comment` and other events GitHub runs on the
   default branch get that environment, so never check out, build or run pull request code or
   artifacts in them;
-- set Settings → Actions → General → Workflow permissions to **Read repository contents** at the
-  repository level, and the organization's if it has one, so a workflow naming no `permissions:`
-  gets a read-only `GITHUB_TOKEN`. No workflow that `push` or `pull_request` can trigger may ask
+- set Settings → Actions → General → Workflow permissions to read-only (`contents` and
+  `packages`) at the repository level, and the organization's if it has one, so a workflow naming
+  no `permissions:` gets a read-only `GITHUB_TOKEN`. No workflow that `push` or `pull_request` can trigger may ask
   for write access in any version the repository holds: a gateway push can make a namespace
   branch run any of them;
 - use a fine-grained token or an App **without** the workflows permission. A push then cannot
-  introduce new workflow content, only switch a file to a version the repository holds.
+  introduce new workflow content, only switch a file to a version the repository holds, as
+  [observed](#the-permissions-and-why-each-one).
 
-**Add GitHub rulesets**: they bound where a compromised gateway's token can write. Give each
+**Add GitHub rulesets**: they bound where the gateway's token can write. Give each
 deployment one on every branch but its namespace (`canopycms/prod/**/*`), settings branch
 (`canopycms-settings-prod`) and legacy branches, restricting creations, updates and deletions
 and blocking force pushes, bypassed by every _other_ deployment's GitHub App and whoever else
-pushes there; GitHub Actions is never a bypass actor. A bypass actor is an App, a role or a team,
+pushes there; never make GitHub Actions one. A bypass actor is an App, a role or a team,
 so a shared repository needs one App per deployment. Rulesets add up, so each App writes only its
 own exemptions. Give each settings branch a ruleset blocking deletions and force pushes; the
 gateway only fast-forwards it. Protect the base branch, and any a cutover will make it, with one
 requiring a pull request. On a throwaway branch outside the namespace, settings branch and legacy
-list, confirm the credential's direct and force pushes are both rejected.
+list, confirm the credential's direct and force pushes are rejected.
 
 The worker's host, system git config and image stay trusted.
 
