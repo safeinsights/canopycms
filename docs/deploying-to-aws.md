@@ -1177,8 +1177,7 @@ does not know your base branch, and protects it only if it is GitHub's default.
 [branch namespace](#two-deployments-one-repository) the gateway may still write: no `*`,
 nothing in the namespace or that it sits under (`canopycms/prod`). **Before upgrading, or
 changing the template,** list every open branch outside it; System health names any you missed.
-Drop each once merged or deleted. Such a branch's pull request shows its comments and review
-state as of its last submit.
+Drop each once merged or deleted.
 
 **`clerkOrganizationsAsGroups`** (default `true`) sets whether the worker maps Clerk Organizations to
 groups; it, not the plugin's `useOrganizationsAsGroups`, governs a deployment, so keep them equal. Set
@@ -1391,7 +1390,7 @@ already request through the task queue.
 The gateway writes only branches in its namespace (`branchNamespace`, `canopycms/prod/` by
 default), its settings branch and `legacyBranches`, never the base branch, GitHub's default
 branch or a `protectedBranches` match. It acts only on pull requests from those heads in this
-repository, and returns a body only for a namespace head. There it can push any of the
+repository, and returns a body only for a pull request it may update. There it can push any of the
 repository's commits, force-push, delete and open pull requests, which run your workflows. So:
 
 - keep secrets a workflow could leak in an environment with required reviewers, never in

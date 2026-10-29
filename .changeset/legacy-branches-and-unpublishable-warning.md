@@ -18,10 +18,10 @@ the GitHub gateway may still write. It writes them, comma-separated, to the gate
 such as an entry holding `*` or a comma, inside the resolved namespace, a branch the namespace
 sits under, or repeated. Each git sync, the worker checks every editor branch against the
 gateway's policy, and System health lists by full name the ones it would refuse to publish, with
-what to do. The gateway now returns a pull request's body only when its head is in the
-namespace, not protected and in this repository; for any other pull request it returns the merge
-state alone. So a legacy branch's pull request shows its comments and review state as of its
-last submit, rather than following each change.
+what to do. The gateway now returns a pull request's body only when it would update that pull
+request: its head is in the namespace or on `legacyBranches`, not protected, and in this
+repository. For any other pull request it returns the merge state alone. So a legacy branch's
+pull request keeps its comment and review blocks current, as a namespace branch's does.
 
 **To adopt.** Before deploying, open the editor's branch list and pass every open branch whose
 name is outside the namespace as `legacyBranches`; a hand install sets `CANOPYCMS_LEGACY_BRANCHES`

@@ -399,14 +399,19 @@ export class BranchPolicy {
     }
   }
 
-  /** Whether `branch` is in the namespace itself, not merely writable as settings or legacy. */
-  namespaceHolds(branch: string): boolean {
-    return branch.startsWith(this.namespace)
-  }
-
   /** Whether the gateway may write `branch` at all: the namespace, the settings branch, the list. */
   inNamespace(branch: string): boolean {
-    return this.namespaceHolds(branch) || branch === this.settingsBranch || this.legacy.has(branch)
+    return (
+      branch.startsWith(this.namespace) || branch === this.settingsBranch || this.legacy.has(branch)
+    )
+  }
+
+  /**
+   * Whether the gateway opens and updates a pull request from `head`, protection aside: a branch it
+   * writes that is not a settings branch. `isProtected`, which may read GitHub, judges the rest.
+   */
+  takesPullRequestFrom(head: string): boolean {
+    return !this.isSettings(head) && this.inNamespace(head)
   }
 
   /**
@@ -520,7 +525,7 @@ export class BranchPolicy {
         `${refusing}: ${PROTECTED_WHY}`,
       )
     }
-    if (!this.inNamespace(head)) {
+    if (!this.takesPullRequestFrom(head)) {
       throw new GatewayRefusalError(
         'pull-request',
         head,

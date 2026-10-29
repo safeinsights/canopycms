@@ -513,13 +513,33 @@ describe('reading a pull request by number', () => {
     })
   })
 
+  it('answers the body of one whose head is on the legacy list, as the gateway updates it', async () => {
+    const answer = await read(pullRequestHead('spring'), { legacyBranches: ['spring'] })
+
+    expect(answer.body).toBe('Notes')
+  })
+
   it("answers an empty body as '', which only a withheld body is not", async () => {
     expect((await read({ ...pullRequestHead('canopycms/prod/feature'), body: null })).body).toBe('')
   })
 
   it.each([
     ['outside the namespace', pullRequestHead('developer-branch'), {}],
-    ['on the legacy list', pullRequestHead('spring'), { legacyBranches: ['spring'] }],
+    [
+      'outside the namespace and not on the legacy list',
+      pullRequestHead('summer'),
+      { legacyBranches: ['spring'] },
+    ],
+    [
+      'on the legacy list, in a fork',
+      pullRequestHead('spring', 2002),
+      { legacyBranches: ['spring'] },
+    ],
+    [
+      'on the legacy list, protected',
+      pullRequestHead('spring'),
+      { legacyBranches: ['spring'], protectedBranches: ['spring'] },
+    ],
     ['the settings branch', pullRequestHead('canopycms-settings-prod'), {}],
     ['protected, outside the namespace', pullRequestHead('main'), {}],
     [
@@ -557,6 +577,7 @@ describe('reading a pull request by number', () => {
       { protectedBranches: ['canopycms/prod/keep-*'] },
       null,
     ],
+    ['on the legacy list', pullRequestHead('spring'), { legacyBranches: ['spring'] }, 'Notes'],
     ['outside the namespace', pullRequestHead('developer-branch'), {}, null],
     ['in a fork', pullRequestHead('canopycms/prod/feature', 2002), {}, null],
   ] as const)(
