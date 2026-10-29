@@ -179,7 +179,7 @@ describe('branch withdraw api', () => {
   })
 
   it('syncs against the branch the save returned, which can carry a PR the guard did not see', async () => {
-    // On the queued path the worker records the PR's number after the guard has read the branch.
+    // On the queued path the worker can record the PR's number after the guard has read the branch.
     mockMetadataSave.mockImplementationOnce(async () => ({
       branch: { ...baseContext.branch, status: 'editing', pullRequestNumber: 456 },
     }))

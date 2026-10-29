@@ -81,9 +81,8 @@ const withdrawBranchHandler = async (
   })
 
   // The PR body still says "Approved" until it is re-rendered from the cleared review.
-  // Against the branch the save returned, so a PR number recorded since the guard read is seen
-  // and a closed PR's dropped number is not. Best-effort: syncPrComments logs its failures and
-  // never throws.
+  // Against the branch the save returned, so a PR number recorded since the guard read is seen.
+  // Best-effort: syncPrComments logs its failures and never throws.
   await syncPrComments(ctx, { ...branchContext, branch: updated.branch })
 
   return {
