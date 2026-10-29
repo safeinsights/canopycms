@@ -171,7 +171,8 @@ const rawText = (value: unknown): string =>
   typeof value === 'string' ? value : (JSON.stringify(normalized(value), null, 2) ?? String(value))
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/
+const ISO_DATETIME_START = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/
+const ISO_CHARS = /^[\d:.+\-TZ]+$/
 
 /**
  * A date as a comparison shows it: absolute, in the viewer's locale, with the time zone. The
@@ -206,7 +207,8 @@ const formatDate = (
 /** Two ISO date-time values naming one instant, however spelled: no change. Free text is not parsed. */
 const sameInstant = (field: FieldConfig | undefined, a: unknown, b: unknown): boolean => {
   if (field?.type !== 'datetime' || typeof a !== 'string' || typeof b !== 'string') return false
-  if (!ISO_DATE.test(a) || !ISO_DATE.test(b)) return false
+  const iso = (s: string) => DATE_ONLY.test(s) || (ISO_DATETIME_START.test(s) && ISO_CHARS.test(s))
+  if (!iso(a) || !iso(b)) return false
   const [x, y] = [Date.parse(a), Date.parse(b)]
   return !Number.isNaN(x) && x === y
 }
