@@ -395,8 +395,25 @@ describe('branch review api - requestChanges', () => {
         expect(res.ok).toBe(true)
         const { threads } = await new CommentStore(branchRoot).load()
         expect(Object.keys(threads)).toHaveLength(0)
+        // The review block still changes, so the body is synced once all the same.
+        expect(mockSyncPrComments).toHaveBeenCalledTimes(1)
       },
     )
+
+    it("updates the pull request's comment summary once the note is saved", async () => {
+      mockSyncPrComments.mockImplementationOnce(async () => {
+        const { threads } = await new CommentStore(branchRoot).load()
+        expect(Object.values(threads)).toHaveLength(1)
+      })
+      const res = await run({ note: 'Fix the intro.' })
+      expect(res.ok).toBe(true)
+      expect(mockSyncPrComments).toHaveBeenCalledTimes(1)
+      // The branch as the status write left it, so a PR number recorded meanwhile is seen.
+      expect(mockSyncPrComments.mock.calls[0]?.[1]).toMatchObject({
+        branchRoot,
+        branch: { status: 'editing' },
+      })
+    })
 
     it('rejects a note over 2,000 characters at the endpoint boundary, after trimming', () => {
       const validate = (note: string) =>
@@ -605,6 +622,23 @@ describe('branch review api - approveBranch', () => {
       ctx,
       expect.objectContaining({ branchRoot: baseContext.branchRoot }),
     )
+  })
+
+  it('syncs against the branch the save returned, which can carry a PR the guard did not see', async () => {
+    // On the queued path the worker records the PR's number after the guard has read the branch.
+    mockMetadataSave.mockImplementationOnce(async () => ({
+      branch: { ...baseContext.branch, status: 'approved', pullRequestNumber: 456 },
+    }))
+    const ctx = makeCtx()
+    ctx.getBranchContext = vi.fn().mockResolvedValue({
+      ...baseContext,
+      branch: { ...baseContext.branch, pullRequestNumber: undefined },
+    })
+    const res = await approveBranchHandler(ctx, admin, { branch: 'feature/x' as BranchName })
+    expect(res.status).toBe(200)
+    expect(mockSyncPrComments.mock.calls[0]?.[1]).toMatchObject({
+      branch: { status: 'approved', pullRequestNumber: 456 },
+    })
   })
 
   it.each([

@@ -54,6 +54,127 @@ entries under **Released**.
 
 ## Released
 
+### 0.7.0
+
+<!-- changeset: playwright-1-64-ubuntu-26-04 -->
+
+#### The editor opens on the deployment's own default branch — **breaking (client config)**
+
+<!-- changeset: editor-starts-on-server-branch -->
+
+_First in 0.7.0._
+
+**What changed.** `/edit` with no `?branch=` now opens on the branch the server names as its
+default: `defaultActiveBranch`, else the base branch, as that deployment resolves them. Before,
+it opened on the branch the config evaluated in the browser named. In the browser a value read
+from an environment variable falls back to its literal, so a deployment whose base differs from
+that literal opened on the wrong branch. `config.client()` and `CanopyClientConfig` no longer
+carry `defaultBaseBranch` or `defaultActiveBranch`, and `CanopyEditor` without a `branchName`
+starts branchless and adopts the server's default, as `CanopyEditorPage` does. If the branch
+list fails to load, both panes say so and the form offers Retry.
+
+**To adopt.** Nothing, unless your code reads `config.client().defaultBaseBranch` or
+`.defaultActiveBranch`. Read the branch from the server config instead (`config.server`, on the
+server), or from the branches API's `defaultBranch` in the browser. To open the editor on a
+particular branch, link to `/edit?branch=<name>`.
+
+**Now deletable.** A `NEXT_PUBLIC_` copy of the base-branch variable, or an `/edit` link that adds
+`?branch=` only to work around the editor opening on the wrong branch.
+
+#### Pull request bodies show the editor's open comments
+
+<!-- changeset: pr-body-comment-state -->
+
+_First in 0.7.0._
+
+**What changed.** The pull request a submit opens now lists the branch's unresolved editor comment threads: where each one is, the first line of its first comment (80 characters at most) and a link to it in the editor. Once every thread is resolved, it says so. The list is updated whenever a comment is added, replied to or resolved, as well as on submit. Comment excerpts are visible to everyone who can read the pull request, which on a public repository means everyone. Open threads do not block the merge or keep the pull request in draft. A pull request opened before this release shows no list until its branch is next submitted.
+
+**To adopt.** Nothing, if your deploy replaces the worker along with the CMS, as `cdk deploy` of the canopycms-cdk stack does with the default `workerCode`. A worker on an earlier release fails each update of the list and marks the branch's sync failed until a later task succeeds, so a pipeline that leaves the worker behind must roll it no later than the CMS: see [Rolling the worker from CI](docs/deploying-to-aws.md#rolling-the-worker-from-ci).
+
+#### Pull request bodies link back to the editor
+
+<!-- changeset: pr-body-editor-links -->
+
+_First in 0.7.0._
+
+**What changed.** The pull request a submit opens links to the branch in the editor, and each changed entry to that entry. A notice tells reviewers that comments on the pull request do not reach the editor, so the author will not see them. The links use the editor's URL from the submit, accepted only when its host is the one the request was addressed to (`X-Forwarded-Host`, else `Host`), which holds behind `canopycms-cdk`'s CloudFront distribution as it stands.
+
+**To adopt.** Nothing, unless a proxy in front of the CMS sets neither header to the editor's public host: then set `editorUrl` in your Canopy config to the editor page's URL, e.g. `editorUrl: 'https://cms.example.org/edit'`. See [the config reference](README.md#definecanopyconfig-options).
+
+#### CloudFront origin read timeout accepted up to 120 s; the editor waits 135 s
+
+<!-- changeset: cdk-origin-read-timeout-120 -->
+
+_First in 0.7.0._
+
+**What changed.** `CanopyCmsDistribution` and `attachTo` accepted an origin read timeout of at most 60 s, but CloudFront's default quota for "Response timeout per origin" is 120 s. Both now accept up to 120 s and refuse more at synth, with an error that names the quota. A raised quota does not lift the limit, because the editor's request deadline is set just above it: the standard deadline is now 135 s and a branch create's is 150 s, so a standard request that never answers shows its timeout message after 135 s rather than 75 s. Long requests, such as submit, admin scans and an upload the CMS proxies, still wait 180 s.
+
+**To adopt.** Nothing is required; the default Lambda timeout is still 60 s. To allow slower requests, pass `timeout: Duration.seconds(120)` (at most) to `CanopyCmsService` and `originReadTimeout: cmsService.timeout` to `CanopyCmsDistribution`.
+
+#### Approve and Request changes in the editor
+
+<!-- changeset: review-approve-request-changes -->
+
+_First in 0.7.0._
+
+**What changed.** Reviewers and admins can now Approve a submitted branch, and Request changes with an optional note, from the top bar and the branch card. The branch's creator never gets them, and a reviewer on the branch's access list finds them only in the branch card's menu. Approve is a CanopyCMS status and does not approve the pull request on GitHub, which stays open for someone with access to merge. Request changes also works on an approved branch. It converts the pull request to a draft, and its note is saved as a comment on the branch.
+
+#### Markdown typed in "Edit source" saves in Prettier's markers
+
+<!-- changeset: source-mode-markdown-export-style -->
+
+_First in 0.7.0._
+
+**What changed.** A markdown body typed in a markdown field's "Edit source" mode used to be written as typed, so `*italic*` and `*` bullets failed a required `prettier --check`. A save now restyles every new or edited block in place to Prettier's style: `-` bullets, `_` emphasis, `**` strong, `---` rules, `#` headings, backtick fences, padded tables, and one blank line between blocks. This applies whichever editor mode produced the block, and to a new entry's body. Only markers and whitespace change, plus an escaped `_` between two letters, which Prettier also unescapes. Text, links, entities and other escapes stay as typed. Untouched blocks keep their bytes, and a block is restyled only if it still means exactly what was typed. Cases Prettier still flags are listed in [#1116](https://github.com/safeinsights/canopycms/issues/1116).
+
+#### Fix the App links `init-github-app create` prints for an organisation
+
+<!-- changeset: init-github-app-org-links -->
+
+_First in 0.7.0._
+
+**What changed.** For an organisation-owned repository, `canopycms init-github-app create` printed App settings and install links under `github.com/settings/apps/…`, which 404 for an organisation's App. It now prints the `github.com/organizations/<owner>/settings/apps/…` form; user-owned repositories are unchanged. The command's output is also laid out for scanning, with bold headings, a permissions list, green ticks for progress and red crosses for failures, and is plain text on a stream that is piped (unless `FORCE_COLOR` turns colour on) or when `NO_COLOR` is set.
+
+#### Faster first request to a new editor deployment
+
+<!-- changeset: settings-workspace-first-clone -->
+
+_First in 0.7.0._
+
+**What changed.** A new deployment's first request builds the settings workspace without
+writing the base branch's files into it, so it no longer spends an EFS write and a delete on
+every file of the site, and cold starts arriving together share that one build. If the process building it dies, the others
+build their own after waiting at most 15 seconds. The `provision dir=settings` log line gives the
+time each step took.
+
+#### Live preview shows a list reference's picks on load
+
+<!-- changeset: preview-list-reference-targets -->
+
+_First in 0.7.0._
+
+**What changed.** The editor loads an entry with its references resolved, so a `list: true`
+reference arrives as its targets. Live preview used to hand the view `null` for each of them until
+the list was edited; it now passes each loaded target through, as it already did for a single
+reference.
+
+#### The worker keeps syncing past one corrupt branch on git 2.56 and later
+
+<!-- changeset: worker-fetch-past-a-corrupt-branch -->
+
+_First in 0.7.0._
+
+**What changed.** From git 2.56, `git bundle unbundle` fails when any branch in `remote.git` has a
+corrupt object in its history. Because the worker used it for every GitHub fetch, one torn
+object on the shared filesystem would have failed every sync cycle until an operator repaired the
+repository. The worker now checks that each prerequisite of the bundle is a commit and indexes
+the pack itself, so the sync skips only the damaged branch, as it did on git 2.55. Three kinds of
+damage still stop every fetch, as they did on 2.55: a corrupt object in `remote.git` that the
+incoming pack also carries, a prerequisite whose object header is torn, and a corrupt commit in
+a branch's first-parent history, which the fetch walks to tell GitHub what `remote.git` already
+has before the first fetch has written its tracking refs
+([#1104](https://github.com/safeinsights/canopycms/issues/1104)).
+
 ### 0.6.0
 
 #### Clerk organizations-as-groups is a deployment setting, and survives a Clerk instance without Organizations — **behaviour change**
