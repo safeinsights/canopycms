@@ -559,11 +559,6 @@ export async function executeTask(
 }
 
 /**
- * The branch whose metadata records a task's outcome, or null when none does. A
- * delete-remote-branch task names a branch already deleted here, so a workspace under that
- * name is leftover or a newer branch's that reused the name.
- */
-/**
  * The name links and a fallback title give the branch: the short name the API queued
  * (branch-param.ts), else the ref, which the editor resolves too.
  */
@@ -571,13 +566,25 @@ function editorBranchOf(payload: Record<string, unknown>, branch: string): strin
   return optionalString(payload, 'editorBranch', branch)
 }
 
+/**
+ * The branch whose metadata records a task's outcome, or null when none does. A
+ * delete-remote-branch task names a branch already deleted here, so a workspace under that
+ * name is leftover or a newer branch's that reused the name.
+ */
 function metadataBranchOf(task: Task): string | null {
   if (task.action === 'delete-remote-branch' || task.action === SYNC_PR_COMMENTS_ACTION) return null
   return typeof task.payload.branch === 'string' ? task.payload.branch : null
 }
 
+/** Logs an outcome write skipped because `branch`'s workspace has no branch.json. */
+function noMetadataToRecord(branch: string, what: string): void {
+  workerLogWarn(`Not recording the ${what} for ${branch}: its workspace has no branch.json`)
+}
+
 /**
- * Update branch metadata after successful task completion.
+ * Update branch metadata after successful task completion. Like every outcome write here, it
+ * updates an existing branch.json only: a workspace without one is not a branch whose name
+ * could be recorded (`noMetadataToRecord`).
  */
 export async function updateBranchMetadata(
   ctx: TaskRunnerContext,
@@ -596,31 +603,34 @@ export async function updateBranchMetadata(
 
   try {
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
-    const updates: Record<string, unknown> = {
-      syncStatus: 'synced',
-      // save()'s merge only overwrites keys present in this update, so a prior
-      // syncFailureReason would survive this successful sync forever unless
-      // cleared explicitly (same pattern as rebaseFailure elsewhere).
-      syncFailureReason: undefined,
-    }
-    if (result.prUrl) updates.pullRequestUrl = result.prUrl
-    if (result.prNumber) {
-      updates.pullRequestNumber = result.prNumber
-      // As soon as the PR exists the field reads 'open', rather than staying
-      // absent until the next poll cycle observes it. Exception: the git-sync
-      // loop may have archived this branch (PR merged/closed) while the task
-      // was in flight, and a late completion must not downgrade that terminal
-      // state back to 'open'.
-      const current = await BranchMetadataFileManager.loadOnly(branchPath)
-      const terminal =
-        current?.branch.status === 'archived' ||
-        current?.branch.pullRequestState === 'merged' ||
-        current?.branch.pullRequestState === 'closed'
-      if (!terminal) {
-        updates.pullRequestState = 'open'
+    const saved = await meta.update((existing) => {
+      if (!existing) return null
+      const updates: Record<string, unknown> = {
+        syncStatus: 'synced',
+        // save()'s merge only overwrites keys present in this update, so a prior
+        // syncFailureReason would survive this successful sync forever unless
+        // cleared explicitly (same pattern as rebaseFailure elsewhere).
+        syncFailureReason: undefined,
       }
-    }
-    await meta.save({ branch: updates })
+      if (result.prUrl) updates.pullRequestUrl = result.prUrl
+      if (result.prNumber) {
+        updates.pullRequestNumber = result.prNumber
+        // As soon as the PR exists the field reads 'open', rather than staying
+        // absent until the next poll cycle observes it. Exception: the git-sync
+        // loop may have archived this branch (PR merged/closed) while the task
+        // was in flight, and a late completion must not downgrade that terminal
+        // state back to 'open'.
+        const terminal =
+          existing.branch.status === 'archived' ||
+          existing.branch.pullRequestState === 'merged' ||
+          existing.branch.pullRequestState === 'closed'
+        if (!terminal) {
+          updates.pullRequestState = 'open'
+        }
+      }
+      return { branch: updates }
+    })
+    if (saved === null) noMetadataToRecord(branch, `${task.action} outcome`)
   } catch (err) {
     workerLogError(
       `Failed to update metadata for ${branch}:`,
@@ -675,7 +685,10 @@ async function updateBranchMetadataOnFailure(
           existing.branch.pullRequestNumber === undefined &&
           existing.branch.submittedAt === submittedAt,
       )) !== null
-    if (!unlocked) await meta.save({ branch: failed })
+    if (!unlocked) {
+      const saved = await meta.saveIf({ branch: failed }, (existing) => existing !== null)
+      if (saved === null) noMetadataToRecord(branch, `${task.action} failure`)
+    }
   } catch (err) {
     workerLogError(
       `Failed to update failure metadata for ${branch}:`,
@@ -847,9 +860,11 @@ async function recordPushedToGitHub(
     return
   }
   try {
-    await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).save({
-      branch: { pushedToGitHubAt: new Date().toISOString() },
-    })
+    const saved = await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).saveIf(
+      { branch: { pushedToGitHubAt: new Date().toISOString() } },
+      (existing) => existing !== null,
+    )
+    if (saved === null) noMetadataToRecord(branch, 'GitHub push')
   } catch (err) {
     workerLogError(`Failed to record the GitHub push for ${branch}:`, getErrorMessage(err))
   }

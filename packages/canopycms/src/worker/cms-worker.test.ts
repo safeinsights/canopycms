@@ -520,8 +520,14 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     return { worker, internals, octokit }
   }
 
-  const setupBranchDir = (branch: string) =>
-    fs.mkdir(path.join(contentBranchesPath, sanitizeBranchName(branch)), { recursive: true })
+  /** A branch workspace with its branch.json, which every outcome write updates. */
+  const setupBranchDir = async (branch: string) => {
+    const branchPath = path.join(contentBranchesPath, sanitizeBranchName(branch))
+    await fs.mkdir(branchPath, { recursive: true })
+    await getBranchMetadataFileManager(branchPath, contentBranchesPath).save({
+      branch: { name: branch },
+    })
+  }
 
   const readBranchMeta = (branch: string) =>
     fs
@@ -953,6 +959,56 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
       expect(meta.branch.syncFailureReason).toContain('Validation Failed')
     })
   })
+
+  describe('on a workspace with no branch.json', () => {
+    const branchJson = path.join(
+      'content-branches',
+      'canopycms-prod-feature-x',
+      '.canopy-meta',
+      'branch.json',
+    )
+    const runTask = async (create: (octokit: PrOctokitStub) => void) => {
+      await fs.mkdir(path.join(contentBranchesPath, 'canopycms-prod-feature-x', '.git'), {
+        recursive: true,
+      })
+      const { worker, octokit } = makePrWorker()
+      octokit.pulls.list.mockResolvedValue({ data: [] })
+      create(octokit)
+      const id = await enqueueTask(taskDir, {
+        action: 'push-and-create-or-update-pr',
+        payload: {
+          branch: 'canopycms/prod/feature-x',
+          title: 'Submit feature-x',
+          body: '',
+          baseBranch: 'main',
+          submittedAt: '2026-03-01T00:00:00.000Z',
+        },
+      })
+      await worker.processTaskQueue()
+      return getTask(taskDir, id)
+    }
+
+    it('records no success outcome, creating no branch.json', async () => {
+      const task = await runTask((octokit) =>
+        octokit.pulls.create.mockResolvedValue({
+          data: { number: 9, html_url: 'https://github.com/test-owner/test-repo/pull/9' },
+        }),
+      )
+
+      expect(task?.status).toBe('completed')
+      expect(await fileExists(path.join(tmpDir, branchJson))).toBe(false)
+      expect(consoleSpy).toHaveWarned('its workspace has no branch.json')
+    })
+
+    it('records no failure outcome, creating no branch.json', async () => {
+      const error = await noCommitsBetweenError('main', 'canopycms/prod/feature-x')
+      const task = await runTask((octokit) => octokit.pulls.create.mockRejectedValue(error))
+
+      expect(task?.status).toBe('failed')
+      expect(await fileExists(path.join(tmpDir, branchJson))).toBe(false)
+      expect(consoleSpy).toHaveWarned('its workspace has no branch.json')
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -1107,6 +1163,20 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
 
     expect(await readPushedAt('canopycms/prod/feature-clean')).toEqual(expect.any(String))
     expect(await readPushedAt('canopycms/prod/feature-x')).toBeUndefined()
+  })
+
+  it('records no push on a workspace with no branch.json, creating none', async () => {
+    await seedBranchInRemoteGit('canopycms/prod/feature-clean', 'hello')
+    const branchPath = path.join(contentBranchesPath, 'canopycms-prod-feature-clean')
+    await fs.mkdir(path.join(branchPath, '.git'), { recursive: true })
+
+    await (makePushWorker() as unknown as PushBranchInternals).pushBranchToGitHub(
+      'canopycms/prod/feature-clean',
+    )
+
+    expect(await fixtureHasBranch('canopycms/prod/feature-clean')).toBe(true)
+    await expect(fs.stat(path.join(branchPath, '.canopy-meta', 'branch.json'))).rejects.toThrow()
+    expect(consoleSpy).toHaveWarned('its workspace has no branch.json')
   })
 
   it("throws PermanentTaskError when remote.git holds an ancestor of GitHub's tip, sending no bundle", async () => {
@@ -1396,6 +1466,10 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     await fs.mkdir(path.join(contentBranchesPath, 'canopycms-prod-feature-collision'), {
       recursive: true,
     })
+    await getBranchMetadataFileManager(
+      path.join(contentBranchesPath, 'canopycms-prod-feature-collision'),
+      contentBranchesPath,
+    ).save({ branch: { name: 'canopycms/prod/feature-collision' } })
 
     const worker = makePushWorker()
     ;(worker as unknown as { running: boolean }).running = true
@@ -1507,6 +1581,10 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     await fs.mkdir(path.join(contentBranchesPath, 'canopycms-prod-feature-workflow'), {
       recursive: true,
     })
+    await getBranchMetadataFileManager(
+      path.join(contentBranchesPath, 'canopycms-prod-feature-workflow'),
+      contentBranchesPath,
+    ).save({ branch: { name: 'canopycms/prod/feature-workflow' } })
     await refuseLikeGitHubWorkflowCheck(githubFixture)
 
     const worker = makePushWorker()
