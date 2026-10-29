@@ -418,6 +418,15 @@ describe('the namespace', () => {
     expect(octokit.pulls.create).not.toHaveBeenCalled()
     expect(octokit.pulls.list).not.toHaveBeenCalled()
   })
+
+  it('says a refused delete leaves the branch on GitHub, and how to delete it there', async () => {
+    const caught = await gateway({ octokit: octokitStub() as unknown as Octokit })
+      .deleteBranch('developer-branch')
+      .catch((err: unknown) => err)
+
+    expect(String(caught)).toContain('so the branch stays on GitHub')
+    expect(String(caught)).toContain('add it to legacyBranches, retry this task in System health')
+  })
 })
 
 describe('pull requests by number', () => {

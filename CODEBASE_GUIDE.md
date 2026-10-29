@@ -115,10 +115,10 @@ Which guards run, in what order, and what each one catches are in
 
 Route handlers, one file per endpoint namespace:
 
-- `branch.ts` — `/branches`: create, list, delete; `toBranchListItem` shapes every branch response, with server-computed `isProtected` / `readOnly`
+- `branch.ts` — `/branches`: create, list, delete; `toBranchListItem` shapes branch responses, with server-computed `isProtected` / `readOnly`
 - `branch-status.ts` — `/branch-status`: status and submit (`SubmitBranchResponse`)
 - `branch-withdraw.ts` — `/branch-withdraw`: withdraw a PR
-- `branch-review.ts` — `/branch-review`: request changes
+- `branch-review.ts` — `/branch-review`: approve, request changes
 - `branch-changes.ts` — `GET /:branch/changes`
 - `branch-entry-changes.ts` — `GET /:branch/changes/...entryPath`
 - `branch-merge.ts` — `/branch-merge`: merge and clean up
