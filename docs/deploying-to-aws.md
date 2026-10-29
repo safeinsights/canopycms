@@ -883,9 +883,9 @@ new CanopyCmsService(this, 'Cms', {
 2. `deploymentName` in the shared repo's `canopycms.config.ts`
 3. the operating mode's default (`prod` / `local`)
 
-The env var deliberately wins over config, and if both are set and disagree the Lambda logs a one-time warning naming both values and which one won. See [ARCHITECTURE.md](../ARCHITECTURE.md#deployment-name-resolution) for why that order and not the intuitive one.
+The env var wins over config; when both are set and disagree, the Lambda logs a one-time warning naming both and the winner. See [ARCHITECTURE.md](../ARCHITECTURE.md#deployment-name-resolution) for why that order.
 
-`CANOPYCMS_DEPLOYMENT_NAME` set through the construct's `environment` prop wins over the `deploymentName` prop; it is validated at synth and written to both the Lambda's environment and the worker's `.env`.
+`CANOPYCMS_DEPLOYMENT_NAME` set through the construct's `environment` prop wins over the `deploymentName` prop; validated at synth, it is written to the Lambda's environment and the worker's `.env`.
 
 **Each deployment writes only its own branches.** Every branch editors create starts with the
 branch namespace, `canopycms/{deployment}/` by default: a template, set by `CanopyCmsService`'s
@@ -899,9 +899,10 @@ repository: a deployment name holds no `/`, so `canopycms/prod/` never contains
 
 **Changing the template is a migration.** Existing branches keep their names, so they fall
 outside the new namespace: URLs carry their full names, and the gateway refuses to publish them
-until `CANOPYCMS_LEGACY_BRANCHES` lists them.
+until `CANOPYCMS_LEGACY_BRANCHES` lists them. A PR body rendered before the change links the
+old short name, which can open whichever branch later takes it until the body is re-rendered.
 
-**Changing `deploymentName` (or `settingsBranch`) on a stack that already has a populated settings workspace is refused at boot, loudly** — it is not migrated automatically, because renaming the resolved settings branch would check out a _different_ orphan branch in the same on-disk workspace and wipe `permissions.json`/`groups.json` with no history to recover them from. If you see this error, either restore the previous value or deliberately move the settings workspace aside first. A moved-aside or wiped settings workspace is re-provisioned from `remote.git`, keeping groups and path rules.
+**Changing `deploymentName` (or `settingsBranch`) on a stack that already has a populated settings workspace is refused at boot, loudly** — it is not migrated automatically, because renaming the resolved settings branch would check out a _different_ orphan branch in the same on-disk workspace and wipe `permissions.json`/`groups.json` with no history to recover them from. Restore the previous value, or move the settings workspace aside first. A moved-aside or wiped settings workspace is re-provisioned from `remote.git`, keeping groups and path rules.
 
 ## Base branch and settings branch: keeping the worker and the Lambda in step
 
