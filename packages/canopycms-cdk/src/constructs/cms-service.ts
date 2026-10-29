@@ -439,8 +439,16 @@ export function resolveBranchNamespaceProp(
     .replace(/-+/g, '-')
     .replace(/^\.+/, '')
     .replace(/(?<!\.)\.+$/, '')
-  if (sanitized.startsWith('canopycms-settings-')) {
-    reject('its branches would be canopycms-settings-* settings branches')
+  const directoryPrefix = namespace
+    .replace(/[^a-zA-Z0-9._-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^\.+/, '')
+    .replace(/(?<!\.)\.+$/, '')
+  if (
+    'canopycms-settings-'.startsWith(directoryPrefix) ||
+    sanitized.startsWith('canopycms-settings-')
+  ) {
+    reject('some branches in it would be canopycms-settings-* settings branches')
   }
   for (const [propName, branch] of [
     ['baseBranch', branches.baseBranch],
@@ -450,6 +458,11 @@ export function resolveBranchNamespaceProp(
       reject(
         `the ${propName} ${JSON.stringify(branch)} is inside it, and the namespace holds only the ` +
           'branches editors create',
+      )
+    }
+    if (branch !== undefined && namespace.startsWith(`${branch}/`)) {
+      reject(
+        `the ${propName} ${JSON.stringify(branch)} is a branch named after part of it, so git can hold no branch in it`,
       )
     }
   }
@@ -1423,6 +1436,14 @@ export class CanopyCmsService extends Construct {
         : undefined
 
     const protectedBranches = assertValidProtectedBranches(props.protectedBranches ?? [])
+    // The construct stamps the namespace into both halves; an override in `environment` would reach
+    // the Lambda alone and be replaced there, so it is refused rather than silently ignored.
+    if (props.environment?.['CANOPYCMS_BRANCH_NAMESPACE'] !== undefined) {
+      throw new Error(
+        'CanopyCmsService: set the branch namespace with the branchNamespace prop, not ' +
+          'environment.CANOPYCMS_BRANCH_NAMESPACE: the prop reaches both the Lambda and the GitHub gateway.',
+      )
+    }
     const branchNamespace = resolveBranchNamespaceProp(
       props.branchNamespace ?? DEFAULT_BRANCH_NAMESPACE_TEMPLATE,
       deploymentName,

@@ -26,6 +26,10 @@ export const VALID_BRANCH_NAMESPACE_TEMPLATES = [
 
 /** Templates both copies must REJECT. */
 export const INVALID_BRANCH_NAMESPACE_TEMPLATES = [
+  // Their branches' directories start `canopycms-`, so `.../settings-x` would be a settings name.
+  ['a namespace that sanitizes to the start of the settings prefix', 'canopycms/'],
+  ['one that sanitizes to it with a dash', 'canopycms-/'],
+  ['one that sanitizes further into it', 'canopycms/settings/'],
   ['no trailing slash', 'canopycms/{deployment}'],
   ['the empty string', ''],
   ['an unknown placeholder', 'canopycms/{env}/'],

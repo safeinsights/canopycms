@@ -564,11 +564,24 @@ describe('BranchPolicy: building the namespace', () => {
     expect(
       () =>
         new BranchPolicy({
-          baseBranch: 'canopycms/prod',
+          baseBranch: 'canopycms/prod-main',
           settingsBranch: 'canopycms/prod-settings',
         }),
     ).not.toThrow()
   })
+
+  it.each([
+    ['base branch', { baseBranch: 'canopycms/prod' }],
+    ['base branch', { baseBranch: 'canopycms' }],
+    ['settings branch', { settingsBranch: 'canopycms' }],
+  ])(
+    'refuses a %s named after part of the namespace, which git cannot hold beside it',
+    (what, options) => {
+      expect(() => new BranchPolicy(options)).toThrow(
+        new RegExp(`The ${what} ".*" is a branch named after part of the branch namespace`),
+      )
+    },
+  )
 
   it('refuses a legacy entry inside the namespace, as already in it', () => {
     expect(() => new BranchPolicy({ legacyBranches: ['canopycms/prod/spring'] })).toThrow(

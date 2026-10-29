@@ -2728,12 +2728,22 @@ describe('CanopyCmsService: branchNamespace', () => {
     expect(stamped(synth(false, { branchNamespace: 'cms/' }))).toBe('cms/')
   })
 
-  it('replaces an environment.CANOPYCMS_BRANCH_NAMESPACE, so the Lambda and the gateway agree', () => {
-    const template = synth(false, {
-      branchNamespace: 'cms/',
-      environment: { CANOPYCMS_BRANCH_NAMESPACE: 'other/' },
-    })
-    expect(stamped(template)).toBe('cms/')
+  it('refuses an environment.CANOPYCMS_BRANCH_NAMESPACE, which would reach the Lambda alone', () => {
+    expect(() =>
+      synth(false, {
+        branchNamespace: 'cms/',
+        environment: { CANOPYCMS_BRANCH_NAMESPACE: 'other/' },
+      }),
+    ).toThrow('set the branch namespace with the branchNamespace prop')
+  })
+
+  it.each([
+    ['the base branch', { baseBranch: 'cms' }],
+    ['the settings branch', { settingsBranch: 'cms' }],
+  ])('refuses a namespace with %s named after part of it', (_label, branches) => {
+    expect(() => synth(false, { branchNamespace: 'cms/{deployment}/', ...branches })).toThrow(
+      /is a branch named after part of it/,
+    )
   })
 
   it.each([

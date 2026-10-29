@@ -442,7 +442,7 @@ async function buildSingleProcessWorker(
     refreshAuthCache,
     protectedBranches: parseProtectedBranches(env),
     legacyBranches: parseLegacyBranches(env),
-    branchNamespace: env[BRANCH_NAMESPACE_ENV] || undefined,
+    branchNamespace: env[BRANCH_NAMESPACE_ENV]?.trim() || undefined,
     ...commonWorkerConfig(env),
   })
   return {

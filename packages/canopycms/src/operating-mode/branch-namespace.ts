@@ -11,7 +11,15 @@
  */
 import { RESERVED_SETTINGS_BRANCH_PREFIX, sanitizeBranchName } from '../paths/branch-name'
 import { parseBranchName } from '../paths/validation'
+import { canopyLogWarn } from '../utils/logger'
 import { resolveDeploymentName } from './deployment-name'
+
+let warned = false
+function warnOnce(message: string): void {
+  if (warned) return
+  warned = true
+  canopyLogWarn(message)
+}
 
 /** The one placeholder a template may hold. */
 const DEPLOYMENT_PLACEHOLDER = '{deployment}'
@@ -44,8 +52,14 @@ export function branchNamespaceProblem(namespace: string): string | null {
   if (sample.split('/').some((part) => part.startsWith('.') || part.endsWith('.lock'))) {
     return "a part of it starts with '.' or ends with '.lock'"
   }
-  if (sanitizeBranchName(sample).startsWith(RESERVED_SETTINGS_BRANCH_PREFIX)) {
-    return `its branches would be ${RESERVED_SETTINGS_BRANCH_PREFIX}* settings branches`
+  // A branch's directory is the namespace's own sanitized form followed by the rest, so a
+  // namespace that sanitizes to a start of the settings prefix (`canopycms/`) holds settings names.
+  const directoryPrefix = sanitizeBranchName(namespace)
+  if (
+    RESERVED_SETTINGS_BRANCH_PREFIX.startsWith(directoryPrefix) ||
+    sanitizeBranchName(sample).startsWith(RESERVED_SETTINGS_BRANCH_PREFIX)
+  ) {
+    return `some branches in it would be ${RESERVED_SETTINGS_BRANCH_PREFIX}* settings branches`
   }
   return null
 }
@@ -88,6 +102,13 @@ export function resolveBranchNamespace(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): string {
   const fromEnv = env[BRANCH_NAMESPACE_ENV]?.trim()
+  if (fromEnv && config.branchNamespace !== undefined && fromEnv !== config.branchNamespace) {
+    warnOnce(
+      `CanopyCMS: ${BRANCH_NAMESPACE_ENV} (${JSON.stringify(fromEnv)}) differs from ` +
+        `config.branchNamespace (${JSON.stringify(config.branchNamespace)}); using the ` +
+        'environment variable, which infrastructure stamps per stack.',
+    )
+  }
   const [template, source] = fromEnv
     ? [fromEnv, BRANCH_NAMESPACE_ENV]
     : config.branchNamespace !== undefined

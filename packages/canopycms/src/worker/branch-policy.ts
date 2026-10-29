@@ -292,6 +292,13 @@ export class BranchPolicy {
             'which holds only the branches editors create; choose a namespace it is outside',
         )
       }
+      // git holds no ref under a path that is itself a branch.
+      if (name !== undefined && this.namespace.startsWith(`${name}/`)) {
+        throw new Error(
+          `The ${what} ${JSON.stringify(name)} is a branch named after part of the branch namespace ` +
+            `${JSON.stringify(this.namespace)}, so git can hold no branch in it; choose another namespace`,
+        )
+      }
     }
     const entries = [...(options.protectedBranches ?? [])]
     if (entries.length > MAX_PROTECTED_BRANCHES) {

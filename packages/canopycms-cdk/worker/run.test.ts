@@ -594,6 +594,11 @@ describe('runWorker: a healthy start', () => {
     const absent = harness({ env: envWithout('CANOPYCMS_BRANCH_NAMESPACE') })
     await runWorker(absent.deps)
     expect(absent.createWorker.mock.calls[0][0].branchNamespace).toBeUndefined()
+
+    // Blank, as the Lambda and the split gateway read it: unset, never a namespace of spaces.
+    const blank = harness({ env: { ...baseEnv(), CANOPYCMS_BRANCH_NAMESPACE: '  ' } })
+    await runWorker(blank.deps)
+    expect(blank.createWorker.mock.calls[0][0].branchNamespace).toBeUndefined()
   })
 
   it.each([
