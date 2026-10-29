@@ -208,8 +208,9 @@ export interface BaseSchemaHold {
  * Why listing an unpublishable branch in `legacyBranches` would not publish it.
  * `blocks-namespace`: it is named after part of the namespace, so while it exists neither
  * remote.git nor GitHub holds a branch in the namespace. `unlistable`: `legacyBranches` refuses
- * its name. The report reads branch.json only, so a blocker that exists only on GitHub (which
- * `reconcileTrackedBranches` brings back into remote.git) is never listed.
+ * its name. The report lists branch workspaces only, read from their branch.json: a blocker that
+ * exists only on GitHub is never listed, even after `reconcileTrackedBranches` brings it into
+ * remote.git.
  */
 export type UnpublishableBranchReason = 'blocks-namespace' | 'unlistable'
 

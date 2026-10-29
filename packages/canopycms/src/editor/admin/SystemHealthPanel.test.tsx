@@ -788,6 +788,10 @@ describe('SystemHealthPanel', () => {
         "takes a protected one out of protectedBranches, or makes another branch GitHub's default.",
       )
       expect(alert.textContent).toContain('new branch, which is created inside the namespace')
+      // A namespace branch an older worker renamed, which the rebase loop restores.
+      expect(alert.textContent).toContain(
+        'A branch named like one inside the namespace with dashes for its slashes needs neither: an older worker renamed it, and the next git sync restores its name.',
+      )
       expect(alert.textContent).toContain('spring')
       expect(alert.textContent).toContain('cms/old/fix-typos')
       expect(alert.textContent).not.toContain('more')

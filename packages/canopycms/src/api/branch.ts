@@ -301,7 +301,8 @@ export const TOP_LEVEL_ROUTE_SEGMENTS: readonly string[] = [
  * The names of the branches outside `namespace` a URL can reach, which neither a new branch's
  * short name nor its ref may take, since the base and active branches resolve first and a short
  * name would shadow the rest (branch-param.ts): the base, the configured active branch, every
- * workspace outside the namespace, and every exact name the GitHub gateway protects. Namespace
+ * workspace outside the namespace, and the exact names the GitHub gateway protects as the last git
+ * sync recorded them in worker-status.json. Namespace
  * workspaces are left out, so a creator's retry of a create that already landed reaches the key
  * check's idempotent answer instead of a refusal.
  */
