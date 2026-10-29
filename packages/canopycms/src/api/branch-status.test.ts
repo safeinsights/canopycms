@@ -552,8 +552,12 @@ describe('branch status api', () => {
 
       expect(res).toMatchObject({ ok: false, status: 400 })
       expect(res.error).toMatch(/^Nothing to submit yet: "feature\/x"/)
-      expect(mockMetadataUpdate).toHaveBeenCalledTimes(1)
-      expect(mockMetadataUpdate).toHaveBeenCalledWith({
+      // The verdict is cleared before the PR is written, then the push is recorded.
+      expect(mockMetadataUpdate).toHaveBeenCalledTimes(2)
+      expect(mockMetadataUpdate).toHaveBeenNthCalledWith(1, {
+        branch: { name: 'feature/x', review: undefined },
+      })
+      expect(mockMetadataUpdate).toHaveBeenLastCalledWith({
         branch: { name: 'feature/x', pushedToGitHubAt: expect.any(String) },
       })
       consoleSpy.restore()
@@ -590,7 +594,7 @@ describe('branch status api', () => {
       const res = await submitBranchForMerge(makeCtx(true), { user }, params, undefined)
 
       expect(res.ok).toBe(true)
-      const saved = mockMetadataUpdate.mock.calls[0]?.[0].branch
+      const saved = mockMetadataUpdate.mock.calls.at(-1)?.[0].branch
       expect(saved.submittedAt).toEqual(expect.any(String))
       expect(saved).toHaveProperty('syncFailureReason', undefined)
       expect(saved).not.toHaveProperty('pushedToGitHubAt')

@@ -180,7 +180,7 @@ describe('syncPrComments, direct path', () => {
     await syncPrComments(directCtx(service), branchWithPr())
 
     expect(service.updatePullRequest).not.toHaveBeenCalled()
-    expect(consoleSpy).toHaveWarned(/review state on PR #7/)
+    expect(consoleSpy).toHaveWarned(/editor comments of feature\/x/)
     consoleSpy.restore()
   })
 

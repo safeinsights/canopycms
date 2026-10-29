@@ -539,15 +539,13 @@ export async function executeTask(
       }
       const pr = await ctx.github().getPullRequest(prNumber, signal)
       if (pr.state !== 'open') return { updated: false, skipped: 'not-open' }
-      // A comments.json that does not parse stays so until a comment write rewrites it.
+      // A file that cannot be read leaves its block as it is; the other block still updates.
       const body = await renderPrCommentsBody({
         branchRoot: branchPath,
         branch,
         editorUrl,
         body: pr.body,
-      }).catch((err: unknown) => {
-        if (err instanceof SyntaxError) throw new PermanentTaskError(getErrorMessage(err))
-        throw err
+        warn: workerLogWarn,
       })
       if (body === undefined) return { updated: false, skipped: 'unchanged' }
       await ctx.github().updatePullRequest(prNumber, { body }, signal)

@@ -840,14 +840,16 @@ describe('the review block in buildPrSection', () => {
   }
 
   it('follows the submitter and editors lines and precedes the editor link and comments', () => {
-    const section = buildPrSection({
-      submitter: jane,
-      editors: [{ userId: 'user_9', name: 'Sam' }],
-      changedPaths: ['a.md'],
-      branch: 'feature/x',
-      editorUrl: 'https://cms.example.org/edit',
-      review,
-    })
+    const section = mergeReviewBlock(
+      buildPrSection({
+        submitter: jane,
+        editors: [{ userId: 'user_9', name: 'Sam' }],
+        changedPaths: ['a.md'],
+        branch: 'feature/x',
+        editorUrl: 'https://cms.example.org/edit',
+      }),
+      buildReviewBlock(review),
+    )!
     const at = (needle: string) => section.indexOf(needle)
     expect(at('Also edited by')).toBeGreaterThan(at('Submitted by'))
     expect(at(PR_REVIEW_START)).toBeGreaterThan(at('Also edited by'))
@@ -856,7 +858,7 @@ describe('the review block in buildPrSection', () => {
     expect(at(PR_REVIEW_END)).toBeLessThan(at(PR_COMMENTS_START))
   })
 
-  it('renders not yet reviewed when no review is given', () => {
+  it('starts every section as not yet reviewed', () => {
     expect(buildPrSection({ changedPaths: [] })).toContain('Not yet reviewed in CanopyCMS.')
   })
 

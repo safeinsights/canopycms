@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BranchName } from '../paths/types'
 
 const mockMetadataSave = vi.fn().mockResolvedValue({
@@ -24,6 +24,11 @@ vi.mock('../branch-metadata', () => ({
   })),
 }))
 
+const { mockSyncPrComments } = vi.hoisted(() => ({
+  mockSyncPrComments: vi.fn<(...args: unknown[]) => Promise<void>>(),
+}))
+vi.mock('./pr-comment-sync', () => ({ syncPrComments: mockSyncPrComments }))
+
 import { withdrawBranch } from './branch-withdraw'
 import { mockConsole, createMockApiContext, createMockBranchContext } from '../test-utils'
 import { RESERVED_GROUPS } from '../authorization'
@@ -48,6 +53,11 @@ const makeCtx = (allowed = true, githubService?: any) =>
       config: { defaultBranchAccess: 'allow' } as any,
     },
   })
+
+beforeEach(() => {
+  mockSyncPrComments.mockReset()
+  mockSyncPrComments.mockResolvedValue(undefined)
+})
 
 describe('branch withdraw api', () => {
   it('returns 404 if branch not found', async () => {
@@ -137,6 +147,49 @@ describe('branch withdraw api', () => {
       expect(saved).toHaveProperty('review', undefined)
     },
   )
+
+  it('re-renders the pull request body after the withdraw is saved, so it stops saying Approved', async () => {
+    const order: string[] = []
+    mockMetadataSave.mockImplementationOnce(async () => {
+      order.push('save')
+      return { branch: { ...baseContext.branch, status: 'editing' } }
+    })
+    mockSyncPrComments.mockImplementationOnce(async () => {
+      order.push('sync')
+    })
+    const ctx = makeCtx()
+    const approvedContext = {
+      ...baseContext,
+      branch: { ...baseContext.branch, status: 'approved' as const },
+    }
+    ctx.getBranchContext = vi.fn().mockResolvedValue(approvedContext)
+
+    const res = await withdrawHandler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+    )
+
+    expect(res.ok).toBe(true)
+    expect(order).toEqual(['save', 'sync'])
+    expect(mockSyncPrComments).toHaveBeenCalledWith(ctx, approvedContext)
+  })
+
+  it('still succeeds, and logs, when the pull request body cannot be synced', async () => {
+    const consoleSpy = mockConsole()
+    mockSyncPrComments.mockRejectedValue(new Error('gateway down'))
+
+    const res = await withdrawHandler(
+      makeCtx(),
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+    )
+
+    expect(res.ok).toBe(true)
+    expect(res.status).toBe(200)
+    expect(consoleSpy).toHaveWarned(/Could not clear the review of feature\/x.*gateway down/)
+    consoleSpy.restore()
+  })
 
   it('returns 400 when withdrawing an archived branch', async () => {
     const ctx = makeCtx()

@@ -1,11 +1,7 @@
 import { CommentStore } from './comment-store'
 import { getErrorMessage } from './utils/error'
 import type { TaskAction } from './task-queue/cms-task-queue'
-import {
-  BranchMetadataCorruptError,
-  readBranchMetadataFile,
-  type BranchMetadataFile,
-} from './branch-metadata-file'
+import { readBranchMetadataFile } from './branch-metadata-file'
 import {
   buildCommentsBlock,
   buildReviewBlock,
@@ -14,43 +10,46 @@ import {
 } from './submission-attribution'
 
 /**
- * The worker action that re-renders the blocks of a PR body that change after a submit, the
- * editor-comment summary and the review state: enqueued by api/pr-comment-sync.ts, run by
- * worker/task-runner.ts.
+ * The worker action that re-renders both blocks of a PR body that change after a submit, the
+ * editor-comment summary and the review block: enqueued by api/pr-comment-sync.ts, run by
+ * worker/task-runner.ts. The action string is the queue's contract.
  */
 export const SYNC_PR_COMMENTS_ACTION = 'sync-pr-comments' satisfies TaskAction
 
 /**
- * `branchRoot`'s branch.json, or undefined when it is missing or corrupt: the review block then
- * stays as it is, as a PR is not worth a wrong verdict. Any other IO failure is thrown.
- */
-async function readBranchFile(branchRoot: string): Promise<BranchMetadataFile | undefined> {
-  try {
-    return (await readBranchMetadataFile(branchRoot)) ?? undefined
-  } catch (err) {
-    if (err instanceof BranchMetadataCorruptError) return undefined
-    throw err
-  }
-}
-
-/**
  * `body` with its comment summary re-rendered from `branchRoot`'s comments.json and its review
  * block from the review in branch.json as stored, or undefined when there is nothing to write.
- * The two blocks are replaced independently: a body without one still gets the other.
+ * The two blocks are replaced independently: a body without one still gets the other, and a
+ * file that cannot be read leaves its block as it is, with a warning, without stopping the other.
+ * A missing branch.json is no failure: it leaves the review block alone.
  */
 export async function renderPrCommentsBody(options: {
   branchRoot: string
   branch: string
   editorUrl?: string
   body: string | null | undefined
+  warn: (message: string) => void
 }): Promise<string | undefined> {
-  const threads = await new CommentStore(options.branchRoot).listThreadsStrict()
-  const file = await readBranchFile(options.branchRoot)
   const original = options.body ?? ''
   let next = original
-  next =
-    mergeCommentsBlock(next, buildCommentsBlock(threads, options.branch, options.editorUrl)) ?? next
-  if (file) next = mergeReviewBlock(next, buildReviewBlock(file.branch.review)) ?? next
+  try {
+    const threads = await new CommentStore(options.branchRoot).listThreadsStrict()
+    next =
+      mergeCommentsBlock(next, buildCommentsBlock(threads, options.branch, options.editorUrl)) ??
+      next
+  } catch (err) {
+    options.warn(
+      `Could not read the editor comments of ${options.branch}; the PR keeps its summary: ${getErrorMessage(err)}`,
+    )
+  }
+  try {
+    const file = await readBranchMetadataFile(options.branchRoot)
+    if (file) next = mergeReviewBlock(next, buildReviewBlock(file.branch.review)) ?? next
+  } catch (err) {
+    options.warn(
+      `Could not read the review state of ${options.branch}; the PR keeps its review block: ${getErrorMessage(err)}`,
+    )
+  }
   return next === original ? undefined : next
 }
 
@@ -63,12 +62,12 @@ export function prBodyLockKey(branchRoot: string): string {
 }
 
 /**
- * A submit's section with its comment and review blocks re-rendered from disk, for a queued
- * submit whose blocks were rendered when it was queued: a comment or review since then, or a
- * sync task that ran while this one waited out a retry, would otherwise be overwritten. The
- * review counts only while the branch is in review: before the submit is saved the branch is
- * still `editing`, and its last round's verdict is not this PR's. A file that cannot be read
- * leaves its block as it was queued.
+ * A submit's section with its comment and review blocks, both covered, re-rendered from disk,
+ * for a queued submit whose blocks were rendered when it was queued: a comment or review since
+ * then, or a sync task that ran while this one waited out a retry, would otherwise be
+ * overwritten. The review is the one stored, as in renderPrCommentsBody: a submit clears the
+ * last verdict before it writes the PR. A file that cannot be read leaves its block as it was
+ * queued.
  */
 export async function refreshCommentsBlock(options: {
   branchRoot: string
@@ -88,13 +87,8 @@ export async function refreshCommentsBlock(options: {
     )
   }
   try {
-    const file = await readBranchFile(options.branchRoot)
-    if (file) {
-      const { status, review } = file.branch
-      const inReview = status === 'submitted' || status === 'approved'
-      section =
-        mergeReviewBlock(section, buildReviewBlock(inReview ? review : undefined)) ?? section
-    }
+    const file = await readBranchMetadataFile(options.branchRoot)
+    if (file) section = mergeReviewBlock(section, buildReviewBlock(file.branch.review)) ?? section
   } catch (err) {
     options.warn(
       `Could not re-read the review state of ${options.branch}; the PR gets it from submit time: ${getErrorMessage(err)}`,

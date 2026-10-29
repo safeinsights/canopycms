@@ -294,8 +294,6 @@ export interface PrSectionInput {
   entryPaths?: ReadonlyMap<string, string>
   /** The branch's editor comment threads (comments.json), or null when they could not be read. */
   threads?: readonly CommentThread[] | null
-  /** The reviewer's verdict (branch.json); a submit has none, as it clears the last verdict. */
-  review?: BranchReview
 }
 
 /**
@@ -526,7 +524,8 @@ export function buildPrSection(input: PrSectionInput): string {
     input.branch,
     input.editorUrl,
   )
-  const reviewBlock = buildReviewBlock(input.review)
+  // A submit clears the verdict, so a new section is never reviewed.
+  const reviewBlock = buildReviewBlock(undefined)
   const size = (l: SectionLayout) =>
     renderPrSection(input, l, block, reviewBlock).length - block.length
   const layout: SectionLayout = { entryLinks: true, listed: MAX_LISTED_ENTRIES, description }

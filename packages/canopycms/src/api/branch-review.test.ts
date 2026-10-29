@@ -288,6 +288,23 @@ describe('branch review api - requestChanges', () => {
     )
   })
 
+  it('always records the reviewer, so a new verdict replaces an old approval', async () => {
+    mockMetadataSave.mockClear()
+    await requestChangesHandler(
+      makeCtx(),
+      {
+        user: { type: 'authenticated', userId: 'rev2', groups: [RESERVED_GROUPS.REVIEWERS] },
+      },
+      { branch: 'feature/x' as BranchName },
+      {},
+    )
+    expect(mockMetadataSave.mock.calls[0]![0].branch.review).toEqual({
+      state: 'changes-requested',
+      by: { userId: 'rev2' },
+      at: expect.any(String),
+    })
+  })
+
   it('syncs the pull request body only after the review is saved', async () => {
     const order: string[] = []
     mockMetadataSave.mockImplementationOnce(async () => {
@@ -416,6 +433,31 @@ describe('branch review api - requestChanges', () => {
       })
       await run({ note: 'x' })
       expect(order).toEqual(['status', 'comment'])
+    })
+
+    it('syncs the pull request body after the note is saved, so one update carries both', async () => {
+      const order: string[] = []
+      mockMetadataSave.mockImplementationOnce(async () => {
+        order.push('status')
+        return { branch: { ...baseContext.branch, status: 'editing' } }
+      })
+      vi.spyOn(CommentStore.prototype, 'addComment').mockImplementation(async () => {
+        order.push('comment')
+        return { threadId: 't', commentId: 'c' }
+      })
+      mockSyncPrComments.mockImplementationOnce(async () => {
+        order.push('sync')
+      })
+      await run({ note: 'x' })
+      expect(order).toEqual(['status', 'comment', 'sync'])
+    })
+
+    it('syncs even when the note cannot be saved', async () => {
+      const consoleSpy = mockConsole()
+      vi.spyOn(CommentStore.prototype, 'addComment').mockRejectedValue(new Error('disk full'))
+      await run({ note: 'x' })
+      expect(mockSyncPrComments).toHaveBeenCalledTimes(1)
+      consoleSpy.restore()
     })
 
     it('still succeeds, with a warning, when the note cannot be saved', async () => {

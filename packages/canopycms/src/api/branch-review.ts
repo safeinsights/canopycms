@@ -12,7 +12,7 @@ import { REQUEST_CHANGES_NOTE_MAX_LENGTH } from '../authorization/review-role'
 import { getBranchProtection } from '../authorization'
 import type { CanopyUser } from '../user'
 import type { BranchReview } from '../types'
-import { sanitizeDisplayName, submissionEditorFromUser } from '../submission-attribution'
+import { sanitizeDisplayName } from '../submission-attribution'
 import { syncPrComments } from './pr-comment-sync'
 
 /** Optional on the wire: a bodiless request means no note. */
@@ -56,19 +56,18 @@ const approveConflict = (status: string | undefined): BranchListItemResponse => 
       : staleStatusError(status, "it can't be approved"),
 })
 
-/** The verdict `user` gives, or none for a caller with no identity to credit. */
-const reviewBy = (user: CanopyUser, state: BranchReview['state']): { review?: BranchReview } => {
-  const reviewer = submissionEditorFromUser(user)
-  return reviewer
-    ? {
-        review: {
-          state,
-          by: { userId: reviewer.userId, name: sanitizeDisplayName(reviewer.name) },
-          at: new Date().toISOString(),
-        },
-      }
-    : {}
-}
+/**
+ * The verdict `user` gives. The reviewer guard admits only authenticated users, and the record is
+ * always written, so a new verdict replaces whatever the last one left.
+ */
+const reviewBy = (user: CanopyUser, state: BranchReview['state']): BranchReview => ({
+  state,
+  by: {
+    userId: user.userId,
+    name: user.type === 'authenticated' ? sanitizeDisplayName(user.name) : undefined,
+  },
+  at: new Date().toISOString(),
+})
 
 /**
  * Shows the new verdict on the PR. Best-effort: the review is already saved, so a failure is
@@ -112,7 +111,7 @@ const requestChangesHandler = async (
       branch: {
         name: branchContext.branch.name,
         status: 'editing',
-        ...reviewBy(req.user, 'changes-requested'),
+        review: reviewBy(req.user, 'changes-requested'),
       },
     },
     (existing) => {
@@ -121,9 +120,6 @@ const requestChangesHandler = async (
     },
   )
   if (!updated) return requestChangesConflict(found)
-
-  // After the save, which the PR body renders from; the draft conversion above never writes the body.
-  await syncReviewToPr(ctx, branchContext)
 
   // The note is written after the status change so a failed write never blocks the branch from
   // returning to editing; the caller is warned instead.
@@ -144,6 +140,10 @@ const requestChangesHandler = async (
       warning = NOTE_NOT_SAVED_WARNING
     }
   }
+
+  // After the save and the note, which the PR body renders from, so one update carries both; the
+  // draft conversion above never writes the body.
+  await syncReviewToPr(ctx, branchContext)
 
   return {
     ok: true,
@@ -204,7 +204,7 @@ const approveBranchHandler = async (
       branch: {
         name: branchContext.branch.name,
         status: 'approved',
-        ...reviewBy(req.user, 'approved'),
+        review: reviewBy(req.user, 'approved'),
       },
     },
     (existing) => {

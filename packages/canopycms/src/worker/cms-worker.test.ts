@@ -3138,15 +3138,34 @@ describe('CmsWorker sync-pr-comments', () => {
     }
   })
 
-  it('fails at once, with no retries, on a comments.json that does not parse', async () => {
-    await seedBranch({ pullRequestNumber: 7 })
-    await fs.mkdir(path.join(branchPath, '.canopy-meta'), { recursive: true })
+  it('keeps the comment block of a comments.json that does not parse, and still updates the review', async () => {
+    await seedBranch({
+      pullRequestNumber: 7,
+      status: 'approved',
+      review: {
+        state: 'approved',
+        by: { userId: 'rev1', name: 'Rae' },
+        at: '2026-10-28T14:05:00Z',
+      },
+    })
     await fs.writeFile(path.join(branchPath, '.canopy-meta', 'comments.json'), '{not json')
 
     const { task, update } = await run()
 
-    expect(task?.status).toBe('failed')
-    expect(task?.retryCount ?? 0).toBe(0)
+    expect(task?.status).toBe('completed')
+    expect(update).toHaveBeenCalledTimes(1)
+    const body: string = update.mock.calls[0]![0].body
+    expect(body).toContain('Approved in CanopyCMS by `Rae`')
+    expect(body).toContain('No editor comments.')
+  })
+
+  it('writes nothing for a comments.json that does not parse when the review is unchanged', async () => {
+    await seedBranch({ pullRequestNumber: 7 })
+    await fs.writeFile(path.join(branchPath, '.canopy-meta', 'comments.json'), '{not json')
+
+    const { task, update } = await run()
+
+    expect(task?.status).toBe('completed')
     expect(update).not.toHaveBeenCalled()
   })
 

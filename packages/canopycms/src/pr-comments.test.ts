@@ -10,12 +10,12 @@ import { refreshCommentsBlock, renderPrCommentsBody } from './pr-comments'
 import {
   PR_COMMENTS_END,
   PR_COMMENTS_START,
-  PR_REVIEW_END,
   PR_REVIEW_START,
   PR_SECTION_END,
   PR_SECTION_START,
   buildPrSection,
   buildReviewBlock,
+  mergeReviewBlock,
 } from './submission-attribution'
 import type { BranchReview, BranchStatus } from './types'
 
@@ -50,8 +50,8 @@ const addComment = () =>
 /** A PR body as a submit writes it, under some human text. */
 const submittedBody = `Notes\n\n${buildPrSection({ changedPaths: ['a.md'] })}`
 
-const render = (body: string | null | undefined = submittedBody) =>
-  renderPrCommentsBody({ branchRoot, branch: 'feature/x', body })
+const render = (body: string | null | undefined = submittedBody, warn = vi.fn()) =>
+  renderPrCommentsBody({ branchRoot, branch: 'feature/x', body, warn })
 
 describe('renderPrCommentsBody', () => {
   it('re-renders the comment block and the review block together', async () => {
@@ -109,22 +109,46 @@ describe('renderPrCommentsBody', () => {
     expect(await render(null)).toBeUndefined()
   })
 
-  it('leaves the review block as it is when branch.json is missing or corrupt', async () => {
+  const withApprovedBody = () =>
+    submittedBody.replace(buildReviewBlock(undefined), buildReviewBlock(approved))
+
+  it('leaves the review block as it is, silently, when branch.json is missing', async () => {
     await addComment()
-    const withReview = submittedBody.replace(
-      buildReviewBlock(undefined),
-      buildReviewBlock(approved),
-    )
+    const warn = vi.fn()
 
-    const missing = (await render(withReview))!
-    expect(missing).toContain('Approved in CanopyCMS by `Rae Viewer`')
-    expect(missing).toContain('**1 unresolved editor comment thread**')
+    const body = (await render(withApprovedBody(), warn))!
 
+    expect(body).toContain('Approved in CanopyCMS by `Rae Viewer`')
+    expect(body).toContain('**1 unresolved editor comment thread**')
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it('keeps the review block, warns, and still updates the comments when branch.json cannot be read', async () => {
+    await addComment()
     await fs.mkdir(path.join(branchRoot, '.canopy-meta'), { recursive: true })
     await fs.writeFile(path.join(branchRoot, '.canopy-meta', 'branch.json'), '{not json')
-    const corrupt = (await render(withReview))!
-    expect(corrupt).toContain('Approved in CanopyCMS by `Rae Viewer`')
-    expect(corrupt).toContain('**1 unresolved editor comment thread**')
+    const warn = vi.fn()
+
+    const body = (await render(withApprovedBody(), warn))!
+
+    expect(body).toContain('Approved in CanopyCMS by `Rae Viewer`')
+    expect(body).toContain('**1 unresolved editor comment thread**')
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('review state'))
+  })
+
+  it('keeps the comment block, warns, and still updates the review when comments.json cannot be read', async () => {
+    await seedBranch('approved', approved)
+    await fs.mkdir(path.join(branchRoot, '.canopy-meta'), { recursive: true })
+    await fs.writeFile(path.join(branchRoot, '.canopy-meta', 'comments.json'), '{not json')
+    const warn = vi.fn()
+
+    const body = (await render(submittedBody, warn))!
+
+    expect(body).toContain('Approved in CanopyCMS by `Rae Viewer`')
+    expect(body).toContain('No editor comments.')
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('editor comments'))
   })
 
   it('drops a malformed review from a body that showed one', async () => {
@@ -162,20 +186,26 @@ describe('refreshCommentsBlock', () => {
     },
   )
 
-  it("does not carry the last round's verdict onto a submit that is still saving", async () => {
+  it('renders the stored review whatever the status, so a retried submit keeps a current request for changes', async () => {
     await seedBranch('editing', changesRequested)
 
     const refreshed = await refresh()
 
-    expect(refreshed).toContain('Not yet reviewed in CanopyCMS.')
-    expect(refreshed).not.toContain('Changes requested')
-    expect(refreshed).toContain(PR_REVIEW_START)
-    expect(refreshed).toContain(PR_REVIEW_END)
+    expect(refreshed).toContain('Changes requested in CanopyCMS by `Rae Viewer`')
+    expect(refreshed).not.toContain('Not yet reviewed')
+  })
+
+  it('renders not yet reviewed for a branch with no review', async () => {
+    await seedBranch('submitted')
+    expect(await refresh()).toContain('Not yet reviewed in CanopyCMS.')
   })
 
   it('keeps the queued review block when branch.json is missing, and still refreshes comments', async () => {
     await addComment()
-    const queued = buildPrSection({ changedPaths: ['a.md'], review: approved })
+    const queued = mergeReviewBlock(
+      buildPrSection({ changedPaths: ['a.md'] }),
+      buildReviewBlock(approved),
+    )!
 
     const refreshed = await refreshCommentsBlock({
       branchRoot,

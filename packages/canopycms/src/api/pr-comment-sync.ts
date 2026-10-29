@@ -21,9 +21,9 @@ function openPullRequest(context: BranchContext): number | undefined {
 const DIRECT_SYNC_TIMEOUT_MS = 10_000
 
 /**
- * Brings the PR body's editor-comment summary and review block up to date after a comment is
- * added, replied to or resolved, or a reviewer approves or requests changes. Best-effort: a
- * failure is logged and never fails the request.
+ * Brings both of the PR body's blocks, the editor-comment summary and the review block, up to
+ * date after a comment is added, replied to or resolved, or a review is given or withdrawn.
+ * Best-effort: a failure is logged and never fails the request.
  *
  * Direct path: read the PR body, replace the blocks, write it back, within
  * DIRECT_SYNC_TIMEOUT_MS so a slow or rate-limited GitHub never holds the request.
@@ -33,8 +33,8 @@ const DIRECT_SYNC_TIMEOUT_MS = 10_000
  * Queued path: one pending task per branch and PR, rendered by the worker from comments.json
  * and branch.json when it runs, so a burst of changes costs one update. The change was written
  * before this call and a pending task reads those files only after it leaves pending, so its
- * run carries the change this call skipped; a task already running doesn't count, so a later change gets
- * a run of its own.
+ * run carries the change this call skipped; a task already running doesn't count, so a later
+ * change gets a run of its own.
  */
 export async function syncPrComments(ctx: ApiContext, context: BranchContext): Promise<void> {
   const prNumber = openPullRequest(context)
@@ -56,6 +56,7 @@ export async function syncPrComments(ctx: ApiContext, context: BranchContext): P
               branch,
               editorUrl,
               body: pr.body,
+              warn: (message) => console.warn(`CanopyCMS: ${message}`),
             })
             if (body !== undefined)
               await githubService.updatePullRequest(prNumber, { body }, signal)
