@@ -323,6 +323,13 @@ describe('GET /:branch/changes/...entryPath', () => {
     expect(recreated.after?.data.title).toBe('New')
   })
 
+  it('answers 404 for an id neither side holds at the path', async () => {
+    await write(files.hello, JSON.stringify({ ...helloPost, title: 'Hello again' }))
+    expect(await entryChange(createCtx(), 'content/blog/hello', undefined, ID.fresh)).toEqual(
+      notComparable,
+    )
+  })
+
   it('keys a base side the schema no longer places with the saved side’s fields', async () => {
     // The blog collection is renamed to "posts" in the schema and on disk; the entry is unchanged.
     const renamed: RootCollectionConfig = {
