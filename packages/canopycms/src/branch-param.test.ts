@@ -52,6 +52,13 @@ describe('resolveBranchParam', () => {
     expect(await resolved('canopycms/local/spring')).toBe('canopycms/local/spring')
   })
 
+  it('names a branch nested deeper in the namespace by its full name, never by a short name', async () => {
+    await workspace('canopycms/local/a/b')
+    expect(await resolved('a/b')).toBeNull()
+    expect(await resolved('canopycms/local/a/b')).toBe('canopycms/local/a/b')
+    expect(shortNameOf(config, 'canopycms/local/a/b')).toBe('canopycms/local/a/b')
+  })
+
   it('resolves a branch outside the namespace by its full name only', async () => {
     await workspace('legacy/update')
     expect(await resolved('legacy/update')).toBe('legacy/update')

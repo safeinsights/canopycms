@@ -420,7 +420,7 @@ describe('branch api', () => {
     expect(res.code).toBe('BRANCH_NAME_REFUSED')
   })
 
-  it('names a namespace branch holding the key by its short name', async () => {
+  it('names a nested namespace branch holding the key by its full name, as it has no short name', async () => {
     const registry = createMockRegistry([])
     registry.getByKey.mockResolvedValue(
       createMockBranchContext({ branchName: 'canopycms/local/feature/test', createdBy: 'u1' }),
@@ -433,7 +433,7 @@ describe('branch api', () => {
     const res = await createBranch(ctx, asU1, { branch: unsafeAsBranchName('feature-test') })
     expect(res.status).toBe(409)
     expect(res.error).toBe(
-      '"feature-test" would clash with the existing branch "feature/test". Choose a different name.',
+      '"feature-test" would clash with the existing branch "canopycms/local/feature/test". Choose a different name.',
     )
     expect(res.code).toBe('BRANCH_NAME_REFUSED')
   })

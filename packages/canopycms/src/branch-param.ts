@@ -58,7 +58,8 @@ export function shortNameOf(config: BranchParamConfig, name: string): string {
  * `~canopycms~prod~spring`) names only the branch whose branch.json `name` it decodes to, and a
  * malformed one names none. Any other `param`, in order:
  * 1. the base or configured active branch, exactly, so no namespace branch ever shadows it;
- * 2. the namespace branch whose short name is `param`, when its branch.json `name` is that ref;
+ * 2. the namespace branch whose short name is `param` (which holds no `/`), when its branch.json
+ *    `name` is that ref;
  * 3. a branch outside the namespace by its full name, when its `name` is `param`. A namespace
  *    branch's full ref resolves here too. A branch outside the namespace that step 2 shadows
  *    opens only by the exact form.
@@ -82,7 +83,9 @@ export async function resolveBranchParam(
   if (namesBaseOrActive(param, config)) return load(param)
 
   const namespace = cmsBranchNamespace(config)
-  if (namespace !== null) {
+  // No short name holds a `/` (`branchShortName`), so a `param` with one names no namespace
+  // branch by its short name.
+  if (namespace !== null && !param.includes('/')) {
     const ref = `${namespace}${param}`
     // A ref past a filename's length can still leave `param` naming a branch outside it.
     const inNamespace = await load(ref).catch((err: unknown) => {

@@ -76,7 +76,8 @@ export function requestSegments<B extends Named>(branches: readonly B[]): Map<st
 
 /**
  * The `/:branch` segment of a name no listed branch maps: the exact form when it holds a `/`, which
- * no short name does, so no path carries `%2F`; else the name as given, which a short name needs.
+ * no short name does (paths/branch-name.ts `branchShortName`), so no path carries `%2F`; else the
+ * name as given, which a short name needs.
  */
 export function unlistedSegment(name: string): string {
   return name.includes('/') ? exactBranchSegment(name) : name
