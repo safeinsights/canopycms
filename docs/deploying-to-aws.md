@@ -1455,8 +1455,8 @@ the worker. What it means for you, and what you can do:
   `Syncing git...` lines the [worker-down alarm](#worker-down-alarm) counts, so the alarm detects
   faults, not compromise. The gateway's log (the `{instance_id}-gateway` stream), which the worker
   cannot write, records what reached GitHub: read it when GitHub shows a change nobody made.
-- **Pull requests people open from namespace branches.** The CMS Lambda alone, through the task
-  queue, can draft, close, retitle or rewrite one. Choosing a branch CanopyCMS owns opts into that;
+- **Pull requests people open from namespace or legacy branches.** The CMS Lambda alone, through
+  the task queue, can draft, close, retitle or rewrite one. Using such a branch opts in;
   merging still takes a person.
 - **Other unix sockets** on the host that `ec2-user` can connect to are levers the worker keeps.
   Install nothing on the instance that listens on one.

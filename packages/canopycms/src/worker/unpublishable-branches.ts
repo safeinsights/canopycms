@@ -175,7 +175,8 @@ export async function readCarriedUnpublishableBranches(
  * the first sync asks the gateway again. The Lambda can write the status file, so they are carried
  * only in the shape git sync writes: a namespace `branchNamespaceProblem` takes, and at most one
  * more name than `protectedBranches` holds, each exact and no longer than a branch name. Tolerant:
- * anything else carries nothing.
+ * no namespace, or one in any other shape, carries nothing, and a list in any other shape
+ * carries the namespace alone.
  */
 export async function readCarriedGatewayPolicy(
   taskDir: string,

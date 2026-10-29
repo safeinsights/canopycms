@@ -344,9 +344,10 @@ export const createBranchHandler = async (
     }
     const { workerStatus } = await readWorkerStatus(getTaskQueueDir(config))
     const gatewayNamespace = workerStatus?.gatewayBranchNamespace
-    // A worker that predates the namespace never reports one, and its rebase loop renames a
-    // namespace branch to its directory, which no request then resolves. Where branches publish
-    // through the worker, creation waits for the report.
+    // The worker reports the namespace once a git sync reads the gateway's health
+    // (worker/git-sync.ts). A worker that predates the namespace never reports one, and its rebase
+    // loop renames a namespace branch to its directory, which no request then resolves. Where
+    // branches publish through the worker, creation waits for the report.
     if (gatewayNamespace === undefined && strategy.supportsPullRequests()) {
       return {
         ok: false,

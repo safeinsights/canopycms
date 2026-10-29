@@ -31,5 +31,5 @@ its namespace. Stacks sharing a repository keep `{deployment}` in one template. 
 branch editors are still working on whose name is outside the namespace, as
 [`legacyBranches`](./legacy-branches-and-unpublishable-warning.md) describes. Until a branch is
 listed, its publishes, pull request updates and deletion fail permanently, naming the list.
-Rolling the worker back renames namespace branches so editors cannot open them; redeploying this
+Rolling the worker back can rename namespace branches so editors cannot open them; redeploying this
 release's worker restores their names on its next sync.

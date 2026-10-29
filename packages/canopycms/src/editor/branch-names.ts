@@ -2,7 +2,8 @@
  * The names an editor sees one branch by. A listed branch has its full name (`name`, the ref
  * `canopycms/prod/spring`), which keys everything the editor stores, and a short name
  * (`shortName`, `spring`; a branch outside the namespace lists its full name), which the person
- * sees, the URL carries and requests send.
+ * sees and, unless another branch's short name shadows it, the URL carries and requests send
+ * (`branchUrlName`).
  */
 import type { BranchListItem } from '../api/branch'
 // branch-name, NOT branch or the '../paths' barrel: both pull node:fs into the browser bundle.
