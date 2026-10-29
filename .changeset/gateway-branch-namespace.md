@@ -29,6 +29,6 @@ health says when the CMS and the gateway resolve different namespaces.
 `gateway.env` too (a hand install adds them, as `gateway.env.example` shows). The bundle needs
 worker contract 3, so the roll gate refuses it on an older template. Stacks sharing a repository
 keep `{deployment}` in one template. Then list every branch editors are still working on whose
-name is outside the namespace in `CANOPYCMS_LEGACY_BRANCHES` on the gateway, exact names
-separated by commas. Until a branch is listed, its publishes, pull request updates and deletion
-fail permanently, naming the list.
+name is outside the namespace, as [`legacyBranches`](./legacy-branches-and-unpublishable-warning.md)
+describes. Until a branch is listed, its publishes, pull request updates and deletion fail
+permanently, naming the list.

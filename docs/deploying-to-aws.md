@@ -891,16 +891,16 @@ The env var wins over config; when both are set and disagree, the Lambda logs a 
 branch namespace, `canopycms/{deployment}/` by default: a template, set by `CanopyCmsService`'s
 `branchNamespace` prop, in which `{deployment}` is the deployment name, ending with `/`. The
 construct resolves it at synth and sets `CANOPYCMS_BRANCH_NAMESPACE` for both the Lambda and the
-GitHub gateway, which writes no other branch but its settings branch and `legacyBranches`; set
-the same template as `branchNamespace` in `canopycms.config.ts` for development. System health
+GitHub gateway ([Security Model](#security-model)); set the same template as `branchNamespace` in `canopycms.config.ts` for development. System health
 says so when the two disagree. Keep `{deployment}` in one template on every stack sharing a
 repository: a deployment name holds no `/`, so `canopycms/prod/` never contains
 `canopycms/prod-eu/`, but nothing checks a template that differs between stacks.
 
 **Changing the template is a migration.** Existing branches keep their names, so they fall
 outside the new namespace: URLs carry their full names, and the gateway refuses to publish them
-until `CANOPYCMS_LEGACY_BRANCHES` lists them. A PR body rendered before the change links the
-old short name, which can open whichever branch later takes it until the body is re-rendered.
+until [`legacyBranches`](#the-worker-instance) lists them. A PR body rendered before the change
+links the old short name, which can open whichever branch later takes it until the branch is
+submitted again.
 
 **Changing `deploymentName` (or `settingsBranch`) on a stack that already has a populated settings workspace is refused at boot, loudly** — it is not migrated automatically, because renaming the resolved settings branch would check out a _different_ orphan branch in the same on-disk workspace and wipe `permissions.json`/`groups.json` with no history to recover them from. Restore the previous value, or move the settings workspace aside first. A moved-aside or wiped settings workspace is re-provisioned from `remote.git`, keeping groups and path rules.
 
@@ -1173,6 +1173,13 @@ it always protects: names, or globs in which `*` matches any run of characters, 
 entry may start with `canopycms-settings-`. Set `baseBranch` explicitly: without it the gateway
 does not know your base branch, and protects it only if it is GitHub's default.
 
+**`legacyBranches`** lists, exactly, branches outside the
+[branch namespace](#two-deployments-one-repository) the gateway may still write: no `*`,
+nothing in the namespace or that it sits under (`canopycms/prod`). **Before upgrading, or
+changing the template,** list every open branch outside it; System health names any you missed.
+Drop each once merged or deleted. Such a branch's pull request shows its comments and review
+state as of its last submit.
+
 **`clerkOrganizationsAsGroups`** (default `true`) sets whether the worker maps Clerk Organizations to
 groups; it, not the plugin's `useOrganizationsAsGroups`, governs a deployment, so keep them equal. Set
 it `false` when the Clerk instance has Organizations disabled.
@@ -1386,32 +1393,30 @@ internet route: it reaches only EFS and the AWS services its own role and VPC en
 the worker, it may run a command as the worker. The worker has no network, no credential and no
 route to the instance metadata service. Among CanopyCMS's processes, only the GitHub gateway uses
 the GitHub credential, the Clerk secret key and the instance role. The gateway cannot see EFS,
-and it answers the worker through a fixed set of operations: push or delete a branch, open or
-update a pull request, fetch from GitHub. The Lambda can already request those through the task
-queue. The rest read GitHub's default branch, a pull request and the Clerk user directory, and
-watch for and complete the instance's termination.
+and answers the worker only through [a fixed set of operations](#the-worker-instance), whose
+writes the Lambda can already request through the task queue.
 
-The gateway refuses to push to, delete, or open a pull request from the configured base branch
-(`baseBranch`), GitHub's default branch, or any branch in `protectedBranches`. Any other branch
-it can push to, force-push or delete, including with any commit already in your repository, so
-any workflow in your history can run on its content. It can also open pull requests, and update
-or close any pull request by number, which run your `push` and `pull_request` workflows. So:
+The gateway writes only branches in its namespace (`branchNamespace`, `canopycms/prod/` by
+default), its settings branch and `legacyBranches`, never the base branch, GitHub's default
+branch or a `protectedBranches` match. It acts on a pull request only if its head is one of them
+in this repository, and reads its body only if the head is in the namespace. There it can push,
+force-push or delete with any commit in your repository, and open pull requests, which run your
+`push` and `pull_request` workflows. So:
 
-- list every branch that deploys or that people work on in `protectedBranches`, and protect your
-  base branch and those with GitHub rulesets the CanopyCMS credential cannot bypass;
-- give workflows read-only `permissions:`;
-- keep deployment secrets in environments with required reviewers;
+- keep secrets from workflows on those branches (`branches-ignore: ['canopycms/prod/**']`;
+  GitHub's `*` stops at `/`), give workflows read-only `permissions:`, and keep deployment
+  secrets in environments with required reviewers;
 - never check out a pull request's head in `pull_request_target`;
 - use a fine-grained token or an App **without** the workflows permission, which is what stops a
   push from adding or changing a workflow file.
 
-**Check that the protection holds against the credential itself.** Each branch above, and any
-branch a cutover will make the base branch, needs a ruleset or branch protection requiring
-a pull request and blocking force pushes and deletion. A classic token of a repository
-admin bypasses classic branch protection unless "Do not allow bypassing the above settings" is on;
-an App installation token is bound by rulesets unless the App is a bypass actor. Confirm it with
-the credential on a throwaway branch protected the same way: a direct push and a force push
-must both be rejected.
+**Optionally, GitHub rulesets**, which hold even against a compromised gateway: one on every branch
+but your namespace (`canopycms/prod/**`) and legacy branches, restricting creations, updates and
+deletions and blocking force pushes, bypassed by whoever else pushes there. Protect the base
+branch, and any a cutover will make it, with one requiring a pull request. On a throwaway branch,
+confirm the credential cannot bypass them: a direct push and a force push must both be rejected.
+A repository admin's classic token bypasses classic branch protection unless "Do not allow
+bypassing the above settings" is on.
 
 The worker's host, system git config and image stay trusted.
 
