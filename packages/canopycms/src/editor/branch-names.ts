@@ -16,20 +16,17 @@ export function displayBranchName(branch: Named): string {
 }
 
 /**
- * The listed branch `name` opens: the active branch (`defaultBranch`) by its full name first, then
- * a namespace branch by its short name, then any branch by its full name. The server's first step
- * also takes the base, which needs no step here: while the base resolves, `shortNameOf` lists no
- * namespace branch under the base's or the active branch's name. A branch outside the namespace
- * lists its full name as its short name, so only a namespace branch matches the second step.
+ * The listed branch `name` opens: a namespace branch by its short name, then any branch by its full
+ * name, as the server resolves it (branch-param.ts). The server's first step, the base or active
+ * branch exactly, needs none here: while it applies, `shortNameOf` lists no namespace branch under
+ * either's name, and when the base cannot be resolved the server skips it too. A branch outside the
+ * namespace lists its full name as its short name, so only a namespace branch matches the first.
  */
-function resolveExactly<B extends Named>(
-  branches: readonly B[],
-  name: string,
-  defaultBranch?: string,
-): B | undefined {
-  const byName = branches.find((b) => b.name === name)
-  if (byName && name === defaultBranch) return byName
-  return branches.find((b) => b.shortName === name && b.name !== name) ?? byName
+function resolveExactly<B extends Named>(branches: readonly B[], name: string): B | undefined {
+  return (
+    branches.find((b) => b.shortName === name && b.name !== name) ??
+    branches.find((b) => b.name === name)
+  )
 }
 
 /**
@@ -41,25 +38,18 @@ function resolveExactly<B extends Named>(
 export function resolveListedBranch<B extends Named>(
   branches: readonly B[],
   name: string,
-  defaultBranch?: string,
 ): B | undefined {
-  const exact = resolveExactly(branches, name, defaultBranch)
+  const exact = resolveExactly(branches, name)
   if (exact) return exact
   const sanitized = branches.find((b) => b.name === sanitizeBranchName(name))
-  return sanitized && resolveExactly(branches, sanitized.name, defaultBranch) === sanitized
-    ? sanitized
-    : undefined
+  return sanitized && resolveExactly(branches, sanitized.name) === sanitized ? sanitized : undefined
 }
 
 /**
  * The `?branch=` value for `branch`: its short name when that opens the same branch, else its
  * full name, so a URL never opens a different branch than the one shown.
  */
-export function branchUrlName<B extends Named>(
-  branches: readonly B[],
-  branch: B,
-  defaultBranch?: string,
-): string {
+export function branchUrlName<B extends Named>(branches: readonly B[], branch: B): string {
   const short = displayBranchName(branch)
-  return resolveExactly(branches, short, defaultBranch) === branch ? short : branch.name
+  return resolveExactly(branches, short) === branch ? short : branch.name
 }

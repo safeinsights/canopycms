@@ -1785,11 +1785,12 @@ describe('useBranchManager', () => {
       expect(window.history.replaceState).not.toHaveBeenCalled()
     })
 
-    it('is the full name when the short name would open another branch', async () => {
+    it('is the full name the server lists for a namespace branch named after the active one', async () => {
+      // `shortNameOf` gives such a branch its full name as its short name.
       const shadowed: BranchListItem = {
         ...spring,
         name: 'canopycms/local/main',
-        shortName: 'main',
+        shortName: 'canopycms/local/main',
       }
       branchesOf(shadowed)
       renderHook(() => useBranchManager({ ...defaultOptions, initialBranch: shadowed.name }), {

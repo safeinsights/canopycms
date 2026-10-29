@@ -481,11 +481,10 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     [branchesData, pendingBranches],
   )
 
-  const defaultBranch = branchesData?.defaultBranch
   // Requests name a branch by the form its URL does.
   const segments = useMemo(
-    () => new Map(branches.map((b) => [b.name, branchUrlName(branches, b, defaultBranch)])),
-    [branches, defaultBranch],
+    () => new Map(branches.map((b) => [b.name, branchUrlName(branches, b)])),
+    [branches],
   )
   useBranchSegments(segments)
 
@@ -578,7 +577,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     // eslint-disable-next-line react-hooks/exhaustive-deps -- options is a new object every Editor.tsx render; only setBusy (a stable setState) matters here
   }, [branchesIsValidating, options.setBusy])
 
-  const currentBranch = resolveListedBranch(branches, branchName, branchesData?.defaultBranch)
+  const currentBranch = resolveListedBranch(branches, branchName)
   const currentBranchName = currentBranch?.name
 
   // A link names a branch by its short name or a raw form; the state takes the listed name, so
@@ -671,7 +670,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   // A deep link can carry a short name or the raw form of a listed name; the actions key, look
   // up and send the listed name, resolved the way `currentBranch` resolves it.
   const listedBranch = (name: string): BranchListItem | undefined =>
-    resolveListedBranch(latest.current.branches, name, latest.current.branchesData?.defaultBranch)
+    resolveListedBranch(latest.current.branches, name)
   const listedName = (name: string): string => listedBranch(name)?.name ?? sanitizeBranchName(name)
 
   // What a dialog or toast calls the listed branch `name`; the keys, lookups and requests keep `name`.
@@ -682,9 +681,9 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
 
   // The `?branch=` value for `name`: the listed branch's URL form, else `name` as given.
   const urlBranchName = (name: string): string => {
-    const { branches: listed, branchesData: data } = latest.current
-    const found = resolveListedBranch(listed, name, data?.defaultBranch)
-    return found ? branchUrlName(listed, found, data?.defaultBranch) : name
+    const listed = latest.current.branches
+    const found = resolveListedBranch(listed, name)
+    return found ? branchUrlName(listed, found) : name
   }
 
   const pullRequestOf = (name: string): BranchPullRequest => {
@@ -1190,9 +1189,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
 
   // The editor's own page; a Back off it to a page of the host leaves that page's URL alone.
   const editorPathRef = useRef(typeof window === 'undefined' ? '' : window.location.pathname)
-  const shownBranch = currentBranch
-    ? branchUrlName(branches, currentBranch, branchesData?.defaultBranch)
-    : undefined
+  const shownBranch = currentBranch ? branchUrlName(branches, currentBranch) : undefined
   // Each Back or Forward, which can arrive at an entry naming this branch in another form.
   const [historyMoves, setHistoryMoves] = useState(0)
   useEffect(() => {
@@ -1214,8 +1211,8 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     const named = url.searchParams.get('branch')
     if (named === shownBranch) return
     if (popped && named !== null) {
-      const { branches: listed, branchesData: data, branchName: current } = latest.current
-      if (resolveListedBranch(listed, named, data?.defaultBranch)?.name !== current) return
+      const { branches: listed, branchName: current } = latest.current
+      if (resolveListedBranch(listed, named)?.name !== current) return
     }
     url.searchParams.set('branch', shownBranch)
     writeEditorUrl(url.toString(), false)

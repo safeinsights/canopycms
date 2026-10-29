@@ -366,15 +366,16 @@ describe('the editor on a namespace branch named by its short name', () => {
     expect(urlBranch()).toBe(OUTSIDE)
   })
 
-  it('sends a namespace branch the active branch shadows under its full name', async () => {
+  it('sends a namespace branch the server lists by its full name under that name', async () => {
     window.history.replaceState({}, '', `/?branch=${encodeURIComponent(SPRING)}`)
     const inner = stubApi({ status: 'editing', userId: 'author-1' })
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
       urlOf(input).endsWith('/api/canopycms/branches') && (init?.method ?? 'GET') === 'GET'
         ? okJson({
+            // `shortNameOf` lists a namespace branch named after the active branch by its full name.
             branches: [
               listed('main', 'editing'),
-              listed(SPRING, 'editing'),
+              { ...listed(SPRING, 'editing'), shortName: SPRING },
               listed('spring', 'editing'),
             ],
             defaultBranch: 'spring',
