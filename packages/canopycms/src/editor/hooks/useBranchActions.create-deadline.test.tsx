@@ -105,7 +105,7 @@ describe('useBranchActions create past the deadline', () => {
     expect(options.onBranchSwitch).toHaveBeenCalledWith('canopycms/local/feature-x')
   })
 
-  it("stays put and reports a conflict when the listed branch is another user's", async () => {
+  it("stays put and refuses the name when the listed branch is another user's", async () => {
     stallUntilDeadline()
     mockClient.branches.list.mockResolvedValue({
       ok: true,
@@ -113,11 +113,10 @@ describe('useBranchActions create past the deadline', () => {
       data: { branches: [{ ...listedBranch, createdBy: 'someone-else' }], users: [] },
     })
 
-    expect(await createAfterDeadline()).toBe(false)
-    expect(notifications.show).toHaveBeenCalledWith({
-      message: 'A branch named "feature-x" already exists',
-      color: 'red',
+    expect(await createAfterDeadline()).toEqual({
+      refusal: 'A branch named "feature-x" already exists',
     })
+    expect(notifications.show).not.toHaveBeenCalled()
     expect(options.onBranchCreated).not.toHaveBeenCalled()
     expect(options.setBranchName).not.toHaveBeenCalled()
     expect(options.onBranchSwitch).not.toHaveBeenCalled()
