@@ -83,8 +83,8 @@ export async function resolveBranchParam(
   if (namesBaseOrActive(param, config)) return load(param)
 
   const namespace = cmsBranchNamespace(config)
-  // No short name holds a `/` (`branchShortName`), so a `param` with one names no namespace
-  // branch by its short name.
+  // A short name holding a `/` is a full name (`branchShortName`), so a `param` with one names no
+  // namespace branch by the part after the namespace.
   if (namespace !== null && !param.includes('/')) {
     const ref = `${namespace}${param}`
     // A ref past a filename's length can still leave `param` naming a branch outside it.

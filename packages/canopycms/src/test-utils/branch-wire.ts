@@ -1,7 +1,8 @@
 /**
  * The `/:branch` segment of an editor request in both forms it takes: plainly before the branch
- * listing arrives, and exactly (`exactBranchSegment`, `~canopycms~prod~spring`) once the listing
- * holds the branch (editor/hooks/useBranchManager.tsx's segments).
+ * listing arrives, unless the name holds a `/` (editor/branch-names.ts `unlistedSegment`), and
+ * exactly (`exactBranchSegment`, `~canopycms~prod~spring`) once the listing holds the branch
+ * (editor/hooks/useBranchManager.tsx's segments).
  */
 import { exactBranchName, exactBranchSegment } from '../paths/validation'
 

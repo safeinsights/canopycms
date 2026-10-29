@@ -40,10 +40,10 @@ export const RESERVED_SETTINGS_BRANCH_PREFIX = 'canopycms-settings-'
 
 /**
  * Branch `name`'s short name: the part after `namespace` for a branch in it, the full name for
- * any other, and for one whose remainder holds a `/`. So no short name holds a `/`, which the
- * editor's unlisted request segment (editor/branch-names.ts `unlistedSegment`) relies on. The
- * server rebuilds the ref from it (branch-param.ts's `resolveBranchParam`); the editor is never
- * told the namespace.
+ * any other, and for one whose remainder holds a `/`. So a short name holding a `/` is always a
+ * full name, which the editor's unlisted request segment (editor/branch-names.ts `unlistedSegment`)
+ * relies on. The server rebuilds the ref from it (branch-param.ts's `resolveBranchParam`); the
+ * editor is never told the namespace.
  */
 export function branchShortName(name: string, namespace: string | null): string {
   if (namespace === null || !name.startsWith(namespace) || name.length === namespace.length) {

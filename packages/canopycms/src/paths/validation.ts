@@ -228,8 +228,9 @@ export function parseBranchName(
 }
 
 /**
- * Validate a branch's own name, the ref git and branch.json hold, against git's ref rules and cast
- * it to BranchName. It refuses every `~`, so the exact form is never one.
+ * Validate a branch's own name, the ref git and branch.json hold, against git's ref rules, except
+ * that an inner part may start with `.` or end `.lock` (`a/.b`, `a.lock/b`), and cast it to
+ * BranchName. It refuses every `~`, so the exact form is never one.
  */
 export function parseBranchRef(
   name: string,

@@ -830,7 +830,7 @@ describe('the request paths the editor builds', () => {
     ['an outside branch a namespace branch shadows', '~spring', 'spring'],
     ['the base branch', 'main', 'main'],
   ])(
-    'carry no %%2F for %s, before the listing, after it and in a save',
+    'carry no encoded "/" for %s, before the listing, after it and in a save',
     async (_l, opened, full) => {
       let releaseListing = () => {}
       const holdListing = new Promise<void>((resolve) => {
