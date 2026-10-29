@@ -29,9 +29,26 @@ function cmsBranchNamespace(config: BranchParamConfig): string | null {
   }
 }
 
-/** The short name of the branch whose ref is `name`, under this CMS's namespace. */
+/** Whether `param` is the base or configured active branch, which resolve before any other. */
+function namesBaseOrActive(param: string, config: BranchParamConfig): boolean {
+  let base: string
+  try {
+    base = baseBranchOf(config)
+  } catch (err) {
+    if (err instanceof BaseBranchUnresolvedError) return false
+    throw err
+  }
+  return param === base || param === (config.defaultActiveBranch ?? base)
+}
+
+/**
+ * The name requests carry for the branch whose ref is `name`: its short name under this CMS's
+ * namespace, or the full ref when the short name is the base or active branch's, which the
+ * resolver would answer instead.
+ */
 export function shortNameOf(config: BranchParamConfig, name: string): string {
-  return branchShortName(name, cmsBranchNamespace(config))
+  const short = branchShortName(name, cmsBranchNamespace(config))
+  return short !== name && namesBaseOrActive(short, config) ? name : short
 }
 
 /**
@@ -50,15 +67,7 @@ export async function resolveBranchParam(
   const load = (branchName: string) =>
     loadBranchContext({ branchName, mode: config.mode, basePathOverride: options.basePathOverride })
 
-  let base: string | undefined
-  try {
-    base = baseBranchOf(config)
-  } catch (err) {
-    if (!(err instanceof BaseBranchUnresolvedError)) throw err
-  }
-  if (base !== undefined && (param === base || param === (config.defaultActiveBranch ?? base))) {
-    return load(param)
-  }
+  if (namesBaseOrActive(param, config)) return load(param)
 
   const namespace = cmsBranchNamespace(config)
   if (namespace !== null) {

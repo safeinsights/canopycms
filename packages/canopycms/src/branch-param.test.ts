@@ -104,4 +104,17 @@ describe('shortNameOf', () => {
     expect(shortNameOf(config, 'canopycms/prod/spring')).toBe('canopycms/prod/spring')
     expect(shortNameOf({ ...config, mode: 'prod' }, 'canopycms/prod/spring')).toBe('spring')
   })
+
+  it('keeps the full ref when the short name is the base or active branch, which resolve first', async () => {
+    expect(shortNameOf(config, 'canopycms/local/main')).toBe('canopycms/local/main')
+    expect(shortNameOf(config, 'canopycms/local/develop')).toBe('canopycms/local/develop')
+    const noActive = { mode: 'dev', defaultBaseBranch: 'trunk' } as const
+    expect(shortNameOf(noActive, 'canopycms/local/trunk')).toBe('canopycms/local/trunk')
+    expect(shortNameOf(noActive, 'canopycms/local/main')).toBe('main')
+
+    // The name it gives resolves back to the branch.
+    await workspace('main')
+    await workspace('canopycms/local/main')
+    expect(await resolved(shortNameOf(config, 'canopycms/local/main'))).toBe('canopycms/local/main')
+  })
 })
