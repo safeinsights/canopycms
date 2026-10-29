@@ -1,7 +1,7 @@
 import { BASE_URL } from '../fixtures/base-url'
 import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
-import { BranchPage } from '../fixtures/branch-page'
+import { BranchPage, branchRef } from '../fixtures/branch-page'
 import { switchUser, installE2EFlag } from '../fixtures/test-users'
 import {
   resetWorkspace,
@@ -31,7 +31,8 @@ test.describe('Branch Lifecycle & Workflow', () => {
   test('complete happy path: create → edit → submit → approve → archive', async ({ page }) => {
     test.setTimeout(90000)
 
-    const branchName = `canopycms-test-branch-${Date.now()}`
+    const branchName = `test-branch-${Date.now()}`
+    const ref = branchRef(branchName)
 
     // Step 1: Set user to editor FIRST
     await switchUser(page, 'editor')
@@ -44,11 +45,11 @@ test.describe('Branch Lifecycle & Workflow', () => {
     await branchPage.createBranch(branchName, 'Test Branch Title', 'Test branch for E2E testing')
 
     // Step 3: Wait for branch to appear and verify status
-    await branchPage.waitForBranchInList(branchName, 10000)
-    await branchPage.verifyBranchStatus(branchName, 'editing')
+    await branchPage.waitForBranchInList(ref, 10000)
+    await branchPage.verifyBranchStatus(ref, 'editing')
 
     // Step 4: Switch to the new branch
-    await branchPage.switchToBranch(branchName)
+    await branchPage.switchToBranch(ref)
     await branchPage.closeBranchManager()
 
     // Step 5: Make some edits
@@ -60,11 +61,11 @@ test.describe('Branch Lifecycle & Workflow', () => {
 
     // Step 6: Submit branch for review
     await branchPage.openBranchManager()
-    await branchPage.waitForBranchInList(branchName)
-    await branchPage.submitBranch(branchName)
+    await branchPage.waitForBranchInList(ref)
+    await branchPage.submitBranch(ref)
 
     // Step 7: Verify status changed to 'submitted'
-    await branchPage.verifyBranchStatus(branchName, 'submitted')
+    await branchPage.verifyBranchStatus(ref, 'submitted')
 
     // Step 8: Switch to reviewer/admin user and approve
     await switchUser(page, 'admin')
@@ -73,12 +74,12 @@ test.describe('Branch Lifecycle & Workflow', () => {
     await branchPage.openBranchManager()
 
     // Wait for branch to appear for admin
-    await branchPage.waitForBranchInList(branchName)
+    await branchPage.waitForBranchInList(ref)
 
     // The admin did not make this branch, so the card offers Review, with Approve and
     // Request changes in its menu.
-    expect(await branchPage.isActionButtonVisible(branchName, 'approve')).toBe(true)
-    const canRequestChanges = await branchPage.isActionButtonVisible(branchName, 'request-changes')
+    expect(await branchPage.isActionButtonVisible(ref, 'approve')).toBe(true)
+    const canRequestChanges = await branchPage.isActionButtonVisible(ref, 'request-changes')
     expect(canRequestChanges).toBe(true)
 
     await branchPage.closeBranchManager()
@@ -89,7 +90,8 @@ test.describe('Branch Lifecycle & Workflow', () => {
     await editorPage.waitForReady()
     await branchPage.openBranchManager()
 
-    const branchName = `canopycms-feature-branch-${Date.now()}`
+    const branchName = `feature-branch-${Date.now()}`
+    const ref = branchRef(branchName)
     const title = 'Feature Branch'
     const description = 'Adding new feature with tests'
 
@@ -97,7 +99,7 @@ test.describe('Branch Lifecycle & Workflow', () => {
     await branchPage.createBranch(branchName, title, description)
 
     // Verify branch was created
-    expect(await branchPage.verifyBranchInList(branchName)).toBe(true)
+    expect(await branchPage.verifyBranchInList(ref)).toBe(true)
 
     // Test duplicate branch name — submit same name again
     await branchPage.createBranchButton.click()
@@ -109,7 +111,8 @@ test.describe('Branch Lifecycle & Workflow', () => {
   })
 
   test('submit and withdraw flow', async ({ page }) => {
-    const branchName = `canopycms-test-withdraw-${Date.now()}`
+    const branchName = `test-withdraw-${Date.now()}`
+    const ref = branchRef(branchName)
 
     // Set user to editor FIRST
     await switchUser(page, 'editor')
@@ -124,32 +127,33 @@ test.describe('Branch Lifecycle & Workflow', () => {
     await branchPage.openBranchManager()
 
     // Wait for branch to appear and verify status
-    await branchPage.waitForBranchInList(branchName)
-    await branchPage.verifyBranchStatus(branchName, 'editing')
+    await branchPage.waitForBranchInList(ref)
+    await branchPage.verifyBranchStatus(ref, 'editing')
 
     // Submit the branch via UI
-    await branchPage.submitBranch(branchName)
+    await branchPage.submitBranch(ref)
 
     // Verify status changed to submitted
-    await branchPage.verifyBranchStatus(branchName, 'submitted')
+    await branchPage.verifyBranchStatus(ref, 'submitted')
 
     // Verify withdraw button is visible for creator
-    const canWithdraw = await branchPage.isActionButtonVisible(branchName, 'withdraw')
+    const canWithdraw = await branchPage.isActionButtonVisible(ref, 'withdraw')
     expect(canWithdraw).toBe(true)
 
     // Withdraw the branch
-    await branchPage.withdrawBranch(branchName)
+    await branchPage.withdrawBranch(ref)
 
     // Verify status returns to editing
-    await branchPage.verifyBranchStatus(branchName, 'editing')
+    await branchPage.verifyBranchStatus(ref, 'editing')
 
     // Re-submit
-    await branchPage.submitBranch(branchName)
-    await branchPage.verifyBranchStatus(branchName, 'submitted')
+    await branchPage.submitBranch(ref)
+    await branchPage.verifyBranchStatus(ref, 'submitted')
   })
 
   test('refuses to submit a branch with nothing saved, leaving it editable', async ({ page }) => {
-    const branchName = `canopycms-test-empty-submit-${Date.now()}`
+    const branchName = `test-empty-submit-${Date.now()}`
+    const ref = branchRef(branchName)
 
     await switchUser(page, 'editor')
     const createResponse = await createBranchViaAPI(BASE_URL, branchName, 'editor')
@@ -158,16 +162,17 @@ test.describe('Branch Lifecycle & Workflow', () => {
     await editorPage.goto()
     await editorPage.waitForReady()
     await branchPage.openBranchManager()
-    await branchPage.waitForBranchInList(branchName)
+    await branchPage.waitForBranchInList(ref)
 
-    await branchPage.submitBranch(branchName)
+    await branchPage.submitBranch(ref)
 
-    await expect(editorPage.notification(`Nothing to submit yet: "${branchName}"`)).toBeVisible()
-    await branchPage.verifyBranchStatus(branchName, 'editing')
+    await expect(editorPage.notification(`Nothing to submit yet: "${ref}"`)).toBeVisible()
+    await branchPage.verifyBranchStatus(ref, 'editing')
   })
 
   test('request changes flow', async ({ page }) => {
-    const branchName = `canopycms-test-request-changes-${Date.now()}`
+    const branchName = `test-request-changes-${Date.now()}`
+    const ref = branchRef(branchName)
 
     // Set editor user first
     await switchUser(page, 'editor')
@@ -185,14 +190,14 @@ test.describe('Branch Lifecycle & Workflow', () => {
     await branchPage.openBranchManager()
 
     // Wait for branch and verify it's submitted
-    await branchPage.waitForBranchInList(branchName)
-    await branchPage.verifyBranchStatus(branchName, 'submitted')
+    await branchPage.waitForBranchInList(ref)
+    await branchPage.verifyBranchStatus(ref, 'submitted')
 
     // Request changes
-    await branchPage.requestChanges(branchName)
+    await branchPage.requestChanges(ref)
 
     // Verify status changed back to editing
-    await branchPage.verifyBranchStatus(branchName, 'editing')
+    await branchPage.verifyBranchStatus(ref, 'editing')
 
     // Switch back to editor user
     await switchUser(page, 'editor')
@@ -201,15 +206,16 @@ test.describe('Branch Lifecycle & Workflow', () => {
     await branchPage.openBranchManager()
 
     // Wait for branch to appear
-    await branchPage.waitForBranchInList(branchName)
+    await branchPage.waitForBranchInList(ref)
 
     // Editor can now re-submit
-    const canSubmit = await branchPage.isActionButtonVisible(branchName, 'submit')
+    const canSubmit = await branchPage.isActionButtonVisible(ref, 'submit')
     expect(canSubmit).toBe(true)
   })
 
   test('permission boundaries: non-reviewers are not offered request changes', async ({ page }) => {
-    const branchName = `canopycms-test-permissions-${Date.now()}`
+    const branchName = `test-permissions-${Date.now()}`
+    const ref = branchRef(branchName)
 
     // Set editor user and create/submit branch
     await switchUser(page, 'editor')
@@ -225,15 +231,16 @@ test.describe('Branch Lifecycle & Workflow', () => {
     await branchPage.openBranchManager()
 
     // Wait for branch to appear (editor can see their own branch)
-    await branchPage.waitForBranchInList(branchName)
+    await branchPage.waitForBranchInList(ref)
 
     // Request changes is not offered to a non-reviewer at all, though the branch is in review
-    expect(await branchPage.actionState(branchName, 'request-changes')).toBe('absent')
-    expect(await branchPage.actionState(branchName, 'withdraw')).toBe('enabled')
+    expect(await branchPage.actionState(ref, 'request-changes')).toBe('absent')
+    expect(await branchPage.actionState(ref, 'withdraw')).toBe('enabled')
   })
 
   test("permission boundaries: admin can withdraw another user's branch", async ({ page }) => {
-    const branchName = `canopycms-test-withdraw-perms-${Date.now()}`
+    const branchName = `test-withdraw-perms-${Date.now()}`
+    const ref = branchRef(branchName)
 
     // Create and submit branch as editor
     await createBranchViaAPI(BASE_URL, branchName, 'editor')
@@ -248,16 +255,17 @@ test.describe('Branch Lifecycle & Workflow', () => {
     await branchPage.openBranchManager()
 
     // Admin should see the branch
-    expect(await branchPage.verifyBranchInList(branchName)).toBe(true)
+    expect(await branchPage.verifyBranchInList(ref)).toBe(true)
 
     // Admin has override permissions (canPerformWorkflowActions = true for admins),
     // so the withdraw button should be visible and enabled.
-    const withdrawVisible = await branchPage.isActionButtonVisible(branchName, 'withdraw')
+    const withdrawVisible = await branchPage.isActionButtonVisible(ref, 'withdraw')
     expect(withdrawVisible).toBe(true)
   })
 
   test('branch deletion permissions', async ({ page }) => {
-    const branchName = `canopycms-test-delete-${Date.now()}`
+    const branchName = `test-delete-${Date.now()}`
+    const ref = branchRef(branchName)
 
     // Set user to editor FIRST, then create branch
     await switchUser(page, 'editor')
@@ -271,33 +279,33 @@ test.describe('Branch Lifecycle & Workflow', () => {
     await branchPage.openBranchManager()
 
     // Wait for branch to appear
-    await branchPage.waitForBranchInList(branchName)
+    await branchPage.waitForBranchInList(ref)
 
     // Verify branch is in editing status
-    await branchPage.verifyBranchStatus(branchName, 'editing')
+    await branchPage.verifyBranchStatus(ref, 'editing')
 
     // Creator should be able to delete
-    const canDelete = await branchPage.isActionButtonVisible(branchName, 'delete')
+    const canDelete = await branchPage.isActionButtonVisible(ref, 'delete')
     expect(canDelete).toBe(true)
 
     // Submit the branch
-    await branchPage.submitBranch(branchName)
+    await branchPage.submitBranch(ref)
 
     // Wait for status to reflect submitted before checking button states
-    await branchPage.verifyBranchStatus(branchName, 'submitted')
+    await branchPage.verifyBranchStatus(ref, 'submitted')
 
     // Cannot delete submitted branch
-    expect(await branchPage.actionState(branchName, 'delete')).toBe('disabled')
+    expect(await branchPage.actionState(ref, 'delete')).toBe('disabled')
 
     // Withdraw it
-    await branchPage.withdrawBranch(branchName)
-    await branchPage.verifyBranchStatus(branchName, 'editing')
+    await branchPage.withdrawBranch(ref)
+    await branchPage.verifyBranchStatus(ref, 'editing')
 
     // Now can delete again
-    await branchPage.deleteBranch(branchName)
+    await branchPage.deleteBranch(ref)
 
     // Verify branch is removed from list
-    await branchPage.verifyBranchNotInList(branchName)
+    await branchPage.verifyBranchNotInList(ref)
   })
 
   test('branch list filtering and status display', async ({ page }) => {
@@ -305,8 +313,10 @@ test.describe('Branch Lifecycle & Workflow', () => {
     await switchUser(page, 'editor')
 
     // Create multiple branches with different statuses via API
-    const editingBranch = `canopycms-editing-${Date.now()}`
-    const submittedBranch = `canopycms-submitted-${Date.now()}`
+    const editingBranch = `editing-${Date.now()}`
+    const editingRef = branchRef(editingBranch)
+    const submittedBranch = `submitted-${Date.now()}`
+    const submittedRef = branchRef(submittedBranch)
 
     await createBranchViaAPI(BASE_URL, editingBranch, 'editor')
     await createBranchViaAPI(BASE_URL, submittedBranch, 'editor')
@@ -326,16 +336,16 @@ test.describe('Branch Lifecycle & Workflow', () => {
     await branchPage.openBranchManager()
 
     // Wait for branches to appear
-    await branchPage.waitForBranchInList(editingBranch)
-    await branchPage.waitForBranchInList(submittedBranch)
+    await branchPage.waitForBranchInList(editingRef)
+    await branchPage.waitForBranchInList(submittedRef)
 
     // Verify statuses
-    await branchPage.verifyBranchStatus(editingBranch, 'editing')
-    await branchPage.verifyBranchStatus(submittedBranch, 'submitted')
+    await branchPage.verifyBranchStatus(editingRef, 'editing')
+    await branchPage.verifyBranchStatus(submittedRef, 'submitted')
 
     // Verify status badges have correct styling (color may vary)
-    const editingBadge = branchPage.getBranchStatusBadge(editingBranch)
-    const submittedBadge = branchPage.getBranchStatusBadge(submittedBranch)
+    const editingBadge = branchPage.getBranchStatusBadge(editingRef)
+    const submittedBadge = branchPage.getBranchStatusBadge(submittedRef)
 
     await expect(editingBadge).toBeVisible()
     await expect(submittedBadge).toBeVisible()

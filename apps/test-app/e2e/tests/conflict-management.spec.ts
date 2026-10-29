@@ -1,7 +1,7 @@
 import { BASE_URL } from '../fixtures/base-url'
 import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
-import { BranchPage } from '../fixtures/branch-page'
+import { BranchPage, branchRef } from '../fixtures/branch-page'
 import { switchUser, installE2EFlag } from '../fixtures/test-users'
 import { STANDARD_TIMEOUT, LONG_TIMEOUT } from '../fixtures/timeouts'
 import {
@@ -38,7 +38,8 @@ test.describe('Conflict Management', () => {
   test('conflict detection shows sidebar badge and form alert after rebase', async ({ page }) => {
     test.setTimeout(120_000)
 
-    const branchName = `canopycms-conflict-test-${Date.now()}`
+    const branchName = `conflict-test-${Date.now()}`
+    const ref = branchRef(branchName)
 
     // 0. Restore main content to known state (in case a previous run polluted remote.git)
     await test.step('restore clean main content', async () => {
@@ -55,7 +56,7 @@ test.describe('Conflict Management', () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await branchPage.openBranchManager()
-      await branchPage.switchToBranch(branchName)
+      await branchPage.switchToBranch(ref)
       await branchPage.closeBranchManager()
     })
 
