@@ -3,11 +3,18 @@ import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from './timeouts'
 // Isomorphic/dependency-free modules (see their own doc comments) -- safe to
 // import directly in test code, same convention test-workspace.ts already
 // uses for other package internals (e.g. resource-generation.ts).
-import { sanitizeBranchName } from '../../../../packages/canopycms/src/paths/branch-name'
+import { resolveBranchNamespace } from '../../../../packages/canopycms/src/operating-mode/branch-namespace'
+import {
+  branchShortName,
+  sanitizeBranchName,
+} from '../../../../packages/canopycms/src/paths/branch-name'
 import { parseCreatedBranchName } from '../../../../packages/canopycms/src/paths/validation'
 
-/** The branch namespace the test app's dev mode gives every branch an editor creates. */
-const BRANCH_NAMESPACE = 'canopycms/local/'
+/**
+ * The branch namespace the app gives every branch an editor creates: what dev mode resolves for
+ * the test app's config, which sets neither a namespace nor a deployment name.
+ */
+const BRANCH_NAMESPACE = resolveBranchNamespace({}, 'local')
 
 /** The short name CanopyCMS gives a typed branch name: the part after the namespace. */
 export function branchShort(typed: string): string {
@@ -16,9 +23,17 @@ export function branchShort(typed: string): string {
   return parsed.shortName
 }
 
-/** The ref (git branch, `branch.name`, UI label and testid key) of the branch created from `typed`. */
+/** The ref (git branch, `branch.name` and testid key) of the branch created from `typed`. */
 export function branchRef(typed: string): string {
   return `${BRANCH_NAMESPACE}${branchShort(typed)}`
+}
+
+/**
+ * What the editor shows and puts in its URL for the branch at `ref`: the part after the namespace,
+ * or the whole name for a branch outside it (the protected base branch, say).
+ */
+export function refShort(ref: string): string {
+  return branchShortName(ref, BRANCH_NAMESPACE)
 }
 
 /** The workspace directory name under `.canopy-dev/content-branches/` of the branch created from `typed`. */
@@ -250,9 +265,10 @@ export class BranchPage {
   }
 
   /**
-   * Switch to a different branch.
+   * Switch to a different branch, and check the editor names it by its short name in the pill and
+   * in `?branch=`.
    *
-   * @param branchName - The name of the branch to switch to
+   * @param branchName - The branch's ref
    */
   async switchToBranch(branchName: string): Promise<void> {
     // The current branch has no Open button: it is already the one open.
@@ -263,9 +279,14 @@ export class BranchPage {
     }
 
     // Wait for the branch dropdown to reflect the new branch (condition-based)
-    await expect(this.branchDropdownButton).toContainText(branchName, {
+    await expect(this.branchDropdownButton).toHaveText(refShort(branchName), {
       timeout: STANDARD_TIMEOUT,
     })
+    await expect
+      .poll(() => new URL(this.page.url()).searchParams.get('branch'), {
+        timeout: STANDARD_TIMEOUT,
+      })
+      .toBe(refShort(branchName))
   }
 
   /**

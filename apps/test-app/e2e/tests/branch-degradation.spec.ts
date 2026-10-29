@@ -3,7 +3,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
-import { BranchPage, branchRef, findProtectedBranch } from '../fixtures/branch-page'
+import { BranchPage, branchRef, branchShort, findProtectedBranch } from '../fixtures/branch-page'
 import { switchUser, installE2EFlag } from '../fixtures/test-users'
 import { resetWorkspace, ensureMainBranch, createBranchViaAPI } from '../fixtures/test-workspace'
 import {
@@ -122,8 +122,11 @@ test.describe('Branch Degradation', () => {
       })
 
       await test.step('the editor still loads a healthy branch', async () => {
-        await page.goto(`/edit?branch=${healthyRef}`)
+        await page.goto(`/edit?branch=${branchShort(healthyBranchName)}`)
         await editorPage.waitForReady()
+        await expect(page.getByTestId('branch-dropdown-button')).toHaveText(
+          branchShort(healthyBranchName),
+        )
       })
     } finally {
       // MANDATORY: this corrupts a shared workspace directory other specs
