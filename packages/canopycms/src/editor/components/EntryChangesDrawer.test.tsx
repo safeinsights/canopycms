@@ -378,7 +378,8 @@ describe('EntryChangesDrawer marks', () => {
     expect(textOf(grid)).not.toContain('Inserted 21')
     await userEvent.click(within(grid).getByRole('button', { name: 'Show all 2000 added lines' }))
     expect(textOf(grid)).toContain('Inserted 2000')
-  })
+    // "Show all" renders 2,000 rows, about 3 s in jsdom: more than the default under a loaded runner.
+  }, 15_000)
 
   it('says how a moved item moved, and counts moves apart from changed fields', async () => {
     const team: FieldConfig = {
