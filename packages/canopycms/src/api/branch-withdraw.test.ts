@@ -172,7 +172,32 @@ describe('branch withdraw api', () => {
 
     expect(res.ok).toBe(true)
     expect(order).toEqual(['save', 'sync'])
-    expect(mockSyncPrComments).toHaveBeenCalledWith(ctx, approvedContext)
+    expect(mockSyncPrComments).toHaveBeenCalledWith(ctx, {
+      ...approvedContext,
+      branch: { ...baseContext.branch, status: 'editing' },
+    })
+  })
+
+  it('syncs against the branch the save returned, which can carry a PR the guard did not see', async () => {
+    // On the queued path the worker can record the PR's number after the guard has read the branch.
+    mockMetadataSave.mockImplementationOnce(async () => ({
+      branch: { ...baseContext.branch, status: 'editing', pullRequestNumber: 456 },
+    }))
+    const ctx = makeCtx()
+    ctx.getBranchContext = vi.fn().mockResolvedValue({
+      ...baseContext,
+      branch: { ...baseContext.branch, pullRequestNumber: undefined },
+    })
+
+    await withdrawHandler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+    )
+
+    expect(mockSyncPrComments.mock.calls[0]?.[1]).toMatchObject({
+      branch: { status: 'editing', pullRequestNumber: 456 },
+    })
   })
 
   it('returns 400 when withdrawing an archived branch', async () => {

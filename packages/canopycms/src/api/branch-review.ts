@@ -6,6 +6,7 @@ import { toBranchListItem, type BranchListItemResponse } from './branch'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { defineEndpoint } from './route-builder'
 import { syncConvertToDraft } from './github-sync'
+import { syncPrComments } from './pr-comment-sync'
 import { CommentStore } from '../comment-store'
 import { getErrorMessage } from '../utils/error'
 import { REQUEST_CHANGES_NOTE_MAX_LENGTH } from '../authorization/review-role'
@@ -13,7 +14,6 @@ import { getBranchProtection } from '../authorization'
 import type { CanopyUser } from '../user'
 import type { BranchReview } from '../types'
 import { sanitizeDisplayName } from '../submission-attribution'
-import { syncPrComments } from './pr-comment-sync'
 
 /** Optional on the wire: a bodiless request means no note. */
 const requestChangesBodySchema = z
@@ -127,8 +127,10 @@ const requestChangesHandler = async (
   }
 
   // After the save and the note, which the PR body renders from, so one update carries both; the
-  // draft conversion above never writes the body. Best-effort: syncPrComments only logs failures.
-  await syncPrComments(ctx, branchContext)
+  // draft conversion above never writes the body. The branch is the one the status write returned:
+  // the guard read it earlier, and on the queued path the worker can record the PR's number in
+  // between. Best-effort: syncPrComments only logs failures.
+  await syncPrComments(ctx, { ...branchContext, branch: updated.branch })
 
   return {
     ok: true,
@@ -199,8 +201,9 @@ const approveBranchHandler = async (
   )
   if (!updated) return approveConflict(found)
 
-  // Best-effort: syncPrComments only logs failures.
-  await syncPrComments(ctx, branchContext)
+  // Against the branch the save returned, as for request changes. Best-effort: syncPrComments
+  // only logs failures.
+  await syncPrComments(ctx, { ...branchContext, branch: updated.branch })
 
   return {
     ok: true,
