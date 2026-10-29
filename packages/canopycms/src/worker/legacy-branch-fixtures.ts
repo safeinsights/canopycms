@@ -5,8 +5,8 @@
  * runtime (`branch-policy.ts`'s `legacyBranchProblem` and the `BranchPolicy` constructor) and at
  * synth time (`canopycms-cdk`'s `constructs/cms-service.ts`, which does not import core). A rule
  * tightened at runtime but not at synth synths clean and then crash-loops the gateway at boot, so
- * both suites require their copy's verdict on every list here. Add a case when you change either
- * copy of the rule.
+ * the CDK suite (`cms-deploy.test.ts`) requires both copies' verdict on every list here. Add a
+ * case when you change either copy of the rule.
  *
  * Dependency-free (plain arrays, no vitest import) so the CDK suite can import it across the
  * package boundary. Each case is a resolved namespace and the list checked against it.
@@ -19,6 +19,7 @@ export const VALID_LEGACY_BRANCH_LISTS: readonly (readonly [string, string, read
   [
     ['no entries', DEFAULT_NAMESPACE, []],
     ['plain names', DEFAULT_NAMESPACE, ['spring', 'feature/x', 'v1.0', 'Release-2']],
+    ['a name of 255 characters, the most a branch name has', DEFAULT_NAMESPACE, ['a'.repeat(255)]],
     ['a dash where the namespace has a slash', DEFAULT_NAMESPACE, ['canopycms-spring']],
     ['a sibling of the namespace', DEFAULT_NAMESPACE, ['canopycms/prodigy', 'canopycms/staging/x']],
     ['a name that only sanitizes into the namespace', DEFAULT_NAMESPACE, ['canopycms-prod-x']],
@@ -49,9 +50,16 @@ export const INVALID_LEGACY_BRANCH_LISTS: readonly (readonly [
   ['a percent sign', DEFAULT_NAMESPACE, ['a%2fb']],
   ['a double quote', DEFAULT_NAMESPACE, ['a"b']],
   ['a brace', DEFAULT_NAMESPACE, ['a{b']],
+  ['a closing brace', DEFAULT_NAMESPACE, ['a}b']],
+  ['a caret', DEFAULT_NAMESPACE, ['a^b']],
+  ['a colon', DEFAULT_NAMESPACE, ['a:b']],
+  ['an opening bracket', DEFAULT_NAMESPACE, ['a[b']],
+  ['DEL', DEFAULT_NAMESPACE, ['a\x7fb']],
   ['a leading dash', DEFAULT_NAMESPACE, ['-x']],
   ['a leading refs/', DEFAULT_NAMESPACE, ['refs/heads/main']],
   ['a leading tags/ in another case', DEFAULT_NAMESPACE, ['Tags/x']],
+  ['a leading heads/', DEFAULT_NAMESPACE, ['heads/x']],
+  ['a leading remotes/', DEFAULT_NAMESPACE, ['remotes/origin/x']],
   ['a git-forbidden character', DEFAULT_NAMESPACE, ['release-?']],
   ['a tilde', DEFAULT_NAMESPACE, ['a~1']],
   ['a backslash', DEFAULT_NAMESPACE, ['a\\b']],
@@ -65,7 +73,7 @@ export const INVALID_LEGACY_BRANCH_LISTS: readonly (readonly [
   ['a .lock component', DEFAULT_NAMESPACE, ['a.lock/b']],
   ['HEAD', DEFAULT_NAMESPACE, ['HEAD']],
   ['a lone @', DEFAULT_NAMESPACE, ['@']],
-  ['a name over 255 characters', DEFAULT_NAMESPACE, ['a'.repeat(256)]],
+  ['a name of 256 characters, one over the most', DEFAULT_NAMESPACE, ['a'.repeat(256)]],
   ['an entry listed twice', DEFAULT_NAMESPACE, ['spring', 'summer', 'spring']],
   ['1025 entries', DEFAULT_NAMESPACE, Array.from({ length: 1025 }, (_, i) => `r${i}`)],
 ]

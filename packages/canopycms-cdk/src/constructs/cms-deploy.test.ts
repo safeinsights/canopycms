@@ -2702,6 +2702,18 @@ describe('CanopyCmsService: legacyBranches', () => {
     expect(() => synth(false, { legacyBranches: [entry] })).toThrow(why)
   })
 
+  it('refuses an environment.CANOPYCMS_LEGACY_BRANCHES, which would reach the Lambda alone', () => {
+    expect(() =>
+      synth(false, {
+        legacyBranches: ['spring'],
+        environment: { CANOPYCMS_LEGACY_BRANCHES: 'autumn' },
+      }),
+    ).toThrow('set legacy branches with the legacyBranches prop')
+    expect(() => synth(false, { environment: { CANOPYCMS_LEGACY_BRANCHES: '' } })).toThrow(
+      'environment.CANOPYCMS_LEGACY_BRANCHES',
+    )
+  })
+
   it('checks entries against the resolved branchNamespace', () => {
     const custom = { branchNamespace: 'edits/{deployment}/', deploymentName: 'docs' }
     expect(() => synth(false, { ...custom, legacyBranches: ['edits/docs/x'] })).toThrow(

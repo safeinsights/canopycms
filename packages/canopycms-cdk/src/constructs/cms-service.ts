@@ -1528,6 +1528,13 @@ export class CanopyCmsService extends Construct {
       deploymentName,
       { baseBranch, settingsBranch },
     )
+    // The gateway alone reads the list, from its own env file; `environment` reaches the Lambda.
+    if (props.environment?.['CANOPYCMS_LEGACY_BRANCHES'] !== undefined) {
+      throw new Error(
+        'CanopyCmsService: set legacy branches with the legacyBranches prop, not ' +
+          'environment.CANOPYCMS_LEGACY_BRANCHES: the prop reaches the GitHub gateway, and the environment only the Lambda.',
+      )
+    }
     const legacyBranches = assertValidLegacyBranches(props.legacyBranches ?? [], branchNamespace)
 
     const workerCapacity: WorkerCapacity = props.workerCapacity ?? { type: 'on-demand' }
