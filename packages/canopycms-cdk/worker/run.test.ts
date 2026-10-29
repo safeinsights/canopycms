@@ -894,6 +894,15 @@ describe('runWorker: split mode', () => {
     expect(h.exitCodes()).toEqual([1])
   })
 
+  it('starts with a blank CANOPYCMS_BRANCH_NAMESPACE on the worker unit, which sets nothing', async () => {
+    const h = harness({ env: { ...splitEnv(), CANOPYCMS_BRANCH_NAMESPACE: '  ' } })
+
+    await runWorker(h.deps)
+
+    expect(h.record).not.toHaveBeenCalled()
+    expect(h.createWorker).toHaveBeenCalledTimes(1)
+  })
+
   it("refuses to start beside a gateway that pushes another settings branch than this worker's", async () => {
     // resolveDeploymentName reads the process's variable first; the harness's env stands in for it.
     vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', '')
