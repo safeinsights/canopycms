@@ -574,11 +574,12 @@ function writesFrontmatter(data: Record<string, unknown>): boolean {
 }
 
 /**
- * The body to write: `body`'s content in `existingRaw`'s text wherever they agree
- * (`preserveMarkdownSource`), opening with the blank line the frontmatter is followed by on disk.
- * gray-matter leaves that blank line in the body, and the editor's body does not carry it, so it
- * is restored here even when the splice falls back. A body under frontmatter the file did not
- * have, or under frontmatter with no body yet, gets one blank line, Prettier's style.
+ * The body to write: `body`'s content in `existingRaw`'s text wherever they agree, and in the
+ * export style elsewhere (`preserveMarkdownSource`), opening with the blank line the frontmatter
+ * is followed by on disk. gray-matter leaves that blank line in the body, and the editor's body
+ * does not carry it, so it is restored here even when the splice falls back. A body under
+ * frontmatter the file did not have, or under frontmatter with no body yet, gets one blank line,
+ * Prettier's style.
  *
  * With no frontmatter written, the body opens the file: it loses its leading blank lines, except
  * the one newline that stops a body starting with `---` (after any BOM, which gray-matter skips)
@@ -591,7 +592,7 @@ function bodyToWrite(
   existingRaw: string | undefined,
 ): string {
   const priorBody = existingRaw === undefined ? undefined : extractBody(existingRaw)
-  const spliced = priorBody === undefined ? body : preserveMarkdownSource(priorBody, body, format)
+  const spliced = preserveMarkdownSource(priorBody, body, format)
   if (!writesFrontmatter(data)) {
     const flush = spliced.replace(/^(?:\r?\n)+/, '')
     return /^\uFEFF?---/.test(flush) ? `\n${flush}` : flush

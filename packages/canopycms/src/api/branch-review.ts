@@ -6,37 +6,112 @@ import { toBranchListItem, type BranchListItemResponse } from './branch'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { defineEndpoint } from './route-builder'
 import { syncConvertToDraft } from './github-sync'
+import { syncPrComments } from './pr-comment-sync'
+import { CommentStore } from '../comment-store'
+import { getErrorMessage } from '../utils/error'
+import { REQUEST_CHANGES_NOTE_MAX_LENGTH } from '../authorization/review-role'
+import { getBranchProtection } from '../authorization'
+
+/** Optional on the wire: a bodiless request means no note. */
+const requestChangesBodySchema = z
+  .object({ note: z.string().trim().max(REQUEST_CHANGES_NOTE_MAX_LENGTH).optional() })
+  .optional()
+
+export interface RequestChangesBody {
+  /** Saved as a branch comment; trimmed before its length is checked, and ignored when empty. */
+  note?: string
+}
+
+const NOTE_NOT_SAVED_WARNING = "Changes were requested, but your note couldn't be saved."
+
+/**
+ * The 409 for a branch that left review before this request arrived, because the reviewer's page
+ * was stale. `action` finishes "so ..." for any status that has no wording of its own.
+ */
+const staleStatusError = (status: string | undefined, action: string): string =>
+  status === 'editing'
+    ? "This branch is no longer in review: it's back with its editor."
+    : status === undefined
+      ? `This branch's status can't be read, so ${action}.`
+      : `This branch is ${status}, so ${action}.`
+
+const canRequestChangesFrom = (status: string | undefined) =>
+  status === 'submitted' || status === 'approved'
+
+const requestChangesConflict = (status: string | undefined): BranchListItemResponse => ({
+  ok: false,
+  status: 409,
+  error: staleStatusError(status, "changes can't be requested"),
+})
+
+const approveConflict = (status: string | undefined): BranchListItemResponse => ({
+  ok: false,
+  status: 409,
+  error:
+    status === 'approved'
+      ? 'This branch is already approved.'
+      : staleStatusError(status, "it can't be approved"),
+})
 
 const requestChangesHandler = async (
   gc: { branchContext: BranchContext },
   ctx: ApiContext,
   req: ApiRequest,
   _params: z.infer<typeof branchParamSchema>,
+  body: z.infer<typeof requestChangesBodySchema>,
 ): Promise<BranchListItemResponse> => {
   const { branchContext } = gc
 
-  if (branchContext.branch.status !== 'submitted') {
-    return {
-      ok: false,
-      status: 400,
-      error: `Cannot request changes on branch with status '${branchContext.branch.status}'. Only 'submitted' branches can have changes requested.`,
-    }
+  if (!canRequestChangesFrom(branchContext.branch.status)) {
+    return requestChangesConflict(branchContext.branch.status)
   }
 
   await syncConvertToDraft(ctx, branchContext)
 
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
 
-  const updated = await meta.save({
-    branch: { name: branchContext.branch.name, status: 'editing' },
-  })
+  // The status the guard read can be stale by now, so the save checks the status on disk, in the
+  // same step that writes. A branch that left review meanwhile is refused, and the draft
+  // conversion above is left as it is: withdraw converts the pull request to a draft too, and a
+  // merged one cannot be converted.
+  let found: string | undefined
+  const updated = await meta.saveIf(
+    { branch: { name: branchContext.branch.name, status: 'editing' } },
+    (existing) => {
+      found = existing?.branch.status
+      return canRequestChangesFrom(found)
+    },
+  )
+  if (!updated) return requestChangesConflict(found)
 
-  // TODO: Optionally record comment in .canopy-meta/comments.json when comment system is implemented
+  // The note is written after the status change so a failed write never blocks the branch from
+  // returning to editing; the caller is warned instead.
+  const note = body?.note
+  let warning: string | undefined
+  if (note) {
+    try {
+      await new CommentStore(branchContext.branchRoot).addComment({
+        userId: req.user.userId,
+        text: `Changes requested: ${note}`,
+        type: 'branch',
+      })
+    } catch (err) {
+      console.error(
+        `CanopyCMS: Failed to save the request-changes note for ${branchContext.branch.name}:`,
+        getErrorMessage(err),
+      )
+      warning = NOTE_NOT_SAVED_WARNING
+    }
+    if (!warning) await syncPrComments(ctx, { ...branchContext, branch: updated.branch })
+  }
 
   return {
     ok: true,
     status: 200,
-    data: { branch: toBranchListItem(ctx.services.config, updated.branch, req.user) },
+    data: {
+      branch: toBranchListItem(ctx.services.config, updated.branch, req.user),
+      ...(warning && { warning }),
+    },
   }
 }
 
@@ -48,21 +123,50 @@ const approveBranchHandler = async (
 ): Promise<BranchListItemResponse> => {
   const { branchContext } = gc
 
-  if (branchContext.branch.status !== 'submitted') {
+  // Approve is a CanopyCMS status only. The CMS authors its pull requests and GitHub refuses
+  // an author's approval review, so nothing is sent to GitHub.
+  if (branchContext.branch.createdBy === req.user.userId) {
+    return {
+      ok: false,
+      status: 403,
+      error: "You can't approve a branch you created. Ask another reviewer to approve it.",
+    }
+  }
+
+  // Request changes stays open on the base branch, as Withdraw does, to recover one stuck in review.
+  const { isProtected } = getBranchProtection(
+    ctx.services.config,
+    branchContext.branch.name,
+    branchContext.branch.baseBranch,
+  )
+  if (isProtected) {
+    return { ok: false, status: 400, error: "The base branch can't be approved." }
+  }
+
+  if (branchContext.branch.status !== 'submitted')
+    return approveConflict(branchContext.branch.status)
+
+  if (branchContext.branch.pullRequestState === 'closed') {
     return {
       ok: false,
       status: 400,
-      error: `Cannot approve branch with status '${branchContext.branch.status}'. Only 'submitted' branches can be approved.`,
+      error:
+        'The pull request was closed on GitHub, so this branch cannot be approved. Withdraw it from review, then submit it again to open a new one.',
     }
   }
 
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
 
-  const updated = await meta.save({
-    branch: { name: branchContext.branch.name, status: 'approved' },
-  })
-
-  // TODO: Optionally call githubService.approvePullRequest() when GitHub integration is needed
+  // As for request changes, the status on disk decides, in the step that writes.
+  let found: string | undefined
+  const updated = await meta.saveIf(
+    { branch: { name: branchContext.branch.name, status: 'approved' } },
+    (existing) => {
+      found = existing?.branch.status
+      return found === 'submitted'
+    },
+  )
+  if (!updated) return approveConflict(found)
 
   return {
     ok: true,
@@ -77,8 +181,8 @@ export const requestChanges = defineEndpoint({
   method: 'POST',
   path: '/:branch/request-changes',
   params: branchParamSchema,
-  // body/bodyType removed: comment field was declared but never stored.
-  // Re-add when comment storage is implemented (see TODO in handler).
+  body: requestChangesBodySchema,
+  bodyType: 'RequestChangesBody',
   responseType: 'BranchListItemResponse',
   response: {} as BranchListItemResponse,
   defaultMockData: {

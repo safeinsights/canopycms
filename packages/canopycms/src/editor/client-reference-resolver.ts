@@ -3,7 +3,7 @@ import { createApiClient } from '../api/client'
 import type { ApiClient } from './context'
 import { flattenGroupFields } from '../utils/flatten-group-fields'
 import { isValidContentId } from '../paths/validation'
-import { traverseFields } from '../validation/field-traversal'
+import { referenceValueId, traverseFields } from '../validation/field-traversal'
 
 /**
  * Resolves the reference fields of a draft for live preview, at every position the server's
@@ -207,9 +207,11 @@ function setCreating(root: FormValue, path: DataPath, leaf: unknown, source: For
 /**
  * The draft as the preview sees it, computed synchronously from the cache.
  *
- * Each reference becomes its cached value (the target, or an `unavailable` reference), or `null`
- * while it has none (still resolving, a failed lookup, or a malformed id). A list field's array maps element by element, a
- * non-string element to `null`; anything else is left as the form holds it, as on the server.
+ * Each id becomes its cached value (the target, or an `unavailable` reference), or `null` while it
+ * has none (still resolving, a failed lookup, or a malformed id). A reference the form holds as an
+ * object is the target the entry's read resolved, and passes through as it is, alone or in a list.
+ * A list field's array maps element by element, any other non-string element to `null`; anything
+ * else is left as the form holds it, as on the server.
  * `loadingState` holds a boolean only at reference positions, `true` while resolving, at the
  * reference's own path (`boolean[]` for a list).
  */
@@ -224,7 +226,10 @@ export function applyReferenceCache(
   const copies = new WeakSet<object>()
 
   const lookup = (id: unknown): { value: unknown; loading: boolean } => {
-    if (typeof id !== 'string' || !isValidContentId(id)) return { value: null, loading: false }
+    if (typeof id !== 'string') {
+      return { value: referenceValueId(id) === undefined ? null : id, loading: false }
+    }
+    if (!isValidContentId(id)) return { value: null, loading: false }
     const entry = cache.get(cacheKey(branch, id))
     return entry ? { value: entry.value, loading: false } : { value: null, loading: true }
   }

@@ -27,18 +27,66 @@ import type { UnsavedSummary } from './useDraftManager'
 import type { StampedEntry } from '../../stamp-on-publish'
 import { describeUnsaved } from './useBranchActions'
 import { writeEditorUrl } from './editor-history'
+import {
+  approveMessage,
+  NoteNotSavedMessage,
+  RequestChangesForm,
+} from '../components/ReviewDialogs'
 
 const BRANCHES_LOAD_FAILED_TOAST_ID = 'canopy-branches-load-failed'
 const BRANCH_OUTCOME_UNKNOWN_TOAST_ID = 'canopy-branch-outcome-unknown'
 
-/** The error a refused branch action throws; a gateway's 5xx says nothing of whether it ran. */
-function actionError(result: ApiResponse, fallback: string): Error {
-  return isGatewayFailure(result) ? new UnansweredError() : new Error(result.error || fallback)
+/** The API's 409: the branch is no longer in the state the action needs, so a retry cannot pass. */
+class StaleStatusError extends Error {
+  override readonly name = 'StaleStatusError'
 }
 
+/** An answer that refused the action, with its HTTP status: a 4xx is a refusal no retry passes. */
+class RefusedError extends Error {
+  override readonly name = 'RefusedError'
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message)
+  }
+}
+
+/**
+ * The error a refused branch action throws; a gateway's 5xx says nothing of whether it ran.
+ * With `staleIsConflict`, the API's 409 is a `StaleStatusError`.
+ */
+function actionError(result: ApiResponse, fallback: string, staleIsConflict = false): Error {
+  if (isGatewayFailure(result)) return new UnansweredError()
+  const message = result.error || fallback
+  if (result.ok) return new Error(message)
+  return staleIsConflict && result.status === 409 && !isNonApiResponse(result)
+    ? new StaleStatusError(message)
+    : new RefusedError(message, result.status)
+}
+
+type ReviewKind = 'approve' | 'request-changes'
+
+/** Whether a branch's status still lets the reviewer act: Approve needs submitted. */
+const acceptsReview = (status: string | undefined, kind: ReviewKind): boolean =>
+  kind === 'approve' ? status === 'submitted' : status === 'submitted' || status === 'approved'
+
+/** The line for a branch the reviewer's page still showed in review after it left. */
+const leftReviewMessage = (status: string, kind: ReviewKind): string =>
+  status === 'editing'
+    ? "This branch is no longer in review: it's back with its editor."
+    : status === 'approved' && kind === 'approve'
+      ? 'This branch is already approved.'
+      : `This branch is ${status}, so ${kind === 'approve' ? "it can't be approved" : "changes can't be requested"}.`
+
 /** @internal Exported for tests. */
-export const branchActionOutcomeUnknown = (action: string) =>
-  `${action} may have gone through even though the server didn't answer. Check the branch's status before trying again.`
+export const branchActionOutcomeUnknown = (
+  action: string,
+  check = "Check the branch's status before trying again.",
+) => `${action} may have gone through even though the server didn't answer. ${check}`
+
+/** Where to look after a Request changes nobody answered: the status, and the note it carried. */
+const REQUEST_CHANGES_CHECK = `Check the branch's status and its comments in "Comments".`
 
 /**
  * Wire a confirm modal's exits so exactly ONE of {confirmed, dismissed} runs,
@@ -167,21 +215,54 @@ const showWithdrawConfirmation = (
   })
 }
 
-const showRequestChangesConfirmation = (
+const showApproveConfirmation = (
   branchName: string,
+  pr: BranchPullRequest,
   onConfirm: () => Promise<void>,
   onDismiss: () => void,
+  returnFocusTo?: () => HTMLElement | null,
 ) => {
+  openConfirm({
+    title: EDITOR_ACTIONS.approve,
+    children: <Text size="sm">{approveMessage(branchName, !!pr.pullRequestNumber)}</Text>,
+    labels: { confirm: EDITOR_ACTIONS.approve, cancel: 'Cancel' },
+    confirmProps: { color: 'brand', 'data-testid': 'confirm-approve-branch' },
+    ...confirmModalHandlers(onConfirm, onDismiss),
+    ...focusReturnProps(returnFocusTo),
+  })
+}
+
+/**
+ * `onConfirm` receives the note as typed, which the dialog starts with `initialNote` and reports
+ * through `onNoteChange` as it changes, so a draft outlives the dialog.
+ */
+const showRequestChangesConfirmation = (
+  branchName: string,
+  pr: BranchPullRequest,
+  initialNote: string,
+  onNoteChange: (note: string) => void,
+  onConfirm: (note: string) => Promise<void>,
+  onDismiss: () => void,
+  returnFocusTo?: () => HTMLElement | null,
+) => {
+  let note = initialNote
   openConfirm({
     title: EDITOR_ACTIONS.requestChanges,
     children: (
-      <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
-        {`Send "${branchName}" back to its editor?\n\nThis will:\n• Change the branch status back to "editing"\n• Let its editor change it and submit again`}
-      </Text>
+      <RequestChangesForm
+        branchName={branchName}
+        hasPullRequest={!!pr.pullRequestNumber}
+        initialNote={initialNote}
+        onNoteChange={(value) => {
+          note = value
+          onNoteChange(value)
+        }}
+      />
     ),
     labels: { confirm: EDITOR_ACTIONS.requestChanges, cancel: 'Cancel' },
     confirmProps: { color: 'red', 'data-testid': 'confirm-request-changes' },
-    ...confirmModalHandlers(onConfirm, onDismiss),
+    ...confirmModalHandlers(() => onConfirm(note), onDismiss),
+    ...focusReturnProps(returnFocusTo),
   })
 }
 
@@ -341,6 +422,9 @@ export interface UseBranchManagerOptions {
 
   /** The entries a submit of the open branch stamped (useDraftManager's `applySubmitStamps`). */
   onStamped?: (stamped: StampedEntry[]) => void
+
+  /** A request for changes went through; the branch may now carry the reviewer's note as a comment. */
+  onChangesRequested?: (branchName: string) => void
 }
 
 export interface UseBranchManagerReturn {
@@ -359,7 +443,13 @@ export interface UseBranchManagerReturn {
   handleSubmit: (branchName: string, returnFocusTo?: () => HTMLElement | null) => Promise<void>
   /** Confirms first; the dialog returns focus to `returnFocusTo()` when given, else its opener. */
   handleWithdraw: (branchName: string, returnFocusTo?: () => HTMLElement | null) => Promise<void>
-  handleRequestChanges: (branchName: string) => Promise<void>
+  /** Confirms first; the dialog returns focus to `returnFocusTo()` when given, else its opener. */
+  handleApprove: (branchName: string, returnFocusTo?: () => HTMLElement | null) => Promise<void>
+  /** Confirms first, taking an optional note; focus returns as for `handleApprove`. */
+  handleRequestChanges: (
+    branchName: string,
+    returnFocusTo?: () => HTMLElement | null,
+  ) => Promise<void>
   handleDelete: (branchName: string) => Promise<void>
   handleReloadBranchData: () => Promise<void>
   loadBranches: () => Promise<void>
@@ -580,7 +670,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
    * after the action succeeded.
    */
   const singleFlight = async (
-    action: 'submit' | 'withdraw' | 'request-changes' | 'delete',
+    action: 'submit' | 'withdraw' | 'approve' | 'request-changes' | 'delete',
     branch: string,
     run: () => Promise<void>,
   ): Promise<void> => {
@@ -596,23 +686,163 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
 
   // A workflow action that got no answer may have gone through, so the list reloads to show
   // where the branch stands rather than inviting a blind retry.
-  const showOutcomeUnknown = (action: string) => {
+  const showOutcomeUnknown = (action: string, check?: string) => {
     notifications.hide(BRANCH_OUTCOME_UNKNOWN_TOAST_ID)
     notifications.show({
       id: BRANCH_OUTCOME_UNKNOWN_TOAST_ID,
-      message: branchActionOutcomeUnknown(action),
+      message: branchActionOutcomeUnknown(action, check),
       color: 'yellow',
       autoClose: false,
       withCloseButton: true,
     })
   }
-  const reportActionFailure = async (err: unknown, fallback: string, action: string) => {
+  const reportActionFailure = async (
+    err: unknown,
+    fallback: string,
+    action: string,
+    follow: {
+      /** Where to look after an unanswered write, in place of the branch's status alone. */
+      check?: string
+      /** Runs once an unanswered write's branch list has reloaded, with that listing. */
+      afterUnanswered?: (fresh: BranchesData | undefined) => void
+    } = {},
+  ) => {
     if (isUnanswered(err)) {
-      showOutcomeUnknown(action)
-      await loadBranches()
+      showOutcomeUnknown(action, follow.check)
+      const fresh = await reloadBranches()
+      follow.afterUnanswered?.(fresh)
       return
     }
     notifications.show({ message: err instanceof Error ? err.message : fallback, color: 'red' })
+  }
+
+  // A note typed in the Request changes dialog, by branch, until a request carries it or the
+  // branch leaves review.
+  const noteDrafts = useRef(new Map<string, string>())
+
+  // The stale-status toasts that carry a note and stay up, by id: a plain one never replaces them.
+  const stickyStaleToasts = useRef(new Set<string>())
+
+  /**
+   * A review action found its branch out of review, or the page already knew it was. A warning,
+   * not an error: nothing is lost yet. A typed note is shown to copy, so it stays up until
+   * dismissed, and a later toast without a note leaves it be. The note's draft is the caller's to
+   * judge: Request changes still takes a branch that is merely approved.
+   */
+  const showLeftReview = (branch: string, message: string, note: string | undefined) => {
+    const id = `canopy-review-stale-${branch}`
+    if (!note && stickyStaleToasts.current.has(id)) return
+    notifications.hide(id)
+    stickyStaleToasts.current.delete(id)
+    if (note) stickyStaleToasts.current.add(id)
+    notifications.show({
+      id,
+      message: note ? (
+        <NoteNotSavedMessage message={message} note={note} hint="Copy it to keep it." />
+      ) : (
+        message
+      ),
+      color: 'yellow',
+      withCloseButton: true,
+      ...(note ? { autoClose: false, onClose: () => stickyStaleToasts.current.delete(id) } : {}),
+    })
+  }
+
+  /** Forgets a branch's draft when the listing shows it out of review. */
+  const dropDraftsOutOfReview = (branches: readonly { name: string; status: string }[]) => {
+    for (const { name, status } of branches) {
+      if (!acceptsReview(status, 'request-changes')) noteDrafts.current.delete(name)
+    }
+  }
+
+  const reviewFailureId = (kind: ReviewKind, branch: string) => `canopy-${kind}-failed-${branch}`
+
+  /**
+   * Why an Approve or Request changes failed. Retry only on an API 5xx, 408, 429 or unsent request;
+   * a timeout or gateway 5xx may have landed, so it reloads and says what to check. Other 4xx: a
+   * plain message and a reload. A 409 means the branch left review (see `showLeftReview`).
+   */
+  const reportReviewFailure = async (
+    err: unknown,
+    kind: ReviewKind,
+    branch: string,
+    details: {
+      fallback: string
+      label: string
+      /** The reviewer's note as sent, which a 409 shows back to copy. */
+      note?: string
+      /** Reopens the action's dialog. */
+      retry: () => void
+      check?: string
+      afterUnanswered?: (fresh: BranchesData | undefined) => void
+    },
+  ) => {
+    if (err instanceof StaleStatusError) {
+      showLeftReview(branch, err.message, details.note)
+      // What the branch is now decides whether a Request changes note is still wanted.
+      const fresh = await reloadBranches()
+      if (fresh) dropDraftsOutOfReview(fresh.branches)
+      return
+    }
+    if (isUnanswered(err)) {
+      await reportActionFailure(err, details.fallback, details.label, details)
+      return
+    }
+    const message = err instanceof Error ? err.message : details.fallback
+    const id = reviewFailureId(kind, branch)
+    notifications.hide(id)
+    // A 4xx is a refusal no retry passes, except for asking again later (408, 429).
+    if (
+      err instanceof RefusedError &&
+      err.status < 500 &&
+      err.status !== 408 &&
+      err.status !== 429
+    ) {
+      notifications.show({
+        id,
+        message: details.note ? (
+          <NoteNotSavedMessage message={message} note={details.note} hint="Copy it to keep it." />
+        ) : (
+          message
+        ),
+        color: 'red',
+        ...(details.note ? { autoClose: false } : {}),
+      })
+      await loadBranches()
+      return
+    }
+    notifications.show({
+      id,
+      message: (
+        <RetryToastMessage
+          message={message}
+          onRetry={() => {
+            notifications.hide(id)
+            void (async () => {
+              // The page may be stale by now: a branch that left review has nothing to retry.
+              // The listing is fetched first, so the decision is made on where the branch is now.
+              const fresh = await reloadBranches()
+              const status = (fresh?.branches ?? latest.current.branches).find(
+                (b) => b.name === branch,
+              )?.status
+              if (status !== undefined && !acceptsReview(status, kind)) {
+                showLeftReview(
+                  branch,
+                  leftReviewMessage(status, kind),
+                  noteDrafts.current.get(branch),
+                )
+                // An approved branch still takes Request changes, so its draft stays.
+                if (!acceptsReview(status, 'request-changes')) noteDrafts.current.delete(branch)
+                return
+              }
+              details.retry()
+            })()
+          }}
+        />
+      ),
+      color: 'red',
+      autoClose: false,
+    })
   }
 
   const handleSubmit = (requested: string, returnFocusTo?: () => HTMLElement | null) => {
@@ -648,9 +878,11 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
             }
             options.setBusy(true)
             try {
-              const result = await apiClient.workflow.submit({
-                branch: branchNameToSubmit,
-              })
+              const result = await apiClient.workflow.submit(
+                { branch: branchNameToSubmit },
+                // The PR body links back here; the server checks the host (editor-url.ts).
+                { editorUrl: `${window.location.origin}${window.location.pathname}` },
+              )
               if (!result.ok) throw actionError(result, 'Failed to submit branch')
               const stamped = result.data?.stamped
               if (stamped && branchNameToSubmit === listedName(latest.current.branchName)) {
@@ -722,39 +954,114 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     )
   }
 
-  const handleRequestChanges = (branchNameForChanges: string) =>
-    singleFlight(
+  const handleApprove = (requested: string, returnFocusTo?: () => HTMLElement | null) => {
+    const branchNameToApprove = listedName(requested)
+    return singleFlight(
+      'approve',
+      branchNameToApprove,
+      () =>
+        new Promise<void>((resolve, reject) => {
+          showApproveConfirmation(
+            branchNameToApprove,
+            pullRequestOf(branchNameToApprove),
+            async () => {
+              options.setBusy(true)
+              try {
+                const result = await apiClient.workflow.approve({
+                  branch: branchNameToApprove,
+                })
+                if (!result.ok) throw actionError(result, 'Failed to approve branch', true)
+                notifications.hide(reviewFailureId('approve', branchNameToApprove))
+                notifications.show({ message: 'Branch approved', color: 'green' })
+                updateCreatedBranch(branchNameToApprove, result.data?.branch)
+                await loadBranches()
+                resolve()
+              } catch (err) {
+                await reportReviewFailure(err, 'approve', branchNameToApprove, {
+                  fallback: 'Failed to approve branch',
+                  label: `${EDITOR_ACTIONS.approve} "${branchNameToApprove}"`,
+                  retry: () =>
+                    void handleApprove(branchNameToApprove, returnFocusTo).catch(() => {}),
+                })
+                reject(err)
+              } finally {
+                options.setBusy(false)
+              }
+            },
+            () => resolve(),
+            returnFocusTo,
+          )
+        }),
+    )
+  }
+
+  const handleRequestChanges = (requested: string, returnFocusTo?: () => HTMLElement | null) => {
+    const branchNameForChanges = listedName(requested)
+    // A draft is for the review cycle it was typed in; a branch already out of review starts clean.
+    dropDraftsOutOfReview(latest.current.branches.filter((b) => b.name === branchNameForChanges))
+    return singleFlight(
       'request-changes',
       branchNameForChanges,
       () =>
         new Promise<void>((resolve) => {
           showRequestChangesConfirmation(
             branchNameForChanges,
-            async () => {
+            pullRequestOf(branchNameForChanges),
+            noteDrafts.current.get(branchNameForChanges) ?? '',
+            (draft) => {
+              if (draft) noteDrafts.current.set(branchNameForChanges, draft)
+              else noteDrafts.current.delete(branchNameForChanges)
+            },
+            async (note) => {
               options.setBusy(true)
               try {
-                const result = await apiClient.workflow.requestChanges({
-                  branch: branchNameForChanges,
-                })
-                if (!result.ok) throw actionError(result, 'Failed to request changes')
+                const result = await apiClient.workflow.requestChanges(
+                  { branch: branchNameForChanges },
+                  { note: note.trim() || undefined },
+                )
+                if (!result.ok) throw actionError(result, 'Failed to request changes', true)
+                noteDrafts.current.delete(branchNameForChanges)
+                notifications.hide(reviewFailureId('request-changes', branchNameForChanges))
                 notifications.show({ message: 'Changes requested', color: 'blue' })
+                // The note is saved apart from the status change, so it can fail on its own;
+                // the warning stays up, with the note to copy, because the words are not saved.
+                const warning = result.data?.warning
+                if (warning) {
+                  notifications.show({
+                    message: <NoteNotSavedMessage message={warning} note={note.trim()} />,
+                    color: 'yellow',
+                    autoClose: false,
+                    withCloseButton: true,
+                  })
+                }
                 updateCreatedBranch(branchNameForChanges, result.data?.branch)
                 await loadBranches()
+                options.onChangesRequested?.(branchNameForChanges)
               } catch (err) {
-                await reportActionFailure(
-                  err,
-                  'Failed to request changes',
-                  EDITOR_ACTIONS.requestChanges,
-                )
+                await reportReviewFailure(err, 'request-changes', branchNameForChanges, {
+                  fallback: 'Failed to request changes',
+                  label: `${EDITOR_ACTIONS.requestChanges} on "${branchNameForChanges}"`,
+                  note: note.trim() || undefined,
+                  retry: () =>
+                    void handleRequestChanges(branchNameForChanges, returnFocusTo).catch(() => {}),
+                  check: REQUEST_CHANGES_CHECK,
+                  afterUnanswered: (fresh) => {
+                    // The write may have landed along with its note.
+                    options.onChangesRequested?.(branchNameForChanges)
+                    if (fresh) dropDraftsOutOfReview(fresh.branches)
+                  },
+                })
               } finally {
                 options.setBusy(false)
                 resolve()
               }
             },
             () => resolve(),
+            returnFocusTo,
           )
         }),
     )
+  }
 
   /** After a delete: drop it from the created-branch overlay, and leave it if it is open. */
   const leaveDeletedBranch = (deleted: string, fresh: BranchesData | undefined) => {
@@ -863,6 +1170,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     addCreatedBranch,
     handleSubmit,
     handleWithdraw,
+    handleApprove,
     handleRequestChanges,
     handleDelete,
     handleReloadBranchData,

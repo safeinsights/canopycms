@@ -12,7 +12,7 @@ import { createDebugLogger } from './utils/debug'
 import { getErrorMessage, isNodeError } from './utils/error'
 import { canopyLogWarn } from './utils/logger'
 import { ProvisionLog } from './utils/provision-log'
-import { acquireProvisioningLock } from './utils/provisioning-lock'
+import { acquireProvisioningLock, acquireProvisioningLockWithin } from './utils/provisioning-lock'
 import { RESERVED_SETTINGS_BRANCH_PREFIX } from './paths'
 
 const log = createDebugLogger({ prefix: 'SettingsWorkspace' })
@@ -34,9 +34,8 @@ let settingsInitLock: Promise<void> | null = null
  * dev, a hit also skips re-seeding a deleted `.canopy-dev/remote.git`; a dev-server restart
  * re-seeds it.
  *
- * A hit still reads `.git/HEAD`, so a workspace removed, re-cloned onto another branch, or
- * caught mid-clone by another process (HEAD still on the base branch) misses and runs the full
- * path, guard and lock included.
+ * A hit still reads `.git/HEAD`, so a workspace removed or re-cloned onto another branch misses
+ * and runs the full path, guard and lock included.
  */
 const ensuredSettingsWorkspaces = new Set<string>()
 
@@ -70,6 +69,15 @@ async function hasLocalBranch(settingsRoot: string, branchName: string): Promise
 
 const SETTINGS_INIT_LOCK_DIR = '.settings-init'
 const SETTINGS_INIT_LOCK_NAME = 'lock'
+const SETTINGS_BUILD_LOCK_NAME = 'build'
+
+/**
+ * How long a cold start waits for another process's settings build before building its own.
+ * Well under the CMS Lambda's 60 s default timeout (canopycms-cdk's
+ * DEFAULT_CMS_LAMBDA_TIMEOUT) with room for the fallback build, and far under
+ * PROVISIONING_LOCK_STALE_MS, so a builder killed mid-build costs waiters this, not 90 s.
+ */
+const SETTINGS_BUILD_WAIT_MS = 15_000
 
 /**
  * Directory the cross-process init lock is anchored on — a dedicated sibling of
@@ -128,9 +136,21 @@ async function settingsFilesPresent(settingsRoot: string): Promise<boolean> {
 async function settingsRootState(
   options: EnsureSettingsWorkspaceOptions,
 ): Promise<'vacant' | 'in-use' | 'interrupted'> {
+  // Listing the parent opens it, which makes NFS revalidate it (as branch-provisioning.ts's
+  // `inspectBlocking` relies on), so another host's publish is seen even where this client
+  // cached the name's absence before that publish.
+  const settingsRoot = path.resolve(options.settingsRoot)
+  let siblings: string[]
+  try {
+    siblings = await fs.readdir(path.dirname(settingsRoot))
+  } catch (err: unknown) {
+    if (isNodeError(err) && err.code === 'ENOENT') return 'vacant'
+    throw err
+  }
+  if (!siblings.includes(path.basename(settingsRoot))) return 'vacant'
   let entries: string[]
   try {
-    entries = await fs.readdir(options.settingsRoot)
+    entries = await fs.readdir(settingsRoot)
   } catch (err: unknown) {
     if (isNodeError(err) && err.code === 'ENOENT') return 'vacant'
     if (isNodeError(err) && err.code === 'ENOTDIR') return 'interrupted'
@@ -154,7 +174,7 @@ async function settingsRootState(
  *
  * Without it, GitManager.initializeWorkspace sees an existing .git, skips the
  * clone, and calls createOrphanSettingsBranch(branchName); for a name neither the
- * workspace nor its remote has, git then runs `checkout --orphan <name>` + `rm -rf .` + an empty commit.
+ * workspace nor its remote has, git then runs `switch --orphan <name>` + `git rm` + an empty commit.
  * Orphan branches share no history, so that is not a migration — it
  * PERMANENTLY WIPES permissions.json/groups.json with nothing to recover from.
  * The trigger is almost always deploymentName / settingsBranch /
@@ -201,7 +221,7 @@ async function assertSettingsWorkspaceIdentity(
           : `Its current branch could not be read (${readError ?? 'unknown error'}), but it ` +
             `holds settings files, and this deployment resolved settings branch ` +
             `'${options.branchName}'.`) +
-        ` Proceeding would run \`git checkout --orphan\` + \`rm -rf .\` on this workspace, ` +
+        ` Proceeding would run \`git switch --orphan\` + \`git rm\` on this workspace, ` +
         `which PERMANENTLY WIPES permissions.json/groups.json (orphan branches share no ` +
         `history — there is nothing to migrate from). This almost always means ` +
         `deploymentName, settingsBranch, or CANOPYCMS_DEPLOYMENT_NAME changed on a ` +
@@ -214,6 +234,11 @@ async function assertSettingsWorkspaceIdentity(
   }
 }
 
+export interface SettingsWorkspaceManagerOptions {
+  /** @internal How long {@link SettingsWorkspaceManager} waits for another process's build. */
+  buildWaitMs?: number
+}
+
 /**
  * The settings filesystem workspace and its git operations. Settings live on an
  * orphan git branch, sharing no history with content, and unlike
@@ -222,18 +247,20 @@ async function assertSettingsWorkspaceIdentity(
  *
  * A first clone follows [PROV-1] (branch-provisioning.ts): it is built in a
  * staging sibling and renamed into place, so a process killed mid-clone never
- * leaves a half-made workspace at the settings root. Never sparse: the orphan
- * init's `git rm -rf .` would leave out-of-cone base files in the tree.
+ * leaves a half-made workspace at the settings root.
  *
- * Two locking layers, mirroring BranchWorkspaceManager: an in-memory promise
- * lock within the process, and `acquireProvisioningLock` (proper-lockfile)
- * across processes and hosts around the publish and every in-place init.
+ * Locking: an in-memory promise lock within the process; across processes and
+ * hosts, the build lock electing one first-clone builder (`provisionStaged`),
+ * then the init lock around the publish and every in-place init. Order: build,
+ * then init.
  */
 export class SettingsWorkspaceManager {
   private readonly config: CanopyConfig
+  private readonly buildWaitMs: number
 
-  constructor(config: CanopyConfig) {
+  constructor(config: CanopyConfig, options: SettingsWorkspaceManagerOptions = {}) {
     this.config = config
+    this.buildWaitMs = options.buildWaitMs ?? SETTINGS_BUILD_WAIT_MS
   }
 
   async ensureGitWorkspace(options: EnsureSettingsWorkspaceOptions): Promise<void> {
@@ -339,11 +366,55 @@ export class SettingsWorkspaceManager {
   }
 
   /**
+   * A first clone, built once for all cold starts that arrive together: the build lock's holder
+   * builds, and the others wait for it and find the workspace published. The wait is bounded,
+   * because a builder killed mid-build keeps its marker live until it goes stale; past the bound
+   * a waiter builds its own copy, which the publish step reconciles like any race.
+   */
+  private async provisionStaged(options: EnsureSettingsWorkspaceOptions): Promise<void> {
+    const releaseBuild = await this.claimBuild(options)
+    try {
+      if ((await settingsRootState(options)) === 'in-use') {
+        // Another process published it; the guard decides whether it is this deployment's.
+        await assertSettingsWorkspaceIdentity(options)
+        return
+      }
+      await this.buildAndPublish(options)
+    } finally {
+      try {
+        await releaseBuild?.()
+      } catch (err: unknown) {
+        log.debug('workspace', 'Failed to release settings-build lock', { err })
+      }
+    }
+  }
+
+  /** The build lock's release, or `undefined` once the wait for another builder ran out. */
+  private async claimBuild(
+    options: EnsureSettingsWorkspaceOptions,
+  ): Promise<(() => Promise<void>) | undefined> {
+    try {
+      return await acquireProvisioningLockWithin(
+        settingsInitLockTarget(options.settingsRoot),
+        SETTINGS_BUILD_LOCK_NAME,
+        this.buildWaitMs,
+      )
+    } catch (err: unknown) {
+      if (!isNodeError(err) || err.code !== 'ELOCKED') throw err
+      canopyLogWarn(
+        `[canopy] Another process's settings workspace build did not finish within ` +
+          `${this.buildWaitMs} ms; building one here`,
+      )
+      return undefined
+    }
+  }
+
+  /**
    * Clone and set up the settings branch in a staging sibling, then publish it under the init
    * lock, moving an interrupted first init aside to `.trash-settings-*`. A workspace someone
    * else published meanwhile wins and the staging copy is dropped.
    */
-  private async provisionStaged(options: EnsureSettingsWorkspaceOptions): Promise<void> {
+  private async buildAndPublish(options: EnsureSettingsWorkspaceOptions): Promise<void> {
     const settingsRoot = path.resolve(options.settingsRoot)
     const workspaceRoot = path.dirname(settingsRoot)
     await fs.mkdir(workspaceRoot, { recursive: true })
@@ -358,7 +429,11 @@ export class SettingsWorkspaceManager {
       published = await provisionLog.step('publish', () =>
         this.withInitLock(options, async () => {
           const state = await settingsRootState(options)
-          if (state === 'in-use') return false
+          if (state === 'in-use') {
+            // The guard above may have missed a workspace this fresher read sees.
+            await assertSettingsWorkspaceIdentity(options)
+            return false
+          }
           if (state === 'interrupted') {
             const trashName = settingsTrashDirName()
             await fs.rename(settingsRoot, path.join(workspaceRoot, trashName))
@@ -366,7 +441,16 @@ export class SettingsWorkspaceManager {
               `[canopy] Moved an unfinished settings workspace clone aside as ${trashName}`,
             )
           }
-          await fs.rename(stagingPath, settingsRoot)
+          try {
+            await fs.rename(stagingPath, settingsRoot)
+          } catch (err: unknown) {
+            // The server refuses the rename when the root holds what the state read above
+            // missed; a fresh read decides whether that is a published workspace.
+            const occupied = isNodeError(err) && (err.code === 'ENOTEMPTY' || err.code === 'EEXIST')
+            if (!occupied || (await settingsRootState(options)) !== 'in-use') throw err
+            await assertSettingsWorkspaceIdentity(options)
+            return false
+          }
           return true
         }),
       )

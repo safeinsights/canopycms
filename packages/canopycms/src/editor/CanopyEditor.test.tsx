@@ -87,6 +87,17 @@ describe('CanopyEditor', () => {
     expect(props?.themeOptions).toMatchObject({ colors: { brand: '#123456' } })
   })
 
+  it('pins no branch without a branchName, so the editor adopts the server default', async () => {
+    capturedProps = undefined
+    // A config built in the browser holds the env fallback, never the deployment's branch.
+    const stale = { defaultBaseBranch: 'bundle-literal' } as unknown as Partial<CanopyClientConfig>
+    renderComponent({}, {}, stale)
+    await screen.findByTestId('mock-editor')
+
+    const props = capturedProps as EditorProps | undefined
+    expect(props?.branchName).toBe('')
+  })
+
   it('uses runtime branch overrides when provided', async () => {
     capturedProps = undefined
     renderComponent({ branchName: 'feature' })

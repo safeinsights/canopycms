@@ -145,7 +145,7 @@ export function describeMove(update: Extract<GitHubRefUpdate, { moved: true }>):
 /** The fields of a pull request the worker reads. */
 export type GitHubPullRequest = Pick<
   RestEndpointMethodTypes['pulls']['get']['response']['data'],
-  'merged' | 'merged_at' | 'state' | 'node_id'
+  'merged' | 'merged_at' | 'state' | 'node_id' | 'body'
 >
 
 export type GitHubCreateOrUpdatePullRequest = Omit<

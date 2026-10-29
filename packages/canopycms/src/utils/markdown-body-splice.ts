@@ -1,10 +1,13 @@
 /**
  * Source-preserving save for md/mdx bodies.
  *
- * The editor sends a body re-serialised from its own document model, so every block comes back
- * in the serialiser's style (bullet and emphasis markers, rule style, escapes, no blank line
- * after the frontmatter) whether or not the user touched it. This writes the on-disk text of
- * every block whose MEANING the edit left alone, and the editor's text only where it changed:
+ * The rich editor sends a body re-serialised from its own document model, so every block comes
+ * back in the serialiser's style (bullet and emphasis markers, rule style, escapes, no blank line
+ * after the frontmatter) whether or not the user touched it; the source editor sends whatever was
+ * typed. This writes the on-disk text of every block whose MEANING the edit left alone, and the
+ * edit's text only where it changed. The edit's changed blocks are first restyled in place to
+ * `MARKDOWN_EXPORT_OPTIONS`'s markers (`markdown-restyle.ts`), so a changed block is written in
+ * that one style whichever editor mode produced it:
  *
  * - Top-level blocks are aligned by a position-free canonical form of their mdast, so a block
  *   matches only when it parses to the same tree. A matched block is written from disk.
@@ -15,10 +18,10 @@
  *   stands for the original it is paired with) is the disk's; elsewhere it is the editor's,
  *   re-indented into the original's nesting and written in its line endings.
  *
- * The result is kept only if it parses to exactly the tree the editor's body parses to. A splice
- * that fails that check is retried without descending into lists, and failing that the editor's
- * body is written as sent: the worst case is the editor's own serialisation, never different
- * content.
+ * The result is kept only if it parses to exactly the tree the editor's body parses to, and so is
+ * the restyled edit. A splice that fails that check is retried without descending into lists,
+ * then both again from the edit as sent; failing all four, the restyled edit is written whole,
+ * or the edit as sent when it did not read back: the worst case is never different content.
  */
 
 import { fromMarkdown } from 'mdast-util-from-markdown'
@@ -29,23 +32,14 @@ import { mdxjs } from 'micromark-extension-mdxjs'
 
 import { createDebugLogger } from './debug'
 import { getErrorMessage } from './error'
+import { orderedNumber, restyleMarkdown, type MdNode } from './markdown-restyle'
 import { withSourceLineEndings } from './yaml-source-splice'
 
 const log = createDebugLogger({ prefix: 'MarkdownBodySplice' })
 
 export type MarkdownBodyFormat = 'md' | 'mdx'
 
-/** The parts of an mdast node this module reads. */
-interface MdNode {
-  readonly type: string
-  readonly children?: readonly MdNode[]
-  readonly position?: {
-    readonly start: { readonly offset?: number }
-    readonly end: { readonly offset?: number }
-  }
-  readonly ordered?: boolean | null
-  readonly checked?: boolean | null
-}
+type Root = ReturnType<typeof fromMarkdown>
 
 /** One side's source text, and the indentation its continuation lines carry at this depth. */
 interface Side {
@@ -62,7 +56,7 @@ interface Piece {
 /** Above this many LCS cells the middle of a sequence is treated as one changed run. */
 const MAX_LCS_CELLS = 4_000_000
 
-function parse(text: string, format: MarkdownBodyFormat): MdNode | undefined {
+function parse(text: string, format: MarkdownBodyFormat): Root | undefined {
   try {
     return format === 'mdx'
       ? fromMarkdown(text, {
@@ -416,10 +410,10 @@ function gapBetween(
 
 /**
  * Rewrites an output item's marker to the original list's: its bullet character, or for an
- * ordered list its delimiter and numbering scheme (all one number when the original's first two
- * items share one, else counting up from its start). Undefined when the original's markers
- * cannot be read, or when renumbering would change the width of a multi-line item, whose
- * continuation lines are aligned to the old width.
+ * ordered list its delimiter, numbered as Prettier numbers the original (`orderedNumber`) and
+ * zero-padded as it is. Undefined when the original's markers cannot be read, or when
+ * renumbering would change the width of a multi-line item, whose continuation lines are aligned
+ * to the old width.
  */
 function listMarkers(
   text: string,
@@ -437,16 +431,14 @@ function listMarkers(
     offset === undefined ? null : /^(\d{1,9})([.)])/.exec(text.slice(offset, offset + 10))
   const first = numberAt(firstStart)
   if (first === null) return undefined
-  const start = Number(first[1])
   const delimiter = first[2] ?? '.'
   // `01.`, `02.`: zero-padded to the first marker's width.
   const padTo = first[1]?.startsWith('0') ? first[1].length : 0
-  const second = items.length > 1 ? numberAt(startOf(items[1])) : null
-  const step = second !== null && Number(second[1]) === start ? 0 : 1
+  const typed = items.map((item) => Number(numberAt(startOf(item))?.[1]))
   return (itemText, index) => {
     const current = /^\d{1,9}[.)]/.exec(itemText)
     if (current === null) return undefined
-    const marker = `${String(start + step * index).padStart(padTo, '0')}${delimiter}`
+    const marker = `${String(orderedNumber(typed, index)).padStart(padTo, '0')}${delimiter}`
     if (marker.length !== current[0].length && itemText.includes('\n')) return undefined
     return marker + itemText.slice(current[0].length)
   }
@@ -454,10 +446,12 @@ function listMarkers(
 
 /**
  * The body to write for an edit from `original` (on disk) to `updated` (the editor's body):
- * `updated`'s content, in `original`'s text wherever the two agree. See the module header.
+ * `updated`'s content, in `original`'s text wherever the two agree. With no `original` to keep
+ * text from (a new file, or a body on disk that does not parse), the whole edit is restyled.
+ * See the module header.
  */
 export function preserveMarkdownSource(
-  original: string,
+  original: string | undefined,
   updated: string,
   format: MarkdownBodyFormat,
 ): string {
@@ -471,18 +465,70 @@ export function preserveMarkdownSource(
   }
 }
 
-function splice(original: string, updated: string, format: MarkdownBodyFormat): string | undefined {
-  const before = parse(original, format)
-  const after = parse(updated, format)
-  if (before === undefined || after === undefined) return undefined
-  const target = canonical(after)
+/** An edit's text and its parse, whose positions index that text. */
+interface Edit {
+  readonly text: string
+  readonly tree: Root
+}
 
-  for (const deep of [true, false]) {
-    const candidate = new Splicer(original, updated, deep).body(before, after)
-    if (candidate === undefined) continue
-    const reparsed = parse(candidate, format)
-    if (reparsed !== undefined && canonical(reparsed) === target) return candidate
-    log.debug('markdown-body-splice', 'splice does not read back as the edit', { deep })
+/**
+ * The indexes of the edit's top-level blocks the splice writes from disk: those the alignment
+ * matches, and those that moved (an unmatched original of the same meaning, each used once).
+ */
+function diskBlocks(oNodes: readonly MdNode[], nNodes: readonly MdNode[]): Set<number> {
+  const oKeys = oNodes.map(canonical)
+  const nKeys = nNodes.map(canonical)
+  const pairs = matchSequences(oKeys, nKeys)
+  const fromDisk = new Set(pairs.map(([, ni]) => ni))
+  const matched = new Set(pairs.map(([oi]) => oi))
+  const unmatched = new Map<string, number>()
+  oKeys.forEach((key, index) => {
+    if (!matched.has(index)) unmatched.set(key, (unmatched.get(key) ?? 0) + 1)
+  })
+  nKeys.forEach((key, index) => {
+    const left = unmatched.get(key) ?? 0
+    if (fromDisk.has(index) || left === 0) return
+    unmatched.set(key, left - 1)
+    fromDisk.add(index)
+  })
+  return fromDisk
+}
+
+function splice(
+  original: string | undefined,
+  updated: string,
+  format: MarkdownBodyFormat,
+): string | undefined {
+  const before = original === undefined ? undefined : parse(original, format)
+  const after = parse(updated, format)
+  if (after === undefined) return undefined
+  const target = canonical(after)
+  const fromDisk = diskBlocks(before?.children ?? [], after.children)
+  const restyled = restyleMarkdown(
+    updated,
+    after,
+    (index) => fromDisk.has(index),
+    (text) => {
+      const tree = parse(text, format)
+      return tree !== undefined && canonical(tree) === target ? tree : undefined
+    },
+  )
+  if (original === undefined || before === undefined) return restyled?.text
+  const asSent: Edit = { text: updated, tree: after }
+
+  // The rich editor already writes this style, so its restyled edit is usually the edit as sent.
+  const edits = restyled === undefined || restyled.text === updated ? [asSent] : [restyled, asSent]
+  for (const edit of edits) {
+    for (const deep of [true, false]) {
+      const candidate = new Splicer(original, edit.text, deep).body(before, edit.tree)
+      if (candidate === undefined) continue
+      const reparsed = parse(candidate, format)
+      if (reparsed !== undefined && canonical(reparsed) === target) return candidate
+      log.debug('markdown-body-splice', 'splice does not read back as the edit', {
+        deep,
+        restyled: edit !== asSent,
+      })
+    }
   }
-  return undefined
+  return restyled?.text
 }

@@ -28,6 +28,7 @@ import { RefusedPushError, assertPlainBranchName } from './github-mirror'
 import { pushToGitHub } from './github-transfer'
 import { clearHistoryRewrittenMarker, readPublishedSha } from './history-rewrite'
 import { writeWorkerStatus } from '../task-queue/worker-status'
+import { SYNC_PR_COMMENTS_ACTION, refreshCommentsBlock, renderPrCommentsBody } from '../pr-comments'
 import { workerLog, workerLogError, workerLogWarn } from './log'
 import { assertSharedRepoConfig } from './shared-repo-git'
 import type { WorkerContext } from './worker-context'
@@ -420,6 +421,17 @@ export async function executeTask(
       }
       await ctx.pushBranchToGitHub(branch, signal)
 
+      const mergeSectionIntoBody = payload.mergeSectionIntoBody === true
+      const queuedBody = optionalString(payload, 'body', '')
+      const body = mergeSectionIntoBody
+        ? await refreshCommentsBlock({
+            branchRoot: ctx.branchWorkspacePath(branch),
+            branch,
+            editorUrl: typeof payload.editorUrl === 'string' ? payload.editorUrl : undefined,
+            section: queuedBody,
+            warn: workerLogWarn,
+          })
+        : queuedBody
       let result: { number: number; url: string; created: boolean }
       try {
         result = await ctx.github().createOrUpdatePullRequest(
@@ -427,10 +439,10 @@ export async function executeTask(
             head: branch,
             base,
             title: optionalString(payload, 'title', `Submit ${branch}`),
-            body: optionalString(payload, 'body', ''),
+            body,
             // Content submits (api/github-sync.ts) set both.
             markReadyIfDraft: payload.markReadyIfDraft === true,
-            mergeSectionIntoBody: payload.mergeSectionIntoBody === true,
+            mergeSectionIntoBody,
           },
           signal,
         )
@@ -510,6 +522,39 @@ export async function executeTask(
       workerLog(`Deleted GitHub branch ${branch}`)
       return { deleted: true }
     }
+    case 'sync-pr-comments': {
+      const branch = requireString(payload, 'branch')
+      const prNumber = requireNumber(payload, 'pullRequestNumber')
+      const editorUrl = typeof payload.editorUrl === 'string' ? payload.editorUrl : undefined
+      const branchPath = ctx.branchWorkspacePath(branch)
+      // The branch under this name now: a deleted branch, or a newer one with another PR, has
+      // no say in this PR's summary. Corrupt metadata skips too, as the next submit rewrites it.
+      let live: Awaited<ReturnType<typeof BranchMetadataFileManager.loadOnly>> = null
+      try {
+        live = await BranchMetadataFileManager.loadOnly(branchPath)
+      } catch (err) {
+        if (!(err instanceof BranchMetadataCorruptError)) throw err
+      }
+      if (live?.branch.pullRequestNumber !== prNumber) {
+        return { updated: false, skipped: 'not-this-pr' }
+      }
+      const pr = await ctx.github().getPullRequest(prNumber, signal)
+      if (pr.state !== 'open') return { updated: false, skipped: 'not-open' }
+      // A comments.json that does not parse stays so until a comment write rewrites it.
+      const body = await renderPrCommentsBody({
+        branchRoot: branchPath,
+        branch,
+        editorUrl,
+        body: pr.body,
+      }).catch((err: unknown) => {
+        if (err instanceof SyntaxError) throw new PermanentTaskError(getErrorMessage(err))
+        throw err
+      })
+      if (body === undefined) return { updated: false, skipped: 'unchanged' }
+      await ctx.github().updatePullRequest(prNumber, { body }, signal)
+      workerLog(`Updated the editor comments on PR #${prNumber} for ${branch}`)
+      return { updated: true }
+    }
     default:
       throw new PermanentTaskError(`Unknown task action: ${action}`)
   }
@@ -521,7 +566,7 @@ export async function executeTask(
  * name is leftover or a newer branch's that reused the name.
  */
 function metadataBranchOf(task: Task): string | null {
-  if (task.action === 'delete-remote-branch') return null
+  if (task.action === 'delete-remote-branch' || task.action === SYNC_PR_COMMENTS_ACTION) return null
   return typeof task.payload.branch === 'string' ? task.payload.branch : null
 }
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { BranchStatus } from '../types'
 import { branchBarStatus, branchLockState, describeBranchLock } from './branch-lock'
 import type { BranchBarStatusInput } from './branch-lock'
+import { CLOSED_PULL_REQUEST_REASON } from './copy'
 
 const input = (overrides: Partial<BranchBarStatusInput> = {}): BranchBarStatusInput => ({
   branchStatus: 'editing',
@@ -139,6 +140,28 @@ describe('branchBarStatus', () => {
 })
 
 describe('describeBranchLock', () => {
+  it('says a closed pull request is why a reviewer is not offered Approve', () => {
+    const closed = { branchWriteBlocked: true, pullRequestClosed: true }
+    for (const branchStatus of ['submitted', 'approved'] as const) {
+      expect(describeBranchLock({ ...closed, branchStatus })).toBe(CLOSED_PULL_REQUEST_REASON)
+    }
+    // It speaks only of a lock: an editable branch has none to explain.
+    expect(describeBranchLock({ branchStatus: 'editing', pullRequestClosed: true })).toBeUndefined()
+  })
+
+  it('names Approve and Request changes, not Withdraw, to a reviewer of the branch', () => {
+    const lock = { branchWriteBlocked: true, reviewing: true }
+    expect(describeBranchLock({ ...lock, branchStatus: 'submitted' })).toBe(
+      'This branch is in review. Approve it, or request changes to send it back to its editor.',
+    )
+    expect(describeBranchLock({ ...lock, branchStatus: 'approved' })).toBe(
+      'This branch is approved. Request changes to send it back to its editor.',
+    )
+    expect(describeBranchLock({ ...lock, reviewing: false, branchStatus: 'approved' })).toBe(
+      'This branch is approved. Withdraw it to make changes.',
+    )
+  })
+
   it('gives a reason exactly when the branch takes no writes', () => {
     expect(describeBranchLock({ branchStatus: 'editing' })).toBeUndefined()
     expect(describeBranchLock({ branchStatus: 'submitted', branchWriteBlocked: true })).toBe(
