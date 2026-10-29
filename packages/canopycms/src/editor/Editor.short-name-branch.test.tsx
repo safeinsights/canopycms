@@ -227,6 +227,22 @@ describe('the editor on a namespace branch named by its short name', () => {
     ).toEqual([])
   })
 
+  it('stores no drafts under the short name it was opened by', async () => {
+    window.history.replaceState({}, '', '/?branch=spring')
+    const setItem = vi.spyOn(Storage.prototype, 'setItem')
+    stubApi({ status: 'editing', userId: 'author-1' })
+    renderEditor('spring')
+    expect((await titleBox()).value).toBe('hello title')
+    await waitFor(() =>
+      expect(within(screen.getByTestId('branch-dropdown-button')).getByText('spring')).toBeTruthy(),
+    )
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+
+    expect(setItem.mock.calls.map(([key]) => key)).not.toContain('canopycms:drafts:spring')
+  })
+
   it('rewrites a link carrying the full name to the short name, replacing the entry', async () => {
     window.history.replaceState({}, '', `/?branch=${encodeURIComponent(SPRING)}`)
     const pushState = vi.spyOn(window.history, 'pushState')
