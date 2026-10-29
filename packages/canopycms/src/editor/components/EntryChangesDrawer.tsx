@@ -21,7 +21,11 @@ import {
   Stack,
   Text,
   VisuallyHidden,
+  em,
+  getBreakpointValue,
+  useMantineTheme,
 } from '@mantine/core'
+import { useMediaQuery } from '@mantine/hooks'
 import {
   IconAlertCircle,
   IconAlertTriangle,
@@ -210,8 +214,11 @@ const MarkedText: React.FC<{ parts: readonly DiffPart[]; side: Side; unit: 'line
       {runs.map((run, i) => {
         if (!run.mark) return <React.Fragment key={i}>{run.value}</React.Fragment>
         const Tag = run.mark === 'removed' ? 'del' : 'ins'
+        const style = run.mark === 'removed' ? REMOVED_STYLE : ADDED_STYLE
+        // Whitespace alone has nothing for a line to cross; its tint and mark carry it.
+        const shown = /^\s+$/.test(run.value) ? { ...style, textDecoration: 'none' } : style
         return (
-          <Tag key={i} style={run.mark === 'removed' ? REMOVED_STYLE : ADDED_STYLE}>
+          <Tag key={i} style={shown}>
             {!whole && (
               <VisuallyHidden component="span">{MARK_WORDS[run.mark].start}</VisuallyHidden>
             )}
@@ -242,84 +249,154 @@ const LINE_GRID: React.CSSProperties = {
   columnGap: 'var(--mantine-spacing-xs)',
 }
 
+/** Consecutive one-sided rows past this many show only RUN_SHOWN of them until asked. */
+const LONG_RUN = 50
+const RUN_SHOWN = 20
+
+/** `rows` split into runs: each long run of lines added (or removed) alone is its own segment. */
+const rowSegments = (
+  rows: readonly DiffRow[],
+): Array<{ rows: readonly DiffRow[]; long?: 'added' | 'removed' }> => {
+  const oneSide = (row: DiffRow) =>
+    row.kind !== 'change' ? undefined : !row.before ? 'added' : !row.after ? 'removed' : undefined
+  const segments: Array<{ rows: readonly DiffRow[]; long?: 'added' | 'removed' }> = []
+  let plain: DiffRow[] = []
+  for (let i = 0; i < rows.length; ) {
+    const side = oneSide(rows[i])
+    let end = i + 1
+    while (side && end < rows.length && oneSide(rows[end]) === side) end++
+    if (side && end - i > LONG_RUN) {
+      if (plain.length > 0) segments.push({ rows: plain })
+      plain = []
+      segments.push({ rows: rows.slice(i, end), long: side })
+    } else {
+      plain.push(...rows.slice(i, end))
+    }
+    i = end
+  }
+  if (plain.length > 0) segments.push({ rows: plain })
+  return segments
+}
+
+/** A long run's first rows, then the button that shows the rest. */
+const LongRun: React.FC<{
+  rows: readonly DiffRow[]
+  side: 'added' | 'removed'
+  renderRows: (rows: readonly DiffRow[]) => React.ReactNode
+}> = ({ rows, side, renderRows }) => {
+  const [expanded, setExpanded] = useState(false)
+  if (expanded) return <>{renderRows(rows)}</>
+  return (
+    <>
+      {renderRows(rows.slice(0, RUN_SHOWN))}
+      <Box style={{ gridColumn: '1 / -1' }}>
+        <Button size="compact-sm" variant="subtle" onClick={() => setExpanded(true)}>
+          Show all {rows.length} {side} lines
+        </Button>
+      </Box>
+    </>
+  )
+}
+
+/** Two columns from `md`: an unchanged line is read once, from Before. */
+const twoColumnRows = (rows: readonly DiffRow[]): React.ReactNode =>
+  rows.map((row, i) => {
+    if (row.kind === 'skipped') {
+      return <Skipped key={i} count={row.count} style={{ gridColumn: '1 / -1' }} />
+    }
+    if (row.kind === 'same') {
+      const text = row.text || '\u00a0'
+      return (
+        <React.Fragment key={i}>
+          <Gutter />
+          <Text size="sm" style={TEXT_STYLE}>
+            {text}
+          </Text>
+          <Gutter />
+          <Text size="sm" style={TEXT_STYLE} aria-hidden>
+            {text}
+          </Text>
+        </React.Fragment>
+      )
+    }
+    return (
+      <React.Fragment key={i}>
+        <Gutter sign={row.before ? '−' : undefined} />
+        <Text size="sm" style={TEXT_STYLE}>
+          {row.before ? <MarkedText parts={row.before} side="before" unit="line" /> : null}
+        </Text>
+        <Gutter sign={row.after ? '+' : undefined} />
+        <Text size="sm" style={TEXT_STYLE}>
+          {row.after ? <MarkedText parts={row.after} side="after" unit="line" /> : null}
+        </Text>
+      </React.Fragment>
+    )
+  })
+
+/** One column below `md`, with − and + gutters. */
+const oneColumnRows = (rows: readonly DiffRow[]): React.ReactNode =>
+  rows.flatMap((row, i) => {
+    if (row.kind === 'skipped') {
+      return [<Skipped key={i} count={row.count} style={{ gridColumn: '1 / -1' }} />]
+    }
+    if (row.kind === 'same') {
+      return [
+        <Gutter key={`${i}g`} />,
+        <Text key={i} size="sm" style={TEXT_STYLE}>
+          {row.text || '\u00a0'}
+        </Text>,
+      ]
+    }
+    return (['before', 'after'] as const).flatMap((side) => {
+      const parts = row[side]
+      if (!parts) return []
+      return [
+        <Gutter key={`${i}${side}g`} sign={side === 'before' ? '−' : '+'} />,
+        <Text key={`${i}${side}`} size="sm" style={TEXT_STYLE}>
+          <MarkedText parts={parts} side={side} unit="line" />
+        </Text>,
+      ]
+    })
+  })
+
 /**
  * A line diff as aligned rows, so Before and After stay level however many lines one side adds:
  * from `md`, two columns with an empty cell opposite a line the other side lacks; below it, one
- * column with − and + gutters.
+ * column with − and + gutters. One layout renders, chosen by the theme's `md` breakpoint.
  */
-const LineRows: React.FC<{ rows: readonly DiffRow[] }> = ({ rows }) => (
-  <>
-    <Box visibleFrom="md" style={LINE_GRID} data-testid="entry-change-line-grid">
-      <Text size="xs" c="dimmed" style={{ gridColumn: '1 / span 2' }}>
-        Before
-      </Text>
-      <Text size="xs" c="dimmed" style={{ gridColumn: '3 / span 2' }}>
-        After
-      </Text>
-      {rows.map((row, i) => {
-        if (row.kind === 'skipped') {
-          return <Skipped key={i} count={row.count} style={{ gridColumn: '1 / -1' }} />
-        }
-        if (row.kind === 'same') {
-          const text = row.text || ' '
-          return (
-            <React.Fragment key={i}>
-              <Gutter />
-              <Text size="sm" style={TEXT_STYLE}>
-                {text}
-              </Text>
-              <Gutter />
-              <Text size="sm" style={TEXT_STYLE}>
-                {text}
-              </Text>
-            </React.Fragment>
-          )
-        }
-        return (
-          <React.Fragment key={i}>
-            <Gutter sign={row.before ? '−' : undefined} />
-            <Text size="sm" style={TEXT_STYLE}>
-              {row.before ? <MarkedText parts={row.before} side="before" unit="line" /> : null}
-            </Text>
-            <Gutter sign={row.after ? '+' : undefined} />
-            <Text size="sm" style={TEXT_STYLE}>
-              {row.after ? <MarkedText parts={row.after} side="after" unit="line" /> : null}
-            </Text>
-          </React.Fragment>
-        )
-      })}
-    </Box>
+const LineRows: React.FC<{ rows: readonly DiffRow[] }> = ({ rows }) => {
+  const theme = useMantineTheme()
+  const narrow =
+    useMediaQuery(`(max-width: ${em(getBreakpointValue('md', theme.breakpoints) - 0.1)})`, false, {
+      getInitialValueInEffect: false,
+    }) === true
+  const renderRows = narrow ? oneColumnRows : twoColumnRows
+  const segments = rowSegments(rows)
+  return (
     <Box
-      hiddenFrom="md"
-      style={{ ...LINE_GRID, gridTemplateColumns: '1rem minmax(0, 1fr)' }}
-      data-testid="entry-change-line-list"
+      style={narrow ? { ...LINE_GRID, gridTemplateColumns: '1rem minmax(0, 1fr)' } : LINE_GRID}
+      data-testid={narrow ? 'entry-change-line-list' : 'entry-change-line-grid'}
     >
-      {rows.flatMap((row, i) => {
-        if (row.kind === 'skipped') {
-          return [<Skipped key={i} count={row.count} style={{ gridColumn: '1 / -1' }} />]
-        }
-        if (row.kind === 'same') {
-          return [
-            <Gutter key={`${i}g`} />,
-            <Text key={i} size="sm" style={TEXT_STYLE}>
-              {row.text || ' '}
-            </Text>,
-          ]
-        }
-        return (['before', 'after'] as const).flatMap((side) => {
-          const parts = row[side]
-          if (!parts) return []
-          return [
-            <Gutter key={`${i}${side}g`} sign={side === 'before' ? '−' : '+'} />,
-            <Text key={`${i}${side}`} size="sm" style={TEXT_STYLE}>
-              <MarkedText parts={parts} side={side} unit="line" />
-            </Text>,
-          ]
-        })
-      })}
+      {!narrow && (
+        <>
+          <Text size="xs" c="dimmed" style={{ gridColumn: '1 / span 2' }}>
+            Before
+          </Text>
+          <Text size="xs" c="dimmed" style={{ gridColumn: '3 / span 2' }}>
+            After
+          </Text>
+        </>
+      )}
+      {segments.map((segment, i) =>
+        segment.long ? (
+          <LongRun key={i} rows={segment.rows} side={segment.long} renderRows={renderRows} />
+        ) : (
+          <React.Fragment key={i}>{renderRows(segment.rows)}</React.Fragment>
+        ),
+      )}
     </Box>
-  </>
-)
+  )
+}
 
 const WordsChange: React.FC<{ text: Extract<TextDiff, { mode: 'words' }>; side: Side }> = ({
   text,

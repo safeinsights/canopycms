@@ -77,6 +77,11 @@ export const ShowChanges: Story = {
   args: { hasUnsavedChanges: false, modifiedCount: 0, onShowChanges: noop },
 }
 
+/** While the branch's changes load, the Show changes slot is held, unseen. */
+export const ShowChangesPending: Story = {
+  args: { hasUnsavedChanges: false, modifiedCount: 0, showChangesPending: true },
+}
+
 export const NarrowShowChanges: Story = {
   parameters: phone,
   args: { onShowChanges: noop },

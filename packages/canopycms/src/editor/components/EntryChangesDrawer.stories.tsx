@@ -246,6 +246,30 @@ export const Whitespace: Story = {
   },
 }
 
+/** A changed publish date: in full, the changed part marked, then relative. */
+export const ChangedPublishedAt: Story = {
+  args: {
+    state: answer({
+      before: side({ title: 'Getting started', publishedAt: '2026-09-01T09:00:00.000Z' }),
+      after: side({ title: 'Getting started', publishedAt: '2026-09-14T16:30:00.000Z' }),
+    }),
+  },
+}
+
+/** A new entry whose body runs past 200 lines: the first 50, then "Show all N lines". */
+export const LongNewBody: Story = {
+  args: {
+    subject: { ...meta.args!.subject!, status: 'added' },
+    state: answer({
+      before: null,
+      after: side(
+        { title: 'Getting started' },
+        Array.from({ length: 260 }, (_, i) => `Line ${i + 1} of the guide.`).join('\n'),
+      ),
+    }),
+  },
+}
+
 /** At phone width each card's Before and After stack. */
 export const Narrow: Story = {
   parameters: {

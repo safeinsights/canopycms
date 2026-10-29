@@ -266,6 +266,7 @@ describe('EntryChangesDrawer marks', () => {
     expect(shown.querySelector('del')).toBeNull()
     const inserted = shown.querySelectorAll('ins')
     expect([...inserted].map((i) => i.textContent)).toEqual(['Added: ·space, end of addition'])
+    expect((inserted[0] as HTMLElement).style.textDecoration).toBe('none')
   })
 
   it('lines up a line diff in rows, an empty cell opposite a line the other side lacks', async () => {
@@ -277,7 +278,48 @@ describe('EntryChangesDrawer marks', () => {
     expect(grid.children).toHaveLength(2 + 4 * 4)
     const cells = [...grid.children].slice(2).map((cell) => cell.textContent)
     expect(cells.slice(4, 8)).toEqual(['', '', '+', 'Added line: Added one'])
-    expect(within(await card()).getByTestId('entry-change-line-list')).toBeTruthy()
+    expect(within(await card()).queryByTestId('entry-change-line-list')).toBeNull()
+    // An unchanged line is read once, from its Before cell.
+    expect(grid.children[2 + 1].getAttribute('aria-hidden')).toBeNull()
+    expect(grid.children[2 + 3].getAttribute('aria-hidden')).toBe('true')
+  })
+
+  it('renders one column, and no two-column grid, below md', async () => {
+    const original = window.matchMedia
+    window.matchMedia = ((query: string) =>
+      ({
+        matches: query.startsWith('(max-width:'),
+        media: query,
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      }) as MediaQueryList) as typeof window.matchMedia
+    try {
+      one({ notes: 'Start\nEnd' }, { notes: 'Start\nAdded one\nEnd' }, [
+        { name: 'notes', type: 'markdown', label: 'Notes' },
+      ])
+      const shown = await card()
+      expect(within(shown).getByTestId('entry-change-line-list')).toBeTruthy()
+      expect(within(shown).queryByTestId('entry-change-line-grid')).toBeNull()
+    } finally {
+      window.matchMedia = original
+    }
+  })
+
+  it('shows a long run of added lines as its first 20 until asked', async () => {
+    const inserted = Array.from({ length: 2000 }, (_, i) => `Inserted ${i + 1}`).join('\n')
+    one({ notes: 'Start\nEnd' }, { notes: `Start\n${inserted}\nEnd` }, [
+      { name: 'notes', type: 'markdown', label: 'Notes' },
+    ])
+    const grid = within(await card()).getByTestId('entry-change-line-grid')
+    expect(grid.children.length / 4).toBeLessThan(500)
+    expect(textOf(grid)).toContain('Inserted 20')
+    expect(textOf(grid)).not.toContain('Inserted 21')
+    await userEvent.click(within(grid).getByRole('button', { name: 'Show all 2000 added lines' }))
+    expect(textOf(grid)).toContain('Inserted 2000')
   })
 
   it('says how a moved item moved, and counts moves apart from changed fields', async () => {
