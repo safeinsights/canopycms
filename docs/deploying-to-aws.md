@@ -1005,6 +1005,13 @@ new CanopyCmsService(this, 'Cms', { /* ... */ alarmTopic: new sns.Topic(this, 'C
 A deploy or spot replacement fits inside 30 minutes, so it does not page; a
 crash loop, boot loop, or worker that never started or stopped looping does.
 Then read System health in the editor's admin panel and the worker log group.
+
+It is also notified, and on recovery, when a running worker completes no sync for
+an hour (each cycle logs `Syncing git...`, then `Git sync complete` at its
+end), usually during a GitHub outage. In `workerCode` parameter mode, roll the
+bundle within the hour of the template: an older bundle never logs
+`Git sync complete`.
+
 It also hears once when a boot starts the worker [unpatched](#the-worker-instance).
 
 ## Worker capacity
@@ -1431,8 +1438,7 @@ the worker. What it means for you, and what you can do:
   memory to a core-dump helper, and who owns its socket. Run the
   [first deploy checklist](#first-deploy-checklist) for the rest.
 - **Denial of service.** The worker can slow or stall publishing and sync, and fake the
-  `Syncing git...` lines the [worker-down alarm](#worker-down-alarm) counts, so the alarm detects
-  faults, not compromise. The gateway's log (the `{instance_id}-gateway` stream), which the worker
+  sync lines the [worker alarms](#worker-down-alarm) count, so they detect faults, not compromise. The gateway's log (the `{instance_id}-gateway` stream), which the worker
   cannot write, is the record of what reached GitHub: read it when GitHub shows a change nobody
   made.
 - **Other unix sockets** on the host that `ec2-user` can connect to are levers the worker keeps.

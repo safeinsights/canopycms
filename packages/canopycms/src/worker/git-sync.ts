@@ -717,6 +717,11 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     await writeWorkerStatus(ctx.taskDir, report).catch((writeErr) =>
       workerLogError('Failed to write worker status:', getErrorMessage(writeErr)),
     )
+    // The CDK sync-failing alarm counts this line against the one above
+    // (WORKER_SYNC_DONE_LOG_PHRASE in canopycms-cdk worker-lifecycle.ts); changing its text
+    // breaks the alarm. Only a cycle that ran to its end logs it: not a drain's early return,
+    // not a throw.
+    workerLog('Git sync complete')
   } catch (err) {
     const report = ctx.ensureStatusReport()
     // [REDACT] Persisted to worker-status.json and served to the browser
