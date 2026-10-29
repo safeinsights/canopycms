@@ -114,7 +114,7 @@ describe('useBranchActions create past the deadline', () => {
     })
 
     expect(await createAfterDeadline()).toEqual({
-      refusal: 'A branch named "feature-x" already exists',
+      refusal: 'A branch named “feature-x” already exists',
     })
     expect(notifications.show).not.toHaveBeenCalled()
     expect(options.onBranchCreated).not.toHaveBeenCalled()

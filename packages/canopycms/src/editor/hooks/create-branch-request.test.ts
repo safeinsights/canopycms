@@ -254,7 +254,7 @@ describe('requestBranchCreate', () => {
     )
     const conflict = {
       kind: 'failed',
-      message: 'A branch named "feature-x" already exists',
+      message: 'A branch named “feature-x” already exists',
       refused: true,
     }
 
@@ -285,7 +285,7 @@ describe('requestBranchCreate', () => {
     const mine = vi.fn(async () => listingOf([branch('canopycms/local/feature-x', me, created)]))
     const conflict = {
       kind: 'failed',
-      message: 'A branch named "feature-x" already exists',
+      message: 'A branch named “feature-x” already exists',
       refused: true,
     }
 
@@ -309,7 +309,7 @@ describe('requestBranchCreate', () => {
 
     expect(await requestBranchCreate(apiClient, body, undefined)).toEqual({
       kind: 'failed',
-      message: 'A branch named "feature-x" already exists',
+      message: 'A branch named “feature-x” already exists',
       refused: true,
     })
   })

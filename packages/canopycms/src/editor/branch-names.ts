@@ -16,12 +16,11 @@ export function displayBranchName(branch: Named): string {
 }
 
 /**
- * The listed branch `name` opens, in the order the server resolves a `?branch=`: the active branch
- * (`defaultBranch`) by its full name, then a namespace branch by its short name, then any branch
- * by its full name. The server lists no namespace branch under the base's or active branch's name
- * as its short name (`shortNameOf`), so the base needs no step of its own, and a branch outside
- * the namespace lists its full name as its short name, so only a namespace branch matches the
- * second.
+ * The listed branch `name` opens: the active branch (`defaultBranch`) by its full name first, then
+ * a namespace branch by its short name, then any branch by its full name. The server's first step
+ * also takes the base, which needs no step here: while the base resolves, `shortNameOf` lists no
+ * namespace branch under the base's or the active branch's name. A branch outside the namespace
+ * lists its full name as its short name, so only a namespace branch matches the second step.
  */
 function resolveExactly<B extends Named>(
   branches: readonly B[],

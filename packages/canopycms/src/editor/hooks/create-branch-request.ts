@@ -70,7 +70,7 @@ async function settle(
   if (isCreatorsRecentBranch(listed, userId)) return { kind: 'created', branch: listed }
   return {
     kind: 'failed',
-    message: `A branch named "${listed.shortName ?? listed.name}" already exists`,
+    message: `A branch named “${listed.shortName ?? listed.name}” already exists`,
     refused: true,
   }
 }

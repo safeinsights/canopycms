@@ -2434,7 +2434,7 @@ describe('useBranchManager', () => {
         expect.objectContaining({ color: 'brand', 'data-testid': 'confirm-approve-branch' }),
       )
       expect(body).toContain(
-        'Approve "feature"? Its pull request stays open on GitHub for someone with access to merge it.',
+        'Approve “feature”? Its pull request stays open on GitHub for someone with access to merge it.',
       )
     })
 
@@ -2448,7 +2448,7 @@ describe('useBranchManager', () => {
 
       const { body } = await dialogBody()
       expect(body).toContain(
-        'Approve "feature"? It stays locked until it is withdrawn or changes are requested.',
+        'Approve “feature”? It stays locked until it is withdrawn or changes are requested.',
       )
       expect(body).not.toContain('GitHub')
     })
@@ -2744,8 +2744,8 @@ describe('useBranchManager', () => {
       it.each([
         ['submit', 'Submit “spring” for review?'],
         ['withdraw', 'Withdraw “spring” from review?'],
-        ['approve', 'Approve "spring"?'],
-        ['request changes', 'Send "spring" back to its editor?'],
+        ['approve', 'Approve “spring”?'],
+        ['request changes', 'Send “spring” back to its editor?'],
         ['delete', 'Delete “spring”?'],
       ] as const)('is called by its short name in the %s dialog', async (action, sentence) => {
         const { result } = await loadedSpring()
@@ -2780,9 +2780,9 @@ describe('useBranchManager', () => {
         })
 
         const messages = vi.mocked(notifications.show).mock.calls.map(([n]) => n.message)
-        expect(messages).toContain(branchActionOutcomeUnknown('Approve "spring"'))
+        expect(messages).toContain(branchActionOutcomeUnknown('Approve “spring”'))
         expect(messages).toContainEqual(
-          expect.stringContaining('Request changes on "spring" may have gone through'),
+          expect.stringContaining('Request changes on “spring” may have gone through'),
         )
       })
     })
@@ -2799,7 +2799,7 @@ describe('useBranchManager', () => {
 
       expect(notifications.show).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: branchActionOutcomeUnknown('Approve "feature"'),
+          message: branchActionOutcomeUnknown('Approve “feature”'),
           color: 'yellow',
           autoClose: false,
         }),
@@ -2821,7 +2821,7 @@ describe('useBranchManager', () => {
         expect.objectContaining({ color: 'red', 'data-testid': 'confirm-request-changes' }),
       )
       expect(body).toContain(
-        'Send "feature" back to its editor? It goes back to editing, and its pull request becomes a draft.',
+        'Send “feature” back to its editor? It goes back to editing, and its pull request becomes a draft.',
       )
       expect(body).toContain('Note to the editor')
       expect(body).toContain('Saved as a comment on the branch.')
@@ -2836,7 +2836,7 @@ describe('useBranchManager', () => {
       })
 
       expect((await dialogBody()).body).toContain(
-        'Send "feature" back to its editor? It goes back to editing.',
+        'Send “feature” back to its editor? It goes back to editing.',
       )
     })
 
@@ -2996,7 +2996,7 @@ describe('useBranchManager', () => {
         expect(notifications.show).toHaveBeenCalledWith(
           expect.objectContaining({
             message:
-              'Request changes on "feature" may have gone through even though the server didn\'t answer. Check the branch\'s status and its comments in "Comments".',
+              'Request changes on “feature” may have gone through even though the server didn\'t answer. Check the branch\'s status and its comments in "Comments".',
             color: 'yellow',
             autoClose: false,
           }),
