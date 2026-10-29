@@ -1342,18 +1342,18 @@ CI runs it as `standalone-image`, matrixed over pnpm and npm on `ubuntu-latest` 
 
 ### Worker Platform Check (`worker-platform.yml`)
 
-`scripts/smoke/worker-platform.mjs` boots the worker's user data, as `CanopyCmsService` synthesizes it (`packages/canopycms-cdk/test-support/render-user-data.ts`), in an `amazonlinux:2023` container. Then, as `ec2-user`, it runs `packages/canopycms/src/worker` and `packages/canopycms-cdk/worker` with the git and Node that boot installed. Every worker boot takes AL2023's newest packages, so this is where a new git or Node breaks first. **Its header comment is authoritative**, including what a container cannot show. In short:
+`scripts/smoke/worker-platform.mjs` boots the worker's user data, as `CanopyCmsService` synthesizes it (`packages/canopycms-cdk/test-support/render-user-data.ts`), in an `amazonlinux:2023` container. Then, as `ec2-user`, it runs `packages/canopycms/src/worker`, the git-heavy suites of the code the worker runs (git-manager, branch provisioning and sparse cones, `utils/git`) and `packages/canopycms-cdk/worker` with the git and Node that boot installed. Every worker boot takes AL2023's newest packages, so this is where a new git or Node breaks first. **Its header comment is authoritative**, including what a container cannot show. In short:
 
-- **The script runs verbatim**, so its `dnf` lines and tools are the ones checked. Shims stand in only for `aws s3 cp`, `mount -t efs`, `systemctl` and `shutdown`, and each refuses a call it was not written for.
+- **The script runs verbatim**, so its `dnf` lines and tools are the ones checked. Shims stand in only for `aws s3 cp`, `mount -t efs`, `systemctl` and `shutdown`. Each logs its call, and all but `shutdown` refuse a call they were not written for.
 - **Before the boot**, the driver installs what the AMI ships and the image lacks (`AMI_BASELINE`) from the image's locked release.
-- **The container is privileged**, so the swap and `sysctl` steps run for real. The driver puts back the host's three sysctls and turns off only `/swapfile`.
+- **The container is privileged**, so the swap and `sysctl` steps run for real. Cleanup stops the boot if it is still running, puts back the host's three sysctls and turns off only `/swapfile`.
 
 ```bash
 node scripts/smoke/worker-platform.mjs              # needs Docker and a pnpm-installed workspace
 node scripts/smoke/worker-platform.mjs --skip-tests --keep
 ```
 
-CI runs it on `ubuntu-24.04-arm` on every pull request, on `main`, and daily. A failed daily run opens a P1 issue, comments on it while the run keeps failing, and closes it on the next pass. GitHub mails a scheduled failure only to whoever last edited the cron.
+CI runs it on `ubuntu-24.04-arm` on every pull request, on `main`, and daily. A failed daily run on `main` opens a P1 issue, comments on it while the run keeps failing, and closes it on the next pass. GitHub mails a scheduled failure only to whoever last edited the cron.
 
 ### Backlog: GitHub Issues
 

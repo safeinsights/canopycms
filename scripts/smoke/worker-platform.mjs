@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 /**
- * Boot the CMS worker's real user data in an Amazon Linux 2023 container, then run the git-heavy
- * worker tests there with the git and Node that boot installed.
+ * Boot the CMS worker's real user data in an Amazon Linux 2023 container, then run the worker's
+ * tests, and the git-heavy suites of the code it runs, there with the git and Node that boot
+ * installed.
  *
  *   node scripts/smoke/worker-platform.mjs            # build, render, boot, check, test
  *   node scripts/smoke/worker-platform.mjs --keep     # leave the container running afterwards
@@ -14,17 +15,17 @@
  * It runs the script the construct synthesizes, verbatim, so its package list and tools are the
  * ones checked: nothing here restates them. Only what needs EC2 is replaced, by `shims`.
  *
- * What a container cannot show, and #912's first-deploy checklist still covers: the EFS mount
- * itself (NFS semantics, efs-utils' TLS tunnel, the IAM mount), systemd as PID 1 (the sandbox
- * each unit asks for, socket activation, restarts, the drain), the instance's own kernel, instance
- * metadata and its credentials, S3, the CloudWatch agent's start, and a t4g.nano's memory.
+ * What a container cannot show, so only a real instance does: the EFS mount itself (NFS
+ * semantics, efs-utils' TLS tunnel, the IAM mount), systemd as PID 1 (the sandbox each unit asks
+ * for, socket activation, restarts, the drain), the instance's own kernel, instance metadata and
+ * its credentials, S3, the CloudWatch agent's start, and a t4g.nano's memory.
  */
 
 import { spawnSync } from 'node:child_process'
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { setTimeout as sleep } from 'node:timers/promises'
+import { setImmediate as nextTurn, setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 
@@ -51,9 +52,10 @@ const CALLS_LOG = `${BOOT_DIR}/calls.log`
 const SHUTDOWN_MARKER = `${BOOT_DIR}/shutdown-called`
 
 /**
- * One shim per command that needs EC2, each logging its call and refusing any it was not written
- * for. `aws s3 cp` copies the local file for its destination, so both `sha256sum -c` lines check
- * the real bundle and instance files.
+ * One shim per command that needs EC2, each logging its call. All but `shutdown`, which marks the
+ * run failed whatever it is asked, refuse a call they were not written for. `aws s3 cp` copies the
+ * local file for its destination, so both `sha256sum -c` lines check the real bundle and instance
+ * files.
  */
 function shims(downloads) {
   const log = `{ printf '%s' "$(basename "$0")"; [ "$#" -eq 0 ] || printf ' %q' "$@"; echo; } >> ${CALLS_LOG}`
@@ -175,16 +177,17 @@ const HOST_SYSCTLS = ['vm.swappiness', 'kernel.core_pattern', 'fs.suid_dumpable'
 
 const MINUTE = 60_000
 
-/** Ctrl-C reaches the running child too; run() sees it die and stops, so `finally` cleans up. */
+/** Set by Ctrl-C. Its listener needs the event loop, which spawnSync blocks: run() yields to it. */
 let interrupted = false
 process.on('SIGINT', () => (interrupted = true))
 
 /** Bounded, so a hang fails the run rather than outlasting the job, which reads as cancelled. */
-function run(
+async function run(
   cmd,
   args,
   { input, cwd, allowFail = false, quiet = false, timeoutMs = 10 * MINUTE, cleanup = false } = {},
 ) {
+  await nextTurn()
   if (interrupted && !cleanup) throw new Error('interrupted')
   if (!quiet) console.log(`$ ${cmd} ${args.join(' ')}`)
   const result = spawnSync(cmd, args, {
@@ -200,7 +203,7 @@ function run(
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
   })
-  if (result.signal === 'SIGINT' || result.status === 130) interrupted = true
+  await nextTurn()
   if (interrupted && !cleanup) throw new Error('interrupted')
   if (result.error?.code === 'ETIMEDOUT') {
     throw new Error(`${cmd} ${args[0]} timed out after ${timeoutMs / MINUTE} minutes`)
@@ -214,7 +217,7 @@ function run(
 }
 
 /** A shell command in the container, as root unless `user` is given. */
-function exec(container, script, { user, env = {}, ...options } = {}) {
+async function exec(container, script, { user, env = {}, ...options } = {}) {
   const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`])
   const userArgs = user ? ['-u', user, '-w', `/home/${user}`] : []
   return run('docker', ['exec', ...userArgs, ...envArgs, container, 'bash', '-c', script], options)
@@ -226,7 +229,7 @@ async function pullImage() {
     for (let attempt = 1; attempt <= 3; attempt++) {
       if (interrupted) throw new Error('interrupted')
       try {
-        const pull = run('docker', ['pull', '-q', image], {
+        const pull = await run('docker', ['pull', '-q', image], {
           allowFail: true,
           timeoutMs: 3 * MINUTE,
         })
@@ -241,18 +244,23 @@ async function pullImage() {
   throw new Error(`could not pull any of ${IMAGES.join(', ')}`)
 }
 
-function renderUserData(outDir) {
-  run('pnpm', ['--filter', 'canopycms-cdk', 'run', 'build:worker'])
-  run('node', ['--import', 'tsx', 'test-support/render-user-data.ts', outDir], { cwd: CDK_DIR })
+async function renderUserData(outDir) {
+  await run('pnpm', ['--filter', 'canopycms-cdk', 'run', 'build:worker'])
+  await run('node', ['--import', 'tsx', 'test-support/render-user-data.ts', outDir], {
+    cwd: CDK_DIR,
+  })
 }
 
-function checkBoot(container, downloads) {
+async function checkBoot(container, downloads) {
   const failures = []
-  const marker = exec(container, `test -e ${SHUTDOWN_MARKER}`, { allowFail: true, quiet: true })
+  const marker = await exec(container, `test -e ${SHUTDOWN_MARKER}`, {
+    allowFail: true,
+    quiet: true,
+  })
   if (marker.status === 0) failures.push('the boot called shutdown (its ERR trap fired)')
 
-  const calls = exec(container, `cat ${CALLS_LOG}`, { quiet: true })
-    .stdout.split('\n')
+  const calls = (await exec(container, `cat ${CALLS_LOG}`, { quiet: true })).stdout
+    .split('\n')
     .filter(Boolean)
   console.log(`Shimmed calls:\n  ${calls.join('\n  ')}`)
   const required = calls.slice(0, EXPECTED_CALLS.length)
@@ -268,14 +276,14 @@ function checkBoot(container, downloads) {
     failures.push('the manifest names other than two downloads')
 
   for (const [what, check] of POST_BOOT_CHECKS) {
-    const result = exec(container, check, { allowFail: true, quiet: true })
+    const result = await exec(container, check, { allowFail: true, quiet: true })
     console.log(`${result.status === 0 ? 'ok  ' : 'FAIL'} ${what}`)
     if (result.status !== 0) {
       failures.push(what)
       process.stderr.write(`${result.stdout}${result.stderr}`)
     }
   }
-  const versions = exec(
+  const versions = await exec(
     container,
     'git --version; /usr/bin/node-22 --version; rpm -q system-release',
     {
@@ -283,25 +291,28 @@ function checkBoot(container, downloads) {
     },
   )
   console.log(versions.stdout.trim())
-  const swap = exec(container, 'swapon --show=NAME --noheadings', { allowFail: true, quiet: true })
+  const swap = await exec(container, 'swapon --show=NAME --noheadings', {
+    allowFail: true,
+    quiet: true,
+  })
   console.log(`swap after boot: ${swap.stdout.trim() || 'none (the boot only warns)'}`)
   return failures
 }
 
 /** The checkout's files, tracked and untracked but not ignored, as a tree to copy in. */
-function stageRepo(dir) {
-  const files = (args) =>
-    run('git', ['ls-files', '-z', ...args], { cwd: REPO_ROOT, quiet: true })
-      .stdout.split('\0')
+async function stageRepo(dir) {
+  const files = async (args) =>
+    (await run('git', ['ls-files', '-z', ...args], { cwd: REPO_ROOT, quiet: true })).stdout
+      .split('\0')
       .filter(Boolean)
   // Deleted files, and sparse-checkout ones (tagged S), are listed but not on disk.
   const absent = new Set([
-    ...files(['--deleted']),
-    ...files(['-t', '--cached'])
+    ...(await files(['--deleted'])),
+    ...(await files(['-t', '--cached']))
       .filter((entry) => entry.startsWith('S '))
       .map((entry) => entry.slice(2)),
   ])
-  for (const file of files(['--cached', '--others', '--exclude-standard'])) {
+  for (const file of await files(['--cached', '--others', '--exclude-standard'])) {
     if (absent.has(file)) continue
     cpSync(path.join(REPO_ROOT, file), path.join(dir, file), {
       recursive: false,
@@ -310,14 +321,14 @@ function stageRepo(dir) {
   }
 }
 
-function runTests(container, scratch) {
-  exec(container, `dnf install -y -q ${TEST_EXTRAS.join(' ')}`)
+async function runTests(container, scratch) {
+  await exec(container, `dnf install -y -q ${TEST_EXTRAS.join(' ')}`)
   const staged = path.join(scratch, 'repo')
   mkdirSync(staged)
-  stageRepo(staged)
+  await stageRepo(staged)
   const home = `/home/${WORKER_USER}`
-  run('docker', ['cp', `${staged}/.`, `${container}:${home}/canopycms`], { quiet: true })
-  exec(container, `chown -R ${WORKER_USER}: ${home}/canopycms`)
+  await run('docker', ['cp', `${staged}/.`, `${container}:${home}/canopycms`], { quiet: true })
+  await exec(container, `chown -R ${WORKER_USER}: ${home}/canopycms`)
 
   const pnpmVersion = JSON.parse(
     readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'),
@@ -332,15 +343,17 @@ function runTests(container, scratch) {
   }
   const asWorker = (script, options) =>
     exec(container, script, { user: WORKER_USER, env, ...options })
-  asWorker(`npm config set prefix ${home}/.npm-global && npm install -g -q pnpm@${pnpmVersion}`)
-  asWorker('cd canopycms && command -v git node && pnpm install --frozen-lockfile')
+  await asWorker(
+    `npm config set prefix ${home}/.npm-global && npm install -g -q pnpm@${pnpmVersion}`,
+  )
+  await asWorker('cd canopycms && command -v git node && pnpm install --frozen-lockfile')
   // Plus the git-heavy modules outside worker/ that the worker runs on the instance.
-  asWorker(
+  await asWorker(
     'cd canopycms/packages/canopycms && pnpm exec vitest run src/worker src/git-manager ' +
       'src/branch-provisioning src/branch-sparse src/branch-workspace src/utils/git',
     { timeoutMs: 25 * MINUTE },
   )
-  asWorker('cd canopycms/packages/canopycms-cdk && pnpm exec vitest run --dir worker')
+  await asWorker('cd canopycms/packages/canopycms-cdk && pnpm exec vitest run --dir worker')
 }
 
 async function main() {
@@ -349,7 +362,7 @@ async function main() {
   })
   const scratch = mkdtempSync(path.join(os.tmpdir(), 'canopycms-worker-platform-'))
   const rendered = path.join(scratch, 'render')
-  renderUserData(rendered)
+  await renderUserData(rendered)
   const { downloads } = JSON.parse(readFileSync(path.join(rendered, 'manifest.json'), 'utf8'))
 
   const image = await pullImage()
@@ -357,7 +370,7 @@ async function main() {
   // Privileged, so the boot's swap and sysctl steps run for real; cleanup restores what they change
   // on the host's kernel. --init, so orphans are reaped as systemd reaps them on the instance: under
   // a bare `sleep` as PID 1, a killed git's children stay zombies, which `kill(pid, 0)` still finds.
-  run(
+  await run(
     'docker',
     ['run', '-d', '--init', '--privileged', '--name', container, image, 'sleep', 'infinity'],
     {
@@ -367,47 +380,51 @@ async function main() {
   let ok = false
   let hostSysctls = []
   try {
-    hostSysctls = HOST_SYSCTLS.map((key) => [
-      key,
-      exec(container, `cat /proc/sys/${key.replaceAll('.', '/')}`, { quiet: true }).stdout.trim(),
-    ])
-    exec(container, `dnf install -y -q --allowerasing ${AMI_BASELINE.join(' ')}`)
-    exec(container, `useradd -u 1000 -m ${WORKER_USER}`)
-    exec(container, `mkdir -p ${BOOT_DIR}/shims`)
-    run('docker', ['cp', `${rendered}/.`, `${container}:${BOOT_DIR}`], { quiet: true })
+    for (const key of HOST_SYSCTLS) {
+      const file = `/proc/sys/${key.replaceAll('.', '/')}`
+      hostSysctls.push([key, (await exec(container, `cat ${file}`, { quiet: true })).stdout.trim()])
+    }
+    await exec(container, `dnf install -y -q --allowerasing ${AMI_BASELINE.join(' ')}`)
+    await exec(container, `useradd -u 1000 -m ${WORKER_USER}`)
+    await exec(container, `mkdir -p ${BOOT_DIR}/shims`)
+    await run('docker', ['cp', `${rendered}/.`, `${container}:${BOOT_DIR}`], { quiet: true })
     const shimDir = path.join(scratch, 'shims')
     mkdirSync(shimDir)
     for (const [name, body] of Object.entries(shims(downloads))) {
       writeFileSync(path.join(shimDir, name), body, { mode: 0o755 })
     }
-    run('docker', ['cp', `${shimDir}/.`, `${container}:${BOOT_DIR}/shims`], { quiet: true })
+    await run('docker', ['cp', `${shimDir}/.`, `${container}:${BOOT_DIR}/shims`], { quiet: true })
 
     console.log('\n--- boot: the synthesized user data ---')
-    const boot = exec(container, `PATH=${BOOT_DIR}/shims:$PATH bash ${BOOT_DIR}/user-data.sh`, {
-      allowFail: true,
-      timeoutMs: 20 * MINUTE,
-    })
+    const boot = await exec(
+      container,
+      `PATH=${BOOT_DIR}/shims:$PATH bash ${BOOT_DIR}/user-data.sh`,
+      {
+        allowFail: true,
+        timeoutMs: 20 * MINUTE,
+      },
+    )
     console.log(`--- boot exited ${boot.status} ---\n`)
-    const failures = checkBoot(container, downloads)
+    const failures = await checkBoot(container, downloads)
     if (failures.length > 0) {
       throw new Error(`the boot check failed:\n  - ${failures.join('\n  - ')}`)
     }
 
     if (!values['skip-tests']) {
       console.log('\n--- worker tests on the booted platform ---')
-      runTests(container, scratch)
+      await runTests(container, scratch)
     }
     ok = true
   } finally {
     // A boot that timed out is still running in the container, and would write the sysctls again.
-    exec(container, 'pkill -KILL -f "user-data[.]sh"', {
+    await exec(container, 'pkill -KILL -f "user-data[.]sh"', {
       allowFail: true,
       quiet: true,
       cleanup: true,
     })
     for (const [key, value] of hostSysctls) {
       const file = `/proc/sys/${key.replaceAll('.', '/')}`
-      exec(container, `printf '%s\\n' '${value}' > ${file}`, {
+      await exec(container, `printf '%s\\n' '${value}' > ${file}`, {
         allowFail: true,
         quiet: true,
         cleanup: true,
@@ -416,9 +433,9 @@ async function main() {
     if (values.keep) {
       console.log(`Left running: docker exec -it ${container} bash`)
     } else {
-      // Only the boot's own swap file: `-a` would also take the host's.
-      exec(container, 'swapoff /swapfile', { allowFail: true, quiet: true, cleanup: true })
-      run('docker', ['rm', '-f', container], { allowFail: true, quiet: true, cleanup: true })
+      // The swap is the host kernel's: left on, it outlives the container.
+      await exec(container, 'swapoff /swapfile', { allowFail: true, quiet: true, cleanup: true })
+      await run('docker', ['rm', '-f', container], { allowFail: true, quiet: true, cleanup: true })
     }
     rmSync(scratch, { recursive: true, force: true })
   }

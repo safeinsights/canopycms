@@ -4,7 +4,8 @@ name: Worker platform
 # release, then runs the worker's git tests there with the git and Node that boot installed
 # (scripts/smoke/worker-platform.mjs, which also lists what a container cannot show). Every worker
 # boot takes AL2023's newest packages, so production moves to a new git or Node within a week of
-# its release whether or not anything here changed: the daily run is what notices that first.
+# AL2023 shipping it (the weekly recycle), whether or not anything here changed: the daily run is
+# what notices that first.
 on:
   pull_request:
   push:
