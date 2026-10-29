@@ -36,6 +36,21 @@ function createClientSignal(): ClientSignal {
   }
 }
 
+type BranchSegments = ReadonlyMap<string, string>
+
+/** The branch-name to `/:branch`-segment lookup the provider's client reads, replaced as listings arrive. */
+function createSegmentTable() {
+  let segments: BranchSegments = new Map()
+  return {
+    lookup: (branch: string): string => segments.get(branch) ?? branch,
+    replace: (next: BranchSegments): void => {
+      segments = next
+    },
+  }
+}
+
+const BranchSegmentsContext = createContext<((segments: BranchSegments) => void) | null>(null)
+
 const UnauthorizedSignalContext = createContext<ClientSignal | null>(null)
 const EditorModeMismatchSignalContext = createContext<ClientSignal | null>(null)
 
@@ -74,6 +89,7 @@ export function ApiClientProvider({
   // Only a client built HERE reports to `useOnUnauthorized` and `useOnEditorModeMismatch`; an
   // injected `client` is used as-is, so its 401s and mode mismatches reach the auth gate only
   // through the gate's own whoami result.
+  const [segmentTable] = useState(createSegmentTable)
   const apiClient = useMemo(() => {
     return (
       client ??
@@ -82,14 +98,17 @@ export function ApiClientProvider({
         onUnauthorized: unauthorized.emit,
         editorMode,
         onEditorModeMismatch: modeMismatch.emit,
+        branchSegment: segmentTable.lookup,
       })
     )
-  }, [client, basePath, editorMode, unauthorized, modeMismatch])
+  }, [client, basePath, editorMode, unauthorized, modeMismatch, segmentTable])
 
   return (
     <UnauthorizedSignalContext.Provider value={unauthorized}>
       <EditorModeMismatchSignalContext.Provider value={modeMismatch}>
-        <ApiClientContext.Provider value={apiClient}>{children}</ApiClientContext.Provider>
+        <BranchSegmentsContext.Provider value={segmentTable.replace}>
+          <ApiClientContext.Provider value={apiClient}>{children}</ApiClientContext.Provider>
+        </BranchSegmentsContext.Provider>
       </EditorModeMismatchSignalContext.Provider>
     </UnauthorizedSignalContext.Provider>
   )
@@ -109,6 +128,17 @@ export function useOnUnauthorized(listener: () => void): void {
 export function useOnEditorModeMismatch(listener: () => void): void {
   const signal = useContext(EditorModeMismatchSignalContext)
   useEffect(() => signal?.subscribe(listener), [signal, listener])
+}
+
+/**
+ * Tells the provider's own client the `/:branch` segment each listed branch's requests carry
+ * (name to segment); a name not in `segments` goes as given. Set during render, not in an effect:
+ * a data hook fetches in a layout effect, before any effect here would run. No-op outside a
+ * provider, and with an injected `client`, which keeps its own paths.
+ */
+export function useBranchSegments(segments: BranchSegments): void {
+  const set = useContext(BranchSegmentsContext)
+  set?.(segments)
 }
 
 /**

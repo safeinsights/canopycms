@@ -12,7 +12,7 @@ import type { ConflictStatus, PullRequestState, SyncStatus } from '../../types'
 import type { OperatingMode } from '../../operating-mode'
 import type { CommentThread } from '../../comment-store'
 import type { BranchListItem } from '../../api/branch'
-import { useApiClient } from '../context'
+import { useApiClient, useBranchSegments } from '../context'
 import { BRANCHES_KEY, fetchBranches, useBranchesData, type BranchesData } from './useBranchesData'
 // branch-name, NOT branch or the '../../paths' barrel: both of those pull
 // node:fs/promises + node:path at the top level (path RESOLUTION helpers),
@@ -477,6 +477,14 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     () => mergePendingBranches(branchesData?.branches ?? [], pendingBranches),
     [branchesData, pendingBranches],
   )
+
+  const defaultBranch = branchesData?.defaultBranch
+  // Requests name a branch by the form its URL does.
+  const segments = useMemo(
+    () => new Map(branches.map((b) => [b.name, branchUrlName(branches, b, defaultBranch)])),
+    [branches, defaultBranch],
+  )
+  useBranchSegments(segments)
 
   const addCreatedBranch = useCallback((branch: BranchListItem) => {
     setPendingBranches((prev) => [

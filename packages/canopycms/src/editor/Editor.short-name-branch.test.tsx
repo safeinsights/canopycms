@@ -36,7 +36,6 @@ afterEach(() => {
 })
 
 const SPRING = 'canopycms/local/spring'
-const SPRING_SEGMENT = encodeURIComponent(SPRING)
 
 const okJson = (data: unknown) =>
   new Response(JSON.stringify({ ok: true, status: 200, data }), {
@@ -91,6 +90,8 @@ const changesNote = {
   authorId: 'reviewer-1',
 }
 
+const OUTSIDE = 'feature/x'
+
 const stubApi = (options: { status: string; userId: string; holdSaves?: Promise<void> }) => {
   let changesRequested = false
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -104,7 +105,11 @@ const stubApi = (options: { status: string; userId: string; holdSaves?: Promise<
     }
     if (url.endsWith('/api/canopycms/branches')) {
       return okJson({
-        branches: [listed('main', 'editing'), listed(SPRING, options.status)],
+        branches: [
+          listed('main', 'editing'),
+          listed(SPRING, options.status),
+          listed(OUTSIDE, 'editing'),
+        ],
         defaultBranch: 'main',
         users: [],
       })
@@ -216,7 +221,7 @@ describe('the editor on a namespace branch named by its short name', () => {
   })
 
   it('rewrites a link carrying the full name to the short name, replacing the entry', async () => {
-    window.history.replaceState({}, '', `/?branch=${SPRING_SEGMENT}`)
+    window.history.replaceState({}, '', `/?branch=${encodeURIComponent(SPRING)}`)
     const pushState = vi.spyOn(window.history, 'pushState')
     stubApi({ status: 'editing', userId: 'author-1' })
     renderEditor(SPRING)
@@ -224,6 +229,30 @@ describe('the editor on a namespace branch named by its short name', () => {
     await waitFor(() => expect(urlBranch()).toBe('spring'))
     expect((await titleBox()).value).toBe('hello title')
     expect(pushState).not.toHaveBeenCalled()
+  })
+
+  it('sends its requests under the short name, with no %2F in a path', async () => {
+    window.history.replaceState({}, '', '/?branch=spring')
+    const fetchMock = stubApi({ status: 'editing', userId: 'author-1' })
+    renderEditor('spring')
+    expect((await titleBox()).value).toBe('hello title')
+
+    const paths = fetchMock.mock.calls.map(([input]) => new URL(urlOf(input), 'http://x').pathname)
+    expect(paths).toContain('/api/canopycms/spring/entries')
+    expect(paths).toContain('/api/canopycms/spring/schema')
+    expect(paths.filter((path) => path.includes('%2F'))).toEqual([])
+  })
+
+  it('sends a branch outside the namespace under its full name', async () => {
+    window.history.replaceState({}, '', `/?branch=${encodeURIComponent(OUTSIDE)}`)
+    const fetchMock = stubApi({ status: 'editing', userId: 'author-1' })
+    renderEditor(OUTSIDE)
+    expect((await titleBox()).value).toBe('hello title')
+
+    const paths = fetchMock.mock.calls.map(([input]) => new URL(urlOf(input), 'http://x').pathname)
+    expect(paths).toContain('/api/canopycms/feature%2Fx/entries')
+    expect(paths).not.toContain('/api/canopycms/x/entries')
+    expect(urlBranch()).toBe(OUTSIDE)
   })
 
   it('keeps a draft made on the short name for the branch reopened from the drawer', async () => {
@@ -294,7 +323,7 @@ describe('the editor on a namespace branch named by its short name', () => {
     await waitFor(() =>
       expect(
         fetchMock.mock.calls.some(([input]) =>
-          urlOf(input).endsWith(`/${SPRING_SEGMENT}/request-changes`),
+          urlOf(input).endsWith('/api/canopycms/spring/request-changes'),
         ),
       ).toBe(true),
     )
