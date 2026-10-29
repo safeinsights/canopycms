@@ -106,6 +106,10 @@ export const LazyEntryChangesDrawer: React.FC<LazyEntryChangesDrawerProps> = ({
             size={720}
             title={`Changes to ${props.subject.title}`}
             {...focusReturn}
+            onExitTransitionEnd={() => {
+              focusReturn.onExitTransitionEnd?.()
+              props.onExited?.()
+            }}
           >
             <Stack gap="sm">
               <Stack gap={2} role="status">

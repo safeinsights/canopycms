@@ -109,6 +109,7 @@ const CONTEXT_LINES = 2
  * How long one entry's text diffing may take in all, on the editor's main thread, where jsdiff's
  * run time grows with the square of the edits. The deadline is checked before each jsdiff call,
  * and each call is given only the time left; past it, every text change left is shown unmarked.
+ * Short word diffs are exempt: they cost well under a millisecond.
  */
 const DIFF_TIMEOUT_MS = 300
 const OTHER_FIELDS_LABEL = 'Other fields'
@@ -170,13 +171,18 @@ const rawText = (value: unknown): string =>
   typeof value === 'string' ? value : (JSON.stringify(normalized(value), null, 2) ?? String(value))
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/
 
 /**
  * A date as a comparison shows it: absolute, in the viewer's locale, with the time zone. The
  * editor's dates are otherwise relative, but two relative dates can read alike while their values
  * differ, which is the one thing a comparison must show.
  */
-const formatDate = (iso: string, dateOnly: boolean, seconds = false): string => {
+const formatDate = (
+  iso: string,
+  dateOnly: boolean,
+  precision: 'minute' | 'second' | 'millisecond' = 'minute',
+): string => {
   if (dateOnly) {
     const [year, month, day] = iso.split('-').map(Number)
     return new Date(year, month - 1, day).toLocaleDateString(undefined, {
@@ -191,29 +197,31 @@ const formatDate = (iso: string, dateOnly: boolean, seconds = false): string => 
     day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
-    ...(seconds && { second: '2-digit' as const }),
+    ...(precision !== 'minute' && { second: '2-digit' as const }),
+    ...(precision === 'millisecond' && { fractionalSecondDigits: 3 as const }),
     timeZoneName: 'short',
   })
 }
 
-/** Two date-time values naming one instant, however spelled: no change. */
+/** Two ISO date-time values naming one instant, however spelled: no change. Free text is not parsed. */
 const sameInstant = (field: FieldConfig | undefined, a: unknown, b: unknown): boolean => {
   if (field?.type !== 'datetime' || typeof a !== 'string' || typeof b !== 'string') return false
+  if (!ISO_DATE.test(a) || !ISO_DATE.test(b)) return false
   const [x, y] = [Date.parse(a), Date.parse(b)]
   return !Number.isNaN(x) && x === y
 }
 
-/** Two date-times in the same minute are shown to the second, so their difference shows. */
+/** Date-times in the same minute are shown to the second, in the same second to the millisecond. */
 const withSecondsWhenNeeded = (
   before: Extract<DisplayValue, { kind: 'date' }>,
   after: Extract<DisplayValue, { kind: 'date' }>,
 ): void => {
   if (before.dateOnly || after.dateOnly) return
-  if (Math.floor(Date.parse(before.iso) / 60_000) !== Math.floor(Date.parse(after.iso) / 60_000)) {
-    return
-  }
-  before.text = formatDate(before.iso, false, true)
-  after.text = formatDate(after.iso, false, true)
+  const [x, y] = [Date.parse(before.iso), Date.parse(after.iso)]
+  if (Math.floor(x / 60_000) !== Math.floor(y / 60_000)) return
+  const precision = Math.floor(x / 1000) === Math.floor(y / 1000) ? 'millisecond' : 'second'
+  before.text = formatDate(before.iso, false, precision)
+  after.text = formatDate(after.iso, false, precision)
 }
 
 /** The text a display marks word by word in a change: text values', and dates' absolute form. */
@@ -621,7 +629,8 @@ const splitLines = (value: string): string[] => {
  * of unchanged lines cut to {@link CONTEXT_LINES} beside each change. Words are diffed with
  * whitespace as tokens (`diffWordsWithSpace`): `diffWords` gives an unchanged run the new
  * text's spacing, so one side read back from its parts would not be the text it was.
- * Undefined once `deadline` (a `Date.now()`) passes: no jsdiff call starts after it.
+ * Undefined once `deadline` (a `Date.now()`) passes: no line diff starts after it. Short word
+ * diffs ignore it.
  * @internal Exported for tests.
  */
 export function textDiff(
@@ -645,11 +654,7 @@ export function textDiff(
     !after.includes('\n') &&
     before.length <= SHORT_TEXT &&
     after.length <= SHORT_TEXT
-  if (short) {
-    const budget = timeLeft()
-    const words = budget && diffWordsWithSpace(before, after, budget)
-    return words ? { mode: 'words', parts: toParts(words) } : undefined
-  }
+  if (short) return { mode: 'words', parts: toParts(diffWordsWithSpace(before, after)) }
 
   const rows: DiffRow[] = []
   const budget = timeLeft()

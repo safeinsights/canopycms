@@ -69,6 +69,18 @@ describe('LazyEntryChangesDrawer', () => {
     expect(within(shown).getByTestId('entry-changes-loading')).toBeTruthy()
   })
 
+  it('ends the comparison when the drawer is closed while its chunk is still loading', async () => {
+    const onExited = vi.fn()
+    render(<Harness load={() => new Promise(() => {})} onExited={onExited} />)
+    await open()
+    const shown = await dialog()
+    expect(within(shown).getByTestId('entry-changes-loading')).toBeTruthy()
+    // Escape closes the loading drawer, as it does the loaded one.
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await waitFor(() => expect(onExited).toHaveBeenCalledTimes(1))
+  })
+
   it('shows its own fallback when the chunk fails to load, and loads afresh on the next open', async () => {
     const consoleSpy = mockConsole()
     const unsilence = silenceReportedRenderErrors()

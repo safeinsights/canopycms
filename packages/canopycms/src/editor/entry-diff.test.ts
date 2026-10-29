@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { FieldConfig } from '../config'
 import type { EntryChangeSide } from '../api/branch-entry-changes'
@@ -10,6 +10,44 @@ import {
   type EntryChange,
   type TextDiff,
 } from './entry-diff'
+
+// Lets a test move the clock when a jsdiff call finishes, so the time budget is tested without
+// waiting on real time.
+const afterDiff = vi.hoisted(() => ({
+  lines: undefined as (() => void) | undefined,
+  words: undefined as (() => void) | undefined,
+}))
+vi.mock('diff', async (importOriginal) => {
+  const real = await importOriginal<typeof import('diff')>()
+  return {
+    ...real,
+    diffLines: (...args: Parameters<typeof real.diffLines>) => {
+      const result = real.diffLines(...args)
+      afterDiff.lines?.()
+      return result
+    },
+    diffWordsWithSpace: (...args: Parameters<typeof real.diffWordsWithSpace>) => {
+      const result = real.diffWordsWithSpace(...args)
+      afterDiff.words?.()
+      return result
+    },
+  }
+})
+
+/** Freezes `Date.now`; the returned function moves it forward. */
+const freezeClock = () => {
+  let now = 1_000_000
+  vi.spyOn(Date, 'now').mockImplementation(() => now)
+  return (ms: number) => {
+    now += ms
+  }
+}
+
+afterEach(() => {
+  afterDiff.lines = undefined
+  afterDiff.words = undefined
+  vi.restoreAllMocks()
+})
 
 const fields: FieldConfig[] = [
   { name: 'title', type: 'string', label: 'Title' },
@@ -419,33 +457,96 @@ describe('computeEntryDiff, round 2', () => {
   })
   const humanName = (name: string) => name.charAt(0).toUpperCase() + name.slice(1)
 
-  it('starts no jsdiff call once the deadline has passed', () => {
+  it('starts no line diff once the deadline has passed, but still diffs short text by word', () => {
     expect(textDiff('a\nb', 'a\nc', true, Date.now() - 1)).toBeUndefined()
-    expect(textDiff('one', 'two', false, Date.now() - 1)).toBeUndefined()
+    expect(textDiff('one', 'two', false, Date.now() - 1)).toEqual({
+      mode: 'words',
+      parts: [
+        { value: 'one', removed: true },
+        { value: 'two', added: true },
+      ],
+    })
   })
 
-  it('spends one budget on the whole entry, marking the text changes left once it runs out', () => {
+  it('spends one budget on the whole entry, showing the text changes left unmarked once it runs out', () => {
+    const advance = freezeClock()
     const many = Array.from({ length: 30 }, (_, i) => markdown(`field${i}`))
     const text = (word: string) =>
-      Array.from({ length: 2000 }, (_, i) => `${word} ${i} ${(i * 31) % 97}`).join('\n')
+      Array.from({ length: 200 }, (_, i) => `${word} ${i} ${(i * 31) % 97}`).join('\n')
     const data = (word: string) => Object.fromEntries(many.map((f) => [f.name, text(word)]))
-    const started = Date.now()
+    // The clock jumps once the first field's 200 line pairs are done.
+    let pairs = 0
+    afterDiff.words = () => {
+      if (++pairs === 200) advance(1000)
+    }
     const { changes } = computeEntryDiff({
       fields: many,
       before: { format: 'json', entryType: 'page', data: data('old') },
       after: { format: 'json', entryType: 'page', data: data('new') },
     })
-    expect(Date.now() - started).toBeLessThan(450)
     expect(changes).toHaveLength(30)
-    expect(changes.at(-1)?.tooLargeToMark).toBe(true)
+    expect(changes[0].text?.mode).toBe('lines')
+    expect(changes.slice(1).every((c) => c.tooLargeToMark && !c.text)).toBe(true)
   })
 
-  it('stops 20,000 changed line pairs at the deadline', () => {
+  it('still marks a one-word title change after a large body has spent the budget', () => {
+    const advance = freezeClock()
+    afterDiff.lines = () => advance(1000)
+    const bodyFirst: FieldConfig[] = [markdown('body'), { name: 'title', type: 'string' }]
+    const body = (word: string) => Array.from({ length: 200 }, (_, i) => `${word} ${i}`).join('\n')
+    const entry = (title: string, word: string) => ({
+      format: 'json' as const,
+      entryType: 'page',
+      data: { body: body(word), title },
+    })
+    const { changes } = computeEntryDiff({
+      fields: bodyFirst,
+      before: entry('Hello world', 'old'),
+      after: entry('Hello there', 'new'),
+    })
+    expect(changes.map((c) => c.path[0])).toEqual(['Body', 'Title'])
+    expect(changes[0].tooLargeToMark).toBe(true)
+    expect(changes[1].tooLargeToMark).toBeUndefined()
+    expect(changes[1].text).toEqual({
+      mode: 'words',
+      parts: [
+        { value: 'Hello ' },
+        { value: 'world', removed: true },
+        { value: 'there', added: true },
+      ],
+    })
+  })
+
+  it('stops changed line pairs at the deadline', () => {
+    const advance = freezeClock()
+    let pairs = 0
+    afterDiff.words = () => {
+      if (++pairs === 3) advance(1000)
+    }
+    const lines = (end: string) => Array.from({ length: 50 }, (_, i) => `l${i}${end}`).join('\n')
+    expect(textDiff(lines('a'), lines('b'), true)).toBeUndefined()
+    expect(pairs).toBe(3)
+  })
+
+  it('gives up on 20,000 changed line pairs within a generous real-time bound', () => {
     const lines = (end: string) =>
       Array.from({ length: 20_000 }, (_, i) => `l${i}${end}`).join('\n')
     const started = Date.now()
     expect(textDiff(lines('a'), lines('b'), true)).toBeUndefined()
-    expect(Date.now() - started).toBeLessThan(450)
+    expect(Date.now() - started).toBeLessThan(2000)
+  })
+
+  it('compares only ISO dates by instant, so free text in a date-time field changes', () => {
+    const at = [{ name: 'term', type: 'datetime', label: 'Term' }] as FieldConfig[]
+    const diff = (a: string, b: string) =>
+      computeEntryDiff({
+        fields: at,
+        before: { format: 'json', entryType: 'page', data: { term: a } },
+        after: { format: 'json', entryType: 'page', data: { term: b } },
+      }).changes
+    expect(diff('Spring 2026', 'Fall 2026')).toHaveLength(1)
+    expect(diff('TBD 1', 'TODO 1')).toHaveLength(1)
+    expect(diff('2026-02-03T10:00:00Z', '2026-02-03T10:00:00.000Z')).toEqual([])
   })
 
   it('reads two spellings of one instant as no change', () => {
@@ -480,6 +581,31 @@ describe('computeEntryDiff, round 2', () => {
       })
     expect(change.before).toMatchObject({ text: withSeconds('2026-02-03T10:00:05Z') })
     expect(change.after).toMatchObject({ text: withSeconds('2026-02-03T10:00:40Z') })
+    expect(change.text?.mode).toBe('words')
+  })
+
+  it('shows milliseconds when two times differ only within the second', () => {
+    const at = [{ name: 'publishedAt', type: 'datetime', label: 'Published' }] as FieldConfig[]
+    const before = {
+      format: 'json' as const,
+      entryType: 'page',
+      data: { publishedAt: '2026-02-03T10:00:05.100Z' },
+    }
+    const after = { ...before, data: { publishedAt: '2026-02-03T10:00:05.600Z' } }
+    const [change] = computeEntryDiff({ fields: at, before, after }).changes
+    const withMillis = (iso: string) =>
+      new Date(iso).toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        second: '2-digit',
+        fractionalSecondDigits: 3,
+        timeZoneName: 'short',
+      })
+    expect(change.before).toMatchObject({ text: withMillis('2026-02-03T10:00:05.100Z') })
+    expect(change.after).toMatchObject({ text: withMillis('2026-02-03T10:00:05.600Z') })
     expect(change.text?.mode).toBe('words')
   })
 
