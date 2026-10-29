@@ -18,9 +18,11 @@ request bodies carry, and what a pull request without a title is named after (`S
 spring-update`); `?branch=` and the API's `/:branch` segment accept it or the full name. A branch
 outside the namespace is reached by its full name. Creation refuses a short name that another branch already has (the
 base, the active branch, a branch outside the namespace, a name the gateway protects), one equal to
-an API route (`admin`, `assets`, …), a name typed with the namespace in front, and any name while
-the CMS and the gateway resolve different namespaces or the remote has a branch named after part
-of the namespace. The gateway refuses a push into the namespace while GitHub has such a branch.
+an API route (`admin`, `assets`, …), one kept for settings (`canopycms-settings-…` or the settings
+branch), a name typed with the namespace in front, a name the remote holds a branch inside
+(`spring/draft` for `spring`), and any name while the CMS and the gateway resolve different
+namespaces or the remote has a branch named after part of the namespace. The gateway refuses a push
+into the namespace while GitHub has a branch named after part of it or inside the one pushed.
 
 **To adopt.** Update any CI workflow, ruleset or script that matches the names of branches the
 editor creates, for example to skip them with `branches-ignore: ['canopycms/**']`. Branches that
