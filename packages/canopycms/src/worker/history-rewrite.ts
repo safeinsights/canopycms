@@ -82,7 +82,7 @@ export async function markHistoryRewritten(
   const current = await BranchMetadataFileManager.loadOnly(branchPath)
   if (typeof current?.branch.historyRewrittenFrom === 'string') return
   const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
-  await meta.save({ branch: { name: branchDir, historyRewrittenFrom: expectedSha } })
+  await meta.save({ branch: { historyRewrittenFrom: expectedSha } })
 }
 
 /**
@@ -108,7 +108,7 @@ export async function clearHistoryRewrittenMarker(
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
     // Explicit undefined clears the key -- save()'s merge only overwrites
     // keys present in the update (same pattern as rebaseFailure).
-    await meta.save({ branch: { name: branchDir, historyRewrittenFrom: undefined } })
+    await meta.save({ branch: { historyRewrittenFrom: undefined } })
   } catch (err) {
     workerLogWarn(
       `  Failed to clear history-rewrite marker for ${branchDir}: ${getErrorMessage(err)}`,

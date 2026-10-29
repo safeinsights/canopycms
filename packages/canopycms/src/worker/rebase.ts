@@ -141,10 +141,7 @@ export async function pollMergeState(
       // GitHub's actual merge time when available; buildMergedBranchUpdate
       // falls back to "now" when merged_at is absent.
       await meta.save({
-        branch: buildMergedBranchUpdate(
-          branchDir,
-          data.merged_at ? new Date(data.merged_at) : undefined,
-        ),
+        branch: buildMergedBranchUpdate(data.merged_at ? new Date(data.merged_at) : undefined),
       })
       workerLog(`  PR #${prNumber} for ${branchDir} is merged -> archived`)
       return
@@ -157,7 +154,7 @@ export async function pollMergeState(
     if (currentMeta?.branch.pullRequestState === newState) return
 
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
-    await meta.save({ branch: { name: branchDir, pullRequestState: newState } })
+    await meta.save({ branch: { pullRequestState: newState } })
     workerLog(`  PR #${prNumber} for ${branchDir}: pullRequestState -> ${newState}`)
   } catch (err) {
     // Non-fatal: transient GitHub/network errors are retried next cycle.
@@ -213,10 +210,7 @@ async function recordRebaseFailure(
 
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
     await meta.save({
-      branch: {
-        name: branchDir,
-        rebaseFailure: { message: redactedMessage, firstAt, lastAt: nowIso },
-      },
+      branch: { rebaseFailure: { message: redactedMessage, firstAt, lastAt: nowIso } },
     })
   } catch (err) {
     // Includes BranchMetadataCorruptError from the load above (a save() against
@@ -936,7 +930,7 @@ async function rebaseOneBranch(
         if (currentMeta?.branch.rebaseFailure === undefined) {
           return { kind: 'none' }
         }
-        await meta.save({ branch: { name: branchDir, rebaseFailure: undefined } })
+        await meta.save({ branch: { rebaseFailure: undefined } })
         return { kind: 'none' }
       }
 
@@ -1037,7 +1031,6 @@ async function rebaseOneBranch(
       )
       await meta.update((existing) => ({
         branch: {
-          name: branchDir,
           ...recordConflicts(existing?.branch.conflictFiles, conflictIdsDeduped),
           // The cycle completed, so clear any prior failure record regardless
           // of the conflict outcome.

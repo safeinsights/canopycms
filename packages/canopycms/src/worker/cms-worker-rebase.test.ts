@@ -945,6 +945,58 @@ describe('CmsWorker rebaseActiveBranches', () => {
   // rebaseFailure recording (PR-W2)
   // -------------------------------------------------------------------------
 
+  describe("the branch's stored name, which its directory is only the sanitized form of", () => {
+    const ENTRY_FILE = 'page.about.TESTENTRYabc.json'
+    const REF = 'canopycms/prod/my-feature'
+
+    it('is kept when a caught-up branch has a stale failure cleared', async () => {
+      const setup = await createBranchSetup(tmpDir, 'canopycms-prod-my-feature')
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+        name: REF,
+        rebaseFailure: {
+          message: 'old',
+          firstAt: '2026-01-01T00:00:00Z',
+          lastAt: '2026-01-01T00:00:00Z',
+        },
+      })
+
+      await runRebase(makeWorker(tmpDir))
+
+      const meta = await readMeta(setup.branchPath)
+      expect(meta?.rebaseFailure).toBeUndefined()
+      expect(meta?.name).toBe(REF)
+    })
+
+    it('is kept when a rebase records conflicts', async () => {
+      const setup = await createBranchSetup(tmpDir, 'canopycms-prod-my-feature', {
+        initialFiles: { [ENTRY_FILE]: '{"title":"base content"}' },
+      })
+      await setup.commitToBranch({ [ENTRY_FILE]: '{"title":"branch version"}' })
+      await setup.pushToRemote({ [ENTRY_FILE]: '{"title":"main version"}' })
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, { name: REF })
+
+      await runRebase(makeWorker(tmpDir))
+
+      const meta = await readMeta(setup.branchPath)
+      expect(meta?.conflictStatus).toBe('conflicts-detected')
+      expect(meta?.name).toBe(REF)
+    })
+
+    it('is kept when a rebase failure is recorded', async () => {
+      const setup = await createBranchSetup(tmpDir, 'canopycms-prod-my-feature')
+      await setup.commitToBranch({ 'branch-content.txt': 'branch work' })
+      await setup.pushToRemote({ 'main-update.txt': 'new from main' })
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, { name: REF })
+      await fs.writeFile(path.join(setup.branchPath, '.git', 'index.lock'), '')
+
+      await runRebase(makeWorker(tmpDir))
+
+      const meta = await readMeta(setup.branchPath)
+      expect(typeof meta?.rebaseFailure?.message).toBe('string')
+      expect(meta?.name).toBe(REF)
+    })
+  })
+
   describe('rebaseFailure recording', () => {
     /**
      * Leaves a stale `.git/index.lock`, so the rebase refuses to start. This drives the round

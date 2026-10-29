@@ -133,6 +133,29 @@ describe('CmsWorker.pollMergeState()', () => {
     expect(meta?.pullRequestUrl).toBe('https://github.com/test-owner/test-repo/pull/42')
   })
 
+  it("keeps the branch's stored name, which its directory is only the sanitized form of", async () => {
+    const { internals, octokit } = makePollWorker()
+    for (const [merged, state] of [
+      [true, 'closed'],
+      [false, 'closed'],
+    ] as const) {
+      const branchPath = await setupBranchMeta('canopycms-prod-spring', {
+        name: 'canopycms/prod/spring',
+        pullRequestNumber: 44,
+        pullRequestState: 'open',
+        status: 'submitted',
+      })
+      octokit.pulls.get.mockResolvedValue(pullRequest({ merged, state }))
+
+      const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
+      await internals.pollMergeState('canopycms-prod-spring', branchPath, metaFile)
+
+      const meta = await readBranchMeta(branchPath)
+      expect(meta?.pullRequestState).toBe(merged ? 'merged' : 'closed')
+      expect(meta?.name).toBe('canopycms/prod/spring')
+    }
+  })
+
   it('records closed state without archiving when the PR is closed but not merged', async () => {
     const { internals, octokit } = makePollWorker()
     const branchPath = await setupBranchMeta('feature-closed', {
