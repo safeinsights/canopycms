@@ -485,6 +485,56 @@ describe('pull requests by number', () => {
   })
 })
 
+describe('reading a pull request by number', () => {
+  const read = async (answer: object, options: Partial<LocalGitHubGatewayOptions> = {}) => {
+    const octokit = octokitStub()
+    octokit.pulls.get.mockResolvedValue({
+      data: {
+        merged: true,
+        merged_at: '2026-10-29T10:00:00Z',
+        state: 'closed',
+        body: 'Notes',
+        ...answer,
+      },
+    })
+    return gateway({ ...options, octokit: octokit as unknown as Octokit }).getPullRequest(2)
+  }
+
+  it('answers the body of one whose head is in the namespace, in this repository', async () => {
+    expect(await read(pullRequestHead('canopycms/prod/feature'))).toEqual({
+      merged: true,
+      merged_at: '2026-10-29T10:00:00Z',
+      state: 'closed',
+      node_id: 'PR_2',
+      body: 'Notes',
+    })
+  })
+
+  it("answers an empty body as '', which only a withheld body is not", async () => {
+    expect((await read({ ...pullRequestHead('canopycms/prod/feature'), body: null })).body).toBe('')
+  })
+
+  it.each([
+    ['outside the namespace', pullRequestHead('developer-branch'), {}],
+    ['on the legacy list', pullRequestHead('spring'), { legacyBranches: ['spring'] }],
+    ['the settings branch', pullRequestHead('canopycms-settings-prod'), {}],
+    ['protected, outside the namespace', pullRequestHead('main'), {}],
+    ['in a fork', pullRequestHead('canopycms/prod/feature', 2002), {}],
+    ['in a deleted fork', pullRequestHead('canopycms/prod/feature', null), {}],
+  ] as const)(
+    'withholds the body of one whose head is %s, answering its merge state',
+    async (_label, answer, options) => {
+      expect(await read(answer, options)).toEqual({
+        merged: true,
+        merged_at: '2026-10-29T10:00:00Z',
+        state: 'closed',
+        node_id: 'PR_2',
+        body: null,
+      })
+    },
+  )
+})
+
 describe('branch names', () => {
   const request = (head: string, base = 'main') => ({ head, base, title: 'T', body: 'B' })
 
@@ -692,11 +742,13 @@ describe('the canary sweep', () => {
         create: vi.fn().mockRejectedValue(octokitError),
         get: vi.fn().mockResolvedValue({
           data: {
+            ...pullRequestHead('canopycms/prod/feature'),
             merged: false,
             merged_at: null,
             state: 'open',
             node_id: TOKEN,
             title: `x ${pair}`,
+            body: `y ${pair}`,
           },
         }),
       },

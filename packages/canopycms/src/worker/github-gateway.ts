@@ -150,8 +150,15 @@ export function describeMove(update: Extract<GitHubRefUpdate, { moved: true }>):
 /** The fields of a pull request the worker reads. */
 export type GitHubPullRequest = Pick<
   RestEndpointMethodTypes['pulls']['get']['response']['data'],
-  'merged' | 'merged_at' | 'state' | 'node_id' | 'body'
->
+  'merged' | 'merged_at' | 'state' | 'node_id'
+> & {
+  /**
+   * The pull request's body, `''` when it has none. `null` when the gateway withholds it: the
+   * head is outside its namespace or in another repository, so the body is not the CMS's to read
+   * or rewrite (`LocalGitHubGateway.getPullRequest`).
+   */
+  body: string | null
+}
 
 export type GitHubCreateOrUpdatePullRequest = Omit<
   CreateOrUpdatePullRequestParams,
@@ -1045,19 +1052,28 @@ class LocalGitHubGateway implements GitHubGateway {
     })
   }
 
+  /**
+   * Pull request `number`'s merge state, for any number, and its body only when its head is a
+   * branch of this repository in the namespace itself: neither a legacy branch nor the settings
+   * branch, and never a human's pull request. The number comes from the worker, which a
+   * compromised CMS Lambda can steer; the head is GitHub's record.
+   */
   getPullRequest(number: number, signal?: AbortSignal): Promise<GitHubPullRequest> {
-    return this.credentialed(signal, (reach) => this.pullRequest(reach, number, signal))
-  }
-
-  private async pullRequest(
-    reach: GitHubReach,
-    number: number,
-    signal?: AbortSignal,
-  ): Promise<GitHubPullRequest> {
-    const { data } = await this.api(reach, () =>
-      this.octokit.pulls.get({ ...this.repo, pull_number: number, request: { signal } }),
-    )
-    return data
+    return this.credentialed(signal, async (reach) => {
+      const { data } = await this.api(reach, () =>
+        this.octokit.pulls.get({ ...this.repo, pull_number: number, request: { signal } }),
+      )
+      // By id, as `assertOwnPullRequest` compares; a deleted fork has no repo.
+      const ours =
+        data.head.repo?.id === data.base.repo.id && this.policy.namespaceHolds(data.head.ref)
+      return {
+        merged: data.merged,
+        merged_at: data.merged_at,
+        state: data.state,
+        node_id: data.node_id,
+        body: ours ? (data.body ?? '') : null,
+      }
+    })
   }
 
   /**

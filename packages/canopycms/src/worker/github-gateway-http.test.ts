@@ -825,9 +825,9 @@ describe('operations across the socket', () => {
     expect(gateway.deleteBranch).toHaveBeenCalledWith('f', expect.any(AbortSignal))
   })
 
-  it('carries only the pull request fields the worker reads', async () => {
+  it('carries only the pull request fields the worker reads, and a withheld body as null', async () => {
     const gateway = fakeGateway()
-    // The in-process gateway hands back all of Octokit's `data`.
+    // More than the type holds: the server sends the five fields alone.
     const full = {
       merged: true,
       merged_at: '2026-01-01T00:00:00Z',
