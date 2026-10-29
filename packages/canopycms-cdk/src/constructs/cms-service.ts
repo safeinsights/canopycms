@@ -454,7 +454,16 @@ export function resolveBranchNamespaceProp(
     ['baseBranch', branches.baseBranch],
     ['settingsBranch', branches.settingsBranch],
   ] as const) {
-    if (branch?.startsWith(namespace)) {
+    const sanitize = (name: string) =>
+      name
+        .replace(/[^a-zA-Z0-9._-]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^\.+/, '')
+        .replace(/(?<!\.)\.+$/, '')
+    if (
+      branch !== undefined &&
+      (branch.startsWith(namespace) || sanitize(branch).startsWith(sanitize(namespace)))
+    ) {
       reject(
         `the ${propName} ${JSON.stringify(branch)} is inside it, and the namespace holds only the ` +
           'branches editors create',

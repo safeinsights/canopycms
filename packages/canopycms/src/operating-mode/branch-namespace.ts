@@ -102,13 +102,6 @@ export function resolveBranchNamespace(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): string {
   const fromEnv = env[BRANCH_NAMESPACE_ENV]?.trim()
-  if (fromEnv && config.branchNamespace !== undefined && fromEnv !== config.branchNamespace) {
-    warnOnce(
-      `CanopyCMS: ${BRANCH_NAMESPACE_ENV} (${JSON.stringify(fromEnv)}) differs from ` +
-        `config.branchNamespace (${JSON.stringify(config.branchNamespace)}); using the ` +
-        'environment variable, which infrastructure stamps per stack.',
-    )
-  }
   const [template, source] = fromEnv
     ? [fromEnv, BRANCH_NAMESPACE_ENV]
     : config.branchNamespace !== undefined
@@ -118,5 +111,26 @@ export function resolveBranchNamespace(
     { deploymentName: config.deploymentName },
     modeDefault,
   )
-  return resolveBranchNamespaceTemplate(template, deploymentName, source)
+  const namespace = resolveBranchNamespaceTemplate(template, deploymentName, source)
+  // Compared resolved: infrastructure stamps the namespace, config holds the template.
+  if (fromEnv && config.branchNamespace !== undefined) {
+    let fromConfig: string | null = null
+    try {
+      fromConfig = resolveBranchNamespaceTemplate(
+        config.branchNamespace,
+        deploymentName,
+        'config.branchNamespace',
+      )
+    } catch {
+      // An invalid config template is reported by the warning below, as differing.
+    }
+    if (fromConfig !== namespace) {
+      warnOnce(
+        `CanopyCMS: ${BRANCH_NAMESPACE_ENV} (${JSON.stringify(fromEnv)}) resolves to another ` +
+          `namespace than config.branchNamespace (${JSON.stringify(config.branchNamespace)}); ` +
+          'using the environment variable, which infrastructure stamps per stack.',
+      )
+    }
+  }
+  return namespace
 }

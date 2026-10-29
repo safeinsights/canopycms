@@ -110,7 +110,26 @@ describe('resolveBranchNamespace', () => {
       .map((call) => call.join(' '))
       .filter((line) => line.includes(BRANCH_NAMESPACE_ENV))
     expect(lines).toHaveLength(1)
-    expect(lines[0]).toContain('differs from config.branchNamespace')
+    expect(lines[0]).toContain('resolves to another namespace than config.branchNamespace')
+    warn.mockRestore()
+  })
+
+  it('does not warn when the stamped namespace is what the config template resolves to', async () => {
+    noDeploymentEnv()
+    vi.resetModules()
+    const { resolveBranchNamespace: fresh } = await import('./branch-namespace')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    // Infrastructure stamps the resolved namespace; the shared config holds the template.
+    expect(
+      fresh({ branchNamespace: 'canopycms/{deployment}/', deploymentName: 'docs' }, 'prod', {
+        [BRANCH_NAMESPACE_ENV]: 'canopycms/docs/',
+      }),
+    ).toBe('canopycms/docs/')
+
+    expect(warn.mock.calls.filter((call) => call.join(' ').includes(BRANCH_NAMESPACE_ENV))).toEqual(
+      [],
+    )
     warn.mockRestore()
   })
 

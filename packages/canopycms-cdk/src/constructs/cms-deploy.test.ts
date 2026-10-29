@@ -2738,6 +2738,18 @@ describe('CanopyCmsService: branchNamespace', () => {
   })
 
   it.each([
+    ['the base branch', { baseBranch: 'cms-prod-main' }],
+    ['the settings branch', { settingsBranch: 'cms-prod-settings' }],
+  ])(
+    'refuses a namespace with %s at a workspace directory a branch in it would share',
+    (_label, branches) => {
+      expect(() => synth(false, { branchNamespace: 'cms/{deployment}/', ...branches })).toThrow(
+        /is inside it/,
+      )
+    },
+  )
+
+  it.each([
     ['the base branch', { baseBranch: 'cms' }],
     ['the settings branch', { settingsBranch: 'cms' }],
   ])('refuses a namespace with %s named after part of it', (_label, branches) => {

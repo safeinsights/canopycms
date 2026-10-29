@@ -286,7 +286,13 @@ export class BranchPolicy {
       ['base branch', options.baseBranch],
       ['settings branch', options.settingsBranch],
     ] as const) {
-      if (name?.startsWith(this.namespace)) {
+      // Sanitized too: a workspace directory is the sanitized name, so `cms-prod-main` would share
+      // one with `cms/prod/main`.
+      if (
+        name !== undefined &&
+        (name.startsWith(this.namespace) ||
+          sanitizeBranchName(name).startsWith(sanitizeBranchName(this.namespace)))
+      ) {
         throw new Error(
           `The ${what} ${JSON.stringify(name)} is inside the branch namespace ${JSON.stringify(this.namespace)}, ` +
             'which holds only the branches editors create; choose a namespace it is outside',
@@ -334,7 +340,9 @@ export class BranchPolicy {
     for (const entry of legacy) {
       const problem = entry.startsWith(this.namespace)
         ? `it starts with ${this.namespace}, so it is already in the namespace`
-        : legacyBranchProblem(entry)
+        : this.namespace.startsWith(`${entry}/`)
+          ? `it is a branch named after part of the namespace ${this.namespace}, so git can hold no branch in it`
+          : legacyBranchProblem(entry)
       if (problem !== null) {
         throw new Error(`Invalid legacyBranches entry ${JSON.stringify(entry)}: ${problem}`)
       }

@@ -564,11 +564,33 @@ describe('BranchPolicy: building the namespace', () => {
     expect(
       () =>
         new BranchPolicy({
-          baseBranch: 'canopycms/prod-main',
-          settingsBranch: 'canopycms/prod-settings',
+          // Distinct from every branch in canopycms/prod/ even as workspace directories.
+          baseBranch: 'canopycms/production',
+          settingsBranch: 'canopycms/prodsettings',
         }),
     ).not.toThrow()
   })
+
+  it.each([
+    ['base branch', { baseBranch: 'canopycms-prod-main' }],
+    ['settings branch', { settingsBranch: 'canopycms-prod-settings' }],
+  ])(
+    'refuses a %s whose workspace directory a branch in the namespace would share',
+    (what, options) => {
+      expect(() => new BranchPolicy(options)).toThrow(
+        new RegExp(`The ${what} ".*" is inside the branch namespace`),
+      )
+    },
+  )
+
+  it.each(['canopycms/prod', 'canopycms'])(
+    'refuses a legacy entry %s named after part of the namespace',
+    (entry) => {
+      expect(() => new BranchPolicy({ legacyBranches: [entry] })).toThrow(
+        /is a branch named after part of the namespace/,
+      )
+    },
+  )
 
   it.each([
     ['base branch', { baseBranch: 'canopycms/prod' }],
