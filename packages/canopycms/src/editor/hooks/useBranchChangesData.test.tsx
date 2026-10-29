@@ -212,12 +212,13 @@ describe('useEntryChangeData', () => {
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(client.changes.entry).not.toHaveBeenCalled()
 
-    rerender({ target: { logicalPath: 'content/b', from: 'content/a' } })
+    rerender({ target: { logicalPath: 'content/b', from: 'content/a', id: 'aB3cD4eF5gH6' } })
     await waitFor(() => expect(result.current.data).toEqual(entrySides('After')))
     expect(client.changes.entry).toHaveBeenCalledWith({
       branch: 'feature',
       entryPath: 'content/b',
       from: 'content/a',
+      id: 'aB3cD4eF5gH6',
     })
   })
 

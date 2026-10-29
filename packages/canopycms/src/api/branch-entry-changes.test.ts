@@ -20,7 +20,12 @@ import {
   initTestRepo,
   openBareRepo,
 } from '../test-utils'
-import { unsafeAsBranchName, unsafeAsLogicalPath, unsafeAsSlug } from '../paths/test-utils'
+import {
+  unsafeAsBranchName,
+  unsafeAsContentId,
+  unsafeAsLogicalPath,
+  unsafeAsSlug,
+} from '../paths/test-utils'
 import { mockConsole } from '../test-utils/console-spy'
 import { matchRoute } from '../http/router'
 import { buildCanopyRoutes } from './routes'
@@ -128,7 +133,12 @@ afterEach(async () => {
 })
 
 const createCtx = (
-  options: { rules?: PathPermission[]; git?: (repoPath: string) => GitManager } = {},
+  options: {
+    rules?: PathPermission[]
+    git?: (repoPath: string) => GitManager
+    /** The schema now, for a branch that changed it. */
+    currentSchema?: RootCollectionConfig
+  } = {},
 ): ApiContext => {
   const config = defineCanopyTestConfig({ defaultBranchAccess: 'allow', schema })
   const checkBranchAccess = createCheckBranchAccess('allow')
@@ -155,7 +165,10 @@ const createCtx = (
         options.git?.(repoPath) ??
         new GitManager({ repoPath, baseBranch: opts?.baseBranch ?? 'main', remote: 'origin' }),
     },
-    branchContext: { ...branchContext, flatSchema: flattenSchema(schema, config.contentRoot) },
+    branchContext: {
+      ...branchContext,
+      flatSchema: flattenSchema(options.currentSchema ?? schema, config.contentRoot),
+    },
   })
 }
 
@@ -165,6 +178,7 @@ const entryChange = (
   ctx: ApiContext,
   entryPath: string,
   from?: string,
+  id?: string,
 ): Promise<BranchEntryChangeResponse> =>
   readBranchEntryChange.handler(
     ctx,
@@ -173,11 +187,12 @@ const entryChange = (
       branch: unsafeAsBranchName('feature'),
       entryPath: unsafeAsLogicalPath(entryPath),
       ...(from && { from: unsafeAsLogicalPath(from) }),
+      ...(id && { id: unsafeAsContentId(id) }),
     },
   )
 
-const ok = async (ctx: ApiContext, entryPath: string, from?: string) => {
-  const res = await entryChange(ctx, entryPath, from)
+const ok = async (ctx: ApiContext, entryPath: string, from?: string, id?: string) => {
+  const res = await entryChange(ctx, entryPath, from, id)
   expect(res).toMatchObject({ ok: true, status: 200 })
   return res.data!
 }
@@ -269,6 +284,65 @@ describe('GET /:branch/changes/...entryPath', () => {
     expect(await entryChange(createCtx(), 'content/blog/missing')).toEqual(notComparable)
   })
 
+  describe('judges the path it reads, not the path as sent', () => {
+    const helloOnly: PathPermission[] = [
+      { path: unsafeAsPermissionPath('content/blog/hello'), read: { allowedGroups: ['insiders'] } },
+    ]
+
+    it.each(['content/blog/HELLO', 'content/blog//hello', 'content//blog/hello', 'blog/Hello'])(
+      'answers 404 for %s, which reads a restricted entry',
+      async (sent) => {
+        await write(files.hello, JSON.stringify({ ...helloPost, title: 'Hello again' }))
+        expect(await entryChange(createCtx({ rules: helloOnly }), sent)).toEqual(notComparable)
+        // Without the rule the same spelling reads that entry.
+        expect((await ok(createCtx(), sent)).after?.data.title).toBe('Hello again')
+      },
+    )
+
+    it('answers 404 for a `from` spelled differently from a restricted base path', async () => {
+      const moved = `content/${BLOG}/post.hello-again.${ID.hello}.json`
+      await fs.rename(path.join(branchRoot, files.hello), path.join(branchRoot, moved))
+      const ctx = createCtx({ rules: helloOnly })
+      expect(await entryChange(ctx, 'content/blog/hello-again', 'content/blog/HELLO')).toEqual(
+        notComparable,
+      )
+      expect(await entryChange(ctx, 'content/blog/hello-again', 'content//blog/hello')).toEqual(
+        notComparable,
+      )
+    })
+  })
+
+  it('pins both sides to `id`: a deleted entry whose slug was reused reads as deleted', async () => {
+    await fs.rm(path.join(branchRoot, files.old))
+    await write(`content/${BLOG}/post.old-news.${ID.fresh}.json`, JSON.stringify({ title: 'New' }))
+    const deleted = await ok(createCtx(), 'content/blog/old-news', undefined, ID.old)
+    expect(deleted.after).toBeNull()
+    expect(deleted.before?.data.title).toBe('Old news')
+    const recreated = await ok(createCtx(), 'content/blog/old-news', undefined, ID.fresh)
+    expect(recreated.before).toBeNull()
+    expect(recreated.after?.data.title).toBe('New')
+  })
+
+  it('keys a base side the schema no longer places with the saved side’s fields', async () => {
+    // The blog collection is renamed to "posts" in the schema and on disk; the entry is unchanged.
+    const renamed: RootCollectionConfig = {
+      ...schema,
+      collections: schema.collections?.map((c) =>
+        c.name === 'blog' ? { ...c, name: 'posts', path: 'posts' } : c,
+      ),
+    }
+    await clone.raw(['mv', `content/${BLOG}`, 'content/posts.Zz9Yy8Xx7Ww6'])
+    const data = await ok(
+      createCtx({ currentSchema: renamed }),
+      'content/posts/hello',
+      'content/blog/hello',
+    )
+    const keys = (side: Record<string, unknown> | undefined) =>
+      (side?.sections as Array<{ _key?: string }>).map((s) => s._key)
+    expect(keys(data.before?.data)).toEqual(keys(data.after?.data))
+    expect(keys(data.after?.data).every((key) => typeof key === 'string')).toBe(true)
+  })
+
   it('answers 413 when either side is over 1 MB, reading neither', async () => {
     const big = JSON.stringify({ title: 'x'.repeat(1024 * 1024) })
     await write(files.hello, big)
@@ -289,7 +363,7 @@ describe('GET /:branch/changes/...entryPath', () => {
     expect(await entryChange(createCtx(), 'content/blog/hello')).toEqual({
       ok: false,
       status: 422,
-      error: "This entry can't be compared.",
+      error: "This entry couldn't be read on one side, so it can't be compared.",
     })
   })
 
@@ -318,13 +392,22 @@ describe('GET /:branch/changes/...entryPath', () => {
       entryType: 'note',
       data: { title: 'Memo' },
       body: 'First line\nSecond line\n',
+      bodyFieldName: 'content',
     })
     expect(data.after).toEqual({
       format: 'md',
       entryType: 'note',
       data: { title: 'Memo' },
       body: 'First line\nSecond line, edited\n',
+      bodyFieldName: 'content',
     })
+  })
+
+  it('keeps a frontmatter field named like the body field as data, as ContentStore.read does', async () => {
+    await write(files.memo, '---\ntitle: Memo\ncontent: In the frontmatter\n---\n')
+    const data = await ok(createCtx(), 'content/notes/memo')
+    expect(data.before?.body).toBe('First line\nSecond line\n')
+    expect(data.after).toMatchObject({ data: { content: 'In the frontmatter' }, body: '' })
   })
 
   it('reads a YAML entry', async () => {

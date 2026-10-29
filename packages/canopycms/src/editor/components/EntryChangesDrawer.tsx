@@ -54,6 +54,8 @@ export interface EntryChangesSubject {
   logicalPath: string
   /** A moved entry's path at the base. */
   from?: string
+  /** The entry's content id, which both sides must carry. */
+  contentId?: string
   status: BranchChangeEntry['status']
   title: string
   /** The entry type's fields; empty when the editor has none for it. */

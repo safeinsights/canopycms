@@ -218,6 +218,15 @@ describe('computeEntryDiff', () => {
     ])
   })
 
+  it('puts each side’s body under that side’s own body field', () => {
+    const before = { ...side({ title: 'Hello' }, 'Old body'), bodyFieldName: 'notes' }
+    const after = { ...side({ title: 'Hello' }, 'New body'), bodyFieldName: 'content' }
+    expect(summary(computeEntryDiff({ fields, before, after }).changes)).toEqual([
+      ['added', 'Body'],
+      ['removed', 'Other fields › Notes'],
+    ])
+  })
+
   it('files fields the schema doesn’t describe under "Other fields", humanised', () => {
     const before = side({ ...base, legacyNote: 'old' })
     const after = side({ ...base, legacyNote: 'new', extraFlag: true })

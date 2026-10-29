@@ -92,14 +92,14 @@ const CONTEXT_LINES = 2
 const OTHER_FIELDS_LABEL = 'Other fields'
 const LONG_TEXT_TYPES = new Set(['markdown', 'mdx', 'code'])
 
-/** A side's data with an md/mdx body under the schema's body field, as the form holds it. */
+/** A side's data with an md/mdx body under that side's body field, as the form holds it. */
 const formValue = (
   fields: readonly FieldConfig[],
   side: EntryChangeSide | null,
 ): Record<string, unknown> | undefined => {
   if (!side) return undefined
   if (side.body === undefined) return side.data
-  return { ...side.data, [findBodyFieldName(fields)]: side.body }
+  return { ...side.data, [side.bodyFieldName ?? findBodyFieldName(fields)]: side.body }
 }
 
 const isEmpty = (value: unknown): boolean =>

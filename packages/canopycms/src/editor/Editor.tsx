@@ -1674,7 +1674,11 @@ const EditorContent: React.FC<EditorProps> = ({
     apiClient,
     branchNameState,
     changesOpen && changesSubject
-      ? { logicalPath: changesSubject.logicalPath, from: changesSubject.from }
+      ? {
+          logicalPath: changesSubject.logicalPath,
+          from: changesSubject.from,
+          id: changesSubject.contentId,
+        }
       : undefined,
   )
   const openEntryChange =
@@ -1707,6 +1711,7 @@ const EditorContent: React.FC<EditorProps> = ({
       EMPTY_SCHEMA
     setChangesSubject({
       logicalPath: entry.logicalPath,
+      contentId: entry.contentId,
       status: entry.status,
       title,
       fields,

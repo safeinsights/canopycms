@@ -193,7 +193,7 @@ describe('Show changes', () => {
         '1 field changed since main',
       ),
     )
-    expect(requested(fetch, '/main/changes/content/posts/hello')).toBe(true)
+    expect(requested(fetch, `/main/changes/content/posts/hello?id=${hello.contentId}`)).toBe(true)
     expect(within(dialog).queryByTestId('entry-changes-unsaved')).toBeNull()
 
     await userEvent.keyboard('{Escape}')

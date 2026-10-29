@@ -23,6 +23,8 @@ export interface EntryChangeTarget {
   logicalPath: string
   /** A moved entry's path at the base. */
   from?: string
+  /** The entry's content id, so a slug another entry reuses isn't read as this one. */
+  id?: string
 }
 
 /**
@@ -30,7 +32,9 @@ export interface EntryChangeTarget {
  * holds, so a reload of the list finds every entry key of its branch by prefix.
  */
 const entryChangeKey = (branch: string, target: EntryChangeTarget): string =>
-  `${KEY_PREFIX}${branch}:${target.logicalPath}${target.from ? `?from=${target.from}` : ''}`
+  `${KEY_PREFIX}${branch}:${target.logicalPath}${target.from ? `?from=${target.from}` : ''}${
+    target.id ? `#${target.id}` : ''
+  }`
 
 /**
  * Why a branch's changes could not be loaded: the branch moved under the read (a 409, nothing
@@ -80,6 +84,7 @@ async function fetchEntryChange(
     branch,
     entryPath: target.logicalPath,
     ...(target.from && { from: target.from }),
+    ...(target.id && { id: target.id }),
   })
   if (result.ok && result.data && 'before' in result.data && 'after' in result.data) {
     return result.data
