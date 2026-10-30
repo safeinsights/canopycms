@@ -85,6 +85,7 @@ function fakeGateway(): FakeGateway {
       state: 'open' as const,
       node_id: 'PR_1',
       body: 'B',
+      mergeable_state: 'behind',
     })),
     createOrUpdatePullRequest: vi.fn(async () => ({
       number: 1,
@@ -799,6 +800,7 @@ describe('operations across the socket', () => {
       state: 'open',
       node_id: 'PR_1',
       body: 'B',
+      mergeable_state: 'behind',
     })
     expect(
       await client.createOrUpdatePullRequest({

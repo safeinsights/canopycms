@@ -16,6 +16,7 @@ import { simpleGit, type SimpleGit } from 'simple-git'
 import { BranchMetadataFileManager } from '../branch-metadata'
 import { listTasks } from '../task-queue/cms-task-queue'
 import { initTestRepo, mockConsole } from '../test-utils'
+import { useLocalGitHubGateway } from '../test-utils/worker-gateway'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import type { BranchMetadata } from '../types'
 import type { BranchPolicyDescription } from './branch-policy'
@@ -65,6 +66,8 @@ interface Setup {
   dropGitHubBranch(): Promise<void>
   /** A second long-lived branch from base's tip. */
   createBranchOnBase(name: string): Promise<void>
+  /** `name` gains a commit. */
+  advanceReleaseBranch(name: string, files: Record<string, string>): Promise<void>
   /** `name` gains a commit, then is merged into GitHub's copy of the branch. */
   updateBranchFromGitHub(name: string, files: Record<string, string>): Promise<string>
   /** Replace GitHub's copy with a history that drops what it held. */
@@ -205,7 +208,7 @@ async function createSetup(workspace: string): Promise<Setup> {
     async createBranchOnBase(name) {
       await seed.raw(['push', 'origin', `${BASE}:refs/heads/${name}`])
     },
-    async updateBranchFromGitHub(name, files) {
+    async advanceReleaseBranch(name, files) {
       await seed.fetch(['origin', name])
       await seed.raw(['checkout', '-q', '-B', name, 'FETCH_HEAD'])
       await write(seedPath, files)
@@ -213,6 +216,9 @@ async function createSetup(workspace: string): Promise<Setup> {
       await seed.commit('commit on the other base')
       await seed.raw(['push', 'origin', `${name}:${name}`])
       await seed.raw(['checkout', '-q', BASE])
+    },
+    async updateBranchFromGitHub(name, files) {
+      await setup.advanceReleaseBranch(name, files)
       await outsideOnBranch()
       await outside.fetch(['origin', name])
       await outside.raw(['merge', '--no-edit', 'FETCH_HEAD'])
@@ -290,6 +296,179 @@ const queued = async (s: Setup, action: string) =>
   (await listTasks(path.join(s.workspace, '.tasks'), 'pending'))
     .filter((t) => t.action === action)
     .map((t) => t.payload.branch)
+
+/** A worker whose gateway answers each pull request read with `mergeableState`. */
+function workerWithPullRequest(s: Setup, mergeableState: string) {
+  const worker = makeWorker(s)
+  useLocalGitHubGateway(worker, {
+    octokit: {
+      pulls: {
+        get: async () => ({
+          data: {
+            merged: false,
+            merged_at: null,
+            state: 'open',
+            node_id: 'PR_7',
+            body: '',
+            mergeable_state: mergeableState,
+            head: { ref: BRANCH, repo: { id: 1 } },
+            base: { ref: BASE, repo: { id: 1 } },
+          },
+        }),
+      },
+    } as never,
+  })
+  return worker
+}
+
+describe('an open pull request GitHub reports behind', () => {
+  let tmpDir: string
+  let s: Setup
+  const submitted = { status: 'submitted', pullRequestNumber: 7 } as const
+
+  beforeEach(async () => {
+    mockConsole()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-pr-behind-'))
+    s = await createSetup(tmpDir)
+    await s.commit({ 'editor.txt': 'v1\n' })
+    await s.push()
+    await writeMeta(s, submitted)
+    await s.advanceBase({ 'base2.txt': 'moved\n' })
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('merges the base and queues the push, leaving the branch in review', async () => {
+    const before = await s.head()
+
+    const summary = await cycle(s, workerWithPullRequest(s, 'behind'))
+
+    expect(summary.rebased).toEqual([BRANCH])
+    expect(await s.file('base2.txt')).toBe('moved\n')
+    expect(await s.remoteSha(`refs/heads/${BRANCH}`)).toBe(await s.head())
+    expect(await queued(s, 'push-branch')).toEqual([BRANCH])
+    expect((await readMeta(s))?.status).toBe('submitted')
+    const parents = (await s.clone.raw(['rev-list', '--parents', '-n1', 'HEAD'])).trim().split(' ')
+    expect(parents[1]).toBe(before)
+  })
+
+  it('keeps an approval and the PR body, as the diff is what was reviewed', async () => {
+    const review = {
+      state: 'approved',
+      by: { userId: 'r' },
+      at: '2026-10-01T00:00:00.000Z',
+    } as const
+    await writeMeta(s, { ...submitted, status: 'approved', review })
+
+    await cycle(s, workerWithPullRequest(s, 'behind'))
+
+    const meta = await readMeta(s)
+    expect(await s.file('base2.txt')).toBe('moved\n')
+    expect(meta?.status).toBe('approved')
+    expect(meta?.review?.state).toBe('approved')
+    expect(await queued(s, 'sync-pr-comments')).toEqual([])
+  })
+
+  it('does nothing when GitHub reports anything else, so no adopter gets commits unasked', async () => {
+    const before = await s.head()
+    for (const state of ['clean', 'blocked', 'unstable', 'dirty', 'unknown', 'draft']) {
+      await cycle(s, workerWithPullRequest(s, state))
+    }
+    expect(await s.head()).toBe(before)
+    expect(await queued(s, 'push-branch')).toEqual([])
+  })
+
+  it('leaves a conflict as it is, with nothing recorded as kept', async () => {
+    await s.advanceBase({ 'editor.txt': 'base edit\n' })
+    const before = await s.head()
+
+    const summary = await cycle(s, workerWithPullRequest(s, 'behind'))
+
+    expect(await s.head()).toBe(before)
+    expect(await s.remoteSha(`refs/heads/${BRANCH}`)).toBe(before)
+    expect(summary.failed).toEqual([])
+    expect((await readMeta(s))?.conflictFiles).toBeUndefined()
+    expect((await readMeta(s))?.keptOverGitHub).toBeUndefined()
+  })
+
+  it('waits while a push is on its way, as GitHub is not at the clone', async () => {
+    await s.commit({ 'editor.txt': 'v2\n' }, 'resubmitted')
+    await s.clone.raw(['push', 'origin', `${BRANCH}:${BRANCH}`])
+
+    await cycle(s, workerWithPullRequest(s, 'behind'))
+
+    expect(await s.file('base2.txt')).toBeNull()
+  })
+
+  it('takes nothing in while the base branch is held for an editor deploy', async () => {
+    const worker = workerWithPullRequest(s, 'behind')
+    const report = (
+      worker as unknown as { ensureStatusReport(): { baseHold?: unknown } }
+    ).ensureStatusReport()
+    report.baseHold = { missingSchemas: ['post'], since: '2026-10-01T00:00:00.000Z' }
+
+    await cycle(s, worker)
+
+    expect(await s.file('base2.txt')).toBeNull()
+  })
+
+  it('leaves a branch the gateway would refuse', async () => {
+    await cycle(s, workerWithPullRequest(s, 'behind'), {
+      policy: {
+        configured: [],
+        githubDefault: null,
+        namespace: 'canopycms/prod/',
+        legacy: [],
+        settingsBranch: null,
+      },
+    })
+    expect(await s.file('base2.txt')).toBeNull()
+  })
+
+  it('leaves a branch whose tree holds work, which a merge could not protect', async () => {
+    await s.save({ 'stray.txt': 'stray\n' })
+    await cycle(s, workerWithPullRequest(s, 'behind'))
+    expect(await s.file('base2.txt')).toBeNull()
+  })
+
+  it('does nothing when the clone already has the base', async () => {
+    await s.clone.fetch(['origin', BASE])
+    await s.clone.raw(['merge', '--no-edit', 'FETCH_HEAD'])
+    await s.push()
+    const before = await s.head()
+
+    await cycle(s, workerWithPullRequest(s, 'behind'))
+
+    expect(await s.head()).toBe(before)
+  })
+
+  it('merges the base the branch forked from, not the default', async () => {
+    await s.createBranchOnBase('release')
+    await s.advanceReleaseBranch('release', { 'release.txt': 'moved\n' })
+    await writeMeta(s, { ...submitted, baseBranch: 'release' })
+
+    await cycle(s, workerWithPullRequest(s, 'behind'))
+
+    expect(await s.file('release.txt')).toBe('moved\n')
+  })
+
+  it('leaves a branch to the next cycle while a content write holds its lock', async () => {
+    const worker = workerWithPullRequest(s, 'behind')
+    await s.commitOnGitHub({ 'fix.txt': 'fix\n' })
+    await cycle(s, worker)
+    const before = await s.head()
+    const release = await tryAcquireContentWriteLock(s.branchPath, () => {})
+    try {
+      const summary = await cycle(s, worker)
+      expect(summary.skippedLocked).toEqual([BRANCH])
+      expect(await s.head()).toBe(before)
+    } finally {
+      await release()
+    }
+  })
+})
 
 describe('bringing commits made on GitHub into a branch clone', () => {
   let tmpDir: string

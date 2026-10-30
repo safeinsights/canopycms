@@ -268,7 +268,7 @@ describe('CmsWorker.pollMergeState()', () => {
     const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
     await expect(
       internals.pollMergeState('feature-error', branchPath, metaFile),
-    ).resolves.toBeUndefined()
+    ).resolves.toBeNull()
 
     const meta = await readBranchMeta(branchPath)
     expect(meta?.pullRequestState).toBe('open')
@@ -326,7 +326,7 @@ describe('CmsWorker.pollMergeState()', () => {
     const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
     await expect(
       internals.pollMergeState('feature-merge-save-fails', branchPath, metaFile),
-    ).resolves.toBeUndefined()
+    ).resolves.toBeNull()
     saveSpy.mockRestore()
 
     const meta = await readBranchMeta(branchPath)

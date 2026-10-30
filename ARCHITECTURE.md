@@ -550,6 +550,8 @@ Between the local publish and the GitHub push landing, such a branch reads as di
 
 Update branch or a maintainer's fix puts commits on a PR branch that its clone never sees, so each cycle, in every status but archived, `worker/github-commits.ts` brings them in ahead of the rebase. A clone behind GitHub fast-forwards. One with commits of its own gets a real merge, never a force, keeping the branch's version of a file git cannot merge and listing that file in the PR body. A conflict that moves or joins paths is left for a developer, as are commits that change `.canopy-meta/`. A tip rewritten on GitHub is not merged, since that could restore what someone removed: a rebase failure stays recorded, and pushes stop, until a developer merges the commit it names back in. A commit that is neither a merge nor on the base sends an approved branch back to review.
 
+A submitted or approved PR that GitHub reports `behind`, which needs the up-to-date rule, gets the base merged in, keeping any approval. A conflict stops it.
+
 A branch holding a merge commit, or commits touching `.canopy-meta/`, catches up by merging the base rather than rebasing: `git rebase` drops merge commits, undoing what they settled, and replays commits over live files.
 
 ### Conflict Resolution Strategy

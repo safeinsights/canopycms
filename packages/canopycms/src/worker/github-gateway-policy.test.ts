@@ -512,6 +512,14 @@ describe('reading a pull request by number', () => {
     return gateway({ ...options, octokit: octokit as unknown as Octokit }).getPullRequest(2)
   }
 
+  it('answers what stands between a pull request and a merge', async () => {
+    const pr = await read({
+      ...pullRequestHead('canopycms/prod/feature'),
+      mergeable_state: 'behind',
+    })
+    expect(pr.mergeable_state).toBe('behind')
+  })
+
   it('answers the body of one whose head is in the namespace, in this repository', async () => {
     expect(await read(pullRequestHead('canopycms/prod/feature'))).toEqual({
       merged: true,

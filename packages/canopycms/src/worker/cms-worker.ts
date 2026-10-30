@@ -12,6 +12,7 @@ import {
   createLocalGitHubGateway,
   type GitHubGateway,
   type LocalGitHubGatewayOptions,
+  type GitHubPullRequest,
 } from './github-gateway'
 import type { BranchMetadataFile } from '../branch-metadata'
 import { GITHUB_TRACKING_REF_PREFIX, ensureRemoteGitConfig, failOnSignalExit } from '../git-manager'
@@ -1692,7 +1693,7 @@ export class CmsWorker {
     branchDir: string,
     branchPath: string,
     metaFile: BranchMetadataFile | null,
-  ): Promise<void> {
+  ): Promise<GitHubPullRequest | null> {
     return pollMergeState(this.ctx(), branchDir, branchPath, metaFile)
   }
 
