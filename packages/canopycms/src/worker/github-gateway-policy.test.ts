@@ -528,6 +528,7 @@ describe('reading a pull request by number', () => {
       state: 'closed',
       node_id: 'PR_2',
       body: 'Notes',
+      baseRef: 'main',
     })
   })
 
@@ -576,6 +577,7 @@ describe('reading a pull request by number', () => {
         state: 'closed',
         node_id: 'PR_2',
         body: null,
+        baseRef: 'main',
       })
     },
   )
@@ -610,6 +612,7 @@ describe('reading a pull request by number', () => {
         state: 'closed',
         node_id: 'PR_2',
         body,
+        baseRef: 'main',
       })
     },
   )
@@ -643,6 +646,7 @@ describe('a pull request read after the default branch read expired', () => {
       state: 'closed',
       node_id: 'PR_2',
       body: null,
+      baseRef: 'main',
     })
     expect(octokit.repos.get).toHaveBeenCalledTimes(2)
   })
