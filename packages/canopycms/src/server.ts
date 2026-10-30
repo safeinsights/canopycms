@@ -3,7 +3,18 @@
 // versions and module-resolution modes and adopters would otherwise get no hover text. Follow the
 // pattern for new top-level public re-exports (see DEVELOPING.md).
 
-export * from './content-reader'
+/**
+ * Server-side reader for one branch's content, with the user, branch and permission checks a
+ * `CanopyContext.read` applies. Prefer the context; use this where no context exists.
+ */
+export {
+  createContentReader,
+  type ContentReader,
+  type ContentReaderOptions,
+  type ContentReadMeta,
+  type ContentReadResult,
+  type ReadContentInput,
+} from './content-reader'
 export * from './services'
 export * from './build-mode'
 export * from './context'

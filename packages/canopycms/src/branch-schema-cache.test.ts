@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
-import { BranchSchemaCache } from './branch-schema-cache'
+import { BranchSchemaCache, type ResolvedBranchSchema } from './branch-schema-cache'
 import type { FieldConfig } from './config'
 import type { OperatingMode } from './operating-mode'
 import type {
@@ -925,6 +925,48 @@ describe('BranchSchemaCache', () => {
       const result = await registry.getSchema(branchRoot, entrySchemaRegistry)
       expect(result.schema.label).toBe('Corrected by the eager re-resolve')
       expect(registry.resolveCount).toBe(1)
+    })
+
+    // A host renaming its own snapshot in between this writer's rename and its memo seed must
+    // win, as it would for a re-read; seeding from a stat of the final path would lose it.
+    it('serves a snapshot another host renames in just after this writer', async () => {
+      const registry = new CountingBranchSchemaCache('prod')
+      const realRename = fs.rename.bind(fs)
+      const rename = vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+        await realRename(from, to)
+        if (to === cachePath) {
+          rename.mockRestore()
+          await writeForeignSnapshot('Renamed in by another host', null)
+        }
+      })
+      try {
+        await registry.getSchema(branchRoot, entrySchemaRegistry)
+      } finally {
+        rename.mockRestore()
+      }
+
+      const result = await registry.getSchema(branchRoot, entrySchemaRegistry)
+      expect(result.schema.label).toBe('Renamed in by another host')
+      expect(registry.resolveCount).toBe(1)
+    })
+
+    it('serves the writing process what every other process parses', async () => {
+      const unbounded = {
+        pageSchema: [
+          { name: 'count', type: 'number', label: 'Count', max: Number.POSITIVE_INFINITY },
+        ] as unknown as FieldConfig[],
+      }
+      const maxOf = (result: ResolvedBranchSchema) =>
+        (result.schema.entries?.[0].schema[0] as { max?: unknown }).max
+
+      const writer = new BranchSchemaCache('prod')
+      await writer.getSchema(branchRoot, unbounded)
+      const fromWriter = await writer.getSchema(branchRoot, unbounded)
+      const fromOther = await new BranchSchemaCache('prod').getSchema(branchRoot, unbounded)
+
+      expect(maxOf(fromOther)).toBeNull()
+      expect(maxOf(fromWriter)).toBeNull()
+      expect(fromWriter.schema.entries?.[0].schema).not.toBe(unbounded.pageSchema)
     })
 
     it('still walks mtimes in dev once the entry is memoized', async () => {

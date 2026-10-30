@@ -417,7 +417,9 @@ export class BranchSchemaCache {
         // rename so a transient error leaves no stray `.tmp` beside the cache.
         // The memo is seeded from the temp file's own identity, which the
         // rename keeps: stat'ing cachePath afterwards could see a concurrent
-        // writer's file and pair it with this entry.
+        // writer's file and pair it with this entry. It holds the parsed body,
+        // as every reader does, not the resolver's objects, which alias the
+        // registry and keep values JSON drops.
         await fs.mkdir(cacheDir, { recursive: true })
         const tmpPath = path.join(cacheDir, `schema-cache.tmp.${Date.now()}.${Math.random()}.json`)
         const body = JSON.stringify(newCache)
@@ -432,7 +434,7 @@ export class BranchSchemaCache {
         }
         this.snapshots.set(cachePath, {
           identity,
-          entry: newCache,
+          entry: JSON.parse(body) as BranchSchemaCacheEntry,
           bytes: Buffer.byteLength(body),
         })
       }
