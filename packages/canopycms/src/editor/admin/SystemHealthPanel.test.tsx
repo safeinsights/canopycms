@@ -1301,6 +1301,34 @@ describe('SystemHealthPanel', () => {
       expect(screen.queryByTestId('rebase-failure-feature-c')).toBeNull() // archived: never looked at
     })
 
+    it('marks a branch in review whose pull request is held, and not one back in editing', async () => {
+      const held = (dirName: string, status: 'submitted' | 'editing'): BranchHealthEntry => ({
+        dirName,
+        kind: 'healthy',
+        branch: {
+          name: dirName,
+          status,
+          access: {},
+          createdBy: 'user-1',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-02T00:00:00.000Z',
+          pullRequestHold: { kind: 'conflicts' },
+        },
+      })
+      mockClient.admin.branchHealth.mockResolvedValue(
+        mockSuccess({
+          entries: [held('held-review', 'submitted'), held('held-editing', 'editing')],
+          generatedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      )
+      renderPanel()
+      await userEvent.click(screen.getByText('Branches'))
+      await waitFor(() => expect(screen.getByText('held-review')).toBeTruthy())
+
+      expect(screen.getByTestId('held-pr-held-review').textContent).toBe('Held')
+      expect(screen.queryByTestId('held-pr-held-editing')).toBeNull()
+    })
+
     it('reaches the rebase failure by keyboard: a named focusable icon described by the message', async () => {
       renderPanel()
       await userEvent.click(screen.getByText('Branches'))

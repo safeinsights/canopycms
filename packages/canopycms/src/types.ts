@@ -36,6 +36,12 @@ export interface BranchReview {
   at: string
 }
 
+/** What keeps a pull request behind its base. `base` is the branch GitHub says it targets now. */
+export type PullRequestHold = { kind: 'conflicts' } | { kind: 'retargeted'; base: string }
+
+/** What the editor tells a branch's viewers is stuck, and needs a person. */
+export type BranchHold = PullRequestHold | { kind: 'rewritten' }
+
 export interface BranchMetadata {
   name: string
   title?: string
@@ -125,6 +131,11 @@ export interface BranchMetadata {
    * it is known to have held, or GitHub no longer has the branch.
    */
   rewrittenOnGitHub?: string
+  /**
+   * What GitHub reports keeps this branch's open pull request from being updated from its base,
+   * as of the worker's last read while the branch was in review. Read only while it still is.
+   */
+  pullRequestHold?: PullRequestHold
   /**
    * Short, sanitized reason the last GitHub sync failed, set alongside
    * `syncStatus: 'sync-failed'` by the worker's updateBranchMetadataOnFailure or a

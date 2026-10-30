@@ -104,6 +104,7 @@ import type { BranchRegistry } from '../branch-registry'
 import type { CanopyConfig } from '../config'
 import type { GitHubService } from '../github-service'
 import { createCheckBranchAccess } from '../authorization/branch'
+import type { BranchMetadata } from '../types'
 import type { ApiContext, ApiRequest } from './types'
 
 /**
@@ -1912,6 +1913,30 @@ describe('updateBranchAccess api', () => {
 })
 
 describe('toBranchListItem', () => {
+  const listed = (branch: Partial<BranchMetadata>) =>
+    toBranchListItem(
+      baseCtx.services.config,
+      { ...createMockBranchContext({ branchName: 'x', createdBy: 'u' }).branch, ...branch },
+      { type: 'authenticated', userId: 'v', groups: [] },
+    )
+
+  it('says what holds a pull request while the branch is in review', () => {
+    const pullRequestHold = { kind: 'retargeted', base: 'release' } as const
+    expect(listed({ status: 'approved', pullRequestHold }).hold).toEqual(pullRequestHold)
+    expect(listed({ status: 'submitted', pullRequestHold }).hold).toEqual(pullRequestHold)
+    expect(listed({ status: 'submitted', pullRequestHold })).not.toHaveProperty('pullRequestHold')
+  })
+
+  it('drops a hold left from before the branch came back to editing', () => {
+    const item = listed({ status: 'editing', pullRequestHold: { kind: 'conflicts' } })
+    expect(item).not.toHaveProperty('hold')
+  })
+
+  it('says a branch was rewritten on GitHub in any status, without the commit', () => {
+    const item = listed({ status: 'editing', rewrittenOnGitHub: 'a'.repeat(40) })
+    expect(item.hold).toEqual({ kind: 'rewritten' })
+  })
+
   it('leaves out what only the worker reads, including file paths a viewer may not see', () => {
     const item = toBranchListItem(
       { mode: 'dev' } as unknown as Parameters<typeof toBranchListItem>[0],

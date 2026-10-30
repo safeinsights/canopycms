@@ -9,7 +9,7 @@ import {
 } from '../branch-metadata'
 import { invalidateBranchContentCaches } from '../content-index-generation'
 import { isSettingsBranchName, sanitizeBranchName } from '../paths/branch-name'
-import type { PullRequestState } from '../types'
+import type { PullRequestHold, PullRequestState } from '../types'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import {
   holdProvisionedWorkspace,
@@ -826,6 +826,48 @@ async function bringInCommitsForBranchInReview(
 }
 
 /**
+ * What GitHub's answer says keeps this pull request behind its base and needs a person. A conflict
+ * is GitHub's `dirty`; a pull request `behind` a base other than the branch's own is one this worker
+ * stands down from. Pure.
+ */
+function pullRequestHoldOf(
+  pullRequest: GitHubPullRequest,
+  recordedBase: string,
+): PullRequestHold | undefined {
+  if (pullRequest.state !== 'open') return undefined
+  if (pullRequest.mergeable_state === 'dirty') return { kind: 'conflicts' }
+  const { mergeable_state: mergeState, baseRef } = pullRequest
+  if (mergeState === 'behind' && baseRef !== undefined && baseRef !== recordedBase) {
+    return { kind: 'retargeted', base: baseRef }
+  }
+  return undefined
+}
+
+/**
+ * Record {@link pullRequestHoldOf} for the branch card, when it changed: every save regenerates the
+ * branch registry. Best-effort: a failure leaves the card as it was until the next cycle.
+ */
+async function recordPullRequestHold(
+  ctx: RebaseContext,
+  branchDir: string,
+  branchPath: string,
+  metaFile: BranchMetadataFile,
+  pullRequest: GitHubPullRequest,
+): Promise<void> {
+  const { name, baseBranch, pullRequestHold } = metaFile.branch
+  const hold = pullRequestHoldOf(pullRequest, baseBranch ?? ctx.baseBranch)
+  if (JSON.stringify(hold) === JSON.stringify(pullRequestHold)) return
+  try {
+    await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).saveIf(
+      { branch: { pullRequestHold: hold } },
+      (current) => current?.branch.name === name,
+    )
+  } catch (err) {
+    workerLogWarn(`  ${branchDir}: could not record the PR's state: ${getErrorMessage(err)}`)
+  }
+}
+
+/**
  * Merge the base into a submitted or approved branch whose open pull request GitHub reports
  * `behind`, so it can merge. It keeps the approval and the PR body: the pull request's diff is what
  * was reviewed. Only from a clone, `remote.git` and GitHub all at one commit, since anything else
@@ -998,6 +1040,9 @@ async function rebaseOneBranch(
         gitHub,
       )
       const pullRequest = await pollMergeState(ctx, branchDir, branchPath, metaFile)
+      if (pullRequest !== null) {
+        await recordPullRequestHold(ctx, branchDir, branchPath, metaFile, pullRequest)
+      }
       // GitHub reports `behind` only where up-to-date branches are required, so a repository
       // that doesn't require them gets no commits or CI runs from this.
       if (

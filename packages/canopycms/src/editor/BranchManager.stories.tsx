@@ -101,6 +101,56 @@ export const WithPullRequests: Story = {
 }
 
 /** A branch CanopyCMS provisioned shows its owner as "CanopyCMS bot", with no lookup. */
+/** Branches stuck on something a person has to do, each saying what and how. */
+export const HeldPullRequests: Story = {
+  args: {
+    ...WithPullRequests.args,
+    branches: [
+      {
+        name: 'feature/conflicting',
+        status: 'submitted',
+        updatedAt: ago(DAY),
+        createdBy: 'bob',
+        access: { users: ['bob'] },
+        pullRequestUrl: 'https://github.com/owner/repo/pull/123',
+        pullRequestNumber: 123,
+        hold: { kind: 'conflicts' },
+      },
+      {
+        name: 'feature/retargeted',
+        status: 'approved',
+        updatedAt: ago(DAY),
+        createdBy: 'bob',
+        access: { users: ['bob'] },
+        pullRequestUrl: 'https://github.com/owner/repo/pull/124',
+        pullRequestNumber: 124,
+        hold: { kind: 'retargeted', base: 'release/2026' },
+      },
+      {
+        name: 'feature/force-pushed',
+        status: 'editing',
+        updatedAt: ago(DAY),
+        createdBy: 'bob',
+        access: { users: ['bob'] },
+        pullRequestUrl: 'https://github.com/owner/repo/pull/125',
+        pullRequestNumber: 125,
+        hold: { kind: 'rewritten' },
+        submitBlocked: false,
+      },
+      {
+        name: 'feature/sync-failed',
+        status: 'submitted',
+        updatedAt: ago(DAY),
+        createdBy: 'bob',
+        access: { users: ['bob'] },
+        pullRequestUrl: 'https://github.com/owner/repo/pull/126',
+        pullRequestNumber: 126,
+        syncStatus: 'sync-failed',
+      },
+    ],
+  },
+}
+
 export const WithBotOwner: Story = {
   args: {
     ...Default.args,

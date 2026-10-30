@@ -416,6 +416,39 @@ describe('an open pull request GitHub reports behind', () => {
     expect((await readMeta(s))?.rebaseFailure).toBeUndefined()
   })
 
+  describe('what the branch card is told', () => {
+    it('records a conflict GitHub reports, and clears it once GitHub stops', async () => {
+      await cycle(s, workerWithPullRequest(s, 'dirty'))
+      expect((await readMeta(s))?.pullRequestHold).toEqual({ kind: 'conflicts' })
+
+      await cycle(s, workerWithPullRequest(s, 'clean'))
+      expect((await readMeta(s))?.pullRequestHold).toBeUndefined()
+    })
+
+    it('records a pull request retargeted while it is behind, naming the base', async () => {
+      await cycle(s, workerWithPullRequest(s, 'behind', { base: 'release' }))
+      expect((await readMeta(s))?.pullRequestHold).toEqual({ kind: 'retargeted', base: 'release' })
+    })
+
+    it('records nothing for a pull request retargeted but not behind', async () => {
+      await cycle(s, workerWithPullRequest(s, 'clean', { base: 'release' }))
+      expect((await readMeta(s))?.pullRequestHold).toBeUndefined()
+    })
+
+    it('records nothing for a closed pull request', async () => {
+      await cycle(s, workerWithPullRequest(s, 'dirty', { state: 'closed' }))
+      expect((await readMeta(s))?.pullRequestHold).toBeUndefined()
+    })
+
+    it('writes once, not every cycle a hold stands', async () => {
+      const worker = workerWithPullRequest(s, 'dirty')
+      await cycle(s, worker)
+      const version = (await BranchMetadataFileManager.loadOnly(s.branchPath))?.version
+      await cycle(s, worker)
+      expect((await BranchMetadataFileManager.loadOnly(s.branchPath))?.version).toBe(version)
+    })
+  })
+
   it('leaves a conflict as it is, with nothing recorded as kept', async () => {
     await s.advanceBase({ 'editor.txt': 'base edit\n' })
     const before = await s.head()

@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
 
-import type { BranchAccessControl, BranchContext, BranchMetadata } from '../types'
+import type { BranchAccessControl, BranchContext, BranchHold, BranchMetadata } from '../types'
 import { BranchWorkspaceManager, type ProvisionOutcome } from '../branch-workspace'
 import {
   BranchDirOccupiedError,
@@ -53,8 +53,15 @@ const log = createDebugLogger({ prefix: 'BranchAPI' })
  */
 export interface BranchListItem extends Omit<
   BranchMetadata,
-  'review' | 'keptOverGitHub' | 'lastGitHubTip' | 'rewrittenOnGitHub' | 'rebaseFailure'
+  | 'review'
+  | 'keptOverGitHub'
+  | 'lastGitHubTip'
+  | 'rewrittenOnGitHub'
+  | 'rebaseFailure'
+  | 'pullRequestHold'
 > {
+  /** What is stuck and needs a person, for the branch card. Names no file. */
+  hold?: BranchHold
   /**
    * What pull request links carry for this branch, which `?branch=` and the `/:branch` segment
    * accept beside `name` (branch-param.ts's `shortNameOf`): `name` less the namespace for a branch
@@ -281,10 +288,19 @@ export const toBranchListItem = (
     lastGitHubTip: _tip,
     rewrittenOnGitHub: _rewritten,
     rebaseFailure: _failure,
+    pullRequestHold,
     ...listed
   } = branch
+  const inReview = branch.status === 'submitted' || branch.status === 'approved'
+  const hold: BranchHold | undefined =
+    branch.rewrittenOnGitHub !== undefined
+      ? { kind: 'rewritten' }
+      : inReview
+        ? pullRequestHold
+        : undefined
   return {
     ...listed,
+    ...(hold ? { hold } : {}),
     shortName: shortNameOf(config, branch.name),
     ...accessForViewer(branch.access ?? {}, viewer),
     isProtected: protection.isProtected,

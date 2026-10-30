@@ -8,7 +8,7 @@ import { openConfirm } from '../utils/confirm-modal'
 import { focusReturnProps } from '../utils/focus-return'
 import { EDITOR_ACTIONS } from '../copy'
 import { notifications } from '@mantine/notifications'
-import type { ConflictStatus, PullRequestState, SyncStatus } from '../../types'
+import type { BranchHold, ConflictStatus, PullRequestState, SyncStatus } from '../../types'
 import type { OperatingMode } from '../../operating-mode'
 import type { CommentThread } from '../../comment-store'
 import type { BranchListItem } from '../../api/branch'
@@ -404,6 +404,8 @@ interface BranchSummary {
   conflictStatus?: ConflictStatus
   /** ContentIds of entries where --theirs was applied during rebase; cleared on clean rebase */
   conflictFiles?: string[]
+  /** What is stuck and needs a person (api/branch.ts). */
+  hold?: BranchHold
   commentCount: number
   isProtected: boolean
   readOnly: boolean
@@ -649,6 +651,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         syncFailureReason: b.syncFailureReason,
         conflictStatus: b.conflictStatus,
         conflictFiles: b.conflictFiles,
+        hold: b.hold,
         commentCount: unresolvedCount,
         // Fail CLOSED (`?? true`): these flags are optional on the wire (see
         // BranchListItem's doc comment in api/branch.ts) so a version-skewed

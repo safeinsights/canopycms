@@ -2,8 +2,17 @@ import { describe, expect, it } from 'vitest'
 import {
   BRANCH_STATUS_PRESENTATION,
   PROTECTED_BRANCH_PRESENTATION,
+  branchHoldMessage,
   branchStatusPresentation,
 } from './branch-status'
+
+describe('branchHoldMessage', () => {
+  it('shows a base from GitHub as exactly what it is', () => {
+    expect(branchHoldMessage({ kind: 'retargeted', base: 'evil\u202Ename' })).toContain(
+      'evil\\u{202e}name',
+    )
+  })
+})
 
 describe('branchStatusPresentation', () => {
   it.each([

@@ -55,7 +55,7 @@ import type {
   UnpublishableBranchesReport,
 } from '../../types'
 import { escapeForLog } from '../../utils/escape-text'
-import { branchStatusPresentation } from '../branch-status'
+import { branchHoldMessage, branchStatusPresentation } from '../branch-status'
 
 // ============================================================================
 // Small pure helpers
@@ -1242,6 +1242,8 @@ function BranchHealthRow({
     // rebased, but commits from GitHub are still brought into it. An exclusion, not a list of
     // statuses, so a status added later still shows its failures by default.
     const showRebaseFailure = b.status !== 'archived' && !!b.rebaseFailure
+    const heldPullRequest =
+      b.status === 'submitted' || b.status === 'approved' ? b.pullRequestHold : undefined
     const canMarkMerged =
       (b.status === 'submitted' || b.status === 'approved') && !!b.pullRequestNumber
 
@@ -1308,6 +1310,13 @@ function BranchHealthRow({
               <Badge color="orange" variant="light">
                 {b.conflictFiles.length} conflict{b.conflictFiles.length === 1 ? '' : 's'}
               </Badge>
+            )}
+            {heldPullRequest && (
+              <TooltipDetail detail={branchHoldMessage(heldPullRequest)}>
+                <Badge color="yellow" variant="light" data-testid={`held-pr-${entry.dirName}`}>
+                  Held
+                </Badge>
+              </TooltipDetail>
             )}
             {showRebaseFailure && b.rebaseFailure && (
               <TooltipDetail

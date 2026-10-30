@@ -19,7 +19,7 @@ import {
 } from '@mantine/core'
 import { IconDots, IconExternalLink } from '@tabler/icons-react'
 import type { OperatingMode } from '../operating-mode'
-import type { ConflictStatus, PullRequestState, SyncStatus } from '../types'
+import type { BranchHold, ConflictStatus, PullRequestState, SyncStatus } from '../types'
 import type { CommentThread } from '../comment-store'
 import type { UserSearchResult } from '../auth/types'
 import { BranchComments } from './comments/BranchComments'
@@ -32,7 +32,11 @@ import { parseCreatedBranchName } from '../paths/validation'
 import { DestructiveMenuItem } from './components/DestructiveMenuItem'
 import { ReasonedMenuItem } from './components/ReasonedMenuItem'
 import { RelativeTime } from './components/RelativeTime'
-import { branchStatusPresentation } from './branch-status'
+import {
+  SYNC_FAILED_IN_REVIEW_NOTE,
+  branchHoldMessage,
+  branchStatusPresentation,
+} from './branch-status'
 import { branchAddress, displayBranchName } from './branch-names'
 import type { CreateRefusal } from './hooks/create-branch-request'
 import { CLOSED_PULL_REQUEST_REASON, EDITOR_ACTIONS } from './copy'
@@ -67,6 +71,8 @@ export interface BranchSummary {
   conflictStatus?: ConflictStatus
   /** ContentIds of entries where --theirs was applied during rebase; cleared on clean rebase */
   conflictFiles?: string[]
+  /** What is stuck and needs a person (api/branch.ts). */
+  hold?: BranchHold
   commentCount?: number
   isProtected?: boolean
   readOnly?: boolean
@@ -393,6 +399,7 @@ const BranchCard: React.FC<BranchCardProps> = ({
   const menuLabel = `More actions for ${displayBranchName(b)}`
   const [menuOpen, setMenuOpen] = useState(false)
 
+  const inReview = b.status === 'submitted' || b.status === 'approved'
   return (
     <Paper
       withBorder
@@ -466,8 +473,13 @@ const BranchCard: React.FC<BranchCardProps> = ({
                 </Badge>
               </Tooltip>
             )}
+            {b.hold && (
+              <Badge color="yellow" variant="light" data-testid={`held-badge-${b.name}`}>
+                Held
+              </Badge>
+            )}
             {b.conflictStatus === 'conflicts-detected' && (
-              <Tooltip label="This branch's version was kept for conflicting entries during a rebase — review the flagged entries.">
+              <Tooltip label="This branch's version was kept for conflicting entries. Review the flagged entries.">
                 <Badge color="orange" variant="light" data-testid={`conflicts-badge-${b.name}`}>
                   Conflicts
                   {b.conflictFiles?.length ? ` (${b.conflictFiles.length})` : ''}
@@ -475,15 +487,21 @@ const BranchCard: React.FC<BranchCardProps> = ({
               </Tooltip>
             )}
           </Group>
-          {b.syncStatus === 'sync-failed' && b.syncFailureReason && (
+          {b.hold && (
+            <Text size="xs" maw={480} data-testid={`branch-hold-${b.name}`}>
+              {branchHoldMessage(b.hold)}
+            </Text>
+          )}
+          {b.syncStatus === 'sync-failed' && (b.syncFailureReason || inReview) && (
             <Text
               size="xs"
               c="var(--canopy-danger-text)"
               maw={480}
               data-testid={`sync-failed-reason-${b.name}`}
             >
-              {b.syncFailureReason}
+              {b.syncFailureReason ?? 'GitHub sync failed.'}
               {b.status === 'submitted' && ' Withdraw it from review to make changes.'}
+              {inReview && ` ${SYNC_FAILED_IN_REVIEW_NOTE}`}
             </Text>
           )}
           <Group gap="xs" align="center">
