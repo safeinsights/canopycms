@@ -21,7 +21,7 @@ import {
   publishPlainToLocalRemote,
   recordConflicts,
 } from './branch-merge'
-import { MAX_REPORTED_PATHS, TRACKED_CANOPY_STATE_FIX, untrackInIndex } from './canopy-state'
+import { MAX_REPORTED_PATHS, TRACKED_CANOPY_STATE_FIX } from './canopy-state'
 import { enqueueGitHubPush, readPublishedSha } from './history-rewrite'
 import { workerLog, workerLogWarn } from './log'
 import { assertNoIncomingSubmodules, fetchFromRemoteGit } from './shared-repo-git'
@@ -91,11 +91,7 @@ const MAX_LISTED_PATH_LENGTH = 200
 
 /** A branch this deployment put on GitHub. Any other GitHub branch of that name is not its own. */
 function isPublished({ branch }: BranchMetadataFile): boolean {
-  return (
-    branch.lastGitHubTip !== undefined ||
-    branch.pushedToGitHubAt !== undefined ||
-    branch.pullRequestNumber !== undefined
-  )
+  return branch.pushedToGitHubAt !== undefined || branch.pullRequestNumber !== undefined
 }
 
 /** Bring GitHub's commits into the clone. Throws what git throws; the caller records it. */
@@ -170,7 +166,10 @@ export async function bringInGitHubCommits(
     } else if (onlyB > 0) {
       // The worker's own rewrite with its push still on the way: GitHub stands at the commit it
       // replaced, and history-rewrite.ts completes that hop.
-      if (branch.historyRewrittenFrom === tip) return { kind: 'in-step' }
+      if (branch.historyRewrittenFrom === tip) {
+        if (rewriteResolved) await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
+        return { kind: 'in-step' }
+      }
       if (dirty) return { kind: 'wait' }
       // Nothing it made could reach GitHub, and each base move would make another.
       if (gatewayPolicy && !publishesBranch(gatewayPolicy, branchRef)) return { kind: 'in-step' }
@@ -226,7 +225,9 @@ async function rewrittenFrom(
   head: string,
 ): Promise<string | null> {
   const { lastGitHubTip, historyRewrittenFrom } = metaFile.branch
-  const known = [lastGitHubTip, historyRewrittenFrom].filter(
+  // The marker first: what is named here must be a commit GitHub really held, and a rewrite's
+  // stamp may not have reached it yet.
+  const known = [historyRewrittenFrom, lastGitHubTip].filter(
     (sha): sha is string => sha !== undefined && COMMIT_ID.test(sha),
   )
   if (known.length === 0 || (await contains(git, tip, head))) return null
@@ -275,10 +276,10 @@ function listPaths(paths: readonly string[]): string {
 }
 
 /**
- * What stops `to` entering this clone, or null, with any canopycms state it deletes untracked
- * first, so the deletion cannot reach the live files. `.git/info/exclude` hides that directory, and
- * git overwrites an ignored file without asking, so a commit that changes it would replace the
- * live branch.json and comments.
+ * What stops `to` entering this clone, or null. `.git/info/exclude` hides canopycms's own state, and
+ * git overwrites an ignored file without asking, so a commit that changes it would replace the live
+ * branch.json and comments. A deletion counts: taken in, it would delete the live file, and
+ * untracking it first only defers that to the next rebase, which replays the commit.
  */
 async function refuseIncoming(
   { git, branchPath }: GitHubCommitsArgs,
@@ -312,7 +313,14 @@ async function refuseIncoming(
         `(${listPaths(changed)}). Nothing was brought in. To fix, ${TRACKED_CANOPY_STATE_FIX}.`,
     }
   }
-  await untrackInIndex(git, deleted)
+  if (deleted.length > 0) {
+    return {
+      kind: 'blocked',
+      reason:
+        `Commits for this branch stop tracking canopycms state this clone still tracks ` +
+        `(${listPaths(deleted)}). Nothing was brought in; the clone needs manual repair.`,
+    }
+  }
   return null
 }
 
@@ -379,18 +387,20 @@ export async function mergeIntoBranch(
     await returnToReview(ctx, args)
   }
 
+  const published = await readPublishedSha(ctx, branchRef)
+  const unpublishable =
+    `This deployment's repository holds commits for ${branchRef} that neither this clone nor ` +
+    `GitHub has, so a merge of the two cannot be published. Nothing was changed. Compare the ` +
+    `copies with a developer before submitting again.`
+  if (published !== null && !(await contains(git, sha, published))) {
+    return { kind: 'blocked', reason: unpublishable }
+  }
   // Recorded before the merge is visible anywhere: the next cycle only fast-forwards to it, and
   // the conflicts cannot be read back from the merge.
   if (conflicted.length > 0) await recordKeptVersions(ctx, args, conflicted, fromGitHub)
-  if ((await readPublishedSha(ctx, branchRef)) !== null) {
+  if (published !== null) {
     if (!(await publishPlainToLocalRemote(ctx, branchPath, branchRef, sha))) {
-      return {
-        kind: 'blocked',
-        reason:
-          `This deployment's repository holds commits for ${branchRef} that neither this clone ` +
-          `nor GitHub has, so a merge of the two cannot be published. Nothing was changed. ` +
-          `Compare the copies with a developer before submitting again.`,
-      }
+      return { kind: 'blocked', reason: unpublishable }
     }
     await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
   }
@@ -520,7 +530,9 @@ async function recordGitHubTip(
   { branchPath, branchRef, metaFile, gitHub }: GitHubCommitsArgs,
   tip: string,
 ): Promise<void> {
-  if (gitHub?.tips.get(branchRef) !== tip || metaFile.branch.lastGitHubTip === tip) return
+  const { lastGitHubTip, rewrittenOnGitHub } = metaFile.branch
+  if (gitHub?.tips.get(branchRef) !== tip) return
+  if (lastGitHubTip === tip && rewrittenOnGitHub === undefined) return
   await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).saveIf(
     { branch: { lastGitHubTip: tip, rewrittenOnGitHub: undefined } },
     (current) => current?.branch.name === branchRef,

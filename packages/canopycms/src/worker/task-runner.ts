@@ -646,7 +646,7 @@ export async function updateBranchMetadata(
   result: Record<string, unknown>,
 ): Promise<void> {
   const branch = metadataBranchOf(task)
-  if (!branch || result.superseded === true) return
+  if (!branch) return
 
   const branchPath = ctx.branchWorkspacePath(branch)
   try {
@@ -657,6 +657,18 @@ export async function updateBranchMetadata(
 
   try {
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
+    // A superseded submit synced nothing. A branch taken back to editing waits on no other task,
+    // and would read as syncing until its next submit.
+    if (result.superseded === true) {
+      await meta.saveIf(
+        { branch: { syncStatus: 'synced' } },
+        (existing) =>
+          existing?.branch.name === branch &&
+          existing.branch.status === 'editing' &&
+          existing.branch.syncStatus === 'pending-sync',
+      )
+      return
+    }
     const saved = await meta.update((existing) => {
       if (existing?.branch.name !== branch) return null
       const updates: Record<string, unknown> = {

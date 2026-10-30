@@ -1072,10 +1072,6 @@ async function rebaseOneBranch(
       // replaying a branch commit that touched it writes historical bytes over
       // the live file, and the abort that follows deletes it. So the index and
       // the bytes stay untouched, and the wedge is recorded for an operator.
-      // Read again if it has any: the commits brought in above can have stopped tracking it.
-      if (trackedCanopyStateChanges(dirtyCheck).length > 0) {
-        dirtyCheck = await branchGit.status([...SHARED_REPO_STATUS_ARGS])
-      }
       const trackedState = trackedCanopyStateChanges(dirtyCheck)
       if (trackedState.length > 0) {
         await fetchFromRemoteGit(branchGit, ctx.remoteGitPath, ctx.baseBranch)

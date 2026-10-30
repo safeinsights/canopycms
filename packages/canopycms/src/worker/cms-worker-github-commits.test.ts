@@ -664,7 +664,8 @@ describe('bringing commits made on GitHub into a branch clone', () => {
 
       await cycle(s)
 
-      expect((await readMeta(s))?.rewrittenOnGitHub).toBeDefined()
+      // The commit GitHub held, not the rewrite's, which never reached it.
+      expect((await readMeta(s))?.rewrittenOnGitHub).toBe(replaced)
     })
   })
 
@@ -696,6 +697,32 @@ describe('bringing commits made on GitHub into a branch clone', () => {
         expect(meta?.rewrittenOnGitHub).toBeUndefined()
       })
     }
+
+    it('clears when GitHub is back exactly at the last tip seen', async () => {
+      await writeMeta(s, { rewrittenOnGitHub: flag, lastGitHubTip: await s.head() })
+
+      await cycle(s)
+
+      expect((await readMeta(s))?.rewrittenOnGitHub).toBeUndefined()
+    })
+
+    it('sends a pending rewrite on from a branch in review when GitHub is back at its commit', async () => {
+      const replaced = await s.head()
+      await s.clone.commit('amended', [], { '--amend': null, '--allow-empty': null })
+      await s.clone.raw(['push', '--force', 'origin', `${BRANCH}:${BRANCH}`])
+      await writeMeta(s, {
+        status: 'submitted',
+        historyRewrittenFrom: replaced,
+        lastGitHubTip: await s.head(),
+        rewrittenOnGitHub: replaced,
+        syncStatus: 'sync-failed',
+      })
+
+      await cycle(s)
+
+      expect((await readMeta(s))?.rewrittenOnGitHub).toBeUndefined()
+      expect(await queued(s, 'push-branch')).toEqual([BRANCH])
+    })
 
     it('queues the push a failed one stranded, once the rewrite is resolved', async () => {
       const held = await s.head()
@@ -839,24 +866,25 @@ describe('bringing commits made on GitHub into a branch clone', () => {
     })
   })
 
-  it('takes in a commit that stops tracking canopycms state, leaving the live file there', async () => {
+  it('refuses a commit that stops tracking canopycms state, which would delete the live file', async () => {
     await writeMeta(s, {})
     await s.clone.raw(['add', '-f', '.canopy-meta/branch.json'])
     await s.clone.commit('tracked by mistake')
     await s.push()
     await writeMeta(s, {})
+    const before = await s.head()
     await s.outside.fetch(['--force', 'origin', `refs/heads/${BRANCH}:refs/x/${BRANCH}`])
     await s.outside.raw(['checkout', '-q', '-B', 'work', `refs/x/${BRANCH}`])
     await s.outside.raw(['rm', '-q', '--cached', '.canopy-meta/branch.json'])
     await s.outside.commit('stop tracking it')
     await s.outside.raw(['push', 'origin', `HEAD:refs/remotes/github/${BRANCH}`])
     await s.outside.raw(['push', 'origin', `HEAD:refs/heads/${BRANCH}`])
-    const tip = (await s.outside.revparse(['HEAD'])).trim()
+    await s.advanceBase({ 'base2.txt': 'moved\n' })
 
     const summary = await cycle(s)
 
-    expect(summary.failed).toEqual([])
-    expect(await s.head()).toBe(tip)
+    expect(await s.head()).toBe(before)
+    expect(summary.failed[0]?.error).toContain('manual repair')
     expect((await readMeta(s))?.name).toBe(BRANCH)
   })
 
@@ -918,11 +946,14 @@ describe('bringing commits made on GitHub into a branch clone', () => {
     await s.outside.raw(['checkout', '-q', '-B', 'work', `refs/x/${BRANCH}`])
     await s.outside.commit('stray', [], { '--allow-empty': null })
     await s.outside.raw(['push', 'origin', `HEAD:refs/heads/${BRANCH}`])
+    await s.commit({ [ENTRY]: '{"title":"editor"}\n' }, 'editor entry')
+    await s.moveGitHubOnly({ [ENTRY]: '{"title":"github"}\n' })
 
     const summary = await cycle(s)
 
     expect(summary.failed.map((f) => f.branch)).toEqual([BRANCH])
     expect((await readMeta(s))?.rebaseFailure?.message).toContain('cannot be published')
+    expect((await readMeta(s))?.keptOverGitHub).toBeUndefined()
   })
 
   it('leaves a same-named GitHub branch alone when this deployment never published the branch', async () => {
@@ -945,6 +976,16 @@ describe('bringing commits made on GitHub into a branch clone', () => {
 
     expect(await s.head()).toBe(before)
     expect((await readMeta(s))?.lastGitHubTip).toBeUndefined()
+  })
+
+  it('treats a rewrite of a branch never pushed to GitHub as unpublished still', async () => {
+    await writeMeta(s, { pushedToGitHubAt: undefined, lastGitHubTip: 'a'.repeat(40) })
+    await s.commitOnGitHub({ 'theirs.txt': 'theirs\n' })
+
+    await cycle(s)
+
+    expect(await s.file('theirs.txt')).toBeNull()
+    expect((await readMeta(s))?.rewrittenOnGitHub).toBeUndefined()
   })
 
   it('keeps the warning about commits this clone lacks while their cause stands', async () => {

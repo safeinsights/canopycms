@@ -1643,6 +1643,13 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
       expect(meta?.branch.syncStatus).toBe('sync-failed')
     })
 
+    it('stops a branch withdrawn since from reading as syncing', async () => {
+      await retrySubmit({ status: 'editing', submittedAt, syncStatus: 'pending-sync' })
+
+      const meta = await BranchMetadataFileManager.loadOnly(dir())
+      expect(meta?.branch.syncStatus).toBe('synced')
+    })
+
     it('does nothing once a newer submit has replaced it', async () => {
       await retrySubmit({ status: 'submitted', submittedAt: '2026-10-02T00:00:00.000Z' })
 
