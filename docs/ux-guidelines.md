@@ -24,6 +24,9 @@ One word per idea, everywhere. New UI takes the verbs from `EDITOR_ACTIONS` in
 | **Clear**                 | Resetting an optional object field to unset                    | Remove                                      |
 | **Delete**                | Destroying a stored entry, collection, branch or group         | Remove                                      |
 | **Discard changes**       | Throwing away unsaved edits                                    | Discard drafts, Revert                      |
+| **Unsaved**               | Not yet saved                                                  | Changed, Dirty                              |
+| **Changed**               | Different from the base branch                                 | Modified, Diff                              |
+| **Show changes**          | Opening an entry's diff against the base                       | Diff, Compare                               |
 | **entry**, **collection** | A content item, and the folder that holds entries              | file, page, item; folder                    |
 | **file**                  | An item in the media library                                   | asset, media item                           |
 | **Content**               | The panel of collections and entries                           | All entries                                 |
@@ -40,19 +43,19 @@ from `packages/canopycms/src/editor/branch-lock.ts`.
   ("Delete entry"), never "OK" or "Yes"; a form's confirm may add its noun ("Create branch").
 - **`…`, the single character,** marks an in-progress state ("Saving…") or a command that
   asks for more input ("Change URL…"). None on a command that acts at once or only opens a
-  confirm or a menu ("Delete branch", "Add section"); never three ASCII dots.
+  confirm or a menu; never three ASCII dots.
 - **One primary action per card, by role**: on the open branch's card, a reviewer of someone
   else's submission sees "Approve" and "Request changes" (the latter alone once approved), and
-  anyone else its workflow action; another branch in review shows them "Review"; others
-  show "Open".
+  anyone else its workflow action; another in review shows them "Review"; others, "Open".
 - **Dismissing a dialog** that mixes staged and immediate changes: "Discard changes" while edits
   are staged, "Close" after an immediate save, otherwise "Cancel".
 - **Quote a named control**: the "Tasks" tab.
 - **No "successfully"**: "Branch created".
 - **Human labels, never internal names**: "Page sections › Hero › Heading", never
-  `blocks[0].title`. An unlabelled schema name is humanised, as `entryTypeLabel`
-  (`packages/canopycms/src/editor/editor-utils.ts`) does.
-- **Developer diagnostics** go behind a "Details" disclosure or are shown to admins only.
+  `blocks[0].title`. `entryTypeLabel`
+  (`packages/canopycms/src/editor/editor-utils.ts`) humanises an unlabelled schema name.
+- **Branches by short name**, except in System health.
+- **Developer diagnostics** go behind a "Details" disclosure or to admins only.
 - **Dates** are relative, with the absolute date in a tooltip
   (`packages/canopycms/src/editor/relative-time.ts`).
 - **Plurals agree**: "1 member", "2 members".
@@ -189,18 +192,19 @@ field (`comments/form-comments.tsx`), reaches comments instead.
 ## Colour and contrast
 
 Colour carries meaning: green success, blue info, yellow warning, red error. A 409 conflict is
-yellow: nothing is lost yet. State is never shown by colour alone. Text, including on controls
-and status badges, is at least 4.5:1, or 3:1 for large text; icons and control borders at least
-3:1. Text and backgrounds use scheme-aware tokens (`--mantine-color-text`, `light-dark(…)`),
-never a fixed shade outside the theme (`gray.0`, `dark.7`, `bg="white"`). The theme
+yellow: nothing is lost yet; a refused name is a red field error. State is never shown by colour
+alone. Text, on controls and badges too, is at least 4.5:1, or 3:1 for large text; icons and
+control borders at least 3:1. Text and backgrounds use scheme-aware tokens
+(`--mantine-color-text`, `light-dark(…)`), never a fixed shade outside the theme (`gray.0`,
+`bg="white"`). The theme
 (`packages/canopycms/src/editor/theme.tsx`) sets these, measured on every surface, menu hover
 included:
 
 - `--mantine-color-dimmed`, the only dimmed colour. Dark dimmed text also differs in size or
   style (italic, `--canopy-dimmed-font-style`).
 - `--mantine-color-placeholder`, at least 4.5:1, and at least 1.7:1 from the text colour.
-- `--canopy-danger-text`, for all destructive and error text, menu items included: `red.9` in
-  light mode and `red.3` in dark.
+- `--canopy-danger-text` (`red.9` light, `red.3` dark), for all destructive and error text,
+  menu items included.
 - `--canopy-input-border` (3:1), for inputs and the borders and tracks of Checkbox, Radio and
   Switch; `--canopy-surface-subtle` and `--canopy-surface-muted`.
 - `--canopy-focus-ring` (3:1 on its surface for any brand) for focus rings, focused borders and
@@ -209,9 +213,9 @@ included:
 Pass a plain colour; the theme brings its text and light variant to 4.5:1, at which dark mode's
 light status badges look alike. Success text is the default colour beside a green icon. Count badges put text colour on a tinted
 background.
-A light yellow `Alert`'s title, icon and close button take the text colour. Filled
-destructive buttons are `red.8`; filled orange buttons are `orange.6` with black text. Nothing else but the
-primary is filled: other badges, icons and indicators take their colour's light variant.
+A light yellow `Alert`'s title, icon and close button take the text colour. Filled destructive
+buttons are `red.8`, filled orange ones `orange.6` with black text. Only the primary is otherwise
+filled: other badges, icons and indicators take their colour's light variant.
 
 ## People
 

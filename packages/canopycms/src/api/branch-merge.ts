@@ -69,7 +69,7 @@ const markAsMergedHandler = async (
 
   // Update branch status to 'archived'
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
-  await meta.save({ branch: buildMergedBranchUpdate(branchName) })
+  await meta.save({ branch: buildMergedBranchUpdate() })
 
   // Optionally delete remote branch (disabled by default for safety)
   // if (ctx.services.githubService && req.body?.deleteRemoteBranch) {
@@ -88,7 +88,7 @@ const markAsMergedHandler = async (
     status: 200,
     data: {
       branch: {
-        name: branchName,
+        name: branchContext.branch.name,
         status: 'archived',
       },
     },

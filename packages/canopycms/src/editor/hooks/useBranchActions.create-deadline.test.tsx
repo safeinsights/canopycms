@@ -10,7 +10,11 @@ import { notifications } from '@mantine/notifications'
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import { CanopyApiClient } from '../../api/client'
 import { ApiTimeoutError } from '../../api/request-deadline'
-import { CREATE_BRANCH_DEADLINE_MS, CREATE_TIMED_OUT_MESSAGE } from './create-branch-request'
+import {
+  CREATE_BRANCH_DEADLINE_MS,
+  CREATE_TIMED_OUT_MESSAGE,
+  type CreateRefusal,
+} from './create-branch-request'
 import { useBranchActions } from './useBranchActions'
 import {
   createApiClientWrapper,
@@ -29,7 +33,8 @@ vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
 vi.mock('@mantine/modals', () => ({ modals: { openConfirmModal: vi.fn() } }))
 
 const listedBranch = {
-  name: 'feature-x',
+  name: 'canopycms/local/feature-x',
+  shortName: 'feature-x',
   status: 'editing' as const,
   access: {},
   createdBy: 'user1',
@@ -73,11 +78,11 @@ describe('useBranchActions create past the deadline', () => {
     )
   }
 
-  async function createAfterDeadline(): Promise<boolean | undefined> {
+  async function createAfterDeadline(): Promise<boolean | CreateRefusal | undefined> {
     const { result } = renderHook(() => useBranchActions(options), {
       wrapper: createApiClientWrapper(mockClient),
     })
-    let created: boolean | undefined
+    let created: boolean | CreateRefusal | undefined
     await act(async () => {
       const pending = result.current.handleCreateBranch({ name: 'feature/x' })
       await vi.advanceTimersByTimeAsync(CREATE_BRANCH_DEADLINE_MS)
@@ -96,11 +101,11 @@ describe('useBranchActions create past the deadline', () => {
 
     expect(await createAfterDeadline()).toBe(true)
     expect(options.onBranchCreated).toHaveBeenCalledWith(listedBranch)
-    expect(options.setBranchName).toHaveBeenCalledWith('feature-x')
-    expect(options.onBranchSwitch).toHaveBeenCalledWith('feature-x')
+    expect(options.setBranchName).toHaveBeenCalledWith('canopycms/local/feature-x')
+    expect(options.onBranchSwitch).toHaveBeenCalledWith('canopycms/local/feature-x')
   })
 
-  it("stays put and reports a conflict when the listed branch is another user's", async () => {
+  it("stays put and refuses the name when the listed branch is another user's", async () => {
     stallUntilDeadline()
     mockClient.branches.list.mockResolvedValue({
       ok: true,
@@ -108,11 +113,10 @@ describe('useBranchActions create past the deadline', () => {
       data: { branches: [{ ...listedBranch, createdBy: 'someone-else' }], users: [] },
     })
 
-    expect(await createAfterDeadline()).toBe(false)
-    expect(notifications.show).toHaveBeenCalledWith({
-      message: 'A branch named "feature-x" already exists',
-      color: 'red',
+    expect(await createAfterDeadline()).toEqual({
+      refusal: 'A branch named “feature-x” already exists',
     })
+    expect(notifications.show).not.toHaveBeenCalled()
     expect(options.onBranchCreated).not.toHaveBeenCalled()
     expect(options.setBranchName).not.toHaveBeenCalled()
     expect(options.onBranchSwitch).not.toHaveBeenCalled()
@@ -156,6 +160,6 @@ describe('useBranchActions create past the deadline', () => {
 
     expect(await createAfterDeadline()).toBe(true)
     expect(mockClient.branches.list).toHaveBeenCalledTimes(1)
-    expect(options.setBranchName).toHaveBeenCalledWith('feature-x')
+    expect(options.setBranchName).toHaveBeenCalledWith('canopycms/local/feature-x')
   })
 })

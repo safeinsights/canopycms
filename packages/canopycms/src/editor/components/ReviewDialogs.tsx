@@ -11,8 +11,8 @@ const NOTE_ANNOUNCE_FROM = REQUEST_CHANGES_NOTE_MAX_LENGTH - 100
 /** What the Approve dialog says; the pull request clause needs a pull request to be true. */
 export function approveMessage(branchName: string, hasPullRequest: boolean): string {
   return hasPullRequest
-    ? `Approve "${branchName}"? Its pull request stays open on GitHub for someone with access to merge it.`
-    : `Approve "${branchName}"? It stays locked until it is withdrawn or changes are requested.`
+    ? `Approve “${branchName}”? Its pull request stays open on GitHub for someone with access to merge it.`
+    : `Approve “${branchName}”? It stays locked until it is withdrawn or changes are requested.`
 }
 
 /** The Request changes dialog's body: what happens, and an optional note for the editor. */
@@ -35,7 +35,7 @@ export function RequestChangesForm({
   return (
     <Stack gap="sm">
       <Text size="sm">
-        {`Send "${branchName}" back to its editor? It goes back to editing${hasPullRequest ? ', and its pull request becomes a draft' : ''}.`}
+        {`Send “${branchName}” back to its editor? It goes back to editing${hasPullRequest ? ', and its pull request becomes a draft' : ''}.`}
       </Text>
       <Stack gap={4}>
         <Textarea

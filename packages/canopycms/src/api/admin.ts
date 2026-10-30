@@ -19,9 +19,9 @@ import {
   requeueFailedTask,
 } from '../task-queue/cms-task-queue'
 import { getTaskQueueDir } from '../task-queue/task-queue-config'
-import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
+import { readWorkerStatus } from '../task-queue/worker-status'
 import type { BuildIdentity, WorkerStatusReport } from '../types'
-import type { OperatingMode } from '../operating-mode'
+import { operatingStrategy, type OperatingMode } from '../operating-mode'
 import type { SchemaIssue } from '../schema/types'
 import { defineEndpoint } from './route-builder'
 import { getErrorMessage, isNotFoundError, redactCredentials } from '../utils/error'
@@ -89,30 +89,6 @@ async function classifyWorkerLiveness(taskDir: string): Promise<WorkerLiveness> 
     state: lockAgeMs < LIVENESS_THRESHOLD_MS ? 'alive' : 'stale',
     lockMtime: stat.mtime.toISOString(),
     lockAgeMs,
-  }
-}
-
-/** Read + parse worker-status.json (written by the worker daemon, PR-W1). */
-async function readWorkerStatus(
-  taskDir: string,
-): Promise<{ workerStatus: WorkerStatusReport | null; statusReadError?: string }> {
-  const statusPath = path.join(taskDir, WORKER_STATUS_FILE)
-  let content: string
-  try {
-    content = await fs.readFile(statusPath, 'utf-8')
-  } catch (err) {
-    if (isNotFoundError(err)) return { workerStatus: null }
-    return { workerStatus: null, statusReadError: getErrorMessage(err) }
-  }
-
-  try {
-    // Trust boundary: this file is written only by the CMS worker daemon
-    // (PR-W1), never derived from request input — cast rather than
-    // runtime-validate every field.
-    const parsed = JSON.parse(content) as WorkerStatusReport
-    return { workerStatus: parsed }
-  } catch (err) {
-    return { workerStatus: null, statusReadError: getErrorMessage(err) }
   }
 }
 
@@ -188,6 +164,12 @@ export interface AdminStatusData {
   settingsWorkspaceError?: string
   /** What the base branch's schema leaves out under this process's code; absent when nothing. */
   schemaIssues?: SchemaIssue[]
+  /**
+   * The branch namespace this process resolves for the branches it creates, or why it cannot.
+   * System health compares it with the GitHub gateway's (`workerStatus.gatewayBranchNamespace`).
+   * Optional on the wire, so an editor reading an older API shows nothing rather than failing.
+   */
+  branchNamespace?: { ok: true; namespace: string } | { ok: false; error: string }
   /** Build of the API process answering this request. */
   build: BuildIdentity
   /** Whether `media` is configured; without it every upload returns 501. */
@@ -307,6 +289,7 @@ const getAdminStatusHandler = async (
         ...(statusReadError ? { statusReadError } : {}),
         ...(settingsWorkspaceError ? { settingsWorkspaceError } : {}),
         ...(schemaIssues.length > 0 ? { schemaIssues } : {}),
+        branchNamespace: resolveOwnBranchNamespace(ctx),
         build: getBuildIdentity(),
         assetStore: { configured: !!ctx.assetStore },
         imageProcessing,
@@ -314,6 +297,16 @@ const getAdminStatusHandler = async (
     }
   } catch (err) {
     return { ok: false, status: 500, error: getErrorMessage(err) }
+  }
+}
+
+/** This process's branch namespace, as an answer rather than a throw. */
+function resolveOwnBranchNamespace(ctx: ApiContext): AdminStatusData['branchNamespace'] {
+  try {
+    const { config } = ctx.services
+    return { ok: true, namespace: operatingStrategy(config.mode).getBranchNamespace(config) }
+  } catch (err) {
+    return { ok: false, error: getErrorMessage(err) }
   }
 }
 
@@ -443,6 +436,7 @@ const getAdminStatus = defineEndpoint({
     build: { canopycmsVersion: '0.0.0' },
     assetStore: { configured: false },
     imageProcessing: { available: true },
+    branchNamespace: { ok: true, namespace: 'canopycms/prod/' },
   },
   guards: ['admin'] as const,
   handler: getAdminStatusHandler,

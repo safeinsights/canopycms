@@ -18,9 +18,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { simpleGit, type SimpleGit } from 'simple-git'
 
 import { BranchMetadataFileManager } from '../branch-metadata'
+import { resolveBranchParam } from '../branch-param'
 import { ROOT_COLLECTION_ID } from '../paths/types'
 import { initTestRepo, mockConsole } from '../test-utils'
 import { branchProvisioningLockName, tryAcquireProvisioningLock } from '../utils/provisioning-lock'
+import type { BranchPolicyDescription } from './branch-policy'
 import { CmsWorker } from './cms-worker'
 
 // ---------------------------------------------------------------------------
@@ -38,9 +40,13 @@ const makeWorker = (workspacePath: string, baseBranch = 'main', contentRoot?: st
     contentRoot,
   })
 
-/** Invoke the private rebaseActiveBranches() method. */
-const runRebase = (worker: CmsWorker): Promise<void> =>
-  (worker as unknown as { rebaseActiveBranches(): Promise<void> }).rebaseActiveBranches()
+/** Invoke the private rebaseActiveBranches() method, given the gateway's policy as git sync is. */
+const runRebase = (worker: CmsWorker, gatewayPolicy?: BranchPolicyDescription): Promise<void> =>
+  (
+    worker as unknown as {
+      rebaseActiveBranches(policy?: BranchPolicyDescription): Promise<void>
+    }
+  ).rebaseActiveBranches(gatewayPolicy)
 
 /** Write branch metadata for a workspace. */
 const writeMeta = async (
@@ -272,18 +278,18 @@ describe('CmsWorker rebaseActiveBranches', () => {
       const basePath = path.join(tmpDir, 'content-branches', 'main')
       await fs.mkdir(path.join(basePath, '.git'), { recursive: true })
 
-      const saveSpy = vi.spyOn(BranchMetadataFileManager.prototype, 'save')
+      const writeSpy = vi.spyOn(BranchMetadataFileManager.prototype, 'update')
       const consoleSpy = mockConsole()
       const worker = makeWorker(tmpDir, 'main')
       await runRebase(worker)
 
-      expect(saveSpy).not.toHaveBeenCalled()
+      expect(writeSpy).not.toHaveBeenCalled()
       expect(consoleSpy).toHaveLogged(/base branch \(refreshed separately\)/)
       const meta = await readMeta(basePath)
       expect(meta).toBeUndefined()
 
       consoleSpy.restore()
-      saveSpy.mockRestore()
+      writeSpy.mockRestore()
     })
 
     it.each([
@@ -298,7 +304,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
         await setup.pushToRemote({ 'main-update.txt': 'new from main' })
         await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
         const head = await setup.branchGit.revparse(['HEAD'])
-        const saveSpy = vi.spyOn(BranchMetadataFileManager.prototype, 'save')
+        const writeSpy = vi.spyOn(BranchMetadataFileManager.prototype, 'update')
         const consoleSpy = mockConsole()
 
         try {
@@ -313,11 +319,11 @@ describe('CmsWorker rebaseActiveBranches', () => {
           await runRebase(worker)
 
           expect(await setup.branchGit.revparse(['HEAD'])).toBe(head)
-          expect(saveSpy).not.toHaveBeenCalled()
+          expect(writeSpy).not.toHaveBeenCalled()
           expect(consoleSpy).toHaveWarned(/settings branch, never a content workspace/)
         } finally {
           consoleSpy.restore()
-          saveSpy.mockRestore()
+          writeSpy.mockRestore()
         }
       },
     )
@@ -369,11 +375,11 @@ describe('CmsWorker rebaseActiveBranches', () => {
         conflictFiles: [],
       })
 
-      const saveSpy = vi.spyOn(BranchMetadataFileManager.prototype, 'save')
+      const writeSpy = vi.spyOn(BranchMetadataFileManager.prototype, 'update')
       const worker = makeWorker(tmpDir)
       await runRebase(worker)
-      expect(saveSpy).not.toHaveBeenCalled()
-      saveSpy.mockRestore()
+      expect(writeSpy).not.toHaveBeenCalled()
+      writeSpy.mockRestore()
     })
 
     it('does not save metadata when the branch has never recorded a conflict status (undefined treated as clean)', async () => {
@@ -382,11 +388,11 @@ describe('CmsWorker rebaseActiveBranches', () => {
       // conflictStatus/conflictFiles were never set (a brand-new branch).
       await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
 
-      const saveSpy = vi.spyOn(BranchMetadataFileManager.prototype, 'save')
+      const writeSpy = vi.spyOn(BranchMetadataFileManager.prototype, 'update')
       const worker = makeWorker(tmpDir)
       await runRebase(worker)
-      expect(saveSpy).not.toHaveBeenCalled()
-      saveSpy.mockRestore()
+      expect(writeSpy).not.toHaveBeenCalled()
+      writeSpy.mockRestore()
 
       // Untouched -- the skip means these stay exactly as they were.
       const meta = await readMeta(setup.branchPath)
@@ -945,6 +951,154 @@ describe('CmsWorker rebaseActiveBranches', () => {
   // rebaseFailure recording (PR-W2)
   // -------------------------------------------------------------------------
 
+  describe("the branch's stored name, which its directory is only the sanitized form of", () => {
+    const ENTRY_FILE = 'page.about.TESTENTRYabc.json'
+    const REF = 'canopycms/prod/my-feature'
+
+    it('is kept when a caught-up branch has a stale failure cleared', async () => {
+      const setup = await createBranchSetup(tmpDir, 'canopycms-prod-my-feature')
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+        name: REF,
+        rebaseFailure: {
+          message: 'old',
+          firstAt: '2026-01-01T00:00:00Z',
+          lastAt: '2026-01-01T00:00:00Z',
+        },
+      })
+
+      await runRebase(makeWorker(tmpDir))
+
+      const meta = await readMeta(setup.branchPath)
+      expect(meta?.rebaseFailure).toBeUndefined()
+      expect(meta?.name).toBe(REF)
+    })
+
+    it('is kept when a rebase records conflicts', async () => {
+      const setup = await createBranchSetup(tmpDir, 'canopycms-prod-my-feature', {
+        initialFiles: { [ENTRY_FILE]: '{"title":"base content"}' },
+      })
+      await setup.commitToBranch({ [ENTRY_FILE]: '{"title":"branch version"}' })
+      await setup.pushToRemote({ [ENTRY_FILE]: '{"title":"main version"}' })
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, { name: REF })
+
+      await runRebase(makeWorker(tmpDir))
+
+      const meta = await readMeta(setup.branchPath)
+      expect(meta?.conflictStatus).toBe('conflicts-detected')
+      expect(meta?.name).toBe(REF)
+    })
+
+    it('is kept when a rebase failure is recorded', async () => {
+      const setup = await createBranchSetup(tmpDir, 'canopycms-prod-my-feature')
+      await setup.commitToBranch({ 'branch-content.txt': 'branch work' })
+      await setup.pushToRemote({ 'main-update.txt': 'new from main' })
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, { name: REF })
+      await fs.writeFile(path.join(setup.branchPath, '.git', 'index.lock'), '')
+
+      await runRebase(makeWorker(tmpDir))
+
+      const meta = await readMeta(setup.branchPath)
+      expect(typeof meta?.rebaseFailure?.message).toBe('string')
+      expect(meta?.name).toBe(REF)
+    })
+  })
+
+  describe('a namespace branch an older worker renamed to its directory', () => {
+    const REF = 'canopycms/prod/spring'
+    const DIR = 'canopycms-prod-spring'
+    const POLICY: BranchPolicyDescription = {
+      configured: ['main'],
+      githubDefault: 'main',
+      namespace: 'canopycms/prod/',
+      legacy: [],
+      settingsBranch: 'canopycms-settings-prod',
+    }
+
+    beforeEach(() => {
+      // resolveBranchParam reads the prod workspace, and the namespace, from these.
+      vi.stubEnv('CANOPYCMS_WORKSPACE_ROOT', tmpDir)
+      vi.stubEnv('CANOPYCMS_BRANCH_NAMESPACE', '')
+      vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', '')
+    })
+    afterEach(() => {
+      vi.unstubAllEnvs()
+    })
+
+    /** A clone at `dir` on the git branch `ref`, whose branch.json names it `storedName`. */
+    const renamedSetup = async (
+      dir: string,
+      ref: string,
+      storedName: string,
+      data: Record<string, unknown> = {},
+    ) => {
+      const setup = await createBranchSetup(tmpDir, dir)
+      await setup.branchGit.raw(['branch', '-m', ref])
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, { name: storedName, ...data })
+      return setup
+    }
+
+    const resolveShort = (param: string) =>
+      resolveBranchParam(param, { mode: 'prod', defaultBaseBranch: 'main', deploymentName: 'prod' })
+
+    it('restores the ref as its name on a caught-up branch, which then resolves by its short name', async () => {
+      const setup = await renamedSetup(DIR, REF, DIR)
+      expect(await resolveShort('spring')).toBeNull()
+
+      await runRebase(makeWorker(tmpDir), POLICY)
+
+      expect((await readMeta(setup.branchPath))?.name).toBe(REF)
+      const resolved = await resolveShort('spring')
+      expect(resolved?.branch.name).toBe(REF)
+      expect(resolved?.branchRoot).toBe(setup.branchPath)
+    })
+
+    it('restores it on a branch in review, which the loop does not rebase', async () => {
+      const setup = await renamedSetup(DIR, REF, DIR, { status: 'submitted' })
+      await setup.pushToRemote({ 'main-update.txt': 'new from main' })
+
+      await runRebase(makeWorker(tmpDir), POLICY)
+
+      const meta = await readMeta(setup.branchPath)
+      expect(meta?.name).toBe(REF)
+      expect(meta?.status).toBe('submitted')
+    })
+
+    it('restores it before a rebase of published history marks the rewrite', async () => {
+      const setup = await renamedSetup(DIR, REF, DIR)
+      await setup.commitToBranch({ 'branch-content.txt': 'branch work' })
+      // Submitted before the rename: remote.git holds the branch under its ref.
+      await setup.branchGit.raw(['push', '-q', path.join(tmpDir, 'remote.git'), `${REF}:${REF}`])
+      const published = (await setup.branchGit.revparse(['HEAD'])).trim()
+      await setup.pushToRemote({ 'main-update.txt': 'new from main' })
+
+      await runRebase(makeWorker(tmpDir), POLICY)
+
+      const meta = await readMeta(setup.branchPath)
+      expect(meta?.name).toBe(REF)
+      // markHistoryRewritten marks only a branch.json whose name is the ref.
+      expect(meta?.historyRewrittenFrom).toBe(published)
+    })
+
+    it.each([
+      ['outside the namespace', 'feature-x', 'feature/x', 'feature-x'],
+      ["whose directory is not the ref's", 'canopycms-prod-other', REF, 'canopycms-prod-other'],
+    ])('leaves alone a branch %s', async (_label, dir, ref, storedName) => {
+      const setup = await renamedSetup(dir, ref, storedName)
+
+      await runRebase(makeWorker(tmpDir), POLICY)
+
+      expect((await readMeta(setup.branchPath))?.name).toBe(storedName)
+    })
+
+    it('leaves it alone without the gateway policy, which names the namespace', async () => {
+      const setup = await renamedSetup(DIR, REF, DIR)
+
+      await runRebase(makeWorker(tmpDir))
+
+      expect((await readMeta(setup.branchPath))?.name).toBe(DIR)
+    })
+  })
+
   describe('rebaseFailure recording', () => {
     /**
      * Leaves a stale `.git/index.lock`, so the rebase refuses to start. This drives the round
@@ -1034,11 +1188,11 @@ describe('CmsWorker rebaseActiveBranches', () => {
         conflictFiles: [],
       })
 
-      const saveSpy = vi.spyOn(BranchMetadataFileManager.prototype, 'save')
+      const writeSpy = vi.spyOn(BranchMetadataFileManager.prototype, 'update')
       const worker = makeWorker(tmpDir)
       await runRebase(worker)
-      expect(saveSpy).not.toHaveBeenCalled()
-      saveSpy.mockRestore()
+      expect(writeSpy).not.toHaveBeenCalled()
+      writeSpy.mockRestore()
     })
 
     it('does not re-save an identical failure within the 1h refresh window (write-amplification guard)', async () => {
@@ -1051,10 +1205,10 @@ describe('CmsWorker rebaseActiveBranches', () => {
       const worker = makeWorker(tmpDir)
       await runRebase(worker) // first cycle: records the failure
 
-      const saveSpy = vi.spyOn(BranchMetadataFileManager.prototype, 'save')
+      const writeSpy = vi.spyOn(BranchMetadataFileManager.prototype, 'update')
       await runRebase(worker) // second cycle: same failure, well within 1h
-      expect(saveSpy).not.toHaveBeenCalled()
-      saveSpy.mockRestore()
+      expect(writeSpy).not.toHaveBeenCalled()
+      writeSpy.mockRestore()
     })
 
     it('preserves firstAt but refreshes lastAt when the same failure recurs after the 1h window', async () => {
@@ -1094,13 +1248,13 @@ describe('CmsWorker rebaseActiveBranches', () => {
       await fs.mkdir(metaDir, { recursive: true })
       await fs.writeFile(path.join(metaDir, 'branch.json'), '{ not valid json')
 
-      const saveSpy = vi.spyOn(BranchMetadataFileManager.prototype, 'save')
+      const writeSpy = vi.spyOn(BranchMetadataFileManager.prototype, 'update')
       const worker = makeWorker(tmpDir)
 
       await runRebase(worker) // must complete without throwing
 
-      expect(saveSpy).not.toHaveBeenCalled()
-      saveSpy.mockRestore()
+      expect(writeSpy).not.toHaveBeenCalled()
+      writeSpy.mockRestore()
     })
   })
 })

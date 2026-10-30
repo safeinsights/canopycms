@@ -89,6 +89,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.unstubAllEnvs()
 })
 
 describe('resolveGatewayListen', () => {
@@ -247,7 +248,13 @@ describe('failedGateway: the stand-in a failed boot serves', () => {
       fatalError: 'the cause',
       preflight: 'pending',
       clerkConfigured: false,
-      protectedBranches: { configured: [], githubDefault: null },
+      branchPolicy: {
+        configured: [],
+        githubDefault: null,
+        namespace: '',
+        legacy: [],
+        settingsBranch: null,
+      },
     })
   })
 
@@ -324,6 +331,50 @@ describe('runGateway: a healthy boot on a token', () => {
 
     expect(h.options().baseBranch).toBeUndefined()
     expect(h.options().protectedBranches).toEqual([])
+    expect(h.options().legacyBranches).toEqual([])
+  })
+
+  it('passes CANOPYCMS_LEGACY_BRANCHES as a list', async () => {
+    const h = harness({ env: { ...baseEnv(), CANOPYCMS_LEGACY_BRANCHES: 'spring, fix/typos,,' } })
+
+    await runGateway(h.deps)
+
+    expect(h.options().legacyBranches).toEqual(['spring', 'fix/typos'])
+  })
+
+  it.each([
+    [{}, 'canopycms/prod/'],
+    [{ CANOPYCMS_DEPLOYMENT_NAME: 'docs' }, 'canopycms/docs/'],
+    [{ CANOPYCMS_BRANCH_NAMESPACE: 'editor-production/' }, 'editor-production/'],
+    [
+      { CANOPYCMS_BRANCH_NAMESPACE: 'editor-{deployment}/', CANOPYCMS_DEPLOYMENT_NAME: 'docs' },
+      'editor-docs/',
+    ],
+  ])('resolves the branch namespace from %j as the worker does: %s', async (vars, expected) => {
+    // resolveDeploymentName reads the process's variable first; the harness's env stands in for it.
+    vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', '')
+    const h = harness({ env: { ...baseEnv(), ...vars } })
+
+    await runGateway(h.deps)
+
+    expect(h.options().branchNamespace).toBe(expected)
+  })
+
+  it.each([
+    [{}, 'canopycms-settings-prod'],
+    [{ CANOPYCMS_DEPLOYMENT_NAME: 'docs' }, 'canopycms-settings-docs'],
+    [
+      { CANOPYCMS_DEPLOYMENT_NAME: 'docs', CANOPYCMS_SETTINGS_BRANCH: 'site-settings' },
+      'site-settings',
+    ],
+  ])('resolves the settings branch from %j as the worker does: %s', async (vars, expected) => {
+    // resolveDeploymentName reads the process's variable first; the harness's env stands in for it.
+    vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', '')
+    const h = harness({ env: { ...baseEnv(), ...vars } })
+
+    await runGateway(h.deps)
+
+    expect(h.options().settingsBranch).toBe(expected)
   })
 
   it('gives the gateway an auth snapshot only when a Clerk key is configured', async () => {
@@ -825,7 +876,13 @@ describe('over a real socket', () => {
             fatalError: failure,
             preflight: 'pending',
             clerkConfigured: false,
-            protectedBranches: { configured: [], githubDefault: null },
+            branchPolicy: {
+              configured: [],
+              githubDefault: null,
+              namespace: '',
+              legacy: [],
+              settingsBranch: null,
+            },
           }),
         }) as unknown as GitHubGateway,
     )

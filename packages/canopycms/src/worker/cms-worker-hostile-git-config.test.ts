@@ -21,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { BranchMetadataFileManager } from '../branch-metadata'
 import { recordSparseCone } from '../branch-sparse'
+import { sanitizeBranchName } from '../paths/branch-name'
 import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
 import type { WorkerStatusReport } from '../types'
 import { initTestRepo, mockConsole, useLocalGitHubGateway, type MockConsole } from '../test-utils'
@@ -30,7 +31,9 @@ import type { GitHubGateway } from './github-gateway'
 const execFileAsync = promisify(execFile)
 
 const BASE = 'main'
-const BRANCH = 'feature'
+const BRANCH = 'canopycms/prod/feature'
+/** What the sync loop names the branch: it walks workspace directories, not refs. */
+const BRANCH_DIR = sanitizeBranchName(BRANCH)
 
 /** The hook events a planted script listens on: every one a fetch, push, rebase or merge fires. */
 const HOOKS = [
@@ -103,7 +106,7 @@ async function createFixture(): Promise<Fixture> {
   const remoteGitPath = path.join(workspacePath, 'remote.git')
   const contentBranchesPath = path.join(workspacePath, 'content-branches')
   const basePath = path.join(contentBranchesPath, BASE)
-  const branchPath = path.join(contentBranchesPath, BRANCH)
+  const branchPath = path.join(contentBranchesPath, BRANCH_DIR)
   await fs.mkdir(contentBranchesPath, { recursive: true })
 
   const seedPath = path.join(root, 'seed')
@@ -352,9 +355,11 @@ describe('config planted in a branch clone', () => {
 
     expect(await f.sentinelLines()).toEqual([])
     const status = await readStatus()
-    const failure = status?.lastGitSync?.failed.find((entry) => entry.branch === BRANCH)
-    expect(failure?.error).toMatch(/^Refusing to run git in \S+\/feature: /)
-    expect(failure?.error).toMatch(/filter\.planted\.smudge in \S+\/feature\/\.git\/config/)
+    const failure = status?.lastGitSync?.failed.find((entry) => entry.branch === BRANCH_DIR)
+    expect(failure?.error).toMatch(/^Refusing to run git in \S+\/canopycms-prod-feature: /)
+    expect(failure?.error).toMatch(
+      /filter\.planted\.smudge in \S+\/canopycms-prod-feature\/\.git\/config/,
+    )
     expect(failure?.error).toMatch(/merge\.planted\.driver/)
     const meta = await BranchMetadataFileManager.loadOnly(f.branchPath)
     expect(meta?.branch.rebaseFailure?.message).toMatch(/filter\.planted\.smudge/)
@@ -371,7 +376,9 @@ describe('config planted in a branch clone', () => {
 
     expect(await f.sentinelLines()).toEqual([])
     expect(consoleSpy).toHaveWarned(
-      new RegExp(`${BRANCH}: could not change the sparse-checkout cone: Refusing to run git in`),
+      new RegExp(
+        `${BRANCH_DIR}: could not change the sparse-checkout cone: Refusing to run git in`,
+      ),
     )
   })
 
@@ -397,7 +404,7 @@ describe('config planted in a branch clone', () => {
 
     expect(await f.sentinelLines()).toEqual([])
     const status = await readStatus()
-    expect(status?.lastGitSync?.failed.find((entry) => entry.branch === BRANCH)?.error).toMatch(
+    expect(status?.lastGitSync?.failed.find((entry) => entry.branch === BRANCH_DIR)?.error).toMatch(
       /it has a submodule with a repository in it at "sub"/,
     )
   })
@@ -426,7 +433,7 @@ describe('config planted in a branch clone', () => {
 
     expect(await f.sentinelLines()).toEqual([])
     const status = await readStatus()
-    expect(status?.lastGitSync?.failed.find((entry) => entry.branch === BRANCH)?.error).toMatch(
+    expect(status?.lastGitSync?.failed.find((entry) => entry.branch === BRANCH_DIR)?.error).toMatch(
       /it has a submodule with a repository in it at "sub"/,
     )
     expect(status?.lastGitSync?.baseRefresh?.message).toMatch(
@@ -467,10 +474,10 @@ describe('config planted in a branch clone', () => {
 
     expect(await f.sentinelLines()).toEqual([])
     const status = await readStatus()
-    const error = status?.lastGitSync?.failed.find((entry) => entry.branch === BRANCH)?.error
-    expect(error).toMatch(/include\.path in \S+\/feature\/\.git\/config/)
+    const error = status?.lastGitSync?.failed.find((entry) => entry.branch === BRANCH_DIR)?.error
+    expect(error).toMatch(/include\.path in \S+\/canopycms-prod-feature\/\.git\/config/)
     expect(error).toMatch(/filter\.planted\.smudge in \S+included\.cfg/)
-    expect(error).toMatch(/core\.fsmonitor in \S+\/feature\/\.git\/config\.worktree/)
+    expect(error).toMatch(/core\.fsmonitor in \S+\/canopycms-prod-feature\/\.git\/config\.worktree/)
   })
 })
 
@@ -504,7 +511,7 @@ describe('a repository planted where git would look first', () => {
     expect(await f.sha(f.remoteGitPath, `refs/heads/${BASE}`)).toBe(upstream)
     // The rebase loop's own .git check skips it; sharedRepoGit's explicit GIT_DIR covers a .git
     // removed after that check (shared-repo-git.test.ts).
-    expect(consoleSpy).toHaveLogged(`Skipping ${BRANCH}: no .git directory`)
+    expect(consoleSpy).toHaveLogged(`Skipping ${BRANCH_DIR}: no .git directory`)
   })
 })
 

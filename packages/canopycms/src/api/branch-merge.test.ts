@@ -85,12 +85,18 @@ describe('branch merge api - markAsMerged', () => {
 
     expect(mockSave).toHaveBeenCalledWith({
       branch: expect.objectContaining({
-        name: 'feature/x',
         status: 'archived',
         pullRequestState: 'merged',
         mergedAt: expect.any(String),
       }),
     })
+  })
+
+  it("keeps the branch's stored name, whatever the URL segment called it", async () => {
+    const res = await markAsMergedHandler(ctx, req, { branch: 'x' as BranchName })
+
+    expect(mockSave.mock.calls[0]?.[0].branch).not.toHaveProperty('name')
+    expect(res.data?.branch.name).toBe('feature/x')
   })
 
   it('returns 404 if branch not found', async () => {

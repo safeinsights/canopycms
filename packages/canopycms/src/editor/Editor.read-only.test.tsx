@@ -17,6 +17,7 @@ import type { EditorEntry } from './Editor'
 import { Editor } from './Editor'
 import { ApiClientProvider } from './context'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../paths/test-utils'
+import { plainBranchPath } from '../test-utils/branch-wire'
 
 vi.mock('@mantine/modals', () => ({
   ModalsProvider: ({ children }: { children: React.ReactNode }) => children,
@@ -156,7 +157,7 @@ const stubApi = (
           }),
         )
       }
-      if (url === entryApiPath && (!init?.method || init.method === 'GET')) {
+      if (plainBranchPath(url) === entryApiPath && (!init?.method || init.method === 'GET')) {
         if (entryReads.fail) {
           return Promise.resolve(new Response('{}', { status: 500 }))
         }

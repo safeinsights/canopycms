@@ -160,7 +160,7 @@ const stubApi = (threads: unknown[], contents: Record<string, () => Rec>): Recor
     if (url.endsWith('/whoami')) {
       return Promise.resolve(okJson({ userId: 'user-1', groups: [] }))
     }
-    if (url.endsWith('/main/comments')) {
+    if (/\/~?main\/comments$/.test(url)) {
       if (method === 'POST') {
         recorded.commentBodies.push(JSON.parse(String(init?.body)) as Rec)
         return Promise.resolve(okJson({ threadId: 'new-thread', commentId: 'new-comment' }))

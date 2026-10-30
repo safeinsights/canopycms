@@ -31,7 +31,7 @@ import {
 } from './canopy-state'
 import { hasPendingHistoryRewrite } from './history-rewrite'
 import { runRebaseCycle, type RebaseContext } from './rebase'
-import { describeMove } from './github-gateway'
+import { describeMove, type GitHubGatewayHealth } from './github-gateway'
 import { fetchGitHubIntoRemoteGit, pushToGitHub } from './github-transfer'
 import { cleanupOldTasks } from '../task-queue/cms-task-queue'
 import { writeWorkerStatus } from '../task-queue/worker-status'
@@ -47,6 +47,7 @@ import {
   sharedRepoGit,
 } from './shared-repo-git'
 import { reapplySparseCones } from './sparse-cone'
+import { findUnpublishableBranches } from './unpublishable-branches'
 import {
   readEditorWork,
   settleStaleMirror,
@@ -69,9 +70,9 @@ import type { WorkerContext } from './worker-context'
  * (`reconcileTrackedBranches`, which holds the base branch while schema-gate.ts
  * says the serving editor lacks a schema the incoming content names), push this
  * deployment's own settings
- * branch, fast-forward the base branch's workspace, rebase every branch that is
- * behind it (rebase.ts), then sweep old tasks and expired trashed branch
- * directories.
+ * branch, fast-forward the base branch's workspace, ask the gateway for its branch policy,
+ * rebase every branch that is behind it (rebase.ts), then sweep old tasks and expired trashed
+ * branch directories.
  *
  * One ordering is load-bearing and nothing enforces it: `runRebaseCycle` MUST
  * follow `reconcileTrackedBranches`. Branch clones fetch the base tip from
@@ -678,10 +679,52 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     const baseRefresh = await refreshBaseBranchWorkspace(ctx)
 
     if (stoppedForDrain(ctx, 'the rebase cycle')) return
-    const rebaseSummary = await runRebaseCycle(ctx)
+    // The gateway's policy, which the rebase loop needs to tell its own namespace and what the
+    // gateway would refuse to publish. A gateway that cannot answer, or answers with no namespace
+    // (a failed boot), gives none.
+    let health: GitHubGatewayHealth | undefined
+    try {
+      health = await ctx.github().health(ctx.shutdownSignal())
+    } catch (err) {
+      workerLogWarn(`Could not read the GitHub gateway's branch policy: ${getErrorMessage(err)}`)
+    }
+    const branchPolicy =
+      health && health.branchPolicy.namespace !== '' ? health.branchPolicy : undefined
+    // The namespace System health compares with the one the CMS creates branches in, and the
+    // names creation refuses. Written at once, as the catch below writes on a failure: branch
+    // creation waits for the namespace (api/branch.ts), so it must not wait on the rest of the
+    // cycle succeeding. Without a policy the last values stand.
+    if (branchPolicy) {
+      const report = ctx.ensureStatusReport()
+      report.gatewayBranchNamespace = branchPolicy.namespace
+      report.gatewayProtectedBranches = branchPolicy.configured.filter((n) => !n.includes('*'))
+      await writeWorkerStatus(ctx.taskDir, report).catch((writeErr) =>
+        workerLogError('Failed to write worker status:', getErrorMessage(writeErr)),
+      )
+    }
+    const rebaseSummary = await runRebaseCycle(ctx, branchPolicy)
     if (stoppedForDrain(ctx, 'the cleanup sweeps')) return
 
     await cleanupOldTasks(ctx.taskDir, undefined, ctx.log)
+
+    // For System health: the branches the gateway would refuse to publish, read after the rebase
+    // cycle, which archives merged branches and restores renamed ones. Without a policy, a fatal
+    // error, or a branches directory or branch.json that cannot be read, the last report stands.
+    if (health && branchPolicy) {
+      const report = ctx.ensureStatusReport()
+      if (health.fatalError === null) {
+        try {
+          const unpublishable = await findUnpublishableBranches(ctx, branchPolicy)
+          if (unpublishable.count > 0) {
+            report.unpublishableBranches = { ...unpublishable, at: new Date().toISOString() }
+          } else delete report.unpublishableBranches
+        } catch (err) {
+          workerLogWarn(
+            `Could not list the branches the gateway will not publish: ${getErrorMessage(err)}`,
+          )
+        }
+      }
+    }
 
     // [C1] Sweep branch directories the admin purge action trashed more than
     // TRASH_RETENTION_MS ago. Worker-only by design: purge itself never deletes

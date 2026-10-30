@@ -237,11 +237,9 @@ Enforcement is layered:
 
 **Withdraw is deliberately not blocked** on protected branches: it is the self-serve recovery path for a base branch wrongly stuck in `submitted`, and the workflow-authorization rule above already restricts it to privileged users there.
 
-### Reserved Branch Names
+### Branch Names
 
-The API serves branch-specific routes (`/:branch/...`) and a handful of static top-level routes (admin, assets, branches, groups, permissions, users, whoami) from one route table, and a static segment always beats the dynamic `:branch` parameter. A branch named e.g. `admin` would therefore be half-alive rather than cleanly rejected: its bare top-level route still resolves while every nested route 404s or 403s unpredictably.
-
-Branch creation rejects any name colliding with a static top-level namespace, checked against both the requested name and its sanitized git-ref-safe form, matching exactly and case-sensitively so `Admin` and `admin-docs` stay creatable. It is enforced **only on the creation path**, deliberately not as general name validation: a blanket rule would also reject an already-existing colliding branch on every one of its own routes, including its delete route, making it permanently un-removable. This reservation protects the route table; the settings-branch namespace is a separate one, protecting a deployment's settings from collision.
+The GitHub gateway writes only branches in its namespace, resolved per deployment from a template ending with `/` (`resolveBranchNamespace`, `packages/canopycms/src/operating-mode/branch-namespace.ts`; default `canopycms/{deployment}/`), so deployments sharing a repository never nest, and only from its own configuration. An editor's branch is created as the namespace followed by the typed name, sanitized (`parseCreatedBranchName`, `packages/canopycms/src/paths/validation.ts`), and `branch.json`'s `name` holds that ref; its workspace directory and registry key are the ref sanitized. Pull request links carry its short name, the typed part; a `/:branch/...` segment or `?branch=` takes either, and `resolveBranchParam` (`packages/canopycms/src/branch-param.ts`) maps it back: the base or active branch exactly, then a namespace branch, then any other branch by its full name. The exact form (`exactBranchSegment`, `~canopycms~prod~spring`) opens only that branch, even a shadowed outside one; git forbids `~` in names. Creation therefore refuses a short name another reachable branch has, one in the settings range, and one equal to a static top-level route (admin, assets, …), which outranks `/:branch/...`; `http/router.test.ts` holds that list to the router. Creation and the gateway refuse a ref with a branch inside it.
 
 ## Operating Modes
 

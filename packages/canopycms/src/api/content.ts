@@ -598,7 +598,7 @@ const writeContentHandler = async (
     try {
       issues = await validateEntry({
         entryPath: logicalPathSegments.join('/'),
-        branch: params.branch,
+        branch: branchContext.branch.name,
         // The type the store writes with, so a request that omits `entryType` can't skip a
         // type-gated rule.
         ...(entryTypeName ? { entryType: entryTypeName } : {}),

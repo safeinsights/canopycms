@@ -244,7 +244,7 @@ describe('CmsWorker credential refresh', () => {
         () => true,
         () => false,
       )
-    const enqueuePush = (branch = 'feature-1') =>
+    const enqueuePush = (branch = 'canopycms/prod/feature-1') =>
       enqueueTask(path.join(workspacePath, '.tasks'), {
         action: 'push-branch',
         payload: { branch },
@@ -254,7 +254,7 @@ describe('CmsWorker credential refresh', () => {
     const seedBranches = async (...branches: string[]) => {
       for (const branch of branches) {
         await seedGit.raw(['checkout', '-q', '-B', branch, 'main'])
-        await fs.writeFile(path.join(seedPath, `${branch}.txt`), branch)
+        await fs.writeFile(path.join(seedPath, `${branch.replace(/\W/g, '-')}.txt`), branch)
         await seedGit.add('.')
         await seedGit.commit(branch)
         await seedGit.raw([
@@ -268,7 +268,7 @@ describe('CmsWorker credential refresh', () => {
 
     beforeEach(async () => {
       await seedGit.raw(['branch', '-M', 'main'])
-      await seedBranches('feature-1', 'feature-2')
+      await seedBranches('canopycms/prod/feature-1', 'canopycms/prod/feature-2')
       server = await startHttpsGitServer(path.join(tmpDir, 'served'), tmpDir)
       server.acceptedTokens.add(ROTATED)
       vi.stubEnv('GIT_SSL_NO_VERIFY', '1')
@@ -347,7 +347,12 @@ describe('CmsWorker credential refresh', () => {
       // Refused once on the revoked token, then accepted on the first retry.
       expect(push).toHaveBeenCalledTimes(2)
       expect(refreshGitHubToken).toHaveBeenCalledTimes(1)
-      const pushed = await simpleGit().raw(['--git-dir', githubFixture, 'rev-parse', 'feature-1'])
+      const pushed = await simpleGit().raw([
+        '--git-dir',
+        githubFixture,
+        'rev-parse',
+        'canopycms/prod/feature-1',
+      ])
       expect(pushed.trim()).toMatch(/^[0-9a-f]{40}$/)
     })
 
@@ -412,8 +417,8 @@ describe('CmsWorker credential refresh', () => {
         maxRetries: MAX_RETRIES,
       })
       ;(worker as unknown as TaskInternals).running = true
-      const first = await enqueuePush('feature-1')
-      const second = await enqueuePush('feature-2')
+      const first = await enqueuePush('canopycms/prod/feature-1')
+      const second = await enqueuePush('canopycms/prod/feature-2')
 
       await worker.processTaskQueue()
 
@@ -459,7 +464,7 @@ describe('CmsWorker credential refresh', () => {
       // untouched and `refreshGitHubTokenMinIntervalMs` is not set, so this is the DEFAULT floor.
       const refreshGitHubToken = vi.fn(async () => undefined)
       const BURST = 5
-      const branches = Array.from({ length: BURST }, (_, i) => `burst-${i}`)
+      const branches = Array.from({ length: BURST }, (_, i) => `canopycms/prod/burst-${i}`)
       await seedBranches(...branches)
       const { worker, push } = makeTaskWorker(refreshGitHubToken)
       const ids = await Promise.all(branches.map((branch) => enqueuePush(branch)))

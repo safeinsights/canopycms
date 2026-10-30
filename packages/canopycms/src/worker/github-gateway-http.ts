@@ -358,8 +358,8 @@ class GatewayRequestHandler {
           number,
           signal,
         )
-        // Octokit's type says string | null; a payload without the field crosses as null.
-        return { merged, merged_at, state, node_id, body: body ?? null }
+        // A null body is the gateway withholding it (`GitHubPullRequest.body`), and crosses as one.
+        return { merged, merged_at, state, node_id, body }
       },
       createOrUpdatePullRequest: async (input, signal) => {
         const { number, url, created } = await gateway.createOrUpdatePullRequest(input, signal)

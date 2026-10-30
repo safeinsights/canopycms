@@ -489,6 +489,7 @@ export interface EntryValidationIssue {
 export interface ValidateEntryInput {
   /** Logical entry path including the content root (e.g. 'content/posts/hello-world'). */
   entryPath: string
+  /** The branch's full name, as git holds it (`canopycms/prod/spring-update`). */
   branch: string
   /**
    * The entry type the save is validated and written as: an existing entry's on-disk type, else
@@ -534,6 +535,8 @@ export interface CanopyConfig {
   allowNetworkRemoteInProd?: boolean
   settingsBranch?: string
   deploymentName?: string
+  /** The branch namespace template — see {@link CanopyConfigInput.branchNamespace}. */
+  branchNamespace?: string
   contentRoot: ContentRoot
   sourceRoot?: SourceRoot
   /** Deployment prefix the host app is served under — see {@link CanopyConfigInput.basePath}. */
@@ -600,6 +603,14 @@ export interface CanopyConfigInput {
   allowNetworkRemoteInProd?: boolean
   settingsBranch?: string
   deploymentName?: string
+  /**
+   * The prefix of every branch editors create, which the GitHub gateway confines its writes to,
+   * as a template in which `{deployment}` is the deployment name, ending with `/` (default
+   * `canopycms/{deployment}/`). `CANOPYCMS_BRANCH_NAMESPACE` wins over it, as the deployment
+   * name's variable does; a CDK deployment sets that variable for the CMS and for the GitHub
+   * gateway from `CanopyCmsService`'s `branchNamespace`.
+   */
+  branchNamespace?: string
   contentRoot?: string
   sourceRoot?: string
   /**

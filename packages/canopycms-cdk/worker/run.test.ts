@@ -103,6 +103,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.unstubAllEnvs()
 })
 
 // The inferred value, not just whether the worker runs: once the contract
@@ -205,7 +206,13 @@ const HEALTHY: GitHubGatewayHealth = {
   fatalError: null,
   preflight: 'not-an-app',
   clerkConfigured: false,
-  protectedBranches: { configured: [], githubDefault: 'main' },
+  branchPolicy: {
+    configured: [],
+    githubDefault: 'main',
+    namespace: 'canopycms/prod/',
+    legacy: [],
+    settingsBranch: 'canopycms-settings-prod',
+  },
 }
 
 const SNAPSHOT: AuthCacheSnapshot = {
@@ -411,7 +418,7 @@ describe('runWorker: a failure before worker.start()', () => {
       error: expect.objectContaining({
         message: expect.stringContaining(
           `unit has 1 (contract 2 adds canopy-github.socket and canopy-github.service, and ` +
-            `${GITHUB_GATEWAY_SOCKET_ENV} on the worker unit)`,
+            `${GITHUB_GATEWAY_SOCKET_ENV} on the worker unit; contract 3 adds`,
         ),
       }),
     })
@@ -569,6 +576,29 @@ describe('runWorker: a healthy start', () => {
     const absent = harness({ env: envWithout('CANOPYCMS_PROTECTED_BRANCHES') })
     await runWorker(absent.deps)
     expect(absent.createWorker.mock.calls[0][0].protectedBranches).toEqual([])
+  })
+
+  it('passes CANOPYCMS_LEGACY_BRANCHES as a list to the single-process worker', async () => {
+    const h = harness({ env: { ...baseEnv(), CANOPYCMS_LEGACY_BRANCHES: 'spring, fix/typos' } })
+    await runWorker(h.deps)
+    expect(h.createWorker.mock.calls[0][0].legacyBranches).toEqual(['spring', 'fix/typos'])
+  })
+
+  it('passes CANOPYCMS_BRANCH_NAMESPACE to the single-process worker, and none when it is absent', async () => {
+    const h = harness({
+      env: { ...baseEnv(), CANOPYCMS_BRANCH_NAMESPACE: 'editor-{deployment}/' },
+    })
+    await runWorker(h.deps)
+    expect(h.createWorker.mock.calls[0][0].branchNamespace).toBe('editor-{deployment}/')
+
+    const absent = harness({ env: envWithout('CANOPYCMS_BRANCH_NAMESPACE') })
+    await runWorker(absent.deps)
+    expect(absent.createWorker.mock.calls[0][0].branchNamespace).toBeUndefined()
+
+    // Blank, as the Lambda and the split gateway read it: unset, never a namespace of spaces.
+    const blank = harness({ env: { ...baseEnv(), CANOPYCMS_BRANCH_NAMESPACE: '  ' } })
+    await runWorker(blank.deps)
+    expect(blank.createWorker.mock.calls[0][0].branchNamespace).toBeUndefined()
   })
 
   it.each([
@@ -741,7 +771,7 @@ describe('runWorker: without the gateway socket, the single-process path', () =>
 
   it('refuses a bundle at the split contract, recording the missing socket variable', async () => {
     const h = harness({
-      env: { ...baseEnv(), [WORKER_CONTRACT_ENV]: String(GATEWAY_SPLIT_CONTRACT) },
+      env: { ...baseEnv(), [WORKER_CONTRACT_ENV]: String(WORKER_CONTRACT_VERSION) },
       bundleContract: GATEWAY_SPLIT_CONTRACT,
     })
 
@@ -760,7 +790,7 @@ describe('runWorker: without the gateway socket, the single-process path', () =>
 
   it('runs single-process at contract 1 with the same environment', async () => {
     const h = harness({
-      env: { ...baseEnv(), [WORKER_CONTRACT_ENV]: String(GATEWAY_SPLIT_CONTRACT) },
+      env: { ...baseEnv(), [WORKER_CONTRACT_ENV]: String(WORKER_CONTRACT_VERSION) },
       bundleContract: 1,
     })
 
@@ -847,17 +877,62 @@ describe('runWorker: split mode', () => {
     expect(h.exit).not.toHaveBeenCalled()
   })
 
-  it("refuses CANOPYCMS_PROTECTED_BRANCHES on the worker's unit, which only the gateway enforces", async () => {
-    const h = harness({ env: { ...splitEnv(), CANOPYCMS_PROTECTED_BRANCHES: 'release/*' } })
+  it.each([
+    ['CANOPYCMS_PROTECTED_BRANCHES', 'release/*'],
+    ['CANOPYCMS_LEGACY_BRANCHES', 'spring'],
+    ['CANOPYCMS_BRANCH_NAMESPACE', 'editor-production/'],
+  ])("refuses %s on the worker's unit, which only the gateway enforces", async (name, value) => {
+    const h = harness({ env: { ...splitEnv(), [name]: value } })
 
     await runWorker(h.deps)
 
     expect(h.record).toHaveBeenCalledTimes(1)
     const { error } = h.record.mock.calls[0][0] as { error: Error }
-    expect(error.message).toMatch(/CANOPYCMS_PROTECTED_BRANCHES is set on the worker unit/)
+    expect(error.message).toMatch(new RegExp(`${name} is set on the worker unit`))
     expect(h.connectGateway).not.toHaveBeenCalled()
     expect(h.createWorker).not.toHaveBeenCalled()
     expect(h.exitCodes()).toEqual([1])
+  })
+
+  it('starts with a blank CANOPYCMS_BRANCH_NAMESPACE on the worker unit, which sets nothing', async () => {
+    const h = harness({ env: { ...splitEnv(), CANOPYCMS_BRANCH_NAMESPACE: '  ' } })
+
+    await runWorker(h.deps)
+
+    expect(h.record).not.toHaveBeenCalled()
+    expect(h.createWorker).toHaveBeenCalledTimes(1)
+  })
+
+  it("refuses to start beside a gateway that pushes another settings branch than this worker's", async () => {
+    // resolveDeploymentName reads the process's variable first; the harness's env stands in for it.
+    vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', '')
+    const h = harness({ env: { ...splitEnv(), CANOPYCMS_DEPLOYMENT_NAME: 'docs' } })
+
+    await runWorker(h.deps)
+
+    expect(h.record).toHaveBeenCalledTimes(1)
+    const { error } = h.record.mock.calls[0][0] as { error: Error }
+    expect(error.message).toBe(
+      'The GitHub gateway pushes the settings branch "canopycms-settings-prod", but this ' +
+        'worker\'s is "canopycms-settings-docs": set CANOPYCMS_DEPLOYMENT_NAME and ' +
+        "CANOPYCMS_SETTINGS_BRANCH alike in the worker's .env and gateway.env",
+    )
+    expect(h.createWorker).not.toHaveBeenCalled()
+    expect(h.exitCodes()).toEqual([1])
+  })
+
+  it('starts beside a gateway that pushes the same settings branch', async () => {
+    vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', '')
+    const h = harness({ env: { ...splitEnv(), CANOPYCMS_SETTINGS_BRANCH: 'site-settings' } })
+    h.gateway.health.mockResolvedValue({
+      ...HEALTHY,
+      branchPolicy: { ...HEALTHY.branchPolicy, settingsBranch: 'site-settings' },
+    })
+
+    await runWorker(h.deps)
+
+    expect(h.record).not.toHaveBeenCalled()
+    expect(h.createWorker).toHaveBeenCalledTimes(1)
   })
 
   it("refuses CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS on the worker's unit, which only the gateway reads", async () => {

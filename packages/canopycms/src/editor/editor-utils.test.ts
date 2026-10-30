@@ -17,6 +17,7 @@ import {
   entryTypeLine,
   resolveHomeEntry,
   entryNameSource,
+  withPreviewBranch,
 } from './editor-utils'
 import type { EditorCollection } from './Editor'
 import type { TreeNodeData } from '@mantine/core'
@@ -26,6 +27,22 @@ import {
   unsafeAsContentId,
   unsafeAsSlug,
 } from '../paths/test-utils'
+
+describe('withPreviewBranch', () => {
+  it('sets the last branch param, keeping the rest of the URL as written', () => {
+    expect(withPreviewBranch('/a?x=1+2&branch=canopycms%2Flocal%2Fspring#top', 'spring')).toBe(
+      '/a?x=1+2&branch=spring#top',
+    )
+    expect(withPreviewBranch('https://h/p?branch=keep&branch=old', 'new')).toBe(
+      'https://h/p?branch=keep&branch=new',
+    )
+  })
+
+  it('leaves a URL with no branch param as it is', () => {
+    expect(withPreviewBranch('/a?x=1#branch=y', 'spring')).toBe('/a?x=1#branch=y')
+    expect(withPreviewBranch('/a', 'spring')).toBe('/a')
+  })
+})
 
 describe('buildPreviewSrc', () => {
   it('returns the provided preview without modification', () => {

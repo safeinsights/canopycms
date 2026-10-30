@@ -4,7 +4,7 @@
  *
  * Before the fix: `PUT /groups/internal` wrote to the settings workspace
  * (via `mutateGroupsFile`), but every read of effective privileges
- * (`http/handler.ts`, and separately `canopycms-next`'s `context-wrapper.ts`)
+ * (`http/handler.ts`, and separately `next`'s `context-wrapper.ts`)
  * loaded internal groups from the BASE BRANCH content clone instead — a
  * location nothing in the product ever wrote groups.json into. A group
  * grant/revoke via the API therefore returned 200 but never actually changed

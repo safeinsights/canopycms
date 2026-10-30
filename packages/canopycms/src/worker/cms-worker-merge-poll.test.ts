@@ -33,11 +33,18 @@ type MergePollInternals = {
 }
 
 /**
- * `pulls.get`'s answer: the fields GitHub always sends that the gateway carries (`merged_at`,
- * `node_id`), under the ones a test sets.
+ * `pulls.get`'s answer: the fields GitHub always sends that the gateway reads (`merged_at`,
+ * `node_id`, the head and base), under the ones a test sets. The head is outside the namespace,
+ * as a legacy branch's is: the gateway answers merge state for any pull request.
  */
 const pullRequest = (data: Record<string, unknown>) => ({
-  data: { merged_at: null, node_id: 'PR_test', ...data },
+  data: {
+    merged_at: null,
+    node_id: 'PR_test',
+    head: { ref: 'legacy-feature', repo: { id: 1 } },
+    base: { ref: 'main', repo: { id: 1 } },
+    ...data,
+  },
 })
 
 describe('CmsWorker.pollMergeState()', () => {
@@ -131,6 +138,77 @@ describe('CmsWorker.pollMergeState()', () => {
     // merge must preserve them from the existing metadata.
     expect(meta?.pullRequestNumber).toBe(42)
     expect(meta?.pullRequestUrl).toBe('https://github.com/test-owner/test-repo/pull/42')
+  })
+
+  it("keeps the branch's stored name, which its directory is only the sanitized form of", async () => {
+    const { internals, octokit } = makePollWorker()
+    for (const [merged, state] of [
+      [true, 'closed'],
+      [false, 'closed'],
+    ] as const) {
+      const branchPath = await setupBranchMeta('canopycms-prod-spring', {
+        name: 'canopycms/prod/spring',
+        pullRequestNumber: 44,
+        pullRequestState: 'open',
+        status: 'submitted',
+      })
+      octokit.pulls.get.mockResolvedValue(pullRequest({ merged, state }))
+
+      const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
+      await internals.pollMergeState('canopycms-prod-spring', branchPath, metaFile)
+
+      const meta = await readBranchMeta(branchPath)
+      expect(meta?.pullRequestState).toBe(merged ? 'merged' : 'closed')
+      expect(meta?.name).toBe('canopycms/prod/spring')
+    }
+  })
+
+  it('records neither outcome on a branch.json removed since it was read, creating none', async () => {
+    const { internals, octokit } = makePollWorker()
+    for (const [merged, state] of [
+      [true, 'closed'],
+      [false, 'closed'],
+    ] as const) {
+      const branchPath = await setupBranchMeta('feature-removed', {
+        pullRequestNumber: 45,
+        pullRequestState: 'open',
+      })
+      octokit.pulls.get.mockResolvedValue(pullRequest({ merged, state }))
+      const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
+      await fs.rm(path.join(branchPath, '.canopy-meta', 'branch.json'))
+
+      await internals.pollMergeState('feature-removed', branchPath, metaFile)
+
+      expect(await readBranchMeta(branchPath)).toBeUndefined()
+    }
+  })
+
+  it("records neither outcome on another branch's branch.json that took its place", async () => {
+    const { internals, octokit } = makePollWorker()
+    for (const [merged, state] of [
+      [true, 'closed'],
+      [false, 'closed'],
+    ] as const) {
+      const branchPath = await setupBranchMeta('canopycms-prod-spring', {
+        name: 'canopycms/prod/spring',
+        pullRequestNumber: 46,
+        pullRequestState: 'open',
+      })
+      octokit.pulls.get.mockResolvedValue(pullRequest({ merged, state }))
+      const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
+      await setupBranchMeta('canopycms-prod-spring', {
+        name: 'canopycms-prod-spring',
+        pullRequestState: 'open',
+      })
+
+      await internals.pollMergeState('canopycms-prod-spring', branchPath, metaFile)
+
+      expect(await readBranchMeta(branchPath)).toMatchObject({
+        name: 'canopycms-prod-spring',
+        status: 'submitted',
+        pullRequestState: 'open',
+      })
+    }
   })
 
   it('records closed state without archiving when the PR is closed but not merged', async () => {
@@ -242,7 +320,7 @@ describe('CmsWorker.pollMergeState()', () => {
     octokit.pulls.get.mockResolvedValue(pullRequest({ merged: true, state: 'closed' }))
 
     const saveSpy = vi
-      .spyOn(BranchMetadataFileManager.prototype, 'save')
+      .spyOn(BranchMetadataFileManager.prototype, 'saveIf')
       .mockRejectedValueOnce(new Error('simulated EFS write failure'))
 
     const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)

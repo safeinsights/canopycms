@@ -39,7 +39,7 @@ const EMPTY_LOGICAL_PATH = '' as LogicalPath
  * Strips the embedded ID from each physical segment to produce a logical path:
  * "content/posts.a1b2c3d4e5f6" → "content/posts".
  */
-function toLogicalCollectionPath(physicalPath: string): LogicalPath {
+export function toLogicalCollectionPath(physicalPath: string): LogicalPath {
   if (physicalPath === '.') return EMPTY_LOGICAL_PATH
   return physicalPath
     .split('/')

@@ -21,15 +21,19 @@ import { isNotFoundError, getErrorMessage, sanitizeErrorMessage } from '../utils
 import { filePathExists } from '../utils/fs'
 import { isNetworkRemoteUrl } from '../utils/git'
 import {
+  parseCreatedBranchName,
   sanitizeBranchName,
   RESERVED_SETTINGS_BRANCH_PREFIX,
-  RESERVED_ROUTE_BRANCH_NAMES,
   isSettingsBranchName,
 } from '../paths'
 import { GitManager } from '../git-manager'
 import { syncDeleteRemoteBranch } from './github-sync'
 import { branchNameSchema, branchParamSchema } from './validators'
 import { baseBranchOf } from '../utils/base-branch'
+import { shortNameOf } from '../branch-param'
+import { namespaceAncestors } from '../operating-mode/branch-namespace'
+import { getTaskQueueDir } from '../task-queue/task-queue-config'
+import { readWorkerStatus } from '../task-queue/worker-status'
 import type { UserProfile } from '../auth/types'
 import { lookupUserProfiles } from '../auth/user-metadata-lookup'
 
@@ -47,7 +51,13 @@ const log = createDebugLogger({ prefix: 'BranchAPI' })
  * rather than silently behaving as if nothing changed. That is by design:
  * wire compatibility here means "doesn't break", not "behaves the same".
  */
-export interface BranchListItem extends BranchMetadata {
+export interface BranchListItem extends Omit<BranchMetadata, 'review'> {
+  /**
+   * What pull request links carry for this branch, which `?branch=` and the `/:branch` segment
+   * accept beside `name` (branch-param.ts's `shortNameOf`): `name` less the namespace for a branch
+   * in it, else the full `name`.
+   */
+  shortName?: string
   isProtected?: boolean
   readOnly?: boolean
   /**
@@ -259,14 +269,56 @@ export const toBranchListItem = (
   viewer: CanopyUser,
 ): BranchListItem => {
   const protection = getBranchWriteProtection(config, branch.name, branch.baseBranch, branch.status)
+  // `review` names the reviewer, whom the editor has no use for.
+  const { review: _review, ...listed } = branch
   return {
-    ...branch,
+    ...listed,
+    shortName: shortNameOf(config, branch.name),
     ...accessForViewer(branch.access ?? {}, viewer),
     isProtected: protection.isProtected,
     readOnly: protection.readOnly,
     writeBlocked: protection.writeBlocked,
     submitBlocked: protection.submitBlockedIncludingStatus,
   }
+}
+
+/**
+ * The API's static top-level route segments, which the router ranks above `/:branch`, so a branch
+ * whose short name is one would be shadowed. `http/router.test.ts` holds this list to the router.
+ * @internal Exported for tests.
+ */
+export const TOP_LEVEL_ROUTE_SEGMENTS: readonly string[] = [
+  'admin',
+  'assets',
+  'branches',
+  'groups',
+  'permissions',
+  'users',
+  'whoami',
+]
+
+/**
+ * The names of the branches outside `namespace` a URL can reach, which neither a new branch's
+ * short name nor its ref may take, since the base and active branches resolve first and a short
+ * name would shadow the rest (branch-param.ts): the base, the configured active branch, every
+ * workspace outside the namespace, and the exact names the GitHub gateway protects as the last git
+ * sync recorded them in worker-status.json. Namespace
+ * workspaces are left out, so a creator's retry of a create that already landed reaches the key
+ * check's idempotent answer instead of a refusal.
+ */
+const outsideBranchNames = (
+  config: ApiContext['services']['config'],
+  namespace: string,
+  listed: readonly BranchContext[],
+  gatewayProtected: readonly string[],
+): Set<string> => {
+  const base = baseBranchOf(config)
+  return new Set([
+    base,
+    config.defaultActiveBranch ?? base,
+    ...listed.map((context) => context.branch.name).filter((name) => !name.startsWith(namespace)),
+    ...gatewayProtected,
+  ])
 }
 
 /** @internal Exported for tests. */
@@ -276,7 +328,51 @@ export const createBranchHandler = async (
   body: z.infer<typeof createBranchBodySchema>,
 ): Promise<BranchListItemResponse> => {
   return log.timed('api', 'createBranch', async () => {
-    const branchName = body.branch
+    const { config } = ctx.services
+    const strategy = operatingStrategy(config.mode)
+    // Every branch an editor creates is in the namespace the GitHub gateway writes
+    // (worker/branch-policy.ts): its ref is the namespace followed by the typed name, sanitized.
+    let namespace: string
+    try {
+      namespace = strategy.getBranchNamespace(config)
+    } catch (err: unknown) {
+      return {
+        ok: false,
+        status: 500,
+        error: `Branches cannot be created until an administrator fixes the branch namespace: ${getErrorMessage(err)}`,
+      }
+    }
+    const { workerStatus } = await readWorkerStatus(getTaskQueueDir(config))
+    const gatewayNamespace = workerStatus?.gatewayBranchNamespace
+    // The worker reports the namespace once a git sync reads one from the gateway's health
+    // (worker/git-sync.ts). A worker that predates the namespace never reports one, and its rebase
+    // loop renames a namespace branch to its directory, which no request then resolves. Where
+    // branches publish through the worker, creation waits for the report.
+    if (gatewayNamespace === undefined && strategy.supportsPullRequests()) {
+      return {
+        ok: false,
+        status: 503,
+        error:
+          "Branches cannot be created yet: the CMS worker has not reported the GitHub gateway's " +
+          'branch namespace. Ask an administrator to check that the worker (canopycms-cdk) runs ' +
+          'this release and that its git sync reaches the gateway, then try again.',
+      }
+    }
+    if (gatewayNamespace !== undefined && gatewayNamespace !== namespace) {
+      return {
+        ok: false,
+        status: 409,
+        error:
+          `Branches cannot be created: this CMS creates them in "${namespace}", but the GitHub ` +
+          `gateway publishes only branches in "${gatewayNamespace}", so none could be published. ` +
+          'Ask an administrator to make the two agree.',
+      }
+    }
+
+    const named = parseCreatedBranchName(body.branch, namespace)
+    if (!named.ok) return nameRefused(400, named.error)
+    const { name: branchName, shortName } = named
+    const key = sanitizeBranchName(branchName)
     log.debug('api', 'Create branch request', {
       branchName,
       userId: req.user.userId,
@@ -284,83 +380,43 @@ export const createBranchHandler = async (
 
     // Scope note: the remote-mirror check further down applies ONLY to this
     // user-facing creation path; http/handler.ts's auto-create (base/active
-    // branches) and loadOrCreateBranchContext provision known names. The two
-    // settings-branch checks below give this path a specific 400; every
+    // branches) and loadOrCreateBranchContext provision known names. Every
     // provisioning path, this one included, also refuses a settings branch in
     // BranchWorkspaceManager.openOrCreateBranch.
 
-    // Prevent git branch name collision with the settings branch. Settings
-    // live in a separate directory but share the same git remote, and
-    // openOrCreateBranch (branch-workspace.ts) uses the SANITIZED name as the
-    // actual git branch name. parseBranchName (via branchNameSchema) permits
-    // '/', so a raw-string comparison here let a request for
-    // "canopycms/settings-prod" sail past this check while
-    // sanitizeBranchName() collapsed it to "canopycms-settings-prod" --
-    // creating a content branch whose real git ref WAS the settings branch.
-    // Comparing sanitized forms on both sides closes that bypass.
-    const strategy = operatingStrategy(ctx.services.config.mode)
-    const sanitizedRequested = sanitizeBranchName(branchName)
+    // Settings live in a separate directory but share the git remote, so a content branch may not
+    // take the settings branch's ref. Compared sanitized, the form git and disk use.
     if (strategy.usesSeparateSettingsBranch()) {
-      const settingsBranchName = strategy.getSettingsBranchName(ctx.services.config)
-      if (sanitizedRequested === sanitizeBranchName(settingsBranchName)) {
-        return {
-          ok: false,
-          status: 400,
-          error:
-            'Cannot create content branch with settings branch name (git branch name collision)',
-        }
+      const settingsBranchName = strategy.getSettingsBranchName(config)
+      if (key === sanitizeBranchName(settingsBranchName)) {
+        return nameRefused(
+          400,
+          'Cannot create content branch with settings branch name (git branch name collision)',
+        )
       }
     }
-
-    // Reserve the WHOLE canopycms-settings- namespace, not just this
-    // deployment's own settings branch name. Two CanopyCMS deployments can
-    // share one GitHub repo, each with its own settings branch under this
-    // prefix; the worker (worker/git-sync.ts) treats any
-    // `canopycms-settings-*` ref specially (orphan-branch reconcile/push
-    // logic), so another deployment's settings branch is a real name that
-    // must not be claimable as a content branch here either.
-    if (sanitizedRequested.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX)) {
-      return {
-        ok: false,
-        status: 400,
-        error: `Branch names starting with "${RESERVED_SETTINGS_BRANCH_PREFIX}" are reserved for CanopyCMS settings branches`,
-      }
-    }
-
-    // Reject names that collide with a static top-level API route namespace --
-    // the router prefers a literal segment over `:branch`, so such a branch
-    // would be unreachable through its own routes (see
-    // RESERVED_ROUTE_BRANCH_NAMES). Checked on both the raw and sanitized form
-    // for the same reason as the settings-branch guard above: the raw name is
-    // what lands in the `/:branch` URL segment, the sanitized name is what
-    // becomes the actual git ref.
-    if (
-      RESERVED_ROUTE_BRANCH_NAMES.includes(branchName) ||
-      RESERVED_ROUTE_BRANCH_NAMES.includes(sanitizedRequested)
-    ) {
-      return {
-        ok: false,
-        status: 400,
-        error: `Branch name "${branchName}" is reserved: it collides with the /${branchName} API route namespace`,
-      }
+    // The handler answers any `/:branch` segment in the settings range as not found
+    // (http/handler.ts), so a branch with such a short name could never be opened.
+    if (isSettingsBranchName(shortName, strategy.getSettingsBranchName(config))) {
+      return nameRefused(
+        400,
+        `"${shortName}" is a name CanopyCMS keeps for its settings. Choose a different name.`,
+      )
     }
 
     // Reject the base branch name outright, even before the base branch is
     // provisioned. No recorded fork point exists yet for a not-yet-created
     // branch, so this checks config protection only.
-    const { isProtected } = getBranchProtection(ctx.services.config, branchName)
-    if (isProtected) {
-      return {
-        ok: false,
-        status: 400,
-        error: 'Cannot create a branch with the base branch name',
-      }
+    const { isProtected } = getBranchProtection(config, branchName)
+    if (isProtected) return nameRefused(400, 'Cannot create a branch with the base branch name')
+
+    if (TOP_LEVEL_ROUTE_SEGMENTS.includes(shortName)) {
+      return nameRefused(
+        400,
+        `"${shortName}" is a name CanopyCMS uses for itself. Choose a different name.`,
+      )
     }
 
-    // A name collision with ANY existing branch answers before a clone is paid
-    // for. Provisioning never merges into an existing branch either: it reports
-    // `exists`, mapped the same way below. Compared sanitized, the form
-    // branch.json records.
     if (!ctx.services.registry) {
       return {
         ok: false,
@@ -368,9 +424,26 @@ export const createBranchHandler = async (
         error: 'Branch registry not initialized — ensure the workspace has been initialized',
       }
     }
-    const existingBranch = await ctx.services.registry.get(sanitizeBranchName(branchName))
+    const listed = await ctx.services.registry.list()
+    const outside = outsideBranchNames(
+      config,
+      namespace,
+      listed,
+      workerStatus?.gatewayProtectedBranches ?? [],
+    )
+    if (outside.has(shortName) || outside.has(branchName)) {
+      return nameRefused(
+        409,
+        `"${shortName}" is already the name of another branch. Choose a different name.`,
+      )
+    }
+
+    // A name collision with ANY existing branch answers before a clone is paid
+    // for. Provisioning never merges into an existing branch either: it reports
+    // `exists`, mapped the same way below. Compared by key, the workspace directory.
+    const existingBranch = await ctx.services.registry.getByKey(key)
     if (existingBranch) {
-      return existingBranchResponse(ctx, req, existingBranch)
+      return existingBranchResponse(ctx, req, existingBranch, named)
     }
 
     // L2: create-time collision check against this deployment's local
@@ -383,10 +456,11 @@ export const createBranchHandler = async (
     // then reconciles refs/heads/* without touching editor work, so it carries both
     // this deployment's local heads and GitHub's view -- readable offline by
     // this same Lambda, since it resolves to the same EFS inode the worker
-    // uses. Reading it here catches a sanitized-name collision with a branch
-    // another CanopyCMS deployment sharing this repo (or a direct push to
-    // GitHub) already created -- something the local registry check above
-    // cannot see.
+    // uses. Reading it here catches a collision with a branch another
+    // CanopyCMS deployment sharing this repo (or a direct push to GitHub)
+    // already created -- something the local registry check above cannot
+    // see -- and a branch named after part of the namespace, which git
+    // cannot hold beside any branch in it.
     //
     const resolvedMirrorPath = resolveReadOnlyMirrorPath(ctx, strategy)
 
@@ -420,9 +494,30 @@ export const createBranchHandler = async (
       )
     } else {
       try {
+        for (const ancestor of namespaceAncestors(namespace)) {
+          // Local heads too: remote.git cannot take the new branch beside one either.
+          if (await GitManager.bareRemoteHasBranch(resolvedMirrorPath, ancestor)) {
+            return {
+              ok: false,
+              status: 409,
+              error:
+                `Branches cannot be created: a branch named "${ancestor}" exists on the remote, ` +
+                'and git cannot hold a branch inside another. Ask an administrator to rename or ' +
+                'delete it.',
+            }
+          }
+        }
+        const [inside] = await GitManager.bareRemoteBranchesInside(resolvedMirrorPath, branchName)
+        if (inside !== undefined) {
+          return nameRefused(
+            409,
+            `"${shortName}" cannot be created: the remote has a branch named "${inside}" inside ` +
+              'it, and git cannot hold both. Choose a different name.',
+          )
+        }
         const collision = await GitManager.bareRemoteHasBranch(
           resolvedMirrorPath,
-          sanitizedRequested,
+          branchName,
           // GitHub's view only -- see bareRemoteHasBranch. A local head in
           // remote.git survives an editor-side branch delete forever, so
           // including refs/heads/* here would make the ordinary create ->
@@ -432,15 +527,13 @@ export const createBranchHandler = async (
           { namespaces: 'tracking' },
         )
         if (collision) {
-          return {
-            ok: false,
-            status: 409,
-            error:
-              `A branch named "${sanitizedRequested}" already exists on the remote. ` +
+          return nameRefused(
+            409,
+            `A branch named "${shortName}" already exists on the remote. ` +
               `It may have been created by another CanopyCMS deployment sharing this ` +
               `repository, pushed directly to GitHub, or left behind by an earlier branch ` +
               `of the same name. Choose a different name.`,
-          }
+          )
         }
         // No collision: GitHub does not have this name. Clear any STALE local
         // head the mirror still carries for it, so this new branch's first
@@ -460,10 +553,10 @@ export const createBranchHandler = async (
         // that is today's status quo, and the publish-time 409 message names
         // this cause.
         try {
-          await GitManager.deleteBareRemoteHead(resolvedMirrorPath, sanitizedRequested)
+          await GitManager.deleteBareRemoteHead(resolvedMirrorPath, branchName)
         } catch (err: unknown) {
           log.warn('api', 'Failed to clear stale mirror head at branch reuse', {
-            branch: sanitizedRequested,
+            branch: branchName,
             path: resolvedMirrorPath,
             error: getErrorMessage(err),
           })
@@ -484,12 +577,12 @@ export const createBranchHandler = async (
     // Load path permissions from the base branch's JSON file (the resolved
     // fork point — baked into config at service creation; dev-mode git HEAD
     // when not explicitly configured)
-    const baseBranch = baseBranchOf(ctx.services.config)
+    const baseBranch = baseBranchOf(config)
     const baseBranchContext = await ctx.getBranchContext(baseBranch)
 
     let pathPermissions: PathPermission[] = []
     if (baseBranchContext) {
-      const operatingMode = ctx.services.config.mode
+      const operatingMode = config.mode
       pathPermissions = await loadPathPermissions(baseBranchContext.branchRoot, operatingMode)
     }
 
@@ -518,12 +611,10 @@ export const createBranchHandler = async (
       if (err instanceof BranchProvisioningBusyError) {
         return { ok: false, status: 503, error: err.message }
       }
-      if (err instanceof BranchDirOccupiedError) {
-        return { ok: false, status: 409, error: err.message }
-      }
+      if (err instanceof BranchDirOccupiedError) return nameRefused(409, err.message)
       throw err
     }
-    if (outcome.kind === 'exists') return existingBranchResponse(ctx, req, outcome.context)
+    if (outcome.kind === 'exists') return existingBranchResponse(ctx, req, outcome.context, named)
 
     log.debug('api', 'Branch created', { branchName: outcome.context.branch.name })
     return {
@@ -534,12 +625,24 @@ export const createBranchHandler = async (
   })
 }
 
-/** A create that names an existing branch: 409, unless it is that creator's recent retry. */
+/**
+ * A create whose key an existing workspace holds: 409, unless that workspace is the branch this
+ * create names (`named.name`) and the create is its creator's recent retry. A workspace with
+ * another stored name only shares the key, so answering with it would hand back another branch.
+ */
 const existingBranchResponse = (
   ctx: ApiContext,
   req: ApiRequest,
   existing: BranchContext,
+  named: { name: string; shortName: string },
 ): BranchListItemResponse => {
+  if (existing.branch.name !== named.name) {
+    return nameRefused(
+      409,
+      `"${named.shortName}" would clash with the existing branch ` +
+        `"${shortNameOf(ctx.services.config, existing.branch.name)}". Choose a different name.`,
+    )
+  }
   if (isCreatorsRecentBranch(existing.branch, req.user.userId)) {
     return {
       ok: true,
@@ -547,8 +650,16 @@ const existingBranchResponse = (
       data: { branch: toBranchListItem(ctx.services.config, existing.branch, req.user) },
     }
   }
-  return { ok: false, status: 409, error: 'A branch with this name already exists' }
+  return nameRefused(409, `A branch named "${named.shortName}" already exists`)
 }
+
+/** A create refused for the name it was given, which the editor shows under its name field. */
+const nameRefused = (status: 400 | 409, error: string): BranchListItemResponse => ({
+  ok: false,
+  status,
+  error,
+  code: 'BRANCH_NAME_REFUSED',
+})
 
 /** @internal Exported for tests. */
 export const listBranchesHandler = async (
@@ -572,15 +683,14 @@ export const listBranchesHandler = async (
     (context) => !isSettingsBranchName(context.branch.name, settingsBranch),
   )
 
-  // The branch the editor should open when none is pinned via URL/config.
-  // Read per-request so dev-mode refreshActiveBranch() updates are reflected.
-  // Sanitized: dev mode detects the RAW git HEAD name (e.g. 'claude/foo'),
-  // but registry branch names are filesystem-sanitized ('claude-foo') — the
-  // editor matches defaultBranch against registry names, so return the form
-  // that can actually be found there.
-  const defaultBranch = sanitizeBranchName(
-    ctx.services.config.defaultActiveBranch ?? baseBranchOf(ctx.services.config),
-  )
+  // The branch the editor should open when none is pinned via URL/config: the name of the
+  // workspace the active branch resolves to, which the editor finds in the list. Read
+  // per-request so dev-mode refreshActiveBranch() updates are reflected.
+  const activeBranch = ctx.services.config.defaultActiveBranch ?? baseBranchOf(ctx.services.config)
+  const activeKey = sanitizeBranchName(activeBranch)
+  const defaultBranch =
+    allBranches.find((context) => path.basename(context.branchRoot) === activeKey)?.branch.name ??
+    activeBranch
 
   // The access check is the rule: the list shows exactly the branches it grants, so the editor
   // never lists a branch it cannot open, nor leaves out one it can.
@@ -792,14 +902,14 @@ export const deleteBranchHandler = async (
     (await filePathExists(mirrorPath))
   ) {
     try {
-      await GitManager.deleteBareRemoteHead(mirrorPath, sanitizedDeleted)
+      await GitManager.deleteBareRemoteHead(mirrorPath, branchContext.branch.name)
     } catch (err: unknown) {
       // Client-facing copy is sanitized (API-H2 — no absolute EFS paths);
       // the console line keeps the raw detail for server logs.
       const warning = `Failed to remove the deleted branch's head from the local mirror: ${sanitizeErrorMessage(getErrorMessage(err))}`
       cleanupWarning = cleanupWarning ? `${cleanupWarning}; ${warning}` : warning
       console.warn(
-        `CanopyCMS: failed to remove deleted branch's mirror head (branch ${sanitizedDeleted}, mirror ${mirrorPath}): ${getErrorMessage(err)}`,
+        `CanopyCMS: failed to remove deleted branch's mirror head (branch ${branchContext.branch.name}, mirror ${mirrorPath}): ${getErrorMessage(err)}`,
       )
     }
   }

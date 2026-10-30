@@ -15,6 +15,7 @@ import { createApiClient } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
 import type { ApiResponse } from '../../api/types'
 import type { ContentReadResponse } from '../../api/content'
+import { branchKey } from '../test-utils/branch-names'
 
 describe('Input Validation', () => {
   let workspace: TestWorkspace
@@ -192,7 +193,7 @@ describe('Input Validation', () => {
         workspace.tmpRoot,
         '.canopy-dev',
         'content-branches',
-        BRANCH,
+        branchKey(BRANCH),
         'content',
       )
       // `posts` when the collection has no content ID yet, `posts.{id}` once it does.

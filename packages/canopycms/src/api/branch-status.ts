@@ -17,6 +17,7 @@ import { ContentWriteLockBusyError } from '../utils/content-write-lock'
 import { submissionEditorFromUser, type SubmissionEditor } from '../submission-attribution'
 import { NothingToSubmitError } from '../services'
 import { baseBranchOf } from '../utils/base-branch'
+import { shortNameOf } from '../branch-param'
 import { resolveEditorUrl } from '../editor-url'
 
 // Re-export for client generation
@@ -146,6 +147,7 @@ const submitBranchForMergeHandler = async (
     if (err instanceof NothingToSubmitError) {
       return { ok: false, status: 400, error: err.message }
     }
+    const shortName = shortNameOf(ctx.services.config, branchContext.branch.name)
     // Retriable either way: a resubmit commits nothing new and pushes only
     // what has not reached the remote.
     if (err instanceof ContentWriteLockBusyError) {
@@ -154,8 +156,8 @@ const submitBranchForMergeHandler = async (
         status: 409,
         error:
           err.outcome === 'not-run'
-            ? `Could not submit "${branchContext.branch.name}" right now: it is being synced with its base branch, or a save is in flight. Nothing was submitted; try again in a moment.`
-            : `"${branchContext.branch.name}" was being synced while it was submitted, so the submit may not have completed. Try submitting again.`,
+            ? `Could not submit "${shortName}" right now: it is being synced with its base branch, or a save is in flight. Nothing was submitted; try again in a moment.`
+            : `"${shortName}" was being synced while it was submitted, so the submit may not have completed. Try submitting again.`,
       }
     }
     const message = getErrorMessage(err)
@@ -186,7 +188,7 @@ const submitBranchForMergeHandler = async (
         ok: false,
         status: 409,
         error:
-          `Could not submit "${branchContext.branch.name}": it has diverged from the copy in ` +
+          `Could not submit "${shortName}": it has diverged from the copy in ` +
           `this deployment's repository and needs to be reconciled before it can be submitted. ` +
           `The background worker reconciles branches when the base branch moves, so this often ` +
           `clears on its own within a few minutes -- try again shortly, and ask an administrator ` +
@@ -201,6 +203,14 @@ const submitBranchForMergeHandler = async (
     }
   }
 
+  // The verdict covers one submit. It is cleared on disk before the PR is written, because a
+  // comment sync between that write and the status save below renders the PR body from disk and
+  // would otherwise put the last round's verdict back on the new body.
+  const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
+  if (branchContext.branch.review) {
+    await meta.save({ branch: { name: branchContext.branch.name, review: undefined } })
+  }
+
   // Create or update PR (sync via githubService, or async via task queue)
   const submittedAt = new Date().toISOString()
   const editorUrl = submitEditorUrl(ctx, req, body?.editorUrl)
@@ -213,7 +223,6 @@ const submitBranchForMergeHandler = async (
     submittedAt,
   })
 
-  const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
   const pushed = prResult.pushedToGitHub ? { pushedToGitHubAt: submittedAt } : {}
   // GitHub found nothing between the pushed branch and its base, though the diff above found
   // changes: GitHub's base can already hold them, or the diff could not be computed. The branch
@@ -224,7 +233,10 @@ const submitBranchForMergeHandler = async (
     return {
       ok: false,
       status: 400,
-      error: new NothingToSubmitError(branchContext.branch.name, base).message,
+      error: new NothingToSubmitError(
+        shortNameOf(ctx.services.config, branchContext.branch.name),
+        base,
+      ).message,
     }
   }
 
@@ -244,6 +256,7 @@ const submitBranchForMergeHandler = async (
       // pre-submit rebase-failure record would otherwise stick as a stale
       // warning through review and archive.
       rebaseFailure: undefined,
+      review: undefined,
     },
   })
 

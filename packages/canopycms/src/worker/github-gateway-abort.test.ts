@@ -113,7 +113,7 @@ beforeEach(async () => {
   await fs.writeFile(path.join(seedPath, 'b.txt'), 'b')
   await seed.add('.')
   await seed.commit('b')
-  await seed.raw(['push', '-q', remoteGitPath, 'HEAD:refs/heads/feature'])
+  await seed.raw(['push', '-q', remoteGitPath, 'HEAD:refs/heads/canopycms/prod/feature'])
   await installStub()
 })
 
@@ -148,11 +148,19 @@ describe('an abort', () => {
       await fs.writeFile(path.join(stubDir, `hold-${what}`), '')
       const github = gateway()
       const controller = new AbortController()
-      const sha = await git('--git-dir', remoteGitPath, 'rev-parse', 'refs/heads/feature')
+      const sha = await git(
+        '--git-dir',
+        remoteGitPath,
+        'rev-parse',
+        'refs/heads/canopycms/prod/feature',
+      )
 
       const pushing = pushToGitHub(
         { github: () => github, remoteGitPath, taskTimeoutMs: 60_000 },
-        { branch: 'feature', prerequisiteBranches: ['feature', 'main'] },
+        {
+          branch: 'canopycms/prod/feature',
+          prerequisiteBranches: ['canopycms/prod/feature', 'main'],
+        },
         async () => sha,
         controller.signal,
       ).catch((err: unknown) => err)
@@ -163,7 +171,9 @@ describe('an abort', () => {
       expect(await pushing).toBeInstanceOf(Error)
       // Within the stop's grace, the whole group: the held git and the child it started.
       await vi.waitFor(() => expect(pids.filter(isAlive)).toEqual([]), { timeout: 10_000 })
-      expect(await git('--git-dir', githubPath, 'for-each-ref', 'refs/heads/feature')).toBe('')
+      expect(
+        await git('--git-dir', githubPath, 'for-each-ref', 'refs/heads/canopycms/prod/feature'),
+      ).toBe('')
     },
   )
 })

@@ -12,6 +12,7 @@ import { createApiClient, saveSamplePost } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
 import type { BranchListItemResponse, BranchListResponse } from '../../api/branch'
 import { getBranchMetadataFileManager, loadBranchContext } from '../../branch-metadata'
+import { branchKey, branchRef } from '../test-utils/branch-names'
 
 describe('Role Permission Integration', () => {
   let workspace: TestWorkspace
@@ -66,7 +67,7 @@ describe('Role Permission Integration', () => {
 
     expect(adminAccessResponse.status).toBe(200)
     const status = await adminAccessResponse.json<BranchListItemResponse>()
-    expect(status.data?.branch.name).toBe('editor-branch')
+    expect(status.data?.branch.name).toBe(branchRef('editor-branch'))
   })
 
   it('allows admin to modify any branch access control', async () => {
@@ -319,8 +320,8 @@ describe('Role Permission Integration', () => {
     expect(editorListResponse.status).toBe(200)
     const editorBranches = await editorListResponse.json<BranchListResponse>()
     const editorBranchNames = editorBranches.data?.branches.map((b) => b.name)
-    expect(editorBranchNames).toContain('editor-branch')
-    expect(editorBranchNames).not.toContain('admin-only')
+    expect(editorBranchNames).toContain(branchRef('editor-branch'))
+    expect(editorBranchNames).not.toContain(branchRef('admin-only'))
 
     // Reviewer sees all branches (privileged role)
     const reviewerListResponse = await reviewerClient.get('/api/canopycms/branches')
@@ -340,7 +341,7 @@ describe('Role Permission Integration', () => {
     expect(editorBefore.status).toBe(200)
 
     // No API sets the lockdown, so write it into branch.json directly.
-    const context = await loadBranchContext({ branchName: 'locked-branch', mode: 'dev' })
+    const context = await loadBranchContext({ branchName: branchKey('locked-branch'), mode: 'dev' })
     if (!context) throw new Error('locked-branch was not provisioned')
     await getBranchMetadataFileManager(context.branchRoot, context.baseRoot).save({
       branch: { access: { managerOrAdminAllowed: true } },
@@ -371,14 +372,14 @@ describe('Role Permission Integration', () => {
     const editorList = await (
       await editorClient.get('/api/canopycms/branches')
     ).json<BranchListResponse>()
-    expect(editorList.data?.branches.map((b) => b.name)).not.toContain('locked-branch')
+    expect(editorList.data?.branches.map((b) => b.name)).not.toContain(branchRef('locked-branch'))
 
     expect((await reviewerClient.get(post)).status).toBe(200)
     expect((await adminClient.get(post)).status).toBe(200)
     const reviewerList = await (
       await reviewerClient.get('/api/canopycms/branches')
     ).json<BranchListResponse>()
-    expect(reviewerList.data?.branches.map((b) => b.name)).toContain('locked-branch')
+    expect(reviewerList.data?.branches.map((b) => b.name)).toContain(branchRef('locked-branch'))
   })
 
   it('allows branch creator to delete their own branch', async () => {

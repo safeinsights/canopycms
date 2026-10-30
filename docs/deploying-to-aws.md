@@ -691,9 +691,9 @@ each entry, and held there by a test that drives the worker's dispatch table and
 fails if a call is added that the set does not cover.
 
 Neither the App nor a token needs the workflows permission (the `workflow` scope,
-for a classic PAT). GitHub refuses a push only when it adds workflow content the
-repository does not already hold, so a content branch rebased onto a base branch
-that changed a workflow still publishes. In practice the refusal needs a workflow
+for a classic PAT). GitHub was seen to refuse a push only when it added workflow
+content the repository lacked, so a content branch rebased onto a base branch that
+changed a workflow still publishes. In practice the refusal needs a workflow
 edit made outside the editor, such as a direct push to a content branch that the
 worker's rebase then merges with a base change to the same file. That publish fails
 at once, and System health and the branch list name the workflow file.
@@ -883,11 +883,26 @@ new CanopyCmsService(this, 'Cms', {
 2. `deploymentName` in the shared repo's `canopycms.config.ts`
 3. the operating mode's default (`prod` / `local`)
 
-The env var deliberately wins over config, and if both are set and disagree the Lambda logs a one-time warning naming both values and which one won. See [ARCHITECTURE.md](../ARCHITECTURE.md#deployment-name-resolution) for why that order and not the intuitive one.
+The env var wins over config; when both are set and disagree, the Lambda logs a one-time warning naming both and the winner. See [ARCHITECTURE.md](../ARCHITECTURE.md#deployment-name-resolution) for why that order.
 
-Setting `CANOPYCMS_DEPLOYMENT_NAME` through the construct's `environment` prop still works and still wins over the `deploymentName` prop, but it is resolved at synth rather than passed through: the winning value is validated by the same rule as the prop (an invalid one fails `cdk synth` instead of crash-looping the Lambda at boot) and is written to **both** the Lambda's environment and the worker's `.env`. Prefer the `deploymentName` prop — it says the same thing in one place.
+`CANOPYCMS_DEPLOYMENT_NAME` set through the construct's `environment` prop wins over the `deploymentName` prop; validated at synth, it is written to the Lambda's environment and the worker's `.env`.
 
-**Changing `deploymentName` (or `settingsBranch`) on a stack that already has a populated settings workspace is refused at boot, loudly** — it is not migrated automatically, because renaming the resolved settings branch would check out a _different_ orphan branch in the same on-disk workspace and wipe `permissions.json`/`groups.json` with no history to recover them from. If you see this error, either restore the previous value or deliberately move the settings workspace aside first. A moved-aside or wiped settings workspace is re-provisioned from `remote.git`, keeping groups and path rules.
+**Each deployment writes only its own branches.** Every branch editors create starts with the
+branch namespace, `canopycms/{deployment}/` by default: a template, set by `CanopyCmsService`'s
+`branchNamespace` prop, in which `{deployment}` is the deployment name, ending with `/`. The
+construct resolves it at synth and sets `CANOPYCMS_BRANCH_NAMESPACE` for both the Lambda and the
+GitHub gateway ([Security Model](#security-model)); set the same template as `branchNamespace` in `canopycms.config.ts` for development. System health
+says so when the two disagree. Keep `{deployment}` in one template on every stack sharing a
+repository: a deployment name holds no `/`, so `canopycms/prod/` never contains
+`canopycms/prod-eu/`, but nothing checks a template that differs between stacks.
+
+**Changing the template is a migration.** Existing branches keep their names, so they fall
+outside the new namespace: URLs carry their full names, and the gateway refuses to publish them
+until [`legacyBranches`](#the-worker-instance) lists them. A PR body rendered before the change
+links the old short name, which can open whichever branch later takes it until the branch is
+submitted again.
+
+**Changing `deploymentName` (or `settingsBranch`) on a stack that already has a populated settings workspace is refused at boot, loudly** — it is not migrated automatically, because renaming the resolved settings branch would check out a _different_ orphan branch in the same on-disk workspace and wipe `permissions.json`/`groups.json` with no history to recover them from. Restore the previous value, or move the settings workspace aside first. A moved-aside or wiped settings workspace is re-provisioned from `remote.git`, keeping groups and path rules.
 
 ## Base branch and settings branch: keeping the worker and the Lambda in step
 
@@ -1138,9 +1153,9 @@ bundle first:
   or the socket is open to group or others.
 - **`canopy-github.socket`**, between them: `/run/canopy-github/gateway.sock`, mode 0600, owned
   by `ec2-user`, so only the worker's user and root can connect. The worker asks the gateway for a fixed
-  set of operations (fetch, push, delete a branch, the pull request calls, the Clerk snapshot,
-  and the instance's termination notice and lifecycle action), and can do nothing else on
-  GitHub, Clerk or AWS.
+  set of operations (fetch, push, delete a branch, the pull request calls, default-branch reads,
+  the Clerk snapshot, and the instance's termination notice and lifecycle action), and can do
+  nothing else on GitHub, Clerk or AWS.
 
 Both units share the same sandbox, rated 0.6 (worker) and 1.6 (gateway) by
 `systemd-analyze security`: only their state directories, a private `/tmp` and, for the worker,
@@ -1163,8 +1178,13 @@ request from, beside GitHub's default branch and the configured base branch (`ba
 it always protects: names, or globs in which `*` matches any run of characters, `/` included
 (`release/*`), case-sensitive, at most 1024 (fewer when long: user data is capped at 16 KiB). No
 entry may start with `canopycms-settings-`. Set `baseBranch` explicitly: without it the gateway
-does not know your base branch, and protects it only if it is GitHub's default. A compromised CMS Lambda can
-still drive the gateway at any other branch: see the [Security Model](#security-model).
+does not know your base branch, and protects it only if it is GitHub's default.
+
+**`legacyBranches`** lists, exactly, branches outside the
+[branch namespace](#two-deployments-one-repository) the gateway may still write: no `*`,
+nothing in the namespace or that it sits under (`canopycms/prod`). **Before upgrading, or
+changing the template,** list every open branch outside it; System health names any you missed.
+Drop each once merged or deleted.
 
 **`clerkOrganizationsAsGroups`** (default `true`) sets whether the worker maps Clerk Organizations to
 groups; it, not the plugin's `useOrganizationsAsGroups`, governs a deployment, so keep them equal. Set
@@ -1333,29 +1353,22 @@ Manager:
 | EFS      | Read/write                           | Read/write                                      | None                                                                     |
 | AWS role | Its own execution role               | None: no route to the instance metadata service | The instance role                                                        |
 
-**The CMS Lambda is intended to receive public configuration only.** Every genuinely
-sensitive value is meant to go to the GitHub gateway instead: pass the GitHub token and Clerk
-secret key to `CanopyCmsService` as `githubTokenSecretArn` / `clerkSecretKeySecretArn`
-(or, for App auth, `githubAppPrivateKeySecretArn` in place of the first),
-and the gateway reads them at boot with the instance role. The Lambda's `environment`
-should carry nothing you would mind reading in the output of
+**The CMS Lambda is meant to receive public configuration only.** Pass the GitHub token and
+Clerk secret key to `CanopyCmsService` as `githubTokenSecretArn` / `clerkSecretKeySecretArn` (for
+App auth, `githubAppPrivateKeySecretArn` in place of the first); the gateway reads them at boot
+with the instance role. The Lambda's `environment` should hold nothing you would mind seeing in
 `aws lambda get-function-configuration`.
 
-The Lambda holds no secrets **because nothing has built that path yet**, not because the
-path cannot exist. It runs in `PRIVATE_ISOLATED` subnets, and a VPC endpoint reaches an AWS
-service from there with no internet route — `CanopyCmsService` already adds a gateway
-endpoint for S3 for exactly that reason. Secrets Manager needs the _interface_ variety
-rather than the free gateway one, so it carries an hourly and per-GB charge: a cost
-argument, not an impossibility argument.
+The Lambda holds no secrets **because nothing has built that path yet**: a Secrets Manager VPC
+endpoint would serve its `PRIVATE_ISOLATED` subnets, but the _interface_ kind carries an hourly
+and per-GB charge, unlike the free gateway kind `CanopyCmsService` adds for S3.
 
 The instance role is correspondingly narrow: EFS mount and write through the shared access
-point, Secrets Manager reads for its specific secrets, SSM core (the Session Manager channel,
-for operators whose roles allow it), read on its bundle and instance files, completing its own
-lifecycle action, the describe calls the EFS mount and the termination watch need, and write-only
-access to its one CloudWatch log group.
-[The worker instance](#the-worker-instance) covers the instance itself.
+point, Secrets Manager reads for its own secrets, SSM core, read on its bundle and instance
+files, its own lifecycle action, the describe calls the EFS mount and termination watch need,
+and write-only access to one CloudWatch log group. See [The worker instance](#the-worker-instance).
 
-Concretely, for Clerk: `CLERK_JWT_KEY` (a public PEM) belongs on the Lambda, and
+For Clerk: `CLERK_JWT_KEY` (a public PEM) belongs on the Lambda, and
 `CLERK_SECRET_KEY` (full Clerk API access) does not. CanopyCMS's own request authentication
 never reads the secret there: `createNextCanopyContext` wraps the Clerk plugin in
 `CachingAuthPlugin`, which checks each token with `verifyTokenOnly()` (the JWT key only) and
@@ -1363,48 +1376,57 @@ takes user and group metadata from the auth cache on EFS. The calls that need th
 Clerk's backend API for that cache, run in the gateway, and the worker writes what they return.
 
 **`clerkMiddleware` is the exception.** `canopycms init` generates a passthrough with it as a
-commented opt-in, and adopted, it throws on every request it matches unless it can
-resolve a secret key — `jwtKey` does not satisfy that check. So the posture above holds for a
-deployment without that middleware, and one that keeps it needs `CLERK_SECRET_KEY` in the
-Lambda's environment, or a fetch of it at run time (see
-safeinsights/canopycms#650). **A middleware you keep
-must also be passed `jwtKey` explicitly**: it never reads `CLERK_JWT_KEY` from the
-environment, and without the prop the internet-less Lambda hangs on sign-in fetching JWKS.
-What dropping the middleware gives up is under [Dual Build Support](#dual-build-support); the
-shape without it has not been run against a real Clerk instance, so test sign-in early.
+commented opt-in, and adopted, it throws on every request it matches unless it can resolve a
+secret key — `jwtKey` does not satisfy that check. So the posture above holds without that
+middleware; one that keeps it needs `CLERK_SECRET_KEY` in the Lambda's environment, or a fetch of
+it at run time (see safeinsights/canopycms#650). **A middleware you keep must also be passed
+`jwtKey` explicitly**: it never reads `CLERK_JWT_KEY` from the environment, and without the prop
+the internet-less Lambda hangs on sign-in fetching JWKS. What dropping it gives up is under
+[Dual Build Support](#dual-build-support); that shape has not been run against a real Clerk
+instance, so test sign-in early.
 
-If the CMS Lambda is compromised, an attacker can read and write content on EFS. It has no
-internet route: it reaches only EFS and the AWS services its own role and VPC endpoints allow
-(the S3 asset bucket, as deployed). It can write the git state the worker reads, and by racing
-the worker, it may run a command as the worker. The worker has no network, no credential and no
-route to the instance metadata service. Among CanopyCMS's processes, only the GitHub gateway uses
-the GitHub credential, the Clerk secret key and the instance role. The gateway cannot see EFS,
-and it answers the worker through a fixed set of operations: push or delete a branch, open or
-update a pull request, fetch from GitHub. The Lambda can already request those through the task
-queue. The rest read GitHub's default branch, a pull request and the Clerk user directory, and
-watch for and complete the instance's termination.
+If the CMS Lambda is compromised, an attacker can read and write EFS content. It has no
+internet route: it reaches only EFS and the AWS services its role and VPC endpoints allow (the S3
+asset bucket, as deployed). It can write the git state the worker reads, and by racing the
+worker, may run a command as the worker. The worker has no network, no credential and no route to
+the instance metadata service. Among CanopyCMS's processes, only the GitHub gateway uses the
+GitHub credential, the Clerk secret key and the instance role. It cannot see EFS, and answers the
+worker only through [a fixed set of operations](#the-worker-instance), whose writes the Lambda can
+already request through the task queue.
 
-The gateway refuses to push to, delete, or open a pull request from the configured base branch
-(`baseBranch`), GitHub's default branch, or any branch in `protectedBranches`. Any other branch
-it can push to, force-push or delete, including with any commit already in your repository, so
-any workflow in your history can run on its content. It can also open pull requests, and update
-or close any pull request by number, which run your `push` and `pull_request` workflows. So:
+The gateway writes only branches in its namespace (`branchNamespace`, `canopycms/prod/` by
+default), its settings branch and `legacyBranches`, never the base branch, GitHub's default
+branch or a `protectedBranches` match. It acts only on pull requests from those heads in this
+repository, and reads no other's body. There it can push any of the repository's commits,
+force-push, delete and open pull requests, which run your workflows. So:
 
-- list every branch that deploys or that people work on in `protectedBranches`, and protect your
-  base branch and those with GitHub rulesets the CanopyCMS credential cannot bypass;
-- give workflows read-only `permissions:`;
-- keep deployment secrets in environments with required reviewers;
-- never check out a pull request's head in `pull_request_target`;
-- use a fine-grained token or an App **without** the workflows permission, which is what stops a
-  push from adding or changing a workflow file.
+- keep secrets a workflow could leak in an environment with required reviewers, never in
+  repository or organization secrets, which reach every branch. Set its deployment branches to
+  "Selected branches and tags", naming only protected branches the gateway cannot write, such as
+  `main`: GitHub matches these against `GITHUB_REF`, so no run on a namespace or legacy branch, or
+  a pull request's `refs/pull/N/merge`, gets them;
+- `pull_request_target`, `workflow_run`, `issue_comment` and other events GitHub runs on the
+  default branch get that environment, so never check out, build or run pull request code or
+  artifacts in them;
+- set Settings → Actions → General → Workflow permissions to read-only (`contents` and
+  `packages`) at the repository level, and the organization's if it has one, so a workflow naming
+  no `permissions:` gets a read-only `GITHUB_TOKEN`. No workflow that `push` or `pull_request` can trigger may ask
+  for write access in any version the repository holds: a gateway push can make a namespace
+  branch run any of them;
+- use a fine-grained token or an App **without** the workflows permission. A push then cannot
+  introduce new workflow content, only switch a file to a version the repository holds, as
+  [observed](#the-permissions-and-why-each-one).
 
-**Check that the protection holds against the credential itself.** Each branch above, and any
-branch a cutover will make the base branch, needs a ruleset or branch protection requiring
-a pull request and blocking force pushes and deletion. A classic token of a repository
-admin bypasses classic branch protection unless "Do not allow bypassing the above settings" is on;
-an App installation token is bound by rulesets unless the App is a bypass actor. Confirm it with
-the credential on a throwaway branch protected the same way: a direct push and a force push
-must both be rejected.
+**Add GitHub rulesets**: they bound where the gateway's token can write. Give each
+deployment one on every branch but its namespace (`canopycms/prod/**/*`), settings branch
+(`canopycms-settings-prod`) and legacy branches, restricting creations, updates and deletions
+and blocking force pushes, bypassed by every _other_ deployment's GitHub App and whoever else
+pushes there; never make GitHub Actions one. A bypass actor is an App, a role or a team,
+so a shared repository needs one App per deployment. Rulesets add up, so each App writes only its
+own exemptions. Give each settings branch a ruleset blocking deletions and force pushes; the
+gateway only fast-forwards it. Protect the base branch, and any a cutover will make it, with one
+requiring a pull request. On a throwaway branch outside the namespace, settings branch and legacy
+list, confirm the credential's direct and force pushes are rejected.
 
 The worker's host, system git config and image stay trusted.
 
@@ -1414,21 +1436,20 @@ Each item assumes an attacker who controls the CMS Lambda and has won the race t
 the worker. What it means for you, and what you can do:
 
 - **The gateway's own reach.** Beyond what the task queue can ask for, such a command can
-  fetch your Clerk user directory through the gateway as often as once a minute, which spends Clerk API quota (the
-  directory itself is already on EFS, as the auth cache), and cut the
-  instance's drain short once a termination has begun, which can cut off a push in flight; the
-  next worker requeues the task. It can also push an object the gateway's mirror still
-  holds but GitHub no longer references, by its object ID: a secret you force-pushed out of
-  history can come back on a branch. The mirror keeps such objects until the instance is
-  replaced, and `remote.git` on EFS keeps them indefinitely, so rotate any secret that ever
-  reached the repository; removing it from history is not enough.
-- **A worker run as one process** (an entrypoint of your own that constructs `CmsWorker` with a
+  fetch your Clerk user directory through the gateway as often as once a minute, spending Clerk
+  API quota (the directory is already on EFS as the auth cache), and cut the instance's drain
+  short once a termination has begun, which can cut off a push in flight; the next worker
+  requeues the task. It can also push, by object ID, an object the mirror still holds
+  but GitHub no longer references: a secret you force-pushed out of history can come back on a
+  branch. The mirror keeps such objects until the instance is replaced, and `remote.git` on EFS
+  indefinitely, so rotate any secret that ever reached the repository.
+- **A worker run as one process** (your own entrypoint constructing `CmsWorker` with a
   credential, or a bundle older than the split) holds its credential itself, so a command won by
   the race reaches it. Run the split units (`CanopyCmsService`, or the hand install above) with a
   current bundle.
-- **Local escalation** from the worker's user, `ec2-user`, through a kernel bug, would reach
-  root and every secret. Its `sudo` is blocked by `NoNewPrivileges`. Deploy now and then, so the
-  instance gets a newer AMI's kernel.
+- **Local escalation** from `ec2-user` through a kernel bug would reach root and every secret
+  (`NoNewPrivileges` blocks its `sudo`). Deploy now and then, so the instance gets a newer AMI's
+  kernel.
 - **Parser bugs in the gateway**, in git's bundle and pack code or node's HTTP server, on input
   the worker chooses, would run code as the gateway, with the credential. Every boot installs the
   latest packages, so a replacement picks up fixes.
@@ -1438,9 +1459,12 @@ the worker. What it means for you, and what you can do:
   memory to a core-dump helper, and who owns its socket. Run the
   [first deploy checklist](#first-deploy-checklist) for the rest.
 - **Denial of service.** The worker can slow or stall publishing and sync, and fake the
-  sync lines the [worker alarms](#worker-down-alarm) count, so they detect faults, not compromise. The gateway's log (the `{instance_id}-gateway` stream), which the worker
-  cannot write, is the record of what reached GitHub: read it when GitHub shows a change nobody
-  made.
+  sync lines the [worker alarms](#worker-down-alarm) count, so they detect faults, not compromise.
+  The gateway's log (the `{instance_id}-gateway` stream), which the worker cannot write, records
+  what reached GitHub: read it when GitHub shows a change nobody made.
+- **Pull requests people open from namespace or legacy branches.** The CMS Lambda alone, through
+  the task queue, can draft, close, retitle or rewrite one. Using such a branch opts in;
+  merging still takes a person.
 - **Other unix sockets** on the host that `ec2-user` can connect to are levers the worker keeps.
   Install nothing on the instance that listens on one.
 - **A root process opening a path the worker can write** could be steered into overwriting any
@@ -1455,13 +1479,13 @@ the worker. What it means for you, and what you can do:
 
 CloudFront reaches the Lambda Function URL through an Origin Access Control (OAC) with SigV4 signing (`SigningBehavior: always`), so the Function URL rejects any request that isn't signed by this distribution — a direct hit to the Function URL is refused.
 
-This has one consequence adopters don't need to think about, but that's worth knowing if you see unexplained 403s: **CloudFront signs origin requests but never hashes the request body.** For any request that carries a body (POST/PUT/PATCH — saves, publishes, permission/group updates), the _viewer_ request must already include an `x-amz-content-sha256` header containing the lowercase-hex SHA-256 digest of the exact payload. If that header is missing, Lambda's signature verification fails the payload check and responds 403, even though the request reached CloudFront correctly.
+For unexplained 403s: **CloudFront signs origin requests but never hashes the request body.** Any request with a body (POST/PUT/PATCH — saves, publishes, permission/group updates) must already carry, from the _viewer_, an `x-amz-content-sha256` header holding the lowercase-hex SHA-256 digest of the exact payload. Without it, Lambda's signature verification fails the payload check and responds 403, even though the request reached CloudFront.
 
-CanopyCMS's generated API client (`packages/canopycms/src/api/client.ts`, via the shared `computeContentSha256Hex` helper in `packages/canopycms/src/api/request-body-hash.ts`) computes and attaches this header automatically for every JSON request body, using WebCrypto (`crypto.subtle.digest`). GET/DELETE requests without a body are unaffected. The header is a no-op on non-AWS deployments (it's just an extra header nothing enforces), so this doesn't need to be conditionally enabled per environment.
+CanopyCMS's generated API client (`packages/canopycms/src/api/client.ts`, via `computeContentSha256Hex` in `packages/canopycms/src/api/request-body-hash.ts`) attaches this header automatically to every JSON request body, using WebCrypto. GET/DELETE requests without a body are unaffected. Off AWS, nothing enforces the header.
 
 **Next.js Server Actions 403 here.** Their POSTs carry a body without that header, so don't rely on Server Actions in the CMS build (safeinsights/canopycms#759). `@clerk/nextjs`'s provider runs one before every `setActive`, and when it fails, sign-in hangs. The editor skips it; `router.refresh()`, which Clerk runs next, still clears Next's router cache. If your CMS build renders Clerk components outside the editor, mount `useSkipClerkSetActiveAction()` as the [Clerk package README](../packages/canopycms-auth-clerk/README.md#clerk-components-on-your-own-pages) shows. This is verified from source, not yet observed live.
 
-**`FormData` bodies can't be hashed this way**, because the multipart boundary is generated at send time. The one CanopyCMS request that sends one, the proxied upload (`POST /assets/upload`), serves a local asset store. With the S3 store the editor uploads by presigned POST to an unsigned S3 origin, never the Function URL. Send any new body as JSON, or as raw bytes hashed with `computeContentSha256HexFromBytes`, never as `FormData`.
+**`FormData` bodies can't be hashed this way**, because the multipart boundary is generated at send time. The one CanopyCMS request that sends one, the proxied upload (`POST /assets/upload`), serves a local asset store. With the S3 store the editor uploads by presigned POST to an unsigned S3 origin, never the Function URL. Send any new body as JSON, or raw bytes hashed with `computeContentSha256HexFromBytes`, never `FormData`.
 
 ## Environments
 
@@ -1481,7 +1505,7 @@ new CmsStack(app, 'CmsProd', {
 })
 ```
 
-Separate AWS accounts mean these two stacks' settings branches would never collide even without `deploymentName` — but set distinct values anyway: it's the same repo's `canopycms-settings-*` branch namespace on GitHub, and a future stack sharing either's account should not have to guess the convention. See [Two deployments, one repository](#two-deployments-one-repository).
+Separate AWS accounts mean these two stacks' settings branches would never collide even without `deploymentName`, but set distinct values anyway: they share the repo's `canopycms-settings-*` branch namespace on GitHub, and a future stack sharing either's account should not have to guess. See [Two deployments, one repository](#two-deployments-one-repository).
 
 The generated workflow deploys one stack by name, so adding a second one here means updating its Deploy step too — either naming both (`npx cdk deploy CmsTest CmsProd`) or, more usually, giving each environment its own workflow with its own trigger and its own OIDC role.
 

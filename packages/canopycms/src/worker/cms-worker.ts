@@ -22,6 +22,7 @@ import {
   sanitizeBranchName,
   RESERVED_SETTINGS_BRANCH_PREFIX,
 } from '../paths/branch-name'
+import { resolveBranchNamespace } from '../operating-mode/branch-namespace'
 import { resolveDeploymentName } from '../operating-mode/deployment-name'
 import type { BaseRefreshReport, WorkerShutdownRecord, WorkerStatusReport } from '../types'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
@@ -33,6 +34,10 @@ import {
 import { CANOPYCMS_VERSION } from '../version'
 import { workerLog, workerLogWarn, workerLogError } from './log'
 import { DEFAULT_SCHEMA_HOLD_MAX_MS, readCarriedBaseHold } from './schema-gate'
+import {
+  readCarriedGatewayPolicy,
+  readCarriedUnpublishableBranches,
+} from './unpublishable-branches'
 import type { WorkerContext } from './worker-context'
 import {
   SharedRepoRefusalError,
@@ -47,6 +52,7 @@ import {
   pushBranchToGitHub,
   updateBranchMetadata,
 } from './task-runner'
+import type { BranchPolicyDescription } from './branch-policy'
 import { pollMergeState, runRebaseCycle, type RebaseSummary } from './rebase'
 import {
   cleanupTrashedBranchDirs,
@@ -96,6 +102,8 @@ export {
   type GitHubGatewayServerOptions,
 } from './github-gateway-http'
 export { GitHubGatewayUnreachableError } from './github-gateway-wire'
+// The split gateway resolves its branch namespace as the in-process one does.
+export { resolveBranchNamespace } from '../operating-mode/branch-namespace'
 // A gateway that failed to boot still serves the instance operations.
 export { GatewayInstance, type GatewayInstanceOptions } from './gateway-instance'
 // The gateway process's scrubbed log lines, and the exact scrubs for the secrets it holds that
@@ -147,8 +155,9 @@ export interface CmsWorkerConfig extends GitHubAuthConfig {
   /**
    * A GitHub gateway to use instead of building the in-process one: a client of a gateway another
    * process serves (`connectGitHubGateway`), which holds the credential, the protected set and the
-   * mirror. Exclusive with `githubToken`, `githubAppAuth`, `refreshGitHubToken` and
-   * `protectedBranches`, which configure the in-process one.
+   * mirror. Exclusive with `githubToken`, `githubAppAuth`, `refreshGitHubToken`,
+   * `protectedBranches`, `legacyBranches` and `branchNamespace`, which configure the in-process
+   * one.
    */
   githubGateway?: GitHubGateway
   /** GitHub owner (e.g., 'acme') */
@@ -171,6 +180,16 @@ export interface CmsWorkerConfig extends GitHubAuthConfig {
    * characters (`release/*`), which never match a settings branch. See worker/branch-policy.ts.
    */
   protectedBranches?: readonly string[]
+  /**
+   * Branches outside the namespace the in-process gateway may still write: exact names of
+   * branches from before the namespace. See worker/branch-policy.ts.
+   */
+  legacyBranches?: readonly string[]
+  /**
+   * The in-process gateway's branch namespace template (`CANOPYCMS_BRANCH_NAMESPACE` wins);
+   * resolved as operating-mode/branch-namespace.ts says.
+   */
+  branchNamespace?: string
   /**
    * Names THIS worker's own settings branch
    * (`canopycms-settings-{deploymentName}`, default 'prod' — ProdStrategy's
@@ -261,6 +280,22 @@ function sameRefs(a: Map<string, string>, b: Map<string, string>): boolean {
 }
 
 /**
+ * The settings branch a worker owns: `settingsBranch` when set, else
+ * `canopycms-settings-{deploymentName}` by `resolveDeploymentName`, which reads
+ * `CANOPYCMS_DEPLOYMENT_NAME` first. The split gateway resolves its own the same way, from its own
+ * environment, so the one branch it pushes is the one its worker owns.
+ */
+export function resolveWorkerSettingsBranch(config: {
+  settingsBranch?: string
+  deploymentName?: string
+}): string {
+  return (
+    config.settingsBranch ??
+    `${RESERVED_SETTINGS_BRANCH_PREFIX}${resolveDeploymentName({ deploymentName: config.deploymentName }, 'prod')}`
+  )
+}
+
+/**
  * The default `taskTimeoutMs`. Exported because a split worker's gateway client passes it as its
  * `fetchInactivityMs` and the gateway uses it as its `timeoutMs`, as the in-process gateway does.
  */
@@ -341,18 +376,31 @@ function lockWorkerTaskDir(
 
 /**
  * The fields a new status snapshot carries from the previous file: `lastFatalError` and
- * `lastShutdown` (task-queue/worker-status.ts) and the schema gate's hold, so its bound keeps
- * counting from the first worker that saw each schema missing.
+ * `lastShutdown` (task-queue/worker-status.ts), the schema gate's hold, so its bound keeps
+ * counting from the first worker that saw each schema missing, and the unpublishable branches and
+ * the gateway's namespace and protected names, which System health and branch creation keep
+ * using until a sync can ask the gateway again.
  */
-async function readCarriedFields(
-  taskDir: string,
-): Promise<Pick<WorkerStatusReport, 'lastFatalError' | 'lastShutdown' | 'baseHold'>> {
+type CarriedFields = Pick<
+  WorkerStatusReport,
+  | 'lastFatalError'
+  | 'lastShutdown'
+  | 'baseHold'
+  | 'unpublishableBranches'
+  | 'gatewayBranchNamespace'
+  | 'gatewayProtectedBranches'
+>
+
+async function readCarriedFields(taskDir: string): Promise<CarriedFields> {
   const { lastFatalError, lastShutdown } = await readCarriedOverStatus(taskDir)
   const baseHold = await readCarriedBaseHold(taskDir)
+  const unpublishableBranches = await readCarriedUnpublishableBranches(taskDir)
   return {
     ...(lastFatalError ? { lastFatalError } : {}),
     ...(lastShutdown ? { lastShutdown } : {}),
     ...(baseHold ? { baseHold } : {}),
+    ...(unpublishableBranches ? { unpublishableBranches } : {}),
+    ...(await readCarriedGatewayPolicy(taskDir)),
   }
 }
 
@@ -389,7 +437,7 @@ export async function recordWorkerStartupFailure(options: {
         workerLogError('Worker lock lost while recording a startup failure:', getErrorMessage(err)),
     })
     const now = new Date().toISOString()
-    const { lastFatalError, lastShutdown, baseHold } = await readCarriedFields(taskDir)
+    const { lastFatalError, ...carried } = await readCarriedFields(taskDir)
     if (
       lastFatalError &&
       options.keepRecordedFatal &&
@@ -403,8 +451,7 @@ export async function recordWorkerStartupFailure(options: {
       workerVersion: CANOPYCMS_VERSION,
       startedAt: now,
       updatedAt: now,
-      ...(lastShutdown ? { lastShutdown } : {}),
-      ...(baseHold ? { baseHold } : {}),
+      ...carried,
       lastFatalError: {
         // [REDACT] Served to the browser by the admin panel and the API's not-ready answer.
         message: redactCredentials(getErrorMessage(options.error)),
@@ -550,9 +597,7 @@ export class CmsWorker {
    */
   private ensureSettingsBranch(): string {
     if (this.settingsBranchResolved === undefined) {
-      this.settingsBranchResolved =
-        this.config.settingsBranch ??
-        `${RESERVED_SETTINGS_BRANCH_PREFIX}${resolveDeploymentName({ deploymentName: this.config.deploymentName }, 'prod')}`
+      this.settingsBranchResolved = resolveWorkerSettingsBranch(this.config)
     }
     return this.settingsBranchResolved
   }
@@ -625,15 +670,12 @@ export class CmsWorker {
     // version. Best-effort, like the startup-failure write below. The previous
     // `lastFatalError` rides along in this snapshot only, so a crash loop keeps
     // its alert between restarts while the first successful sync still clears
-    // it. Two fields carry into the report itself: `lastShutdown`, which
-    // describes the last worker that ran until this worker's own stop() replaces it,
-    // and the schema gate's hold, so its bound keeps counting from the first
-    // worker that saw each schema missing.
+    // it. The other carried fields (readCarriedFields) go into the report itself;
+    // `lastShutdown` describes the last worker that ran until this worker's own
+    // stop() replaces it.
     try {
-      const { lastFatalError, lastShutdown, baseHold } = await readCarriedFields(this.taskDir)
-      const report = this.ensureStatusReport()
-      if (lastShutdown) report.lastShutdown = lastShutdown
-      if (baseHold) report.baseHold = baseHold
+      const { lastFatalError, ...carried } = await readCarriedFields(this.taskDir)
+      const report = Object.assign(this.ensureStatusReport(), carried)
       await writeWorkerStatus(this.taskDir, {
         ...report,
         ...(lastFatalError ? { lastFatalError } : {}),
@@ -1515,10 +1557,12 @@ export class CmsWorker {
     if (this.config.githubAppAuth !== undefined) conflicting.push('githubAppAuth')
     if (this.config.refreshGitHubToken !== undefined) conflicting.push('refreshGitHubToken')
     if ((this.config.protectedBranches?.length ?? 0) > 0) conflicting.push('protectedBranches')
+    if ((this.config.legacyBranches?.length ?? 0) > 0) conflicting.push('legacyBranches')
+    if (this.config.branchNamespace !== undefined) conflicting.push('branchNamespace')
     if (conflicting.length > 0) {
       throw new Error(
         `CmsWorker: githubGateway is exclusive with ${conflicting.join(', ')}, which configure the ` +
-          'in-process gateway; the gateway it is given holds the credential and the protected set',
+          'in-process gateway; the gateway it is given holds the credential and the branch policy',
       )
     }
     this.gateway = githubGateway
@@ -1546,6 +1590,9 @@ export class CmsWorker {
       timeoutMs: this.taskTimeoutMs,
       baseBranch: this.config.baseBranch,
       protectedBranches: this.config.protectedBranches,
+      settingsBranch: this.ensureSettingsBranch(),
+      legacyBranches: this.config.legacyBranches,
+      branchNamespace: resolveBranchNamespace(this.config, 'prod'),
     }
   }
 
@@ -1601,8 +1648,10 @@ export class CmsWorker {
   // apps/test-app/app/api/e2e-test/rebase/route.ts drives it from an e2e
   // fixture route. Do not delete it as unused.
 
-  private async rebaseActiveBranches(): Promise<RebaseSummary> {
-    return runRebaseCycle(this.ctx())
+  private async rebaseActiveBranches(
+    gatewayPolicy?: BranchPolicyDescription,
+  ): Promise<RebaseSummary> {
+    return runRebaseCycle(this.ctx(), gatewayPolicy)
   }
 
   // --- Git-sync cluster (worker/git-sync.ts) -----------------------------

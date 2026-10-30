@@ -177,14 +177,27 @@ export class BranchRegistry {
    * genuinely-absent branch costs at most one extra scan per window.
    */
   async get(name: string): Promise<BranchContext | undefined> {
-    const branches = await this.list()
-    const found = branches.find((b) => b.branch.name === name)
+    return this.find((b) => b.branch.name === name)
+  }
+
+  /**
+   * Returns the branch whose workspace directory is `key` (`sanitizeBranchName` of its ref),
+   * whatever its name, with {@link get}'s backstop.
+   */
+  async getByKey(key: string): Promise<BranchContext | undefined> {
+    return this.find((b) => path.basename(b.branchRoot) === key)
+  }
+
+  private async find(
+    matches: (context: BranchContext) => boolean,
+  ): Promise<BranchContext | undefined> {
+    const found = (await this.list()).find(matches)
     if (found) return found
 
     if (!this.shouldForceRefresh()) return undefined
 
     const refreshed = await this.regenerate()
-    return refreshed.find((b) => b.branch.name === name)
+    return refreshed.find(matches)
   }
 
   private shouldForceRefresh(): boolean {

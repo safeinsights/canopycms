@@ -24,6 +24,18 @@ export interface BranchAccessControl {
   managerOrAdminAllowed?: boolean
 }
 
+/**
+ * A reviewer's verdict on the branch as last submitted, shown in the pull request body
+ * (submission-attribution.ts). Set by approve and request-changes, cleared by submit and
+ * withdraw, and never sent to clients: `by` names the reviewer.
+ */
+export interface BranchReview {
+  state: 'approved' | 'changes-requested'
+  by: { userId: CanopyUserId; name?: string }
+  /** ISO timestamp of the verdict. */
+  at: string
+}
+
 export interface BranchMetadata {
   name: string
   title?: string
@@ -111,6 +123,8 @@ export interface BranchMetadata {
   editors?: CanopyUserId[]
   /** The `editors` who saved since the last submit commit; the next one's trailers name them. */
   uncommittedEditors?: CanopyUserId[]
+  /** The reviewer's verdict on the last submit; absent until a reviewer acts. */
+  review?: BranchReview
 }
 
 export interface BranchPaths {
@@ -191,6 +205,36 @@ export interface BaseSchemaHold {
 }
 
 /**
+ * Why listing an unpublishable branch in `legacyBranches` would not publish it.
+ * `blocks-namespace`: it is named after part of the namespace, so while it exists neither
+ * remote.git nor GitHub holds a branch in the namespace. `unlistable`: `legacyBranches` refuses
+ * its name. The report lists branch workspaces only, read from their branch.json: a blocker that
+ * exists only on GitHub is never listed, even after `reconcileTrackedBranches` brings it into
+ * remote.git.
+ */
+export type UnpublishableBranchReason = 'blocks-namespace' | 'unlistable'
+
+/** A branch the GitHub gateway will not publish, by ref. */
+export interface UnpublishableBranch {
+  name: string
+  /**
+   * Absent when neither applies: a `legacyBranches` entry would then publish it unless it is
+   * protected, by `protectedBranches`, as the base branch, or as GitHub's default branch.
+   */
+  reason?: UnpublishableBranchReason
+}
+
+/**
+ * Branches the GitHub gateway will not publish: at most 50 `branches`, of `count` in all, as of
+ * `at` (ISO).
+ */
+export interface UnpublishableBranchesReport {
+  branches: UnpublishableBranch[]
+  count: number
+  at: string
+}
+
+/**
  * Wire shape of the worker's self-reported status file (worker-status.json, under
  * the task queue dir), written by the CmsWorker daemon. Read-only here: GET
  * /admin/status parses it as-is.
@@ -257,6 +301,22 @@ export interface WorkerStatusReport {
      */
     workerStartedAt?: string
   }
+  /**
+   * The branch namespace the GitHub gateway writes, as of the last git sync that could ask it.
+   * System health compares it with the namespace the CMS creates branches in.
+   */
+  gatewayBranchNamespace?: string
+  /**
+   * The exact names the GitHub gateway protects, its base branch among them, as of the same sync.
+   * Branch creation refuses a short name equal to one.
+   */
+  gatewayProtectedBranches?: string[]
+  /**
+   * Editor branches the GitHub gateway will not publish, as of the last git sync that could ask
+   * it; absent when there are none (worker/unpublishable-branches.ts). Carried into a restarted
+   * worker's first snapshot.
+   */
+  unpublishableBranches?: UnpublishableBranchesReport
   /**
    * Present while the schema gate holds the base branch, and on the cycle a hold expires. Carried
    * into a restarted worker's first snapshot, so the bound survives restarts.

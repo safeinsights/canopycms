@@ -323,6 +323,7 @@ export function createMockApiContext(options: MockApiContextOptions = {}): ApiCo
 export function createMockRegistry(branches?: BranchContext[]): {
   list: Mock
   get: Mock
+  getByKey: Mock
   invalidate: Mock
 } {
   const defaultBranches = branches ?? [
@@ -343,6 +344,7 @@ export function createMockRegistry(branches?: BranchContext[]): {
   return {
     list: vi.fn().mockResolvedValue(defaultBranches),
     get: vi.fn().mockResolvedValue(undefined),
+    getByKey: vi.fn().mockResolvedValue(undefined),
     invalidate: vi.fn().mockResolvedValue(undefined),
   }
 }

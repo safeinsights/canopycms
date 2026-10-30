@@ -215,18 +215,26 @@ describe('seedFromGitHub', () => {
 describe('push', () => {
   /** A branch in remote.git one commit ahead of what GitHub has for it. */
   const aheadOnRemoteGit = async (branch: string) => {
-    const base = await commitAndPush(githubPath, `refs/heads/${branch}`, `${branch}-base.txt`)
+    const base = await commitAndPush(
+      githubPath,
+      `refs/heads/${branch}`,
+      `${branch.replace(/\W/g, '-')}-base.txt`,
+    )
     await git('--git-dir', githubPath, 'push', '-q', remoteGitPath, `${base}:refs/heads/${branch}`)
-    const ahead = await commitAndPush(remoteGitPath, `refs/heads/${branch}`, `${branch}-ahead.txt`)
+    const ahead = await commitAndPush(
+      remoteGitPath,
+      `refs/heads/${branch}`,
+      `${branch.replace(/\W/g, '-')}-ahead.txt`,
+    )
     return { base, ahead }
   }
 
   it("pushes exactly the commit asked for to GitHub's branch, and says where it moved from", async () => {
     await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
-    const { base, ahead } = await aheadOnRemoteGit('feature')
+    const { base, ahead } = await aheadOnRemoteGit('canopycms/prod/feature')
 
     const outcome = await pushVia(gateway(), {
-      branch: 'feature',
+      branch: 'canopycms/prod/feature',
       sha: ahead,
     })
 
@@ -237,13 +245,13 @@ describe('push', () => {
       pastStaleLease: false,
     })
     expect(outcome.moved && base.startsWith(outcome.from ?? '-')).toBe(true)
-    expect(await tip(githubPath, 'refs/heads/feature')).toBe(ahead)
+    expect(await tip(githubPath, 'refs/heads/canopycms/prod/feature')).toBe(ahead)
   })
 
   it('reports a push of the commit GitHub already holds as not moved', async () => {
     await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
-    const { ahead } = await aheadOnRemoteGit('feature')
-    const request = { branch: 'feature', sha: ahead }
+    const { ahead } = await aheadOnRemoteGit('canopycms/prod/feature')
+    const request = { branch: 'canopycms/prod/feature', sha: ahead }
     await pushVia(gateway(), request)
 
     expect(await pushVia(gateway(), request)).toEqual({ moved: false, pastStaleLease: false })
@@ -255,9 +263,9 @@ describe('push', () => {
 
   it('reports a new branch with no previous tip', async () => {
     await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
-    const sha = await commitAndPush(remoteGitPath, 'refs/heads/fresh', 'fresh.txt')
+    const sha = await commitAndPush(remoteGitPath, 'refs/heads/canopycms/prod/fresh', 'fresh.txt')
 
-    expect(await pushVia(gateway(), { branch: 'fresh', sha })).toEqual({
+    expect(await pushVia(gateway(), { branch: 'canopycms/prod/fresh', sha })).toEqual({
       moved: true,
       from: null,
       to: sha,
@@ -267,44 +275,52 @@ describe('push', () => {
 
   it('reports a forced update under a held lease as moved from the leased commit', async () => {
     await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
-    const { base } = await aheadOnRemoteGit('feature')
+    const { base } = await aheadOnRemoteGit('canopycms/prod/feature')
     await seed.raw(['checkout', '-q', '--orphan', 'rewritten'])
-    const rewritten = await commitAndPush(remoteGitPath, 'refs/heads/feature', 'rewritten.txt')
+    const rewritten = await commitAndPush(
+      remoteGitPath,
+      'refs/heads/canopycms/prod/feature',
+      'rewritten.txt',
+    )
 
     const outcome = await pushVia(gateway(), {
-      branch: 'feature',
+      branch: 'canopycms/prod/feature',
       sha: rewritten,
       lease: base,
     })
 
     expect(outcome).toMatchObject({ moved: true, to: rewritten, pastStaleLease: false })
     expect(outcome.moved && base.startsWith(outcome.from ?? '-')).toBe(true)
-    expect(await tip(githubPath, 'refs/heads/feature')).toBe(rewritten)
+    expect(await tip(githubPath, 'refs/heads/canopycms/prod/feature')).toBe(rewritten)
   })
 
   it('retries a refused stale lease plain, and says so when that fast-forwards', async () => {
     await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
-    const { ahead } = await aheadOnRemoteGit('feature')
+    const { ahead } = await aheadOnRemoteGit('canopycms/prod/feature')
 
     const outcome = await pushVia(gateway(), {
-      branch: 'feature',
+      branch: 'canopycms/prod/feature',
       sha: ahead,
       lease: '0'.repeat(40),
     })
 
     expect(outcome).toMatchObject({ moved: true, to: ahead, pastStaleLease: true })
-    expect(await tip(githubPath, 'refs/heads/feature')).toBe(ahead)
+    expect(await tip(githubPath, 'refs/heads/canopycms/prod/feature')).toBe(ahead)
   })
 
   it('reports a rejected retry after a stale lease as its own kind, with git’s message', async () => {
     await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
-    const { ahead } = await aheadOnRemoteGit('feature')
+    const { ahead } = await aheadOnRemoteGit('canopycms/prod/feature')
     // GitHub moves on to a commit remote.git never had: the branch has diverged.
     await seed.raw(['checkout', '-q', '--orphan', 'elsewhere'])
-    const foreign = await commitAndPush(githubPath, 'refs/heads/feature', 'foreign.txt')
+    const foreign = await commitAndPush(
+      githubPath,
+      'refs/heads/canopycms/prod/feature',
+      'foreign.txt',
+    )
 
     const caught = await pushVia(gateway(), {
-      branch: 'feature',
+      branch: 'canopycms/prod/feature',
       sha: ahead,
       lease: '0'.repeat(40),
     }).catch((err: unknown) => err)
@@ -313,24 +329,28 @@ describe('push', () => {
     expect((caught as GitHubPushError).kind).toBe('rejected-after-stale-lease')
     expect(isNonFastForwardRejection((caught as GitHubPushError).message)).toBe(true)
     expect((caught as GitHubPushError).message).toContain('[rejected]')
-    expect(await tip(githubPath, 'refs/heads/feature')).toBe(foreign)
+    expect(await tip(githubPath, 'refs/heads/canopycms/prod/feature')).toBe(foreign)
   })
 
   it('reports a plain non-fast-forward as rejected, without a retry', async () => {
     await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
-    const { ahead } = await aheadOnRemoteGit('feature')
+    const { ahead } = await aheadOnRemoteGit('canopycms/prod/feature')
     await seed.raw(['checkout', '-q', '--orphan', 'elsewhere'])
-    const foreign = await commitAndPush(githubPath, 'refs/heads/feature', 'foreign.txt')
+    const foreign = await commitAndPush(
+      githubPath,
+      'refs/heads/canopycms/prod/feature',
+      'foreign.txt',
+    )
 
     const caught = await pushVia(gateway(), {
-      branch: 'feature',
+      branch: 'canopycms/prod/feature',
       sha: ahead,
     }).catch((err: unknown) => err)
 
     expect(caught).toBeInstanceOf(GitHubPushError)
     expect((caught as GitHubPushError).kind).toBe('rejected')
     expect(isNonFastForwardRejection((caught as GitHubPushError).message)).toBe(true)
-    expect(await tip(githubPath, 'refs/heads/feature')).toBe(foreign)
+    expect(await tip(githubPath, 'refs/heads/canopycms/prod/feature')).toBe(foreign)
   })
 
   it('throws a refusal to push a protected branch as itself', async () => {
@@ -348,14 +368,14 @@ describe('push', () => {
 
   it('resolves the URL once for both attempts', async () => {
     await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
-    const { ahead } = await aheadOnRemoteGit('feature')
+    const { ahead } = await aheadOnRemoteGit('canopycms/prod/feature')
     // Parked on GitHub, so this push is one gateway operation: the URL is resolved once per
     // operation, and a push that needs a bundle (two operations) is the next test's.
     await git('--git-dir', remoteGitPath, 'push', '-q', githubPath, `${ahead}:refs/heads/parked`)
     const remoteUrl = vi.fn(() => githubPath)
 
     await pushVia(gateway({ remoteUrl, prefetch: false }), {
-      branch: 'feature',
+      branch: 'canopycms/prod/feature',
       sha: ahead,
       lease: '0'.repeat(40),
     })
@@ -365,7 +385,7 @@ describe('push', () => {
 
   it('resolves the URL once per operation when the push needs a bundle, both attempts included', async () => {
     await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
-    const { ahead } = await aheadOnRemoteGit('feature')
+    const { ahead } = await aheadOnRemoteGit('canopycms/prod/feature')
     // One resolution for the push asked without objects, one for the push with the bundle; a
     // third would be a second attempt resolving again.
     let resolutions = 0
@@ -376,7 +396,7 @@ describe('push', () => {
     })
 
     const outcome = await pushVia(gateway({ remoteUrl, prefetch: false }), {
-      branch: 'feature',
+      branch: 'canopycms/prod/feature',
       sha: ahead,
       lease: '0'.repeat(40),
     })
@@ -387,10 +407,12 @@ describe('push', () => {
 })
 
 describe('health', () => {
-  it('reports a prepared gateway ready, with its preflight, Clerk and protected set', async () => {
+  it('reports a prepared gateway ready, with its preflight, Clerk and branch policy', async () => {
     const github = gateway({
       baseBranch: 'production',
       protectedBranches: ['release/*'],
+      settingsBranch: 'canopycms-settings-prod',
+      legacyBranches: ['spring'],
       authSnapshot: async () => ({ users: [], groups: [], memberships: {} }),
       prefetch: false,
     })
@@ -401,7 +423,13 @@ describe('health', () => {
       fatalError: null,
       preflight: 'not-an-app',
       clerkConfigured: true,
-      protectedBranches: { configured: ['production', 'release/*'], githubDefault: null },
+      branchPolicy: {
+        configured: ['production', 'release/*'],
+        githubDefault: null,
+        namespace: 'canopycms/prod/',
+        legacy: ['spring'],
+        settingsBranch: 'canopycms-settings-prod',
+      },
     })
   })
 
@@ -507,7 +535,7 @@ describe('Octokit operations', () => {
     })
 
     const caught = await github
-      .createPullRequest({ head: 'feature', base: 'main', title: 'T', body: 'B' })
+      .createPullRequest({ head: 'canopycms/prod/feature', base: 'main', title: 'T', body: 'B' })
       .catch((err: unknown) => err)
 
     if (GATEWAY_TRANSPORT === 'local') expect(caught).toBe(error)
@@ -531,16 +559,16 @@ describe('Octokit operations', () => {
 
     expect(
       await github.createPullRequest(
-        { head: 'feature', base: 'main', title: 'T', body: 'B' },
+        { head: 'canopycms/prod/feature', base: 'main', title: 'T', body: 'B' },
         signal,
       ),
     ).toEqual({ number: 7, url: 'https://example.test/7' })
-    await github.deleteBranch('feature', signal)
+    await github.deleteBranch('canopycms/prod/feature', signal)
 
     expect(create).toHaveBeenCalledWith({
       owner: 'test-owner',
       repo: 'test-repo',
-      head: 'feature',
+      head: 'canopycms/prod/feature',
       base: 'main',
       title: 'T',
       body: 'B',
@@ -549,7 +577,7 @@ describe('Octokit operations', () => {
     expect(deleteRef).toHaveBeenCalledWith({
       owner: 'test-owner',
       repo: 'test-repo',
-      ref: 'heads/feature',
+      ref: 'heads/canopycms/prod/feature',
       request: { signal: passedSignal(signal) },
     })
   })

@@ -320,6 +320,47 @@ describe('syncSubmitPr (GIT-H1)', () => {
       expect(call?.body).not.toContain('jane@example.com')
     })
 
+    it("carries a namespace branch's short name in its links and fallback title, on both paths", async () => {
+      const editorUrl = 'https://cms.example.org/edit'
+      const branchRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-sync-short-'))
+      try {
+        await new CommentStore(branchRoot).addComment({
+          userId: 'u1',
+          text: 'Fix the intro',
+          type: 'entry',
+          entryPath: 'content/pages/home',
+        })
+        const branchContext = createMockBranchContext({
+          branchName: 'canopycms/prod/spring',
+          branchRoot,
+        })
+        const withUrl = { ...submission, editorUrl }
+
+        const githubService = makeGitHubService()
+        await syncSubmitPr(
+          createMockApiContext({ services: { config: baseConfig, githubService } }),
+          branchContext,
+          withUrl,
+        )
+        const direct = vi.mocked(githubService.createOrUpdatePR).mock.calls[0]?.[0]
+        expect(direct?.title).toBe('Submit spring')
+        expect(direct?.body).toContain('?branch=spring&')
+        expect(direct?.body).not.toContain('branch=canopycms')
+
+        await syncSubmitPr(
+          createMockApiContext({ services: { config: baseConfig, githubService: undefined } }),
+          branchContext,
+          withUrl,
+        )
+        const queued = mockEnqueueTask.mock.calls[0]?.[1].payload
+        expect(queued).toMatchObject({ branch: 'canopycms/prod/spring', editorBranch: 'spring' })
+        expect(queued.title).toBe('Submit spring')
+        expect(queued.body).toContain('?branch=spring&')
+      } finally {
+        await fs.rm(branchRoot, { recursive: true, force: true })
+      }
+    })
+
     it("summarizes the branch's editor comments in the section, on both paths", async () => {
       const branchRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-sync-comments-'))
       try {

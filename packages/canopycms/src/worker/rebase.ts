@@ -9,7 +9,7 @@ import {
 } from '../branch-metadata'
 import { extractIdFromFilename } from '../content-id-index'
 import { invalidateBranchContentCaches } from '../content-index-generation'
-import { isSettingsBranchName } from '../paths/branch-name'
+import { isSettingsBranchName, sanitizeBranchName } from '../paths/branch-name'
 import { normalizeFilesystemPath } from '../paths/normalize'
 import { ROOT_COLLECTION_ID, type ContentId } from '../paths/types'
 import type { ConflictStatus, PullRequestState } from '../types'
@@ -20,6 +20,7 @@ import {
   type ProvisionedWorkspaceHold,
 } from './provisioned-workspace'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
+import { escapeForLog } from '../utils/escape-text'
 import { isCanopyInternalPath, isRebaseInProgress } from '../utils/git'
 import {
   TRACKED_CANOPY_STATE_FIX,
@@ -34,6 +35,7 @@ import {
   readPublishedSha,
   reconcilePendingRewrite,
 } from './history-rewrite'
+import type { BranchPolicyDescription } from './branch-policy'
 import { workerLog, workerLogWarn } from './log'
 import {
   SHARED_REPO_STATUS_ARGS,
@@ -130,6 +132,10 @@ export async function pollMergeState(
 ): Promise<void> {
   const prNumber = metaFile?.branch.pullRequestNumber
   if (!prNumber) return
+  // Recorded only on a branch.json that still names the branch this poll read: never a missing
+  // one, nor another branch's that shares the key.
+  const sameBranch = (current: BranchMetadataFile | null) =>
+    current?.branch.name === metaFile?.branch.name
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), ctx.taskTimeoutMs)
@@ -140,13 +146,13 @@ export async function pollMergeState(
       const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
       // GitHub's actual merge time when available; buildMergedBranchUpdate
       // falls back to "now" when merged_at is absent.
-      await meta.save({
-        branch: buildMergedBranchUpdate(
-          branchDir,
-          data.merged_at ? new Date(data.merged_at) : undefined,
-        ),
-      })
-      workerLog(`  PR #${prNumber} for ${branchDir} is merged -> archived`)
+      const saved = await meta.saveIf(
+        {
+          branch: buildMergedBranchUpdate(data.merged_at ? new Date(data.merged_at) : undefined),
+        },
+        sameBranch,
+      )
+      if (saved) workerLog(`  PR #${prNumber} for ${branchDir} is merged -> archived`)
       return
     }
 
@@ -157,8 +163,8 @@ export async function pollMergeState(
     if (currentMeta?.branch.pullRequestState === newState) return
 
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
-    await meta.save({ branch: { name: branchDir, pullRequestState: newState } })
-    workerLog(`  PR #${prNumber} for ${branchDir}: pullRequestState -> ${newState}`)
+    const saved = await meta.saveIf({ branch: { pullRequestState: newState } }, sameBranch)
+    if (saved) workerLog(`  PR #${prNumber} for ${branchDir}: pullRequestState -> ${newState}`)
   } catch (err) {
     // Non-fatal: transient GitHub/network errors are retried next cycle.
     workerLogWarn(`  Failed to poll PR #${prNumber} for ${branchDir}: ${getErrorMessage(err)}`)
@@ -178,13 +184,15 @@ export async function pollMergeState(
  * paths: a corrupt branch.json, lock contention or any other save failure must
  * never abort the per-branch iteration. One of the two call sites is inside the
  * outer per-branch catch with no further catch around it, so the WHOLE method
- * is wrapped, not just the load.
+ * is wrapped, not just the load. It updates an existing branch.json only, never creating one,
+ * and, given `branchRef`, only the one whose `name` is that ref.
  */
 async function recordRebaseFailure(
   ctx: RebaseContext,
   branchPath: string,
   branchDir: string,
   message: string,
+  branchRef?: string,
 ): Promise<void> {
   const RECORD_REFRESH_MS = 60 * 60 * 1000 // 1 hour
 
@@ -212,12 +220,11 @@ async function recordRebaseFailure(
     const firstAt = sameMessage ? prior.firstAt : nowIso
 
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
-    await meta.save({
-      branch: {
-        name: branchDir,
-        rebaseFailure: { message: redactedMessage, firstAt, lastAt: nowIso },
-      },
-    })
+    await meta.saveIf(
+      { branch: { rebaseFailure: { message: redactedMessage, firstAt, lastAt: nowIso } } },
+      (current) =>
+        current !== null && (branchRef === undefined || current.branch.name === branchRef),
+    )
   } catch (err) {
     // Includes BranchMetadataCorruptError from the load above (a save() against
     // the same corrupt file would just throw again): recording is best-effort
@@ -480,9 +487,10 @@ async function carryForwardRewrittenHistory(
     branchRef: string
     publishedSha: string | null
     preRebaseHead: string
+    gatewayPolicy: BranchPolicyDescription | undefined
   },
 ): Promise<void> {
-  const { branchPath, branchDir, branchRef, publishedSha, preRebaseHead } = args
+  const { branchPath, branchDir, branchRef, publishedSha, preRebaseHead, gatewayPolicy } = args
   if (publishedSha !== null) {
     if (publishedSha === preRebaseHead) {
       // ARMING GUARD: remote.git holds EXACTLY what this clone just rebased
@@ -499,14 +507,21 @@ async function carryForwardRewrittenHistory(
       // delete that fixup from remote.git and then GitHub. Keying the lease to
       // the pre-rebase tip turns that case into the visible divergence it is.
       //
-      // Order matters: mark, then push, then queue. A crash after any step
+      // Order matters: mark, then push, then queue, and a mark that declines
+      // (no branch.json names this ref) publishes nothing. A crash after any step
       // leaves the marker set with the work unfinished, which
       // reconcilePendingRewrite() completes on a later cycle. Pushing first
       // would leave remote.git rewritten, GitHub stale and nothing recorded --
       // unrecoverable, and diagnosed as a false "another deployment" collision.
-      await markHistoryRewritten(ctx, branchPath, branchDir, publishedSha)
+      if (!(await markHistoryRewritten(ctx, branchPath, branchRef, publishedSha))) {
+        workerLogWarn(
+          `  ${branchDir}: rebased, but its branch.json is gone or names another branch than ` +
+            `${branchRef}, so the rewrite is not published`,
+        )
+        return
+      }
       if (await forcePublishToLocalRemote(ctx, branchPath, branchRef, publishedSha)) {
-        await enqueueGitHubPush(ctx, branchRef)
+        await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
       }
     } else {
       const divergence =
@@ -514,7 +529,7 @@ async function carryForwardRewrittenHistory(
         `clone never had (a direct push to the branch?). Left untouched -- reconcile it ` +
         `before submitting again.`
       workerLogWarn(`  ${branchDir}: ${divergence}`)
-      await recordRebaseFailure(ctx, branchPath, branchDir, divergence)
+      await recordRebaseFailure(ctx, branchPath, branchDir, divergence, branchRef)
     }
   }
 }
@@ -568,7 +583,10 @@ type BranchRebaseOutcome =
  * that branch's cross-host content-write lock and runs a series of git
  * subprocesses against a shared filesystem.
  */
-export async function runRebaseCycle(ctx: RebaseContext): Promise<RebaseSummary> {
+export async function runRebaseCycle(
+  ctx: RebaseContext,
+  gatewayPolicy?: BranchPolicyDescription,
+): Promise<RebaseSummary> {
   const rebased: string[] = []
   const skippedDirty: string[] = []
   const skippedLocked: string[] = []
@@ -628,7 +646,7 @@ export async function runRebaseCycle(ctx: RebaseContext): Promise<RebaseSummary>
       workerLogWarn(`  Skipping ${branchDir}: settings branch, never a content workspace`)
       continue
     }
-    const outcome = await holdAndRebaseOneBranch(ctx, branchDir, branchPath)
+    const outcome = await holdAndRebaseOneBranch(ctx, branchDir, branchPath, gatewayPolicy)
     if (outcome.kind === 'rebased') rebased.push(branchDir)
     else if (outcome.kind === 'skippedDirty') skippedDirty.push(branchDir)
     else if (outcome.kind === 'skippedLocked') skippedLocked.push(branchDir)
@@ -644,6 +662,62 @@ export async function runRebaseCycle(ctx: RebaseContext): Promise<RebaseSummary>
 }
 
 /**
+ * The ref a branch clone's HEAD names, or null for a detached or unreadable one. Read from the
+ * file rather than through git, so it runs before `assertSharedRepoConfig` vets the clone.
+ */
+async function readCloneRef(branchPath: string): Promise<string | null> {
+  try {
+    const head = (await fs.readFile(path.join(branchPath, '.git', 'HEAD'), 'utf-8')).trim()
+    return head.startsWith('ref: refs/heads/') ? head.slice('ref: refs/heads/'.length) : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Restore `name` to the clone's own ref when a worker that predates the namespace renamed a
+ * namespace branch to its directory (`canopycms-prod-x` for `canopycms/prod/x`), which no request
+ * resolves. Only when the ref is in `namespace` and the directory is that ref sanitized, so the
+ * ref is the name the branch was created with. Runs for every status, so a branch in review heals
+ * too. Resolves the metadata the rest of the cycle reads; a branch left alone, or a write that
+ * fails, keeps `metaFile`.
+ */
+async function restoreRenamedBranch(
+  ctx: RebaseContext,
+  branchDir: string,
+  branchPath: string,
+  metaFile: BranchMetadataFile | null,
+  namespace: string | undefined,
+): Promise<BranchMetadataFile | null> {
+  // A name already in the namespace was never renamed; one that differs from the ref shares its
+  // key with another branch, which this does not decide.
+  if (metaFile === null || namespace === undefined || metaFile.branch.name.startsWith(namespace)) {
+    return metaFile
+  }
+  const staleName = metaFile.branch.name
+  const ref = await readCloneRef(branchPath)
+  if (ref === null || !ref.startsWith(namespace) || sanitizeBranchName(ref) !== branchDir) {
+    return metaFile
+  }
+  try {
+    const restored = await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update(
+      (existing) => (existing?.branch.name === staleName ? { branch: { name: ref } } : null),
+      { keepUpdatedAt: true },
+    )
+    if (restored === null) return BranchMetadataFileManager.loadOnly(branchPath)
+    workerLog(
+      `  ${branchDir}: restored its name ${escapeForLog(ref)} from ${escapeForLog(staleName)}`,
+    )
+    return restored
+  } catch (err) {
+    workerLogWarn(
+      `  ${branchDir}: could not restore its name ${escapeForLog(ref)}: ${getErrorMessage(err)}`,
+    )
+    return metaFile
+  }
+}
+
+/**
  * {@link rebaseOneBranch} under the branch's provisioning lock, so no git step races a clone of
  * this directory. A branch whose lock is held elsewhere is `skippedLocked` and retried next cycle;
  * one with no `branch.json` is skipped. Lock order: provisioning, then the
@@ -654,6 +728,7 @@ async function holdAndRebaseOneBranch(
   ctx: RebaseContext,
   branchDir: string,
   branchPath: string,
+  gatewayPolicy: BranchPolicyDescription | undefined,
 ): Promise<BranchRebaseOutcome> {
   let hold: ProvisionedWorkspaceHold
   try {
@@ -672,7 +747,7 @@ async function holdAndRebaseOneBranch(
   // repairBranchDirResidue (git-sync.ts) quarantines and logs at the cycle's start.
   if (hold.kind === 'not-provisioned') return { kind: 'none' }
   try {
-    return await rebaseOneBranch(ctx, branchDir, branchPath, hold.isCompromised)
+    return await rebaseOneBranch(ctx, branchDir, branchPath, hold.isCompromised, gatewayPolicy)
   } finally {
     await releaseProvisionedWorkspace(hold.release, branchDir)
   }
@@ -695,13 +770,21 @@ async function rebaseOneBranch(
   branchDir: string,
   branchPath: string,
   isProvisioningLockCompromised: () => boolean,
+  gatewayPolicy: BranchPolicyDescription | undefined,
 ): Promise<BranchRebaseOutcome> {
   // Read only by the catch below. See the `rebased` rider on
   // BranchRebaseOutcome.
   let didRebase = false
 
   try {
-    const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
+    // Restored first: everything below this cycle compares `name`.
+    const metaFile = await restoreRenamedBranch(
+      ctx,
+      branchDir,
+      branchPath,
+      await BranchMetadataFileManager.loadOnly(branchPath),
+      gatewayPolicy?.namespace,
+    )
     const branchStatus = metaFile?.branch.status
 
     // Skip branches that must not be mutated:
@@ -899,6 +982,7 @@ async function rebaseOneBranch(
           branchRef,
           headSha: (await branchGit.revparse(['HEAD'])).trim(),
           marker: metaFile.branch.historyRewrittenFrom,
+          gatewayPolicy,
         })
       }
 
@@ -936,7 +1020,11 @@ async function rebaseOneBranch(
         if (currentMeta?.branch.rebaseFailure === undefined) {
           return { kind: 'none' }
         }
-        await meta.save({ branch: { name: branchDir, rebaseFailure: undefined } })
+        const storedName = currentMeta.branch.name
+        await meta.saveIf(
+          { branch: { rebaseFailure: undefined } },
+          (existing) => existing?.branch.name === storedName,
+        )
         return { kind: 'none' }
       }
 
@@ -1035,15 +1123,19 @@ async function rebaseOneBranch(
           ? `  Rebased ${branchDir} (kept branch version for ${conflictIdsDeduped.length} conflicting file(s))`
           : `  Rebased ${branchDir} successfully`,
       )
-      await meta.update((existing) => ({
-        branch: {
-          name: branchDir,
-          ...recordConflicts(existing?.branch.conflictFiles, conflictIdsDeduped),
-          // The cycle completed, so clear any prior failure record regardless
-          // of the conflict outcome.
-          rebaseFailure: undefined,
-        },
-      }))
+      // Recorded only on a branch.json that still names the branch this cycle read.
+      await meta.update((existing) =>
+        existing !== null && existing.branch.name === metaFile?.branch.name
+          ? {
+              branch: {
+                ...recordConflicts(existing.branch.conflictFiles, conflictIdsDeduped),
+                // The cycle completed, so clear any prior failure record regardless
+                // of the conflict outcome.
+                rebaseFailure: undefined,
+              },
+            }
+          : null,
+      )
       didRebase = true
 
       await carryForwardRewrittenHistory(ctx, {
@@ -1052,6 +1144,7 @@ async function rebaseOneBranch(
         branchRef,
         publishedSha,
         preRebaseHead,
+        gatewayPolicy,
       })
 
       return { kind: 'rebased' }

@@ -1,7 +1,13 @@
 import { BASE_URL } from '../fixtures/base-url'
 import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
-import { BranchPage, findProtectedBranch, sanitizeBranchName } from '../fixtures/branch-page'
+import {
+  BranchPage,
+  branchKey,
+  branchRef,
+  branchShort,
+  findProtectedBranch,
+} from '../fixtures/branch-page'
 import { switchUser, installE2EFlag } from '../fixtures/test-users'
 import { STANDARD_TIMEOUT } from '../fixtures/timeouts'
 import {
@@ -52,6 +58,8 @@ test.describe('Branch State Badges', () => {
     page,
   }) => {
     const branchName = `sync-badge-${Date.now()}`
+    const ref = branchRef(branchName)
+    const key = branchKey(branchName)
 
     await test.step('create branch as editor', async () => {
       const res = await createBranchViaAPI(BASE_URL, branchName, 'editor')
@@ -62,35 +70,35 @@ test.describe('Branch State Badges', () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await branchPage.openBranchManager()
-      await branchPage.waitForBranchInList(branchName)
-      await expect(branchPage.getPendingSyncBadge(branchName)).not.toBeVisible()
-      await expect(branchPage.getSyncFailedBadge(branchName)).not.toBeVisible()
+      await branchPage.waitForBranchInList(ref)
+      await expect(branchPage.getPendingSyncBadge(ref)).not.toBeVisible()
+      await expect(branchPage.getSyncFailedBadge(ref)).not.toBeVisible()
       await branchPage.closeBranchManager()
     })
 
     await test.step('pending-sync badge renders "Syncing…"', async () => {
-      await patchBranchMetadata(branchName, { syncStatus: 'pending-sync' })
+      await patchBranchMetadata(key, { syncStatus: 'pending-sync' })
       await page.reload()
       await editorPage.waitForReady()
       await branchPage.openBranchManager()
-      await branchPage.waitForBranchInList(branchName)
-      const badge = branchPage.getPendingSyncBadge(branchName)
+      await branchPage.waitForBranchInList(ref)
+      const badge = branchPage.getPendingSyncBadge(ref)
       await expect(badge).toBeVisible()
       await expect(badge).toContainText('Syncing…')
-      await expect(branchPage.getSyncFailedBadge(branchName)).not.toBeVisible()
+      await expect(branchPage.getSyncFailedBadge(ref)).not.toBeVisible()
       await branchPage.closeBranchManager()
     })
 
     await test.step('sync-failed badge renders "Sync failed"', async () => {
-      await patchBranchMetadata(branchName, { syncStatus: 'sync-failed' })
+      await patchBranchMetadata(key, { syncStatus: 'sync-failed' })
       await page.reload()
       await editorPage.waitForReady()
       await branchPage.openBranchManager()
-      await branchPage.waitForBranchInList(branchName)
-      const badge = branchPage.getSyncFailedBadge(branchName)
+      await branchPage.waitForBranchInList(ref)
+      const badge = branchPage.getSyncFailedBadge(ref)
       await expect(badge).toBeVisible()
       await expect(badge).toContainText('Sync failed')
-      await expect(branchPage.getPendingSyncBadge(branchName)).not.toBeVisible()
+      await expect(branchPage.getPendingSyncBadge(ref)).not.toBeVisible()
       await branchPage.closeBranchManager()
     })
 
@@ -99,18 +107,20 @@ test.describe('Branch State Badges', () => {
       await page.reload()
       await editorPage.waitForReady()
       await branchPage.openBranchManager()
-      await branchPage.waitForBranchInList(branchName)
-      await expect(branchPage.getSyncFailedBadge(branchName)).toBeVisible()
+      await branchPage.waitForBranchInList(ref)
+      await expect(branchPage.getSyncFailedBadge(ref)).toBeVisible()
     })
   })
 
   test('conflicts badge in the branch list shows the conflict count (B3)', async () => {
     const branchName = `conflicts-badge-${Date.now()}`
+    const ref = branchRef(branchName)
+    const key = branchKey(branchName)
 
     await test.step('create branch and seed a conflict flag', async () => {
       const res = await createBranchViaAPI(BASE_URL, branchName, 'admin')
       expect(res.ok).toBe(true)
-      await patchBranchMetadata(branchName, {
+      await patchBranchMetadata(key, {
         conflictStatus: 'conflicts-detected',
         // conflictFiles is ContentId[] (a branded 12-char-base58 id, not a
         // full filename) -- the badge only ever reads .length to render the
@@ -126,8 +136,8 @@ test.describe('Branch State Badges', () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await branchPage.openBranchManager()
-      await branchPage.waitForBranchInList(branchName)
-      const badge = branchPage.getConflictsBadge(branchName)
+      await branchPage.waitForBranchInList(ref)
+      const badge = branchPage.getConflictsBadge(ref)
       await expect(badge).toBeVisible()
       await expect(badge).toContainText('Conflicts (2)')
     })
@@ -175,6 +185,7 @@ test.describe('Branch State Badges', () => {
     page,
   }) => {
     const branchName = `status-lock-${Date.now()}`
+    const ref = branchRef(branchName)
 
     await test.step('create branch and switch to it', async () => {
       const res = await createBranchViaAPI(BASE_URL, branchName, 'admin')
@@ -183,7 +194,7 @@ test.describe('Branch State Badges', () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await branchPage.openBranchManager()
-      await branchPage.switchToBranch(branchName)
+      await branchPage.switchToBranch(ref)
       await branchPage.closeBranchManager()
     })
 
@@ -213,7 +224,7 @@ test.describe('Branch State Badges', () => {
       // The content API takes a LOGICAL path ("home"), not the physical
       // on-disk filename with its embedded content id (HOME_ENTRY_FILE) --
       // the latter 400s with "Path appears to be a physical path".
-      const res = await fetch(`${BASE_URL}/api/canopycms/${branchName}/content/home`, {
+      const res = await fetch(`${BASE_URL}/api/canopycms/${branchShort(branchName)}/content/home`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'X-Test-User': 'admin' },
         body: JSON.stringify({ format: 'json', data: {} }),
@@ -248,6 +259,8 @@ test.describe('Branch State Badges', () => {
 
   test('merged badge appears once the branch is archived with a mergedAt (B8)', async () => {
     const branchName = `merged-badge-${Date.now()}`
+    const ref = branchRef(branchName)
+    const key = branchKey(branchName)
 
     await test.step('create, submit, approve, then mark merged', async () => {
       // The editor makes the branch: its creator cannot approve it.
@@ -259,7 +272,7 @@ test.describe('Branch State Badges', () => {
       const approveRes = await approveBranchViaAPI(BASE_URL, branchName, 'admin')
       expect(approveRes.ok).toBe(true)
 
-      await patchBranchMetadata(branchName, {
+      await patchBranchMetadata(key, {
         status: 'archived',
         mergedAt: new Date().toISOString(),
         pullRequestNumber: 7,
@@ -270,8 +283,8 @@ test.describe('Branch State Badges', () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await branchPage.openBranchManager()
-      await branchPage.waitForBranchInList(branchName)
-      const badge = branchPage.getMergedBadge(branchName)
+      await branchPage.waitForBranchInList(ref)
+      const badge = branchPage.getMergedBadge(ref)
       await expect(badge).toBeVisible()
       await expect(badge).toContainText('Merged')
     })
@@ -279,6 +292,7 @@ test.describe('Branch State Badges', () => {
 
   test('approve transition is reflected in the branch list status badge (B14)', async () => {
     const branchName = `approve-flow-${Date.now()}`
+    const ref = branchRef(branchName)
 
     await test.step('create, submit, approve via API', async () => {
       // The editor makes the branch: its creator cannot approve it.
@@ -295,8 +309,8 @@ test.describe('Branch State Badges', () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await branchPage.openBranchManager()
-      await branchPage.waitForBranchInList(branchName)
-      await branchPage.verifyBranchStatus(branchName, 'approved')
+      await branchPage.waitForBranchInList(ref)
+      await branchPage.verifyBranchStatus(ref, 'approved')
     })
   })
 
@@ -304,15 +318,16 @@ test.describe('Branch State Badges', () => {
     page,
   }) => {
     const branchName = `relative-time-${Date.now()}`
+    const ref = branchRef(branchName)
     const res = await createBranchViaAPI(BASE_URL, branchName, 'admin')
     expect(res.ok).toBe(true)
 
     await editorPage.goto()
     await editorPage.waitForReady()
     await branchPage.openBranchManager()
-    await branchPage.waitForBranchInList(branchName)
+    await branchPage.waitForBranchInList(ref)
 
-    const updatedText = branchPage.getBranchUpdatedText(branchName)
+    const updatedText = branchPage.getBranchUpdatedText(ref)
     await expect(updatedText).toBeVisible()
     await expect(updatedText).toHaveText(/Updated .*(ago|now)/i)
     const relativeLabel = (await updatedText.textContent()) ?? ''
@@ -334,17 +349,18 @@ test.describe('Branch State Badges', () => {
 
   test('sanitized branch name is adopted after creating via the UI with an unsafe raw name (B12)', async () => {
     // A slash is a valid git branch-name character (git itself uses
-    // "feature/x" style names) but not a valid filesystem directory-name
-    // character, so the server sanitizes it to a hyphen for the on-disk
-    // directory / persisted branch.name. NOTE: a space would NOT work here
+    // "feature/x" style names) but not a character a short name may carry,
+    // so the server sanitizes it to a hyphen in the branch's short name and
+    // places the branch in the namespace. NOTE: a space would NOT work here
     // -- branchNameSchema (api/validators.ts -> parseBranchName) rejects
     // spaces outright with a 400 ("Branch name cannot contain spaces")
     // before sanitization ever runs, confirmed against the running dev
     // server; only the create-branch REQUEST would fail, never reaching the
     // sanitize-and-adopt path this test exercises.
     const rawName = `feature/My-Branch-${Date.now()}`
-    const sanitized = sanitizeBranchName(rawName)
-    expect(sanitized).not.toBe(rawName)
+    // The created branch's ref is the sanitized short name inside the namespace.
+    const sanitized = branchRef(rawName)
+    expect(sanitized).toMatch(/^canopycms\/local\/feature-My-Branch-\d+$/)
 
     await editorPage.goto()
     await editorPage.waitForReady()

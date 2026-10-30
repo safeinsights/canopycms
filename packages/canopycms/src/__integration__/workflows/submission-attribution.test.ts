@@ -10,6 +10,7 @@ import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-work
 import { createMockAuthPlugin, TEST_INTERNAL_GROUPS } from '../test-utils/multi-user'
 import { createApiClient } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
+import { branchRef } from '../test-utils/branch-names'
 
 const BRANCH = 'feature-shared-edit'
 
@@ -53,7 +54,9 @@ describe('Submission attribution', () => {
 
   async function pushedTrailers(): Promise<string> {
     const remote = simpleGit({ baseDir: workspace.remotePath })
-    return (await remote.raw(['log', '-1', '--format=%(trailers:only,unfold)', BRANCH])).trim()
+    return (
+      await remote.raw(['log', '-1', '--format=%(trailers:only,unfold)', branchRef(BRANCH)])
+    ).trim()
   }
 
   async function save(client: typeof editorClient, slug: string, body: string): Promise<void> {
@@ -88,7 +91,7 @@ describe('Submission attribution', () => {
           branches: Array<{ name: string; editors?: string[]; uncommittedEditors?: string[] }>
         }
       }
-    ).data?.branches.find((b) => b.name === BRANCH)
+    ).data?.branches.find((b) => b.name === branchRef(BRANCH))
     expect(listed?.editors).toEqual(['test-editor', 'test-admin'])
     expect(listed?.uncommittedEditors).toBeUndefined()
   })

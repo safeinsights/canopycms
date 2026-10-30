@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BranchName } from '../paths/types'
 
 const mockMetadataSave = vi.fn().mockResolvedValue({
@@ -24,6 +24,11 @@ vi.mock('../branch-metadata', () => ({
   })),
 }))
 
+const { mockSyncPrComments } = vi.hoisted(() => ({
+  mockSyncPrComments: vi.fn<(...args: unknown[]) => Promise<void>>(),
+}))
+vi.mock('./pr-comment-sync', () => ({ syncPrComments: mockSyncPrComments }))
+
 import { withdrawBranch } from './branch-withdraw'
 import { mockConsole, createMockApiContext, createMockBranchContext } from '../test-utils'
 import { RESERVED_GROUPS } from '../authorization'
@@ -48,6 +53,11 @@ const makeCtx = (allowed = true, githubService?: any) =>
       config: { defaultBranchAccess: 'allow' } as any,
     },
   })
+
+beforeEach(() => {
+  mockSyncPrComments.mockReset()
+  mockSyncPrComments.mockResolvedValue(undefined)
+})
 
 describe('branch withdraw api', () => {
   it('returns 404 if branch not found', async () => {
@@ -113,6 +123,81 @@ describe('branch withdraw api', () => {
         branch: expect.objectContaining({ status: 'editing' }),
       }),
     )
+  })
+
+  it.each(['submitted', 'approved'])(
+    'clears the review when withdrawing a %s branch, so the next round starts fresh',
+    async (status) => {
+      mockMetadataSave.mockClear()
+      const ctx = makeCtx()
+      ctx.getBranchContext = vi.fn().mockResolvedValue({
+        ...baseContext,
+        branch: { ...baseContext.branch, status },
+      })
+
+      const res = await withdrawHandler(
+        ctx,
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        { branch: 'feature/x' as BranchName },
+      )
+
+      expect(res.ok).toBe(true)
+      const saved = mockMetadataSave.mock.calls.at(-1)![0].branch
+      expect(saved.status).toBe('editing')
+      expect(saved).toHaveProperty('review', undefined)
+    },
+  )
+
+  it('re-renders the pull request body after the withdraw is saved, so it stops saying Approved', async () => {
+    const order: string[] = []
+    mockMetadataSave.mockImplementationOnce(async () => {
+      order.push('save')
+      return { branch: { ...baseContext.branch, status: 'editing' } }
+    })
+    mockSyncPrComments.mockImplementationOnce(async () => {
+      order.push('sync')
+    })
+    const ctx = makeCtx()
+    const approvedContext = {
+      ...baseContext,
+      branch: { ...baseContext.branch, status: 'approved' as const },
+    }
+    ctx.getBranchContext = vi.fn().mockResolvedValue(approvedContext)
+
+    const res = await withdrawHandler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+    )
+
+    expect(res.ok).toBe(true)
+    expect(order).toEqual(['save', 'sync'])
+    expect(mockSyncPrComments).toHaveBeenCalledWith(ctx, {
+      ...approvedContext,
+      branch: { ...baseContext.branch, status: 'editing' },
+    })
+  })
+
+  it('syncs against the branch the save returned, which can carry a PR the guard did not see', async () => {
+    // On the queued path the worker can record the PR's number after the guard has read the branch.
+    mockMetadataSave.mockImplementationOnce(async () => ({
+      branch: { ...baseContext.branch, status: 'editing', pullRequestNumber: 456 },
+    }))
+    const ctx = makeCtx()
+    ctx.getBranchContext = vi.fn().mockResolvedValue({
+      ...baseContext,
+      branch: { ...baseContext.branch, pullRequestNumber: undefined },
+    })
+
+    await withdrawHandler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+    )
+
+    expect(mockSyncPrComments.mock.calls[0]?.[1]).toMatchObject({
+      branch: { status: 'editing', pullRequestNumber: 456 },
+    })
   })
 
   it('returns 400 when withdrawing an archived branch', async () => {

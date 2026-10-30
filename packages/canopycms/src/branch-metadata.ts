@@ -357,16 +357,14 @@ export interface BranchMetadataUpdate {
  * worker's merge-poll (CmsWorker.pollMergeState) and the manual markAsMerged
  * API (api/branch-merge.ts), so both produce identical metadata.
  *
- * Deliberately omits pullRequestNumber/pullRequestUrl: save() keeps existing
- * values for fields the incoming update omits, so the recorded PR number and
- * URL survive untouched.
+ * Deliberately omits `name` and pullRequestNumber/pullRequestUrl: save() keeps
+ * existing values for fields the incoming update omits, so the branch's ref and
+ * its recorded PR number and URL survive untouched.
  */
 export function buildMergedBranchUpdate(
-  branchName: string,
   now: Date = new Date(),
 ): NonNullable<BranchMetadataUpdate['branch']> {
   return {
-    name: branchName,
     status: 'archived',
     pullRequestState: 'merged',
     mergedAt: now.toISOString(),

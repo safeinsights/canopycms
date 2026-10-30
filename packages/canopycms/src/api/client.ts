@@ -15,6 +15,8 @@ import { EDITOR_MODE_HEADER, EDITOR_MODE_MISMATCH_STATUS } from '../operating-mo
 import type { OperatingMode } from '../operating-mode/types'
 
 import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, CreateBranchBody, UpdateBranchAccessBody } from './branch'
+import type { BranchChangesResponse } from './branch-changes'
+import type { BranchEntryChangeResponse } from './branch-entry-changes'
 import type { BranchMergeResponse, RequestChangesBody, SubmitBranchBody, SubmitBranchResponse } from './branch-status'
 import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from './comments'
 import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse, RenameEntryBody, RenameEntryResponse, ValidateReferencesBody, WriteContentBody } from './content'
@@ -59,6 +61,13 @@ export interface ApiClientOptions {
 
   /** Called whenever the server refuses `editorMode` (code `EDITOR_MODE_MISMATCH`). @internal */
   onEditorModeMismatch?: () => void
+
+  /**
+   * Maps a branch name to the `/:branch` segment its requests carry. The editor maps each
+   * listed branch to its exact form (`~canopycms~prod~spring`, `exactBranchSegment`), which the
+   * server resolves to that branch alone, whatever the base or active branch is. @internal
+   */
+  branchSegment?: (branch: string) => string
 }
 
 /**
@@ -79,6 +88,7 @@ export class CanopyApiClient {
   private onUnauthorized: (() => void) | undefined
   private editorMode: OperatingMode | undefined
   private onEditorModeMismatch: (() => void) | undefined
+  private branchSegment: ((branch: string) => string) | undefined
 
   readonly branches = {
     /** GET /branches */
@@ -99,6 +109,18 @@ export class CanopyApiClient {
     /** PATCH /:branch/access */
     updateAccess: (params: Record<string, string>, body: UpdateBranchAccessBody, options?: RequestOptions): Promise<BranchListItemResponse> => {
       return this.request('PATCH', this.buildPath('/:branch/access', params), body, 'standard', options)
+    },
+  }
+
+  readonly changes = {
+    /** GET /:branch/changes */
+    list: (params: Record<string, string>, options?: RequestOptions): Promise<BranchChangesResponse> => {
+      return this.request('GET', this.buildPath('/:branch/changes', params), undefined, 'standard', options)
+    },
+
+    /** GET /:branch/changes/...entryPath */
+    entry: (params: Record<string, string>, options?: RequestOptions): Promise<BranchEntryChangeResponse> => {
+      return this.request('GET', this.buildPath('/:branch/changes/...entryPath', params), undefined, 'standard', options)
     },
   }
 
@@ -390,6 +412,7 @@ export class CanopyApiClient {
     this.onUnauthorized = options.onUnauthorized
     this.editorMode = options.editorMode
     this.onEditorModeMismatch = options.onEditorModeMismatch
+    this.branchSegment = options.branchSegment
   }
 
   private buildPath(template: string, params: Record<string, string>): string {
@@ -401,7 +424,8 @@ export class CanopyApiClient {
       const restParamPattern = `...${key}`
 
       if (result.includes(pathParamPattern)) {
-        result = result.replace(pathParamPattern, encodeURIComponent(String(value)))
+        const segment = key === 'branch' && this.branchSegment ? this.branchSegment(value) : value
+        result = result.replace(pathParamPattern, encodeURIComponent(String(segment)))
       } else if (result.includes(restParamPattern)) {
         // For rest parameters, encode each segment separately to preserve slashes
         const encoded = String(value).split('/').map(segment => encodeURIComponent(segment)).join('/')

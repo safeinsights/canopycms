@@ -999,7 +999,7 @@ describe('useEntryManager', () => {
       window.dispatchEvent(new PopStateEvent('popstate'))
     })
 
-    expect(switchBranch).toHaveBeenCalledWith('feature')
+    expect(switchBranch).toHaveBeenCalledWith('feature', expect.any(Function))
     await waitFor(() => expect(replaceState).toHaveBeenCalled())
     const url = new URL(String(replaceState.mock.calls.at(-1)?.[2]))
     expect(url.searchParams.get('branch')).toBe('main')
@@ -1215,6 +1215,65 @@ describe('useEntryManager', () => {
 
     // Should preserve selection from URL on initial mount, not clear it
     await waitFor(() => {
+      expect(result.current.selectedPath).toBe('entry1')
+    })
+  })
+
+  describe('beside a branch outside the namespace that a short name takes', () => {
+    const NAMESPACED = 'canopycms/local/spring'
+    // The listing's resolution: `spring` opens the namespace branch, its exact form the outside one.
+    const opens: Record<string, string> = {
+      spring: NAMESPACED,
+      '~spring': 'spring',
+      [NAMESPACED]: NAMESPACED,
+    }
+    const listedOptions = {
+      sameBranch: (url: string, branchName: string) => (opens[url] ?? url) === branchName,
+      urlBranchName: (name: string): string => (name === 'spring' ? '~spring' : 'spring'),
+    }
+    const entry1: EditorEntry = {
+      ...mockEntry,
+      path: unsafeAsLogicalPath('entry1'),
+      slug: 'entry1',
+    }
+    const opened = async (branchName: string, extra: Partial<typeof listedOptions> = {}) => {
+      window.location.search = '?entry=entry1'
+      const hook = renderHook((props) => useEntryManager(props), {
+        initialProps: { ...defaultOptions, initialEntries: [entry1], branchName, ...extra },
+        wrapper,
+      })
+      await waitFor(() => expect(hook.result.current.selectedPath).toBe('entry1'))
+      return hook
+    }
+
+    it('clears the selection on a switch from the outside branch to the namespace one', async () => {
+      const { result, rerender } = await opened('spring', listedOptions)
+
+      await act(async () => {
+        rerender({
+          ...defaultOptions,
+          initialEntries: [entry1],
+          branchName: NAMESPACED,
+          ...listedOptions,
+        })
+      })
+
+      expect(result.current.selectedPath).toBe('')
+    })
+
+    it('keeps the selection when a link name the listing had not resolved settles', async () => {
+      // Before a listing, the link's name is its own URL form.
+      const { result, rerender } = await opened('spring', { urlBranchName: (name) => name })
+
+      await act(async () => {
+        rerender({
+          ...defaultOptions,
+          initialEntries: [entry1],
+          branchName: NAMESPACED,
+          ...listedOptions,
+        })
+      })
+
       expect(result.current.selectedPath).toBe('entry1')
     })
   })
