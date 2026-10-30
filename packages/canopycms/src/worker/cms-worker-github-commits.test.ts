@@ -430,6 +430,31 @@ describe('an open pull request GitHub reports behind', () => {
       expect((await readMeta(s))?.pullRequestHold).toEqual({ kind: 'retargeted', base: 'release' })
     })
 
+    it('keeps a hold while GitHub is still working the state out', async () => {
+      await cycle(s, workerWithPullRequest(s, 'dirty'))
+      const before = await BranchMetadataFileManager.loadOnly(s.branchPath)
+
+      await cycle(s, workerWithPullRequest(s, 'unknown'))
+
+      const after = await BranchMetadataFileManager.loadOnly(s.branchPath)
+      expect(after?.branch.pullRequestHold).toEqual({ kind: 'conflicts' })
+      expect(after?.version).toBe(before?.version)
+    })
+
+    it('calls a conflict on a retargeted pull request retargeted, as withdrawing cannot fix it', async () => {
+      await cycle(s, workerWithPullRequest(s, 'dirty', { base: 'release' }))
+      expect((await readMeta(s))?.pullRequestHold).toEqual({ kind: 'retargeted', base: 'release' })
+    })
+
+    it('leaves the time editors read as the last edit alone', async () => {
+      await writeMeta(s, { ...submitted, pullRequestState: 'open' })
+      const before = (await readMeta(s))?.updatedAt
+      await cycle(s, workerWithPullRequest(s, 'dirty'))
+      expect((await readMeta(s))?.pullRequestHold).toEqual({ kind: 'conflicts' })
+      expect((await readMeta(s))?.lastGitHubTip).toBeDefined()
+      expect((await readMeta(s))?.updatedAt).toBe(before)
+    })
+
     it('records nothing for a pull request retargeted but not behind', async () => {
       await cycle(s, workerWithPullRequest(s, 'clean', { base: 'release' }))
       expect((await readMeta(s))?.pullRequestHold).toBeUndefined()

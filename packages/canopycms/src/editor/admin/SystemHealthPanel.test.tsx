@@ -1325,7 +1325,7 @@ describe('SystemHealthPanel', () => {
       await userEvent.click(screen.getByText('Branches'))
       await waitFor(() => expect(screen.getByText('held-review')).toBeTruthy())
 
-      expect(screen.getByTestId('held-pr-held-review').textContent).toBe('Held')
+      expect(screen.getByTestId('held-pr-held-review').textContent).toBe('Needs action')
       expect(screen.queryByTestId('held-pr-held-editing')).toBeNull()
     })
 

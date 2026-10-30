@@ -7,10 +7,30 @@ import {
 } from './branch-status'
 
 describe('branchHoldMessage', () => {
+  const author = { role: 'withdraw', isAdmin: false } as const
+
   it('shows a base from GitHub as exactly what it is', () => {
-    expect(branchHoldMessage({ kind: 'retargeted', base: 'evil\u202Ename' })).toContain(
+    expect(branchHoldMessage({ kind: 'retargeted', base: 'evil\u202Ename' }, author)).toContain(
       'evil\\u{202e}name',
     )
+  })
+
+  it('offers each viewer a way forward they can take on a conflict', () => {
+    const hold = { kind: 'conflicts' } as const
+    expect(branchHoldMessage(hold, author)).toContain('Use "Withdraw from review"')
+    const reviewer = branchHoldMessage(hold, { role: 'review', isAdmin: false })
+    expect(reviewer).toContain('Request changes')
+    expect(reviewer).not.toContain('Withdraw')
+    expect(branchHoldMessage(hold, { role: 'none', isAdmin: false })).toContain(
+      'Its editor needs to withdraw it',
+    )
+  })
+
+  it('points only an admin at System health, which nobody else can open', () => {
+    const hold = { kind: 'rewritten' } as const
+    expect(branchHoldMessage(hold, author)).toContain('Ask an admin')
+    expect(branchHoldMessage(hold, author)).not.toContain('System health')
+    expect(branchHoldMessage(hold, { role: 'none', isAdmin: true })).toContain('"System health"')
   })
 })
 

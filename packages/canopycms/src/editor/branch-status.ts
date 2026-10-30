@@ -41,21 +41,44 @@ export function branchStatusPresentation(
   return { label: status, color: 'gray', variant: 'light' }
 }
 
+/** The badge for a branch something holds, on the card and in System health. */
+export const HOLD_BADGE = { label: 'Needs action', color: 'yellow' } as const
+
+/** Who is reading a hold, which decides the way forward it can offer them. */
+export interface HoldViewer {
+  /** `withdraw`: may withdraw it. `review`: reviews someone else's. `none`: can do neither. */
+  role: 'withdraw' | 'review' | 'none'
+  isAdmin: boolean
+}
+
 /**
- * What's stuck and what to do about it, for anyone viewing the branch. A retargeted base comes
- * from GitHub and is attacker-chosen, so it's shown escaped.
+ * What's stuck and what this viewer can do about it. A retargeted base comes from GitHub and is
+ * attacker-chosen, so it's shown escaped.
  */
-export function branchHoldMessage(hold: BranchHold): string {
+export function branchHoldMessage(hold: BranchHold, viewer: HoldViewer): string {
   switch (hold.kind) {
-    case 'conflicts':
-      return "This branch conflicts with its base branch, so its pull request can't be updated. Withdraw it from review to resolve the conflict."
+    case 'conflicts': {
+      const stuck =
+        "This branch conflicts with its base branch, so its pull request can't be updated."
+      if (viewer.role === 'review') return `${stuck} Request changes to send it back to its editor.`
+      if (viewer.role === 'none') return `${stuck} Its editor needs to withdraw it from review.`
+      return `${stuck} Use "Withdraw from review", check any flagged entries, then submit it again.`
+    }
     case 'retargeted':
-      return `This pull request now targets ${escapeForLog(hold.base)} on GitHub, so CanopyCMS isn't updating it. Use Update branch on GitHub.`
-    case 'rewritten':
-      return "This branch was force-pushed on GitHub, so changes here can't reach it. A developer can fix this: System health says how."
+      return `This pull request now merges into ${escapeForLog(hold.base)} on GitHub, so CanopyCMS isn't updating it. Update it on the pull request, or ask an admin.`
+    case 'rewritten': {
+      const stuck =
+        "This branch was changed on GitHub in a way CanopyCMS can't combine with the work here, so changes here can't reach GitHub. Nothing is lost."
+      return viewer.isAdmin
+        ? `${stuck} See the "Branches" tab in "System health".`
+        : `${stuck} Ask an admin for help.`
+    }
   }
 }
 
 /** Why a branch in review with a failed sync stays behind its base, after the failure itself. */
 export const SYNC_FAILED_IN_REVIEW_NOTE =
-  "CanopyCMS won't update this pull request from its base until the sync is fixed."
+  "Until it syncs, CanopyCMS won't update this pull request from its base."
+
+/** The failed-sync line when the worker recorded no reason. */
+export const SYNC_FAILED_FALLBACK = 'GitHub sync failed. An admin can retry it from System health.'

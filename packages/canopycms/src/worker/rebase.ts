@@ -826,26 +826,29 @@ async function bringInCommitsForBranchInReview(
 }
 
 /**
- * What GitHub's answer says keeps this pull request behind its base and needs a person. A conflict
- * is GitHub's `dirty`; a pull request `behind` a base other than the branch's own is one this worker
- * stands down from. Pure.
+ * What GitHub's answer says keeps this pull request behind its base and needs a person, undefined
+ * for nothing, or null for no information: GitHub answers `unknown` until it has computed the
+ * state, which it redoes after every push to the base. A base other than the branch's own comes
+ * first, because withdrawing resolves nothing there: the worker rebases onto the recorded base.
+ * Pure.
  */
 function pullRequestHoldOf(
   pullRequest: GitHubPullRequest,
   recordedBase: string,
-): PullRequestHold | undefined {
-  if (pullRequest.state !== 'open') return undefined
-  if (pullRequest.mergeable_state === 'dirty') return { kind: 'conflicts' }
-  const { mergeable_state: mergeState, baseRef } = pullRequest
-  if (mergeState === 'behind' && baseRef !== undefined && baseRef !== recordedBase) {
+): PullRequestHold | undefined | null {
+  const { state, mergeable_state: mergeState, baseRef } = pullRequest
+  if (state !== 'open') return undefined
+  if (mergeState === undefined || mergeState === 'unknown') return null
+  if (mergeState !== 'behind' && mergeState !== 'dirty') return undefined
+  if (baseRef !== undefined && baseRef !== recordedBase)
     return { kind: 'retargeted', base: baseRef }
-  }
-  return undefined
+  return mergeState === 'dirty' ? { kind: 'conflicts' } : undefined
 }
 
 /**
  * Record {@link pullRequestHoldOf} for the branch card, when it changed: every save regenerates the
- * branch registry. Best-effort: a failure leaves the card as it was until the next cycle.
+ * branch registry. It's bookkeeping, so it leaves `updatedAt`, which the card shows as an edit.
+ * Best-effort: a failure leaves the card as it was until the next cycle.
  */
 async function recordPullRequestHold(
   ctx: RebaseContext,
@@ -856,11 +859,11 @@ async function recordPullRequestHold(
 ): Promise<void> {
   const { name, baseBranch, pullRequestHold } = metaFile.branch
   const hold = pullRequestHoldOf(pullRequest, baseBranch ?? ctx.baseBranch)
-  if (JSON.stringify(hold) === JSON.stringify(pullRequestHold)) return
+  if (hold === null || JSON.stringify(hold) === JSON.stringify(pullRequestHold)) return
   try {
-    await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).saveIf(
-      { branch: { pullRequestHold: hold } },
-      (current) => current?.branch.name === name,
+    await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update(
+      (current) => (current?.branch.name === name ? { branch: { pullRequestHold: hold } } : null),
+      { keepUpdatedAt: true },
     )
   } catch (err) {
     workerLogWarn(`  ${branchDir}: could not record the PR's state: ${getErrorMessage(err)}`)

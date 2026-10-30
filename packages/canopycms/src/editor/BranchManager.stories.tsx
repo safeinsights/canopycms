@@ -100,7 +100,6 @@ export const WithPullRequests: Story = {
   },
 }
 
-/** A branch CanopyCMS provisioned shows its owner as "CanopyCMS bot", with no lookup. */
 /** Branches stuck on something a person has to do, each saying what and how. */
 export const HeldPullRequests: Story = {
   args: {
@@ -151,6 +150,38 @@ export const HeldPullRequests: Story = {
   },
 }
 
+/** The author's view: the way forward is theirs, and a hold and a failed sync stay one message. */
+export const HeldPullRequestsAsAuthor: Story = {
+  args: { ...HeldPullRequests.args, user: { userId: 'bob', groups: [] } },
+}
+
+/** Everything at once, for how the badges wrap. */
+export const HeldWithEveryBadge: Story = {
+  args: {
+    ...HeldPullRequests.args,
+    user: { userId: 'bob', groups: [] },
+    currentBranchName: 'feature/everything',
+    branches: [
+      {
+        name: 'feature/everything',
+        status: 'submitted',
+        updatedAt: ago(DAY),
+        createdBy: 'bob',
+        access: { users: ['bob'] },
+        pullRequestUrl: 'https://github.com/owner/repo/pull/127',
+        pullRequestNumber: 127,
+        commentCount: 3,
+        syncStatus: 'sync-failed',
+        syncFailureReason: 'Push rejected for this branch: GitHub has moved on.',
+        conflictStatus: 'conflicts-detected',
+        conflictFiles: ['a', 'b'],
+        hold: { kind: 'retargeted', base: 'release_2026_winter_campaign_landing_pages_v2' },
+      },
+    ],
+  },
+}
+
+/** A branch CanopyCMS provisioned shows its owner as "CanopyCMS bot", with no lookup. */
 export const WithBotOwner: Story = {
   args: {
     ...Default.args,

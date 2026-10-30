@@ -2323,6 +2323,7 @@ const EditorContent: React.FC<EditorProps> = ({
               branchIsProtected={currentBranch?.isProtected ?? true}
               branchServerProtected={currentBranch?.isProtected}
               branchReadOnly={currentBranch?.readOnly}
+              branchHold={currentBranch?.hold}
               branchWriteBlocked={branchContentLocked}
               branchLoading={branchLoading}
               branchPending={branchPending}

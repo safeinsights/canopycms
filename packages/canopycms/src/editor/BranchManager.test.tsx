@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { SWRConfig } from 'swr'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { BranchManager, getBranchPermissions } from './BranchManager'
-import { SYNC_FAILED_IN_REVIEW_NOTE } from './branch-status'
+import { HOLD_BADGE, SYNC_FAILED_FALLBACK, SYNC_FAILED_IN_REVIEW_NOTE } from './branch-status'
 import type { BranchSummary } from './BranchManager'
 import { CanopyCMSProvider } from './theme'
 import { BranchesDrawer } from './components/BranchesDrawer'
@@ -534,7 +534,7 @@ describe('BranchManager', () => {
     expect(screen.queryByText('Merged')).toBeNull()
   })
 
-  it('shows a red Sync failed badge with a tooltip pointing to System health', async () => {
+  it('shows a red Sync failed badge with a line pointing to System health', async () => {
     const branches: BranchSummary[] = [
       {
         ...baseBranches[0],
@@ -546,12 +546,10 @@ describe('BranchManager', () => {
     const badge = screen.getByTestId('sync-failed-badge-main')
     expect(badge.textContent).toBe('Sync failed')
     expect(badge.style.getPropertyValue('--badge-bg')).toBe('var(--mantine-color-red-light)')
-
-    await userEvent.hover(badge)
-    expect(await screen.findByText(/System health/)).toBeDefined()
+    expect(screen.getByTestId('sync-failed-reason-main').textContent).toBe(SYNC_FAILED_FALLBACK)
   })
 
-  it('shows the recorded failure reason on the row instead of the generic tooltip', async () => {
+  it('shows the recorded failure reason on the row instead of the generic line', async () => {
     const reason = 'Push rejected for branch "main": it has moved on GitHub.'
     const branches: BranchSummary[] = [
       { ...baseBranches[0], syncStatus: 'sync-failed', syncFailureReason: reason },
@@ -559,34 +557,35 @@ describe('BranchManager', () => {
     renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
 
     expect(screen.getByTestId('sync-failed-reason-main').textContent).toBe(reason)
-    await userEvent.hover(screen.getByTestId('sync-failed-badge-main'))
-    await new Promise((resolve) => setTimeout(resolve, 50))
     expect(screen.queryByText(/System health/)).toBeNull()
   })
 
   describe('a branch held on something a person must do', () => {
-    const held = (hold: BranchSummary['hold'], status: BranchSummary['status'] = 'submitted') => {
+    const held = (hold: BranchSummary['hold'], extra: Partial<BranchSummary> = {}) => {
       renderBranchManager({
-        branches: [{ ...baseBranches[0], status, hold }],
+        branches: [{ ...baseBranches[0], status: 'submitted', hold, ...extra }],
         user: creatorUser,
         mode: 'prod',
       })
       return screen.getByTestId('branch-hold-main').textContent
     }
 
-    it('says a conflict is resolved by withdrawing', () => {
-      expect(held({ kind: 'conflicts' })).toContain('Withdraw it from review')
-      expect(screen.getByTestId('held-badge-main').textContent).toBe('Held')
+    it('gives its author the way forward on a conflict', () => {
+      expect(held({ kind: 'conflicts' })).toContain('Use "Withdraw from review"')
+      expect(screen.getByTestId('held-badge-main').textContent).toBe(HOLD_BADGE.label)
     })
 
-    it('names the base a retargeted pull request now has, and where to act', () => {
-      const line = held({ kind: 'retargeted', base: 'release/2026' })
+    it('names the base a retargeted pull request now has, and links to it', () => {
+      const line = held(
+        { kind: 'retargeted', base: 'release/2026' },
+        { pullRequestUrl: 'https://github.com/owner/repo/pull/1' },
+      )
       expect(line).toContain('release/2026')
-      expect(line).toContain('Update branch on GitHub')
+      expect(screen.getByRole('link', { name: 'View pull request' })).toBeTruthy()
     })
 
-    it('says a force-pushed branch needs a developer, in any status', () => {
-      expect(held({ kind: 'rewritten' }, 'editing')).toContain('A developer can fix this')
+    it('tells an editor a rewritten branch needs an admin', () => {
+      expect(held({ kind: 'rewritten' }, { status: 'editing' })).toContain('Ask an admin')
     })
 
     it('says nothing for a branch nothing holds', () => {
@@ -594,17 +593,43 @@ describe('BranchManager', () => {
       expect(screen.queryByTestId('branch-hold-main')).toBeNull()
       expect(screen.queryByTestId('held-badge-main')).toBeNull()
     })
+
+    it('gives a rewrite one line: its failed sync is the same problem', () => {
+      held(
+        { kind: 'rewritten' },
+        { syncStatus: 'sync-failed', syncFailureReason: 'Not pushing branch' },
+      )
+      expect(screen.queryByTestId('sync-failed-reason-main')).toBeNull()
+      expect(screen.getByTestId('sync-failed-badge-main')).toBeTruthy()
+    })
+
+    it('keeps a hold and a separate sync failure to one instruction', () => {
+      held(
+        { kind: 'conflicts' },
+        { syncStatus: 'sync-failed', syncFailureReason: 'Push rejected.', pullRequestNumber: 1 },
+      )
+      expect(screen.getByTestId('sync-failed-reason-main').textContent).toBe('Push rejected.')
+    })
   })
 
-  it('says a failed sync keeps a branch in review from updating, even with no reason', () => {
+  it('says a failed sync keeps a branch in review from updating, with the way forward', () => {
+    const branches: BranchSummary[] = [
+      { ...baseBranches[0], status: 'approved', syncStatus: 'sync-failed', pullRequestNumber: 1 },
+    ]
+    renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
+
+    expect(screen.getByTestId('sync-failed-reason-main').textContent).toBe(
+      `${SYNC_FAILED_FALLBACK} ${SYNC_FAILED_IN_REVIEW_NOTE}`,
+    )
+  })
+
+  it('names no pull request when a first submit never made one', () => {
     const branches: BranchSummary[] = [
       { ...baseBranches[0], status: 'approved', syncStatus: 'sync-failed' },
     ]
     renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
 
-    expect(screen.getByTestId('sync-failed-reason-main').textContent).toBe(
-      `GitHub sync failed. ${SYNC_FAILED_IN_REVIEW_NOTE}`,
-    )
+    expect(screen.getByTestId('sync-failed-reason-main').textContent).toBe(SYNC_FAILED_FALLBACK)
   })
 
   it('tells the author to withdraw when the failed branch is still submitted', () => {
@@ -614,12 +639,13 @@ describe('BranchManager', () => {
         status: 'submitted',
         syncStatus: 'sync-failed',
         syncFailureReason: 'Push rejected.',
+        pullRequestNumber: 1,
       },
     ]
     renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
 
     expect(screen.getByTestId('sync-failed-reason-main').textContent).toBe(
-      `Push rejected. Withdraw it from review to make changes. ${SYNC_FAILED_IN_REVIEW_NOTE}`,
+      `Push rejected. ${SYNC_FAILED_IN_REVIEW_NOTE} Withdraw the branch from review to make changes.`,
     )
   })
 
@@ -652,8 +678,12 @@ describe('BranchManager', () => {
     expect(badge.textContent).toBe('Conflicts (2)')
     expect(badge.style.getPropertyValue('--badge-bg')).toBe('var(--mantine-color-orange-light)')
 
-    await userEvent.hover(badge)
-    expect(await screen.findByText(/Review the flagged entries/)).toBeDefined()
+    // The detail is there for keyboard and screen reader users, as well as on hover.
+    const trigger = badge.closest('[tabindex="0"]')
+    expect(trigger).not.toBeNull()
+    expect(
+      document.getElementById(trigger?.getAttribute('aria-describedby') ?? '')?.textContent,
+    ).toMatch(/Review the flagged entries/)
   })
 
   it('omits the count from the Conflicts badge when conflictFiles is empty or absent', () => {

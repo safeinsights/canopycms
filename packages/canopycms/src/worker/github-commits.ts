@@ -544,7 +544,10 @@ async function enqueueReviewBlockSync(
   }
 }
 
-/** Skipped when nothing changes: every save regenerates the branch registry. */
+/**
+ * Skipped when nothing changes: every save regenerates the branch registry. Bookkeeping, so it
+ * leaves `updatedAt`, which the card shows as an edit.
+ */
 async function recordGitHubTip(
   ctx: GitHubCommitsContext,
   { branchPath, branchRef, metaFile, gitHub }: GitHubCommitsArgs,
@@ -553,8 +556,11 @@ async function recordGitHubTip(
   const { lastGitHubTip, rewrittenOnGitHub } = metaFile.branch
   if (gitHub?.tips.get(branchRef) !== tip) return
   if (lastGitHubTip === tip && rewrittenOnGitHub === undefined) return
-  await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).saveIf(
-    { branch: { lastGitHubTip: tip, rewrittenOnGitHub: undefined } },
-    (current) => current?.branch.name === branchRef,
+  await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update(
+    (current) =>
+      current?.branch.name === branchRef
+        ? { branch: { lastGitHubTip: tip, rewrittenOnGitHub: undefined } }
+        : null,
+    { keepUpdatedAt: true },
   )
 }

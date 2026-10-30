@@ -1929,12 +1929,22 @@ describe('toBranchListItem', () => {
 
   it('drops a hold left from before the branch came back to editing', () => {
     const item = listed({ status: 'editing', pullRequestHold: { kind: 'conflicts' } })
-    expect(item).not.toHaveProperty('hold')
+    expect(item.hold).toBeUndefined()
   })
 
-  it('says a branch was rewritten on GitHub in any status, without the commit', () => {
+  it('says a branch was rewritten on GitHub, without the commit, and blocks its submit', () => {
     const item = listed({ status: 'editing', rewrittenOnGitHub: 'a'.repeat(40) })
     expect(item.hold).toEqual({ kind: 'rewritten' })
+    expect(item.submitBlocked).toBe(true)
+  })
+
+  it('says nothing of a rewrite on an archived branch, which nothing clears', () => {
+    expect(listed({ status: 'archived', rewrittenOnGitHub: 'a'.repeat(40) }).hold).toBeUndefined()
+  })
+
+  it('ignores a hold written into the file by hand', () => {
+    const forged = { hold: { kind: 'retargeted', base: 5 } } as unknown as Partial<BranchMetadata>
+    expect(listed({ status: 'editing', ...forged }).hold).toBeUndefined()
   })
 
   it('leaves out what only the worker reads, including file paths a viewer may not see', () => {

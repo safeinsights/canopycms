@@ -130,6 +130,17 @@ const submitBranchForMergeHandler = async (
     }
   }
 
+  // The worker pushes nothing for such a branch, so this would commit and report a failure later.
+  if (branchContext.branch.rewrittenOnGitHub !== undefined) {
+    return {
+      ok: false,
+      status: 409,
+      error:
+        "This branch was changed on GitHub in a way CanopyCMS can't combine with the work here, " +
+        "so it can't be submitted. Nothing is lost. Ask an admin for help.",
+    }
+  }
+
   // Commit and push changes
   const submitter = submissionEditorFromUser(req.user)
   const { authPlugin } = ctx
@@ -250,6 +261,9 @@ const submitBranchForMergeHandler = async (
       // warning through review and archive.
       rebaseFailure: undefined,
       review: undefined,
+      // Read by the card as soon as the status says review, and the worker's next read is minutes
+      // away, so what held the last submit must not show as holding this one.
+      pullRequestHold: undefined,
     },
   })
 

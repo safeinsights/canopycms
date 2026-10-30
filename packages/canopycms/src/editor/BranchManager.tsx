@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from 'react'
 
 import {
   ActionIcon,
+  Anchor,
   Badge,
   Button,
   Group,
@@ -33,13 +34,17 @@ import { DestructiveMenuItem } from './components/DestructiveMenuItem'
 import { ReasonedMenuItem } from './components/ReasonedMenuItem'
 import { RelativeTime } from './components/RelativeTime'
 import {
+  HOLD_BADGE,
+  SYNC_FAILED_FALLBACK,
   SYNC_FAILED_IN_REVIEW_NOTE,
   branchHoldMessage,
   branchStatusPresentation,
+  type HoldViewer,
 } from './branch-status'
+import { TooltipDetail } from './components/TooltipDetail'
 import { branchAddress, displayBranchName } from './branch-names'
 import type { CreateRefusal } from './hooks/create-branch-request'
-import { CLOSED_PULL_REQUEST_REASON, EDITOR_ACTIONS } from './copy'
+import { CLOSED_PULL_REQUEST_REASON, EDITOR_ACTIONS, REWRITTEN_SUBMIT_REASON } from './copy'
 import { isReviewerOfOthersReview } from '../authorization/review-role'
 import { SYSTEM_USER_ID } from '../system-users'
 
@@ -285,7 +290,11 @@ const workflowAction = (
       color: 'brand',
       testId: `submit-branch-button-${b.name}`,
       run: () => onSubmit?.(b.name),
-      blockedReason: perms.canSubmit ? undefined : "This branch can't be submitted right now.",
+      blockedReason: perms.canSubmit
+        ? undefined
+        : b.hold?.kind === 'rewritten'
+          ? REWRITTEN_SUBMIT_REASON
+          : "This branch can't be submitted right now.",
     }
   }
   return undefined
@@ -327,6 +336,10 @@ interface BranchCardProps {
  * reviewer Review, which opens it; the other cards show Open, which the current one never needs.
  * No action is shown twice.
  */
+/** Lets the card's details shrink beside its actions, which a long unbroken name would push out. */
+const CARD_DETAILS = { minWidth: 0, flex: 1 }
+const WRAP_ANYWHERE = { overflowWrap: 'anywhere' } as const
+
 const BranchCard: React.FC<BranchCardProps> = ({
   branch: b,
   isCurrent,
@@ -400,6 +413,10 @@ const BranchCard: React.FC<BranchCardProps> = ({
   const [menuOpen, setMenuOpen] = useState(false)
 
   const inReview = b.status === 'submitted' || b.status === 'approved'
+  const holdViewer: HoldViewer = {
+    role: perms.canRequestChanges ? 'review' : perms.canWithdraw ? 'withdraw' : 'none',
+    isAdmin: isAdmin(user?.groups),
+  }
   return (
     <Paper
       withBorder
@@ -410,7 +427,7 @@ const BranchCard: React.FC<BranchCardProps> = ({
       data-testid={`branch-list-item-${b.name}`}
     >
       <Group justify="space-between" align="flex-start" wrap="nowrap">
-        <Stack gap={4}>
+        <Stack gap={4} style={CARD_DETAILS}>
           <Group gap="xs">
             <Text fw={600}>{displayBranchName(b)}</Text>
             {isCurrent && (
@@ -427,6 +444,11 @@ const BranchCard: React.FC<BranchCardProps> = ({
                 data-protected={b.isProtected || undefined}
               >
                 {statusBadge.label}
+              </Badge>
+            )}
+            {b.hold && (
+              <Badge color={HOLD_BADGE.color} variant="light" data-testid={`held-badge-${b.name}`}>
+                {HOLD_BADGE.label}
               </Badge>
             )}
             {b.status === 'archived' && b.mergedAt && (
@@ -455,16 +477,9 @@ const BranchCard: React.FC<BranchCardProps> = ({
               </Badge>
             )}
             {b.syncStatus === 'sync-failed' && (
-              <Tooltip
-                label="GitHub sync failed — an admin can retry it from System health."
-                disabled={Boolean(b.syncFailureReason)}
-                multiline
-                maw={320}
-              >
-                <Badge color="red" variant="light" data-testid={`sync-failed-badge-${b.name}`}>
-                  Sync failed
-                </Badge>
-              </Tooltip>
+              <Badge color="red" variant="light" data-testid={`sync-failed-badge-${b.name}`}>
+                Sync failed
+              </Badge>
             )}
             {b.syncStatus === 'pending-sync' && (
               <Tooltip label="Changes are on their way to GitHub.">
@@ -473,35 +488,43 @@ const BranchCard: React.FC<BranchCardProps> = ({
                 </Badge>
               </Tooltip>
             )}
-            {b.hold && (
-              <Badge color="yellow" variant="light" data-testid={`held-badge-${b.name}`}>
-                Held
-              </Badge>
-            )}
             {b.conflictStatus === 'conflicts-detected' && (
-              <Tooltip label="This branch's version was kept for conflicting entries. Review the flagged entries.">
+              <TooltipDetail detail="This branch's version was kept for conflicting entries. Review the flagged entries.">
                 <Badge color="orange" variant="light" data-testid={`conflicts-badge-${b.name}`}>
                   Conflicts
                   {b.conflictFiles?.length ? ` (${b.conflictFiles.length})` : ''}
                 </Badge>
-              </Tooltip>
+              </TooltipDetail>
             )}
           </Group>
           {b.hold && (
-            <Text size="xs" maw={480} data-testid={`branch-hold-${b.name}`}>
-              {branchHoldMessage(b.hold)}
+            <Text size="xs" maw={480} style={WRAP_ANYWHERE} data-testid={`branch-hold-${b.name}`}>
+              {branchHoldMessage(b.hold, holdViewer)}
+              {b.hold.kind === 'retargeted' && b.pullRequestUrl && (
+                <>
+                  {' '}
+                  <Anchor href={b.pullRequestUrl} target="_blank" rel="noreferrer" inherit>
+                    View pull request
+                  </Anchor>
+                </>
+              )}
             </Text>
           )}
-          {b.syncStatus === 'sync-failed' && (b.syncFailureReason || inReview) && (
+          {/* One cause, one line: a rewrite is what fails the sync, and a hold already says what to do. */}
+          {b.syncStatus === 'sync-failed' && b.hold?.kind !== 'rewritten' && (
             <Text
               size="xs"
               c="var(--canopy-danger-text)"
               maw={480}
+              style={WRAP_ANYWHERE}
               data-testid={`sync-failed-reason-${b.name}`}
             >
-              {b.syncFailureReason ?? 'GitHub sync failed.'}
-              {b.status === 'submitted' && ' Withdraw it from review to make changes.'}
-              {inReview && ` ${SYNC_FAILED_IN_REVIEW_NOTE}`}
+              {b.syncFailureReason ?? SYNC_FAILED_FALLBACK}
+              {!b.hold && inReview && b.pullRequestNumber && ` ${SYNC_FAILED_IN_REVIEW_NOTE}`}
+              {!b.hold &&
+                b.status === 'submitted' &&
+                perms.canWithdraw &&
+                ' Withdraw the branch from review to make changes.'}
             </Text>
           )}
           <Group gap="xs" align="center">

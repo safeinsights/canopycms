@@ -292,21 +292,22 @@ export const toBranchListItem = (
     ...listed
   } = branch
   const inReview = branch.status === 'submitted' || branch.status === 'approved'
-  const hold: BranchHold | undefined =
-    branch.rewrittenOnGitHub !== undefined
-      ? { kind: 'rewritten' }
-      : inReview
-        ? pullRequestHold
-        : undefined
+  const rewritten = branch.rewrittenOnGitHub !== undefined && branch.status !== 'archived'
+  const hold: BranchHold | undefined = rewritten
+    ? { kind: 'rewritten' }
+    : inReview
+      ? pullRequestHold
+      : undefined
   return {
     ...listed,
-    ...(hold ? { hold } : {}),
+    hold,
     shortName: shortNameOf(config, branch.name),
     ...accessForViewer(branch.access ?? {}, viewer),
     isProtected: protection.isProtected,
     readOnly: protection.readOnly,
     writeBlocked: protection.writeBlocked,
-    submitBlocked: protection.submitBlockedIncludingStatus,
+    // The worker refuses to push such a branch, so a submit could only fail later.
+    submitBlocked: protection.submitBlockedIncludingStatus || rewritten,
   }
 }
 
