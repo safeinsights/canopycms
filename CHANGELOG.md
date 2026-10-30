@@ -54,6 +54,16 @@ entries under **Released**.
 
 ## Released
 
+### 0.8.1
+
+#### Content reads stop re-reading and re-parsing the schema cache
+
+<!-- changeset: schema-cache-read-once -->
+
+_First in 0.8.1._
+
+**What changed.** An adopter's request measured every `read()` and `readByUrlPath()` reading and parsing the branch's whole schema cache file, up to five times per page. Each process now keeps the schema it parsed and reuses it while the file is unchanged, still checking its freshness on every read. `readByUrlPath()` resolves the branch's schema once for both of the paths it tries. A build resolves the schema once per process instead of on every read. The cache file is written without indentation, under half its former size.
+
 ### 0.8.0
 
 <!-- changeset: merge-main-0-7-1-into-int-e -->
