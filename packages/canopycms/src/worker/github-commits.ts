@@ -21,7 +21,11 @@ import {
   publishPlainToLocalRemote,
   recordConflicts,
 } from './branch-merge'
-import { MAX_REPORTED_PATHS, TRACKED_CANOPY_STATE_FIX } from './canopy-state'
+import {
+  MAX_REPORTED_PATHS,
+  RETIRED_SCHEMA_CACHE_PATH,
+  TRACKED_CANOPY_STATE_FIX,
+} from './canopy-state'
 import { enqueueGitHubPush, readPublishedSha } from './history-rewrite'
 import { workerLog, workerLogWarn } from './log'
 import { assertNoIncomingSubmodules, fetchFromRemoteGit } from './shared-repo-git'
@@ -302,8 +306,11 @@ async function refuseIncoming(
   const deleted: string[] = []
   const changed: string[] = []
   for (let i = 0; i + 1 < fields.length; i += 2) {
-    if (!isCanopyInternalPath(fields[i + 1])) continue
-    ;(fields[i] === 'D' ? deleted : changed).push(fields[i + 1])
+    const file = fields[i + 1]
+    // Nothing reads the retired cache, so its deletion, which an adopter's fix makes, is harmless.
+    if (!isCanopyInternalPath(file)) continue
+    if (fields[i] !== 'D') changed.push(file)
+    else if (file !== RETIRED_SCHEMA_CACHE_PATH) deleted.push(file)
   }
   if (changed.length > 0) {
     return {

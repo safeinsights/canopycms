@@ -18,7 +18,7 @@ import {
 } from './provisioned-workspace'
 import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
 import { escapeForLog } from '../utils/escape-text'
-import { isCanopyInternalPath, isRebaseInProgress } from '../utils/git'
+import { CANOPY_META_DIR, isCanopyInternalPath, isRebaseInProgress } from '../utils/git'
 import {
   TRACKED_CANOPY_STATE_FIX,
   restoreRetiredSchemaCache,
@@ -1156,15 +1156,16 @@ async function rebaseOneBranch(
 
       // `git rebase` drops merge commits and replays what they merged, so whatever one settled
       // (a kept version, a maintainer's conflict resolution) would be undone, then force-published.
-      // A branch holding one merges the base instead.
-      const mergesAboveBase = await branchGit.raw([
-        'rev-list',
-        '--count',
-        '--merges',
-        '--end-of-options',
-        `${fetchedBaseTip}..HEAD`,
-      ])
-      if (commitArgs !== null && mergesAboveBase.trim() !== '0') {
+      // A branch holding one merges the base instead. So does one whose commits touch canopycms
+      // state: a replay writes their bytes over the live files, and a pair that adds then removes
+      // a file deletes it.
+      const aboveBase = `${fetchedBaseTip}..HEAD`
+      const countAboveBase = async (args: string[]) =>
+        (await branchGit.raw(['rev-list', '--count', ...args])).trim()
+      const cannotReplay =
+        (await countAboveBase(['--merges', '--end-of-options', aboveBase])) !== '0' ||
+        (await countAboveBase(['--end-of-options', aboveBase, '--', CANOPY_META_DIR])) !== '0'
+      if (commitArgs !== null && cannotReplay) {
         const outcome = await mergeIntoBranch(ctx, commitArgs, {
           head: (await branchGit.revparse(['HEAD'])).trim(),
           other: fetchedBaseTip,

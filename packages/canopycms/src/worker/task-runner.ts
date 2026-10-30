@@ -287,8 +287,8 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
       const permanent = isPermanentTaskFailure(err)
       const retryCount = task.retryCount ?? 0
       const maxRetries = task.maxRetries ?? ctx.maxRetries
-      const moved = err instanceof GitHubMovedTaskError
-      if (moved && task.action === SUBMIT_ACTION && retryCount < maxRetries) {
+      const waitsForSync = err instanceof GitHubMovedTaskError && task.action === SUBMIT_ACTION
+      if (waitsForSync && retryCount < maxRetries) {
         await retryTask(ctx.taskDir, task.id, persistedMessage, ctx.log, {
           delayMs: ctx.gitSyncIntervalMs,
         })
@@ -302,7 +302,7 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
           unlock: err instanceof NothingToSubmitTaskError,
         })
         workerLogError(
-          permanent && !moved
+          permanent && !waitsForSync
             ? '  Permanently failed (non-retryable error)'
             : `  Permanently failed after ${maxRetries} retries`,
         )

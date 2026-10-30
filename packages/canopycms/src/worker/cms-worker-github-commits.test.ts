@@ -44,7 +44,11 @@ interface Setup {
   /** Write a saved edit, uncommitted. */
   save(files: Record<string, string>): Promise<void>
   /** A commit on GitHub's copy of the branch, reconciled into remote.git. */
-  commitOnGitHub(files: Record<string, string>, message?: string): Promise<string>
+  commitOnGitHub(
+    files: Record<string, string>,
+    message?: string,
+    removes?: string[],
+  ): Promise<string>
   /** GitHub's Update branch: base merged into GitHub's copy of the branch. */
   updateBranchOnGitHub(): Promise<string>
   /** GitHub moved, and remote.git's head has not: it is diverged, or this cycle has not reached it. */
@@ -146,8 +150,9 @@ async function createSetup(workspace: string): Promise<Setup> {
       await trackGitHub(await setup.head())
     },
     save: (files) => write(branchPath, files),
-    async commitOnGitHub(files, message = 'maintainer fix') {
+    async commitOnGitHub(files, message = 'maintainer fix', removes = []) {
       await outsideOnBranch()
+      for (const file of removes) await outside.raw(['rm', '-q', file])
       const sha = await outsideCommit(files, message)
       await outside.raw(['push', 'origin', `HEAD:refs/heads/${BRANCH}`])
       await trackGitHub(sha)
@@ -886,6 +891,36 @@ describe('bringing commits made on GitHub into a branch clone', () => {
     expect(await s.head()).toBe(before)
     expect(summary.failed[0]?.error).toContain('manual repair')
     expect((await readMeta(s))?.name).toBe(BRANCH)
+  })
+
+  it('takes in the removal of the retired schema cache, which nothing reads', async () => {
+    await s.save({ '.canopy-meta/schema-cache.json': '{}\n' })
+    await s.clone.raw(['add', '-f', '.canopy-meta/schema-cache.json'])
+    await s.clone.commit('old cache')
+    await s.clone.raw(['push', 'origin', `${BRANCH}:${BRANCH}`])
+    await s.landPushOnGitHub()
+    await writeMeta(s, {})
+    const tip = await s.commitOnGitHub({}, 'drop the cache', ['.canopy-meta/schema-cache.json'])
+
+    const summary = await cycle(s)
+
+    expect(summary.failed).toEqual([])
+    expect(await s.head()).toBe(tip)
+  })
+
+  it('keeps the live file when a branch added then removed it and the base moves', async () => {
+    await s.commitOnGitHub({ '.canopy-meta/branch.json': '{"branch":{"status":"approved"}}\n' })
+    await s.commitOnGitHub({}, 'took it out again', ['.canopy-meta/branch.json'])
+    await writeMeta(s, { pullRequestNumber: 7 })
+    await cycle(s)
+    await s.advanceBase({ 'base2.txt': 'moved\n' })
+
+    const summary = await cycle(s)
+
+    expect(summary.failed).toEqual([])
+    expect((await readMeta(s))?.name).toBe(BRANCH)
+    expect(await s.file('base2.txt')).toBe('moved\n')
+    expect((await readMeta(s))?.historyRewrittenFrom).toBeUndefined()
   })
 
   it('names a path from a commit on one line, however the path is written', async () => {
