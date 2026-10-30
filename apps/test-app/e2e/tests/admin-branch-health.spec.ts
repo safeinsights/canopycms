@@ -258,7 +258,7 @@ test.describe('Admin Branch Health', () => {
     }
   })
 
-  test('rebase-failure indicator shows while editing, suppressed once submitted (A13)', async ({
+  test('rebase-failure indicator shows while editing and in review, not once archived (A13)', async ({
     page,
   }) => {
     const branchName = `rebase-fail-${Date.now()}`
@@ -274,8 +274,14 @@ test.describe('Admin Branch Health', () => {
     const adminPage = await openBranchesTab(page)
     await expect(adminPage.rebaseFailureIcon(key)).toBeVisible()
 
-    await test.step('suppressed once the branch is submitted', async () => {
+    await test.step('still shown in review, as the worker still looks at the branch', async () => {
       await patchBranchMetadata(key, { status: 'submitted' })
+      await refreshBranchesTab(adminPage)
+      await expect(adminPage.rebaseFailureIcon(key)).toBeVisible()
+    })
+
+    await test.step('suppressed once the branch is archived', async () => {
+      await patchBranchMetadata(key, { status: 'archived' })
       await refreshBranchesTab(adminPage)
       await expect(adminPage.rebaseFailureIcon(key)).toHaveCount(0)
     })
