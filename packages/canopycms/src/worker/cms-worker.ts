@@ -1650,8 +1650,9 @@ export class CmsWorker {
 
   private async rebaseActiveBranches(
     gatewayPolicy?: BranchPolicyDescription,
+    githubTips?: ReadonlyMap<string, string>,
   ): Promise<RebaseSummary> {
-    return runRebaseCycle(this.ctx(), gatewayPolicy)
+    return runRebaseCycle(this.ctx(), gatewayPolicy, githubTips)
   }
 
   // --- Git-sync cluster (worker/git-sync.ts) -----------------------------

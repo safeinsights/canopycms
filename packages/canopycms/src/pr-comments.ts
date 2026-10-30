@@ -46,7 +46,10 @@ export async function renderPrCommentsBody(options: {
   }
   try {
     const file = await readBranchMetadataFile(options.branchRoot)
-    if (file) next = mergeReviewBlock(next, buildReviewBlock(file.branch.review)) ?? next
+    if (file) {
+      const block = buildReviewBlock(file.branch.review, file.branch.keptOverGitHub)
+      next = mergeReviewBlock(next, block) ?? next
+    }
   } catch (err) {
     if (!(err instanceof BranchMetadataCorruptError)) throw err
     options.warn(
@@ -91,7 +94,10 @@ export async function refreshCommentsBlock(options: {
   }
   try {
     const file = await readBranchMetadataFile(options.branchRoot)
-    if (file) section = mergeReviewBlock(section, buildReviewBlock(file.branch.review)) ?? section
+    if (file) {
+      const block = buildReviewBlock(file.branch.review, file.branch.keptOverGitHub)
+      section = mergeReviewBlock(section, block) ?? section
+    }
   } catch (err) {
     options.warn(
       `Could not re-read the review state of ${options.branch}; the PR gets it from submit time: ${getErrorMessage(err)}`,

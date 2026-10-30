@@ -7,12 +7,9 @@ import {
   getBranchMetadataFileManager,
   type BranchMetadataFile,
 } from '../branch-metadata'
-import { extractIdFromFilename } from '../content-id-index'
 import { invalidateBranchContentCaches } from '../content-index-generation'
 import { isSettingsBranchName, sanitizeBranchName } from '../paths/branch-name'
-import { normalizeFilesystemPath } from '../paths/normalize'
-import { ROOT_COLLECTION_ID, type ContentId } from '../paths/types'
-import type { ConflictStatus, PullRequestState } from '../types'
+import type { PullRequestState } from '../types'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import {
   holdProvisionedWorkspace,
@@ -36,6 +33,8 @@ import {
   reconcilePendingRewrite,
 } from './history-rewrite'
 import type { BranchPolicyDescription } from './branch-policy'
+import { commitsApart, conflictFilesToContentIds, recordConflicts } from './branch-merge'
+import { bringInGitHubCommits } from './github-commits'
 import { workerLog, workerLogWarn } from './log'
 import {
   SHARED_REPO_STATUS_ARGS,
@@ -61,6 +60,10 @@ import type { WorkerContext } from './worker-context'
  * - it carries a rewritten history forward into remote.git and GitHub under a
  *   lease keyed to the exact commit it replaced ([SYNC-H1], history-rewrite.ts).
  *
+ * Ahead of the rebase it brings commits made on GitHub into the clone, for every
+ * status (github-commits.ts): the rebase would otherwise rewrite the clone away
+ * from a tip it never had.
+ *
  * `pollMergeState` lives here rather than in git-sync.ts because the rebase
  * loop is its only caller: submitted/approved branches are skipped for rebasing
  * but still need their PR's resolution polled, and this loop is the only thing
@@ -76,6 +79,7 @@ export type RebaseContext = Pick<
   | 'taskDir'
   | 'taskTimeoutMs'
   | 'github'
+  | 'ensureStatusReport'
   | 'afterConflictDetectedForTesting'
   | 'afterRebaseCompletedForTesting'
   | 'ensureSettingsBranch'
@@ -398,76 +402,6 @@ async function runRebaseRounds(
 }
 
 /**
- * Map the file paths a rebase resolved --theirs onto the ContentIds the editor
- * shows as conflicted, deduplicated. IDs rather than paths because they are
- * immutable: a later slug rename must not orphan a conflict marker. Paths that
- * carry no recoverable ID are dropped rather than guessed at.
- *
- * Pure.
- */
-function conflictFilesToContentIds(
-  conflictedFiles: readonly string[],
-  contentRoot: string,
-): ContentId[] {
-  // Entry files carry their ID in the filename. A `.collection.json` has none
-  // of its own (extractIdFromFilename returns null for dot-prefixed files), so
-  // the ID comes from the parent directory; the root content directory has no
-  // embedded ID at all, so ROOT_COLLECTION_ID stands in -- but only for the
-  // configured contentRoot.
-  //
-  // Two different notions of "parent" are needed, and conflating them is the
-  // bug this guards against (see schema-store.ts's contentRootName doc comment
-  // for the same shape elsewhere):
-  //  - `parentDir` (a basename) recovers a SUB-collection's own embedded ID,
-  //    correct as a basename since a collection directory carries its ID in its
-  //    own name, one path segment;
-  //  - `parentPath` (the full normalized relative parent path) is what must be
-  //    compared against `contentRoot`, which is documented (config/helpers.ts)
-  //    as allowed to span multiple segments (e.g. "cms/content"). Comparing a
-  //    basename against that full value is always false, silently dropping the
-  //    root collection's conflict. Git reports POSIX paths and the configured
-  //    value may use either separator, so both sides go through
-  //    normalizeFilesystemPath first.
-  const normalizedContentRoot = normalizeFilesystemPath(contentRoot)
-  const conflictIds = [...new Set(conflictedFiles)]
-    .map((f) => {
-      const fileId = extractIdFromFilename(path.basename(f))
-      if (fileId) return fileId
-      const parentDir = path.basename(path.dirname(f))
-      const dirId = extractIdFromFilename(parentDir)
-      if (dirId) return dirId
-      // Only assign ROOT_COLLECTION_ID when the file's parent directory IS the
-      // configured content root. Other unrecognized paths are filtered out.
-      const parentPath = normalizeFilesystemPath(path.dirname(f))
-      if (path.basename(f) === '.collection.json' && parentPath === normalizedContentRoot) {
-        return ROOT_COLLECTION_ID
-      }
-      return null
-    })
-    .filter((id): id is ContentId => id !== null)
-  return [...new Set(conflictIds)]
-}
-
-/**
- * The conflict record after a rebase: the IDs already recorded plus this
- * rebase's. A conflict means this branch's version replaced base's change to
- * that entry, which a later clean rebase does not undo, so the record only
- * grows until the branch merges (buildMergedBranchUpdate clears it).
- *
- * Pure.
- */
-function recordConflicts(
-  recorded: readonly ContentId[] | undefined,
-  found: readonly ContentId[],
-): { conflictStatus: ConflictStatus; conflictFiles: ContentId[] } {
-  const conflictFiles = [...new Set([...(recorded ?? []), ...found])]
-  return {
-    conflictStatus: conflictFiles.length > 0 ? 'conflicts-detected' : 'clean',
-    conflictFiles,
-  }
-}
-
-/**
  * [SYNC-H1] Carry a just-rebased history forward into `remote.git`, and queue
  * the GitHub hop.
  *
@@ -586,6 +520,8 @@ type BranchRebaseOutcome =
 export async function runRebaseCycle(
   ctx: RebaseContext,
   gatewayPolicy?: BranchPolicyDescription,
+  /** GitHub's branches as this cycle's fetch reported them. */
+  githubTips?: ReadonlyMap<string, string>,
 ): Promise<RebaseSummary> {
   const rebased: string[] = []
   const skippedDirty: string[] = []
@@ -646,7 +582,13 @@ export async function runRebaseCycle(
       workerLogWarn(`  Skipping ${branchDir}: settings branch, never a content workspace`)
       continue
     }
-    const outcome = await holdAndRebaseOneBranch(ctx, branchDir, branchPath, gatewayPolicy)
+    const outcome = await holdAndRebaseOneBranch(
+      ctx,
+      branchDir,
+      branchPath,
+      gatewayPolicy,
+      githubTips,
+    )
     if (outcome.kind === 'rebased') rebased.push(branchDir)
     else if (outcome.kind === 'skippedDirty') skippedDirty.push(branchDir)
     else if (outcome.kind === 'skippedLocked') skippedLocked.push(branchDir)
@@ -729,6 +671,7 @@ async function holdAndRebaseOneBranch(
   branchDir: string,
   branchPath: string,
   gatewayPolicy: BranchPolicyDescription | undefined,
+  githubTips: ReadonlyMap<string, string> | undefined,
 ): Promise<BranchRebaseOutcome> {
   let hold: ProvisionedWorkspaceHold
   try {
@@ -747,9 +690,113 @@ async function holdAndRebaseOneBranch(
   // repairBranchDirResidue (git-sync.ts) quarantines and logs at the cycle's start.
   if (hold.kind === 'not-provisioned') return { kind: 'none' }
   try {
-    return await rebaseOneBranch(ctx, branchDir, branchPath, hold.isCompromised, gatewayPolicy)
+    return await rebaseOneBranch(
+      ctx,
+      branchDir,
+      branchPath,
+      hold.isCompromised,
+      gatewayPolicy,
+      githubTips,
+    )
   } finally {
     await releaseProvisionedWorkspace(hold.release, branchDir)
+  }
+}
+
+/** Whether `remote.git` holds commits for `branchRef` that this clone lacks. */
+async function lacksPublishedCommits(
+  ctx: RebaseContext,
+  git: SimpleGit,
+  branchRef: string,
+): Promise<boolean> {
+  const published = await readPublishedSha(ctx, branchRef)
+  if (published === null) return false
+  await fetchFromRemoteGit(git, ctx.remoteGitPath, `refs/heads/${branchRef}`)
+  return (await commitsApart(git, 'HEAD', published)).onlyB > 0
+}
+
+/**
+ * {@link bringInGitHubCommits} for a submitted or approved branch, which skips the rest of the
+ * rebase loop. Under the content-write lock, zero-retry, as a save or a submit can hold it. A
+ * branch GitHub holds as it is costs no lock. Never throws, so the caller's merge poll still runs.
+ */
+async function bringInCommitsForBranchInReview(
+  ctx: RebaseContext,
+  branchDir: string,
+  branchPath: string,
+  metaFile: BranchMetadataFile,
+  isProvisioningLockCompromised: () => boolean,
+  gatewayPolicy: BranchPolicyDescription | undefined,
+  githubTips: ReadonlyMap<string, string> | undefined,
+): Promise<BranchRebaseOutcome> {
+  try {
+    const branchRef = await readCloneRef(branchPath)
+    const gitHubTip = branchRef === null ? undefined : githubTips?.get(branchRef)
+    if (branchRef === null || gitHubTip === undefined) return { kind: 'none' }
+
+    await assertSharedRepoConfig(branchPath, 'worktree')
+    const branchGit = sharedRepoGit(branchPath, 'worktree')
+    const head = (await branchGit.revparse(['HEAD'])).trim()
+    if (
+      head === gitHubTip &&
+      metaFile.branch.lastGitHubTip === gitHubTip &&
+      metaFile.branch.rebaseFailure === undefined &&
+      (await readPublishedSha(ctx, branchRef)) === gitHubTip
+    ) {
+      return { kind: 'none' }
+    }
+
+    let contentLockCompromised = false
+    let releaseContentLock: () => Promise<void>
+    try {
+      releaseContentLock = await tryAcquireContentWriteLock(branchPath, (lockErr) => {
+        contentLockCompromised = true
+        workerLogWarn(`  Content-write lock lost for ${branchDir}: ${getErrorMessage(lockErr)}`)
+      })
+    } catch (lockErr: unknown) {
+      if (isNodeError(lockErr) && lockErr.code === 'ELOCKED') {
+        workerLog(`  Skipping ${branchDir}: content write in progress (retrying next cycle)`)
+        return { kind: 'skippedLocked' }
+      }
+      throw lockErr
+    }
+    try {
+      const status = await branchGit.status([...SHARED_REPO_STATUS_ARGS])
+      const outcome = await bringInGitHubCommits(ctx, {
+        git: branchGit,
+        branchPath,
+        branchDir,
+        branchRef,
+        metaFile,
+        gitHubTip,
+        dirty: status.files.some((f) => !isCanopyInternalPath(f.path)),
+        gatewayPolicy,
+        lockLost: () => contentLockCompromised || isProvisioningLockCompromised(),
+      })
+      if (outcome.kind === 'blocked') {
+        workerLogWarn(`  ${branchDir}: ${outcome.reason}`)
+        await recordRebaseFailure(ctx, branchPath, branchDir, outcome.reason, branchRef)
+        return { kind: 'failed', error: outcome.reason }
+      }
+      if (outcome.kind === 'in-step' && metaFile.branch.rebaseFailure !== undefined) {
+        await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).saveIf(
+          { branch: { rebaseFailure: undefined } },
+          (current) => current?.branch.name === branchRef,
+        )
+      }
+      return { kind: 'none' }
+    } finally {
+      await releaseContentLock().catch((releaseErr: unknown) => {
+        workerLogWarn(
+          `  Failed to release content-write lock for ${branchDir}: ${getErrorMessage(releaseErr)}`,
+        )
+      })
+    }
+  } catch (err) {
+    const message = redactCredentials(getErrorMessage(err))
+    workerLogWarn(`  ${branchDir}: could not bring in commits from GitHub: ${message}`)
+    await recordRebaseFailure(ctx, branchPath, branchDir, message)
+    return { kind: 'failed', error: message }
   }
 }
 
@@ -771,6 +818,7 @@ async function rebaseOneBranch(
   branchPath: string,
   isProvisioningLockCompromised: () => boolean,
   gatewayPolicy: BranchPolicyDescription | undefined,
+  githubTips: ReadonlyMap<string, string> | undefined,
 ): Promise<BranchRebaseOutcome> {
   // Read only by the catch below. See the `rebased` rider on
   // BranchRebaseOutcome.
@@ -792,10 +840,19 @@ async function rebaseOneBranch(
     //   PR -- but do poll GitHub for the PR's resolution, since nothing else
     //   tells the worker a merge/close happened;
     // - archived: already merged, with no PR left to poll.
-    if (branchStatus === 'submitted' || branchStatus === 'approved') {
+    if (metaFile !== null && (branchStatus === 'submitted' || branchStatus === 'approved')) {
       workerLog(`  Skipping ${branchDir} (${branchStatus})`)
+      const outcome = await bringInCommitsForBranchInReview(
+        ctx,
+        branchDir,
+        branchPath,
+        metaFile,
+        isProvisioningLockCompromised,
+        gatewayPolicy,
+        githubTips,
+      )
       await pollMergeState(ctx, branchDir, branchPath, metaFile)
-      return { kind: 'none' }
+      return outcome
     }
     if (branchStatus === 'archived') {
       workerLog(`  Skipping ${branchDir} (${branchStatus})`)
@@ -935,6 +992,37 @@ async function rebaseOneBranch(
         dirtyCheck = await branchGit.status([...SHARED_REPO_STATUS_ARGS])
       }
       const editorDirt = dirtyCheck.files.filter((f) => !isCanopyInternalPath(f.path))
+
+      // The clone's own ref name: branchDir is the sanitized DIRECTORY name and
+      // need not match it. A literal 'HEAD' means a detached clone (a crashed
+      // rebase can leave one), where nothing below can safely name a ref, so
+      // every publish path stays disarmed -- the safe direction.
+      const branchRef = (await branchGit.revparse(['--abbrev-ref', 'HEAD'])).trim()
+      const canPublish = branchRef.length > 0 && branchRef !== 'HEAD'
+
+      // Before the dirty return: a fast-forward passes saves that touch other files.
+      if (canPublish && metaFile !== null) {
+        const outcome = await bringInGitHubCommits(ctx, {
+          git: branchGit,
+          branchPath,
+          branchDir,
+          branchRef,
+          metaFile,
+          gitHubTip: githubTips?.get(branchRef),
+          dirty: editorDirt.length > 0,
+          gatewayPolicy,
+          lockLost: lockCompromised,
+        })
+        if (outcome.kind === 'blocked') {
+          workerLogWarn(`  ${branchDir}: ${outcome.reason}`)
+          await recordRebaseFailure(ctx, branchPath, branchDir, outcome.reason, branchRef)
+          return { kind: 'failed', error: outcome.reason }
+        }
+        if (outcome.kind === 'wait') {
+          return editorDirt.length > 0 ? { kind: 'skippedDirty' } : { kind: 'none' }
+        }
+      }
+
       if (editorDirt.length > 0) {
         workerLog(`  Skipping ${branchDir}: has uncommitted changes`)
         return { kind: 'skippedDirty' }
@@ -961,13 +1049,6 @@ async function rebaseOneBranch(
         await recordRebaseFailure(ctx, branchPath, branchDir, reason)
         return { kind: 'failed', error: reason }
       }
-
-      // The clone's own ref name: branchDir is the sanitized DIRECTORY name and
-      // need not match it. A literal 'HEAD' means a detached clone (a crashed
-      // rebase can leave one), where nothing below can safely name a ref, so
-      // every publish path stays disarmed -- the safe direction.
-      const branchRef = (await branchGit.revparse(['--abbrev-ref', 'HEAD'])).trim()
-      const canPublish = branchRef.length > 0 && branchRef !== 'HEAD'
 
       // [SYNC-H1] Self-heal: finish an interrupted publish even when this
       // branch is not behind base. Every crash window in the arming sequence
@@ -1015,9 +1096,14 @@ async function rebaseOneBranch(
         // base change this branch's version replaced, which stays true until
         // the branch merges (see recordConflicts). A lingering rebaseFailure
         // is cleared, or it sticks as a stale warning forever: nothing else
-        // touches a caught-up branch, so no other save site clears it.
+        // touches a caught-up branch, so no other save site clears it. One
+        // whose cause stands stays: remote.git still holds a commit this clone
+        // lacks, and the next submit is refused for it.
         const currentMeta = await BranchMetadataFileManager.loadOnly(branchPath)
         if (currentMeta?.branch.rebaseFailure === undefined) {
+          return { kind: 'none' }
+        }
+        if (canPublish && (await lacksPublishedCommits(ctx, branchGit, branchRef))) {
           return { kind: 'none' }
         }
         const storedName = currentMeta.branch.name

@@ -1291,14 +1291,14 @@ describe('SystemHealthPanel', () => {
       )
     })
 
-    it('shows the rebaseFailure icon for rebased branches, suppresses it for skip-listed ones (LOW-3)', async () => {
+    it('shows the rebaseFailure icon for every branch the worker looks at, and not for an archived one', async () => {
       renderPanel()
       await userEvent.click(screen.getByText('Branches'))
       await waitFor(() => expect(screen.getByText('feature-a')).toBeTruthy())
 
-      expect(screen.getByTestId('rebase-failure-feature-a')).toBeTruthy() // editing: rebased
-      expect(screen.queryByTestId('rebase-failure-feature-b')).toBeNull() // submitted: skipped
-      expect(screen.queryByTestId('rebase-failure-feature-c')).toBeNull() // archived: skipped
+      expect(screen.getByTestId('rebase-failure-feature-a')).toBeTruthy() // editing
+      expect(screen.getByTestId('rebase-failure-feature-b')).toBeTruthy() // submitted
+      expect(screen.queryByTestId('rebase-failure-feature-c')).toBeNull() // archived: never looked at
     })
 
     it('reaches the rebase failure by keyboard: a named focusable icon described by the message', async () => {
@@ -1309,7 +1309,7 @@ describe('SystemHealthPanel', () => {
       const icon = screen.getByTestId('rebase-failure-feature-a')
       const trigger = icon.closest('[tabindex="0"]') as HTMLElement
       expect(trigger.tagName).toBe('SPAN')
-      expect(screen.getByRole('img', { name: 'Rebase failing' })).toBe(trigger)
+      expect(screen.getAllByRole('img', { name: 'Rebase failing' })).toContain(trigger)
       act(() => trigger.focus())
       expect(document.activeElement).toBe(trigger)
       const detail = `merge conflict (first failed ${formatRelativeTime('2026-01-01T00:00:00.000Z')}, ${new Date('2026-01-01T00:00:00.000Z').toLocaleString()})`

@@ -1912,6 +1912,25 @@ describe('updateBranchAccess api', () => {
 })
 
 describe('toBranchListItem', () => {
+  it('leaves out what only the worker reads, including file paths a viewer may not see', () => {
+    const item = toBranchListItem(
+      { mode: 'dev' } as unknown as Parameters<typeof toBranchListItem>[0],
+      {
+        name: 'x',
+        status: 'editing',
+        access: {},
+        createdBy: 'u',
+        createdAt: '2026-10-01T00:00:00.000Z',
+        updatedAt: '2026-10-01T00:00:00.000Z',
+        keptOverGitHub: ['content/secret.json'],
+        lastGitHubTip: 'a'.repeat(40),
+      },
+      { type: 'authenticated', userId: 'v', groups: [] },
+    )
+    expect(item).not.toHaveProperty('keptOverGitHub')
+    expect(item).not.toHaveProperty('lastGitHubTip')
+  })
+
   it('leaves the reviewer out, for a privileged viewer too', () => {
     const context = createMockBranchContext({ branchName: 'feature/x', createdBy: 'u1' })
     const branch = {

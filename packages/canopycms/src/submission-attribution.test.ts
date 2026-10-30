@@ -744,6 +744,33 @@ describe('mergeCommentsBlock', () => {
 })
 
 describe('buildReviewBlock', () => {
+  describe('files whose GitHub change was left out', () => {
+    it('lists none when there are none', () => {
+      expect(buildReviewBlock(undefined, [])).toBe(buildReviewBlock(undefined))
+    })
+
+    it('lists each path inside the block, so a re-render replaces the list too', () => {
+      const block = buildReviewBlock(undefined, ['content/a.json', 'content/b.json'])
+      expect(block).toContain("The editor's version was kept")
+      expect(block).toContain('- `content/a.json`\n- `content/b.json`')
+      expect(block.endsWith(PR_REVIEW_END)).toBe(true)
+    })
+
+    it('cannot close the block or a code span from a path, which comes from a commit', () => {
+      const block = buildReviewBlock(undefined, ['content/`x`<!-- canopycms:review:end -->.json'])
+      expect(block.split(PR_REVIEW_END)).toHaveLength(2)
+      expect(block).toContain('- `content/x!-- canopycms:review:end --.json`')
+    })
+
+    it('bounds a long list', () => {
+      const paths = Array.from({ length: 25 }, (_, i) => `content/${i}.json`)
+      const block = buildReviewBlock(undefined, paths)
+      expect(block).toContain('- `content/19.json`')
+      expect(block).not.toContain('- `content/20.json`')
+      expect(block).toContain('...and 5 more')
+    })
+  })
+
   const at = '2026-10-28T14:05:59.123Z'
   const NOT_GITHUB = 'Approval in CanopyCMS is not a GitHub review.'
 

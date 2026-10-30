@@ -228,7 +228,8 @@ function DivergedBranchesAlert({ names }: { names: readonly string[] }) {
           This deployment&apos;s copy of each branch below holds editor work that conflicts with the
           branch on GitHub, usually because the GitHub branch was rebased or force-pushed, or
           because another CanopyCMS deployment sharing this repository uses the same branch name.
-          Neither copy has been changed, and publishing the branch fails until they agree.
+          Neither copy has been changed, and publishing the branch fails until they agree. A branch
+          that only gained commits on GitHub clears on its own at the next sync.
         </Text>
         <Text size="sm">
           A developer decides which version to keep. To keep GitHub&apos;s, first push it to a new
@@ -1237,13 +1238,10 @@ function BranchHealthRow({
 }) {
   if (entry.kind === 'healthy' && entry.branch) {
     const b = entry.branch
-    // Mirrors the rebase loop's skip logic (worker/rebase.ts): the worker
-    // rebases every branch except 'submitted'/'approved' (under an active PR)
-    // and 'archived' (already merged). An exclusion list, not `status ===
-    // 'editing'`, so a status added later still shows its rebase failures by
-    // default instead of silently hiding them.
-    const showRebaseFailure =
-      !['submitted', 'approved', 'archived'].includes(b.status) && !!b.rebaseFailure
+    // The worker looks at every branch but 'archived' (already merged): one in review is not
+    // rebased, but commits from GitHub are still brought into it. An exclusion, not a list of
+    // statuses, so a status added later still shows its failures by default.
+    const showRebaseFailure = b.status !== 'archived' && !!b.rebaseFailure
     const canMarkMerged =
       (b.status === 'submitted' || b.status === 'approved') && !!b.pullRequestNumber
 

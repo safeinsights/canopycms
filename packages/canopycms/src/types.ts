@@ -108,6 +108,17 @@ export interface BranchMetadata {
    */
   historyRewrittenFrom?: string
   /**
+   * The newest commit this deployment knows GitHub's branch held: the last one it pushed, or the
+   * last tip it took in. A tip that no longer contains it was rewritten on GitHub, so it is not
+   * merged, which could restore what someone removed (worker/github-commits.ts).
+   */
+  lastGitHubTip?: string
+  /**
+   * Repo-relative paths where a merge of GitHub's commits kept this branch's version over theirs.
+   * The PR body lists them, since the person whose change was replaced is not in the editor.
+   */
+  keptOverGitHub?: string[]
+  /**
    * Short, sanitized reason the last GitHub sync failed, set alongside
    * `syncStatus: 'sync-failed'` by the worker's updateBranchMetadataOnFailure or a
    * direct-path submit -- e.g. a non-fast-forward push rejection naming the branch.
