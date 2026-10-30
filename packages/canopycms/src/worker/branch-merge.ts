@@ -63,7 +63,7 @@ function parseMergeTree(output: string, head: string, other: string): MergeTreeR
   const stages: ConflictStage[] = []
   let i = 1
   for (; i < fields.length && fields[i] !== ''; i++) {
-    const match = /^(\d+) ([0-9a-f]+) (\d)\t(.*)$/s.exec(fields[i])
+    const match = /^(\d+) ([0-9a-f]+) (\d)\t([\s\S]*)$/.exec(fields[i])
     if (!match) throw new Error(`Unreadable git merge-tree entry: ${JSON.stringify(fields[i])}`)
     const [, mode, oid, stage, path] = match
     stages.push({ mode, oid, stage, path })
