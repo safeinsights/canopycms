@@ -229,6 +229,8 @@ export async function retryTask(
   taskId: string,
   error: string,
   logger: TaskQueueLogger = nullLogger,
+  /** `delayMs` replaces the backoff, for a retry that waits on something else happening first. */
+  options: { delayMs?: number } = {},
 ): Promise<void> {
   const processingPath = path.join(taskDir, 'processing', `${taskId}.json`)
   const pendingDir = path.join(taskDir, 'pending')
@@ -250,7 +252,7 @@ export async function retryTask(
   }
 
   const retryCount = (task.retryCount ?? 0) + 1
-  const backoffMs = Math.min(5000 * Math.pow(2, retryCount - 1), 60_000)
+  const backoffMs = options.delayMs ?? Math.min(5000 * Math.pow(2, retryCount - 1), 60_000)
 
   task.status = 'pending'
   task.retryCount = retryCount

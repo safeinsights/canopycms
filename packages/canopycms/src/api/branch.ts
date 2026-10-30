@@ -51,7 +51,10 @@ const log = createDebugLogger({ prefix: 'BranchAPI' })
  * rather than silently behaving as if nothing changed. That is by design:
  * wire compatibility here means "doesn't break", not "behaves the same".
  */
-export interface BranchListItem extends Omit<BranchMetadata, 'review'> {
+export interface BranchListItem extends Omit<
+  BranchMetadata,
+  'review' | 'keptOverGitHub' | 'lastGitHubTip' | 'rewrittenOnGitHub' | 'rebaseFailure'
+> {
   /**
    * What pull request links carry for this branch, which `?branch=` and the `/:branch` segment
    * accept beside `name` (branch-param.ts's `shortNameOf`): `name` less the namespace for a branch
@@ -269,8 +272,17 @@ export const toBranchListItem = (
   viewer: CanopyUser,
 ): BranchListItem => {
   const protection = getBranchWriteProtection(config, branch.name, branch.baseBranch, branch.status)
-  // `review` names the reviewer, whom the editor has no use for.
-  const { review: _review, ...listed } = branch
+  // `review` names the reviewer, whom the editor has no use for. `keptOverGitHub` and
+  // `rebaseFailure` can name files, which a viewer's path rules can hide; System Health reads
+  // failures from the admin endpoint. The other two are the worker's.
+  const {
+    review: _review,
+    keptOverGitHub: _kept,
+    lastGitHubTip: _tip,
+    rewrittenOnGitHub: _rewritten,
+    rebaseFailure: _failure,
+    ...listed
+  } = branch
   return {
     ...listed,
     shortName: shortNameOf(config, branch.name),

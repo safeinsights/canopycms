@@ -77,6 +77,10 @@ export async function readPublishedSha(
  * caller's snapshot: the task loop runs concurrently with syncGit() and may
  * have cleared the marker while this branch was rebasing.
  *
+ * `rewrittenTip` goes in the same write as `lastGitHubTip`, so a push that lands
+ * and dies before its stamp is never read as someone rewriting the branch on
+ * GitHub (github-commits.ts).
+ *
  * Resolves whether `branchRef`'s branch.json now holds a marker, set here or kept by set-once.
  * When it does not, the caller publishes nothing: a rewrite pushed without its marker leaves
  * remote.git rewritten and the queued GitHub push failing with a false divergence diagnosis.
@@ -86,13 +90,20 @@ export async function markHistoryRewritten(
   branchPath: string,
   branchRef: string,
   expectedSha: string,
+  rewrittenTip: string,
 ): Promise<boolean> {
   const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
   let marked = false
   await meta.update((current) => {
     marked = current?.branch.name === branchRef
-    if (!marked || typeof current?.branch.historyRewrittenFrom === 'string') return null
-    return { branch: { historyRewrittenFrom: expectedSha } }
+    if (!marked) return null
+    const marker = current?.branch.historyRewrittenFrom
+    return {
+      branch: {
+        historyRewrittenFrom: typeof marker === 'string' ? marker : expectedSha,
+        lastGitHubTip: rewrittenTip,
+      },
+    }
   })
   return marked
 }

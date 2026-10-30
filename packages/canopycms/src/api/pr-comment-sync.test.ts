@@ -9,7 +9,8 @@ import type { GitHubService } from '../github-service'
 import type { BranchContext } from '../types'
 import { CommentStore } from '../comment-store'
 import { PR_COMMENTS_END, PR_COMMENTS_START, buildPrSection } from '../submission-attribution'
-import { listTasks } from '../task-queue/cms-task-queue'
+import { SYNC_PR_COMMENTS_ACTION } from '../pr-comments'
+import { enqueueTask, listTasks } from '../task-queue/cms-task-queue'
 import { getTaskQueueDir } from '../task-queue/task-queue-config'
 import { createMockApiContext, createMockBranchContext } from '../test-utils'
 import { mockConsole } from '../test-utils/console-spy'
@@ -253,6 +254,17 @@ describe('syncPrComments, queued path', () => {
         editorBranch: 'spring',
       },
     ])
+  })
+
+  it("queues beside the worker's review-only task, which carries no comment", async () => {
+    await enqueueTask(getTaskQueueDir(config), {
+      action: SYNC_PR_COMMENTS_ACTION,
+      payload: { branch: 'feature/x', pullRequestNumber: 7, reviewBlockOnly: true },
+    })
+
+    await syncPrComments(queuedCtx(), branchWithPr())
+
+    expect(await pending()).toHaveLength(2)
   })
 
   it('queues again for a new PR while a task for the old one is pending', async () => {

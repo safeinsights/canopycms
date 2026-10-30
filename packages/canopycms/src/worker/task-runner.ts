@@ -7,7 +7,7 @@ import {
   releaseTask,
   retryTask,
 } from '../task-queue/cms-task-queue'
-import type { Task } from '../task-queue/cms-task-queue'
+import type { Task, TaskAction } from '../task-queue/cms-task-queue'
 import { isNoCommitsBetweenError, isRefAlreadyGoneError } from '../github-service'
 import {
   BranchMetadataCorruptError,
@@ -56,6 +56,7 @@ export type TaskRunnerContext = Pick<
   | 'remoteGitPath'
   | 'contentBranchesPath'
   | 'taskTimeoutMs'
+  | 'gitSyncIntervalMs'
   | 'maxTasksPerCycle'
   | 'maxRetries'
   | 'log'
@@ -91,6 +92,16 @@ class TaskAbortedForShutdownError extends Error {}
  * the branch to editing if it is still in that submit, since nothing is under review.
  */
 class NothingToSubmitTaskError extends PermanentTaskError {}
+
+/** The task a submit queues (api/github-sync.ts). */
+const SUBMIT_ACTION = 'push-and-create-or-update-pr' satisfies TaskAction
+
+/**
+ * GitHub's branch moved past what this deployment published. An immediate retry of the same push
+ * cannot land, but the next sync brings those commits in (worker/github-commits.ts), so a submit's
+ * task, which also updates the PR, runs again after it.
+ */
+class GitHubMovedTaskError extends PermanentTaskError {}
 
 /**
  * Classify a task failure as permanent (fail fast) or transient (retry).
@@ -276,7 +287,13 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
       const permanent = isPermanentTaskFailure(err)
       const retryCount = task.retryCount ?? 0
       const maxRetries = task.maxRetries ?? ctx.maxRetries
-      if (!permanent && retryCount < maxRetries) {
+      const waitsForSync = err instanceof GitHubMovedTaskError && task.action === SUBMIT_ACTION
+      if (waitsForSync && retryCount < maxRetries) {
+        await retryTask(ctx.taskDir, task.id, persistedMessage, ctx.log, {
+          delayMs: ctx.gitSyncIntervalMs,
+        })
+        workerLog(`  Will retry after the next sync (attempt ${retryCount + 1}/${maxRetries})`)
+      } else if (!permanent && retryCount < maxRetries) {
         await retryTask(ctx.taskDir, task.id, persistedMessage, ctx.log)
         workerLog(`  Will retry (attempt ${retryCount + 1}/${maxRetries})`)
       } else {
@@ -285,7 +302,7 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
           unlock: err instanceof NothingToSubmitTaskError,
         })
         workerLogError(
-          permanent
+          permanent && !waitsForSync
             ? '  Permanently failed (non-retryable error)'
             : `  Permanently failed after ${maxRetries} retries`,
         )
@@ -401,6 +418,10 @@ export async function executeTask(
       // list->tiebreak->update/create logic and the draft->ready conversion
       // live in one place.
       const branch = requireString(payload, 'branch')
+      if (await isSupersededSubmit(ctx, task, branch)) {
+        workerLog(`Not retrying the submit of ${branch}: the branch has moved on from it`)
+        return { superseded: true }
+      }
       const base = optionalString(payload, 'baseBranch', ctx.baseBranch)
       // Defense-in-depth: refuse head===base even if the 'submittableBranch'
       // API guard and the syncSubmitPr backstop were both bypassed.
@@ -553,6 +574,7 @@ export async function executeTask(
         branch: editorBranchOf(payload, branch),
         editorUrl,
         body: pr.body,
+        reviewBlockOnly: payload.reviewBlockOnly === true,
         warn: workerLogWarn,
       })
       if (body === undefined) return { updated: false, skipped: 'unchanged' }
@@ -563,6 +585,27 @@ export async function executeTask(
     default:
       throw new PermanentTaskError(`Unknown task action: ${action}`)
   }
+}
+
+/**
+ * Whether a retried submit no longer describes the branch: it was withdrawn or sent back meanwhile,
+ * so running it would ready the PR someone pulled back, or submitted again, so it would overwrite
+ * the newer title and body. Only a retry: a first run can start before the API has recorded the
+ * submit it queued.
+ */
+async function isSupersededSubmit(
+  ctx: TaskRunnerContext,
+  task: Task,
+  branch: string,
+): Promise<boolean> {
+  const { submittedAt } = task.payload
+  if (!task.retryCount || typeof submittedAt !== 'string') return false
+  const live = await BranchMetadataFileManager.loadOnly(ctx.branchWorkspacePath(branch))
+  if (live === null) return false
+  const { status } = live.branch
+  return (
+    (status !== 'submitted' && status !== 'approved') || live.branch.submittedAt !== submittedAt
+  )
 }
 
 /**
@@ -614,6 +657,18 @@ export async function updateBranchMetadata(
 
   try {
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
+    // A superseded submit synced nothing. A branch taken back to editing waits on no other task,
+    // and would read as syncing until its next submit.
+    if (result.superseded === true) {
+      await meta.saveIf(
+        { branch: { syncStatus: 'synced' } },
+        (existing) =>
+          existing?.branch.name === branch &&
+          existing.branch.status === 'editing' &&
+          existing.branch.syncStatus === 'pending-sync',
+      )
+      return
+    }
     const saved = await meta.update((existing) => {
       if (existing?.branch.name !== branch) return null
       const updates: Record<string, unknown> = {
@@ -766,6 +821,14 @@ export async function pushBranchToGitHub(
   const branchPath = ctx.branchWorkspacePath(branch)
   const metaFile = await BranchMetadataFileManager.loadOnly(branchPath).catch(() => null)
   const marker = metaFile?.branch.historyRewrittenFrom
+  // github-commits.ts recorded it: this push would restore what someone removed from GitHub.
+  if (metaFile?.branch.rewrittenOnGitHub !== undefined) {
+    throw new PermanentTaskError(
+      `Not pushing branch "${branch}": it was force-pushed or rewritten on GitHub and no longer ` +
+        `contains ${metaFile.branch.rewrittenOnGitHub}. An administrator can see how to continue ` +
+        `in System Health.`,
+    )
+  }
   const readSha = async () => {
     const sha = await readPublishedSha(ctx, branch)
     if (sha === null) {
@@ -796,7 +859,7 @@ export async function pushBranchToGitHub(
     // non-fast-forward then means the branch has genuinely diverged.
     if (err.kind === 'rejected-after-stale-lease') {
       if (isNonFastForwardRejection(err.message)) {
-        throw new PermanentTaskError(
+        throw new GitHubMovedTaskError(
           `Push rejected for branch "${branch}": GitHub's tip is neither the commit this ` +
             `deployment last published nor an ancestor of what it is pushing, so the branch ` +
             `has genuinely diverged and nothing was overwritten. Something else moved it on ` +
@@ -813,7 +876,7 @@ export async function pushBranchToGitHub(
     // advise renaming the branch: one reaching this point usually has an open
     // PR, which renaming would orphan.
     if (isNonFastForwardRejection(err.message)) {
-      throw new PermanentTaskError(
+      throw new GitHubMovedTaskError(
         `Push rejected for branch "${branch}": GitHub's tip is not what this deployment last ` +
           `published, so the branch has diverged and needs reconciling. Something else moved it ` +
           `on GitHub -- a direct push, or another CanopyCMS deployment sharing this repository.`,
@@ -826,7 +889,7 @@ export async function pushBranchToGitHub(
     // The lease was refused, so GitHub is provably not at the marker: it
     // has moved past the rewritten commit and the marker is spent.
     await clearHistoryRewrittenMarker(ctx, branchPath, branch)
-    await recordPushedToGitHub(ctx, branchPath, branch)
+    await recordPushedToGitHub(ctx, branchPath, branch, outgoingSha)
     logPushOutcome(ctx, branch, outcome, 'GitHub had already moved past the rewritten commit')
     return
   }
@@ -838,7 +901,7 @@ export async function pushBranchToGitHub(
   if (marker && outgoingSha !== marker) {
     await clearHistoryRewrittenMarker(ctx, branchPath, branch)
   }
-  await recordPushedToGitHub(ctx, branchPath, branch)
+  await recordPushedToGitHub(ctx, branchPath, branch, outgoingSha)
   logPushOutcome(ctx, branch, outcome)
 }
 
@@ -858,15 +921,16 @@ function logPushOutcome(
 }
 
 /**
- * Stamp `pushedToGitHubAt`, branch delete's proof that the GitHub branch is this one. Recorded
- * when the push lands, whatever the PR call after it does. Best-effort: a branch deleted
- * meanwhile has no metadata to stamp, and a failed stamp only leaves a later delete to skip
- * GitHub.
+ * Stamp `pushedToGitHubAt`, branch delete's proof that the GitHub branch is this one, and
+ * `lastGitHubTip`, what github-commits.ts tells a rewrite on GitHub by. Recorded when the push
+ * lands, whatever the PR call after it does. Best-effort: a branch deleted meanwhile has no
+ * metadata to stamp, and a failed stamp only leaves a later delete to skip GitHub.
  */
 async function recordPushedToGitHub(
   ctx: TaskRunnerContext,
   branchPath: string,
   branch: string,
+  sha: string,
 ): Promise<void> {
   if (isSettingsBranch(branch)) return
   try {
@@ -876,7 +940,7 @@ async function recordPushedToGitHub(
   }
   try {
     const saved = await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).saveIf(
-      { branch: { pushedToGitHubAt: new Date().toISOString() } },
+      { branch: { pushedToGitHubAt: new Date().toISOString(), lastGitHubTip: sha } },
       (existing) => existing?.branch.name === branch,
     )
     if (saved === null) noMetadataToRecord(branch, 'GitHub push')

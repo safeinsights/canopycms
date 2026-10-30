@@ -131,9 +131,10 @@ interface TrackedBranchSummary {
   /**
    * Local heads that diverged from GitHub's tip (neither side is an ancestor of
    * the other) while holding editor work here (stale-mirror.ts's `EditorState`)
-   * -- left untouched and warned about once per pair of tips. A real collision
-   * (e.g. another deployment moved the same branch name); the next push attempt
-   * is rejected non-fast-forward, which is the correct, visible outcome.
+   * -- left untouched and warned about once per pair of tips. Commits added on
+   * GitHub are merged by this cycle's rebase loop (github-commits.ts); a rewrite
+   * or another deployment moving the same name stays, and pushes are rejected
+   * non-fast-forward, which is the correct, visible outcome.
    */
   diverged: string[]
   /** Diverged heads holding no editor work: stale copies, moved to GitHub's tip. */
@@ -287,7 +288,7 @@ export async function pushSettingsBranches(
  * stale copy of a branch rebased and force-pushed on GitHub, and is moved to GitHub's tip
  * (`repointed`); one holding editor work is a real collision (another deployment moved the same
  * branch name, or GitHub's branch was rewritten under an editor's work), never resolved by picking
- * a winner: it stays `diverged`, and the next push is rejected non-fast-forward.
+ * a winner: it stays `diverged`, and github-commits.ts decides whether a merge can reconcile it.
  *
  * A head GitHub has no branch for is deleted through the same function when it holds no editor work
  * and shares history with the base (`pruned`), and only when GitHub's answer names the base branch:
@@ -577,8 +578,8 @@ function divergedWarning({ name, local, github, state, error }: DivergedHead) {
     line:
       `  Tracked-branch reconcile: ${escapeForLog(name)} diverged from GitHub and was left untouched, ` +
       `because ${EDITOR_STATE_WORDS[state]}${error === undefined ? '' : ` (${escapeForLog(error)})`} ` +
-      `(here ${local}, GitHub ${github}). Publishing it fails until the two are reconciled; ` +
-      `System health lists it.`,
+      `(here ${local}, GitHub ${github}). The next rebase cycle merges commits added on GitHub; ` +
+      `otherwise publishing it fails until the two are reconciled. System health lists it.`,
   }
 }
 
@@ -651,6 +652,7 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     // deadline: the wait for the gateway's GitHub fetch, which runs on detached, then the gateway's
     // bundle, the unbundle and the ref update; a killed ref update leaves each ref as it was or
     // fully moved.
+    const fetchedAt = Date.now()
     const { refs: githubTips, needsOperator } = await fetchGitHubIntoRemoteGit(
       ctx,
       ctx.shutdownSignal(),
@@ -702,7 +704,10 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
         workerLogError('Failed to write worker status:', getErrorMessage(writeErr)),
       )
     }
-    const rebaseSummary = await runRebaseCycle(ctx, branchPolicy)
+    const rebaseSummary = await runRebaseCycle(ctx, branchPolicy, {
+      tips: githubTips,
+      fetchedAt,
+    })
     if (stoppedForDrain(ctx, 'the cleanup sweeps')) return
 
     await cleanupOldTasks(ctx.taskDir, undefined, ctx.log)
