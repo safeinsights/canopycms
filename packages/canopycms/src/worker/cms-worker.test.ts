@@ -1580,62 +1580,48 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     expect(await readMarker('canopycms/prod/feature-moved')).toBe('0'.repeat(40))
   })
 
-  it('returns a submit GitHub refused to editing, its PR kept, with what happens next', async () => {
+  it('runs a submit GitHub refused again after the next sync, which brings its commits in', async () => {
     const branch = 'canopycms/prod/feature-moved-on'
     const dir = path.join(contentBranchesPath, 'canopycms-prod-feature-moved-on')
-    const submittedAt = '2026-10-01T00:00:00.000Z'
     await seedBranchInRemoteGit(branch, 'this deployment')
     await seedBranchInGitHubFixture(branch, 'a maintainer')
     await fs.mkdir(dir, { recursive: true })
     await getBranchMetadataFileManager(dir, contentBranchesPath).save({
-      branch: { name: branch, status: 'submitted', pullRequestNumber: 12, submittedAt },
+      branch: { name: branch, status: 'submitted', pullRequestNumber: 12 },
     })
 
     const worker = makePushWorker()
     ;(worker as unknown as { running: boolean }).running = true
-    await enqueueTask(taskDir, {
+    const before = Date.now()
+    const id = await enqueueTask(taskDir, {
       action: 'push-and-create-or-update-pr',
-      payload: { branch, title: 't', body: '', baseBranch: 'main', submittedAt },
+      payload: { branch, title: 't', body: '', baseBranch: 'main' },
     })
     await worker.processTaskQueue()
 
+    const task = await getTask(taskDir, id)
+    expect(task?.status).toBe('pending')
+    expect(task?.retryCount).toBe(1)
+    // The default interval, not the task backoff, which ends long before the next sync.
+    expect(Date.parse(task?.retryAfter ?? '') - before).toBeGreaterThanOrEqual(5 * 60_000)
     const meta = await BranchMetadataFileManager.loadOnly(dir)
-    expect(meta?.branch.status).toBe('editing')
-    expect(meta?.branch.pullRequestNumber).toBe(12)
-    expect(meta?.branch.syncStatus).toBe('sync-failed')
-    expect(meta?.branch.syncFailureReason).toContain('submit again once CanopyCMS')
+    expect(meta?.branch.status).toBe('submitted')
+    expect(meta?.branch.syncStatus).not.toBe('sync-failed')
   })
 
-  it('leaves a newer submit alone when GitHub refuses an older one', async () => {
-    const branch = 'canopycms/prod/feature-resubmitted'
-    const dir = path.join(contentBranchesPath, 'canopycms-prod-feature-resubmitted')
-    await seedBranchInRemoteGit(branch, 'this deployment')
-    await seedBranchInGitHubFixture(branch, 'a maintainer')
+  it('pushes nothing for a branch rewritten on GitHub, which would restore what was removed', async () => {
+    const branch = 'canopycms/prod/feature-rewritten'
+    const dir = path.join(contentBranchesPath, 'canopycms-prod-feature-rewritten')
+    await seedBranchInRemoteGit(branch, 'hello')
     await fs.mkdir(dir, { recursive: true })
     await getBranchMetadataFileManager(dir, contentBranchesPath).save({
-      branch: {
-        name: branch,
-        status: 'submitted',
-        pullRequestNumber: 12,
-        submittedAt: '2026-10-02T00:00:00.000Z',
-      },
+      branch: { name: branch, rewrittenOnGitHub: 'a'.repeat(40) },
     })
 
-    const worker = makePushWorker()
-    ;(worker as unknown as { running: boolean }).running = true
-    await enqueueTask(taskDir, {
-      action: 'push-and-create-or-update-pr',
-      payload: {
-        branch,
-        title: 't',
-        body: '',
-        baseBranch: 'main',
-        submittedAt: '2026-10-01T00:00:00.000Z',
-      },
-    })
-    await worker.processTaskQueue()
-
-    expect((await BranchMetadataFileManager.loadOnly(dir))?.branch.status).toBe('submitted')
+    await expect(
+      (makePushWorker() as unknown as PushBranchInternals).pushBranchToGitHub(branch),
+    ).rejects.toBeInstanceOf(PermanentTaskError)
+    await expect(shaOf(githubFixture, `refs/heads/${branch}`)).rejects.toThrow()
   })
 
   it('fails a push-branch task immediately (not after maxRetries) on a real rejection, and records the reason on branch metadata', async () => {

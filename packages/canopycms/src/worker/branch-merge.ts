@@ -11,36 +11,87 @@ import type { ConflictStatus } from '../types'
 import { isNonFastForwardRejection } from '../utils/git'
 import { getErrorMessage, redactCredentials } from '../utils/error'
 import { runGit } from './git-process'
-import { workerLogWarn } from './log'
 import { pinnedReceivePack, sharedRepoGit, sharedRepoProcessOptions } from './shared-repo-git'
 import type { WorkerContext } from './worker-context'
 
 /**
  * Merging into a branch workspace's history without touching its working tree: the merge is built
- * as objects, and the clone only ever fast-forwards to it. So no crash can leave a clone mid-merge,
- * which would need a second copy of the rebase loop's lossy interrupted-rebase recovery, and a
- * refused merge changes nothing at all.
+ * as objects, and the clone only ever fast-forwards to it. So a refused merge changes nothing, and
+ * a crash can never leave a clone mid-merge with conflicts in it, which would need a second copy
+ * of the rebase loop's lossy interrupted-rebase recovery.
  */
 
 const OBJECT_ID = /^[0-9a-f]{40}([0-9a-f]{24})?$/
 
-/** What {@link buildMergeCommit} made of the two commits. */
-export interface BuiltMerge {
-  /** The merge commit, reachable from no ref yet. */
-  sha: string
-  /** Paths git could not merge, for which the branch's version was kept. */
-  conflicted: string[]
+/**
+ * The conflicts {@link buildMergeCommit} settles by keeping `head`'s side of one path. Every other
+ * kind (a rename colliding with another, a file meeting a directory, a directory rename) moves or
+ * joins paths, so no one side of one path is the branch's version, and settling it by rule loses a
+ * file. Messages that are not `CONFLICT` are git's notes, such as `Auto-merging`.
+ */
+const SETTLED_BY_KEEPING_HEAD: ReadonlySet<string> = new Set([
+  'CONFLICT (contents)',
+  'CONFLICT (binary)',
+  'CONFLICT (modify/delete)',
+])
+
+/** One stage of a conflicted path, as `merge-tree` lists it. */
+interface ConflictStage {
+  mode: string
+  oid: string
+  stage: string
+  path: string
+}
+
+interface MergeTreeResult {
+  tree: string
+  stages: ConflictStage[]
+  /** Conflict kinds other than {@link SETTLED_BY_KEEPING_HEAD}. */
+  unsettled: string[]
 }
 
 /**
- * The merge of `other` into `head`, as a commit no ref names. A path git cannot merge keeps
- * `head`'s version, whole, or stays deleted when `head` deleted it: the rule the rebase loop
- * applies to a conflict, and what `head` having the editor's work is for. `head` is the first
- * parent.
- *
- * Reads the output rather than the exit status: `merge-tree` exits 1 on a conflict with no
- * stderr, which simple-git resolves, and any failure of its own writes stderr and throws. The
- * commit takes its identity from the clone's `user.*`, written when the clone is provisioned.
+ * Parse `merge-tree --write-tree -z`: the tree, then each stage of each conflicted path, an empty
+ * field, then messages of a path count, the paths, a stable kind and a sentence. Reads the output
+ * rather than the exit status, since it exits 1 on a conflict with no stderr, which simple-git
+ * resolves, and any failure of its own writes stderr and throws.
+ */
+function parseMergeTree(output: string, head: string, other: string): MergeTreeResult {
+  const fields = output.split('\0')
+  const tree = fields[0]
+  if (!OBJECT_ID.test(tree)) throw new Error(`git merge-tree printed no tree for ${head}, ${other}`)
+  const stages: ConflictStage[] = []
+  let i = 1
+  for (; i < fields.length && fields[i] !== ''; i++) {
+    const match = /^(\d+) ([0-9a-f]+) (\d)\t(.*)$/s.exec(fields[i])
+    if (!match) throw new Error(`Unreadable git merge-tree entry: ${JSON.stringify(fields[i])}`)
+    const [, mode, oid, stage, path] = match
+    stages.push({ mode, oid, stage, path })
+  }
+  const unsettled = new Set<string>()
+  for (i++; i < fields.length && fields[i] !== ''; ) {
+    const kind = fields[i + parseInt(fields[i], 10) + 1]
+    if (kind?.startsWith('CONFLICT') && !SETTLED_BY_KEEPING_HEAD.has(kind)) unsettled.add(kind)
+    i += parseInt(fields[i], 10) + 3
+  }
+  // A path git could not decode as UTF-8 reads back as U+FFFD, which names no file.
+  if (stages.some(({ path }) => path.includes('\ufffd'))) unsettled.add('an unreadable file name')
+  return { tree, stages, unsettled: [...unsettled] }
+}
+
+/** What {@link buildMergeCommit} made of the two commits. */
+export type BuiltMerge =
+  /** `sha` is the merge, reachable from no ref yet. `conflicted` kept the branch's version. */
+  | { kind: 'built'; sha: string; conflicted: string[] }
+  /** Git met conflicts no rule settles safely. Nothing was built. */
+  | { kind: 'unsettled'; conflicts: string[]; paths: string[] }
+
+/**
+ * The merge of `other` into `head`, as a commit no ref names, with `head` the first parent. A path
+ * git cannot merge keeps `head`'s side, stage 2, at the path git reports, or stays deleted when
+ * `head` has no such stage: the rule the rebase loop applies to a conflict, since `head` has the
+ * editor's work. The commit takes its identity from the clone's `user.*`, written when the clone
+ * is provisioned.
  */
 export async function buildMergeCommit(
   git: SimpleGit,
@@ -51,38 +102,58 @@ export async function buildMergeCommit(
   const output = await git.raw([
     'merge-tree',
     '--write-tree',
-    '--name-only',
     '-z',
-    '--no-messages',
     '--end-of-options',
     head,
     other,
   ])
-  const [mergedTree, ...conflicted] = output.split('\0').filter((field) => field.length > 0)
-  if (mergedTree === undefined || !OBJECT_ID.test(mergedTree)) {
-    throw new Error(`git merge-tree printed no tree for ${head} and ${other}`)
-  }
+  const { tree: mergedTree, stages, unsettled } = parseMergeTree(output, head, other)
+  const conflicted = [...new Set(stages.map(({ path }) => path))]
+  if (unsettled.length > 0) return { kind: 'unsettled', conflicts: unsettled, paths: conflicted }
   const tree =
-    conflicted.length === 0
+    stages.length === 0
       ? mergedTree
-      : await keepBranchVersions(git, clonePath, { mergedTree, head, conflicted, timeoutMs })
+      : await keepHeadStages(clonePath, { mergedTree, stages, conflicted, timeoutMs })
   const sha = (
     await git.raw(['commit-tree', '-p', head, '-p', other, '-m', message, '--end-of-options', tree])
   ).trim()
-  return { sha, conflicted }
+  return { kind: 'built', sha, conflicted }
 }
 
 /**
- * `mergedTree` with every path in `conflicted` as `head` has it, through a throwaway index, so the
- * clone's own index is never read or written. `ls-tree -r` lists `head`'s blobs at or under each
- * path, so a path that became a directory on one side takes all of `head`'s entries.
+ * Whether `merged` holds exactly what `from` and `other` merge to cleanly, and so nothing else. A
+ * conflict counts as no: whoever settled it chose what `merged` holds.
  */
-async function keepBranchVersions(
+export async function isCleanMergeOf(
   git: SimpleGit,
+  merged: string,
+  from: string,
+  other: string,
+): Promise<boolean> {
+  const output = await git.raw([
+    'merge-tree',
+    '--write-tree',
+    '-z',
+    '--end-of-options',
+    from,
+    other,
+  ])
+  const { tree, stages } = parseMergeTree(output, from, other)
+  if (stages.length > 0) return false
+  return (await git.revparse(['--verify', '--end-of-options', `${merged}^{tree}`])).trim() === tree
+}
+
+/** `mergedTree` with each of `conflicted` as `head` has it, through a throwaway index. */
+async function keepHeadStages(
   clonePath: string,
-  args: { mergedTree: string; head: string; conflicted: string[]; timeoutMs: number },
+  args: {
+    mergedTree: string
+    stages: readonly ConflictStage[]
+    conflicted: readonly string[]
+    timeoutMs: number
+  },
 ): Promise<string> {
-  const { mergedTree, head, conflicted, timeoutMs } = args
+  const { mergedTree, stages, conflicted, timeoutMs } = args
   const shared = sharedRepoProcessOptions(clonePath, 'worktree')
   const indexFile = path.join(clonePath, '.git', `canopy-merge-index-${randomUUID()}`)
   const options = {
@@ -90,19 +161,16 @@ async function keepBranchVersions(
     env: { ...shared.env, GIT_INDEX_FILE: indexFile },
     inactivityTimeoutMs: timeoutMs,
   }
+  const kept = new Map(stages.filter((s) => s.stage === '2').map((s) => [s.path, s]))
+  // Mode 0 removes a path: what is left when `head` has no side of it.
+  const zeros = '0'.repeat(mergedTree.length)
+  const entries = conflicted.map((file) => {
+    const entry = kept.get(file)
+    return `${entry?.mode ?? '0'} ${entry?.oid ?? zeros}\t${file}\0`
+  })
   try {
     await runGit(['read-tree', '--end-of-options', mergedTree], options)
-    const branchEntries = await runGit(
-      ['ls-tree', '-r', '-z', '--full-tree', '--end-of-options', head, '--', ...conflicted],
-      options,
-    )
-    // Mode 0 removes a path. `--index-info` reads `ls-tree` output as it is, so `head`'s entries,
-    // listed after, put back what it has.
-    const removals = conflicted.map((file) => `0 ${'0'.repeat(head.length)}\t${file}\0`).join('')
-    await runGit(['update-index', '-z', '--index-info'], {
-      ...options,
-      stdin: removals + branchEntries,
-    })
+    await runGit(['update-index', '-z', '--index-info'], { ...options, stdin: entries.join('') })
     return (await runGit(['write-tree'], options)).trim()
   } finally {
     await fs.rm(indexFile, { force: true }).catch(() => {})
@@ -111,8 +179,8 @@ async function keepBranchVersions(
 
 /**
  * Move `refs/heads/<branchRef>` in remote.git to `sha` as a plain push, so it can only ever
- * fast-forward. Resolves false when it could not: a concurrent reconcile moved the head, and the
- * caller's next cycle looks again. Any other failure throws.
+ * fast-forward. Resolves false when it would not: under the caller's locks, the only writers left
+ * are this loop and a person, so remote.git holds a commit `sha` lacks. Any other failure throws.
  */
 export async function publishPlainToLocalRemote(
   ctx: Pick<WorkerContext, 'remoteGitPath' | 'taskTimeoutMs'>,
@@ -132,12 +200,8 @@ export async function publishPlainToLocalRemote(
     ])
     return true
   } catch (err) {
-    const message = redactCredentials(getErrorMessage(err))
-    if (!isNonFastForwardRejection(message)) throw err
-    workerLogWarn(
-      `  ${branchRef} moved in remote.git while it was being published; the next cycle looks again`,
-    )
-    return false
+    if (isNonFastForwardRejection(redactCredentials(getErrorMessage(err)))) return false
+    throw err
   }
 }
 
@@ -147,7 +211,9 @@ export async function commitsApart(
   a: string,
   b: string,
 ): Promise<{ onlyA: number; onlyB: number }> {
-  const counts = (await git.raw(['rev-list', '--left-right', '--count', `${a}...${b}`])).trim()
+  const counts = (
+    await git.raw(['rev-list', '--left-right', '--count', '--end-of-options', `${a}...${b}`])
+  ).trim()
   const [left, right] = counts.split(/\s+/).map((n) => parseInt(n, 10))
   if (!Number.isInteger(left) || !Number.isInteger(right)) {
     throw new Error(`Unreadable rev-list output for ${a}...${b}: ${JSON.stringify(counts)}`)

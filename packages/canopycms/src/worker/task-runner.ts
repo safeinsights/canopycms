@@ -7,7 +7,7 @@ import {
   releaseTask,
   retryTask,
 } from '../task-queue/cms-task-queue'
-import type { Task } from '../task-queue/cms-task-queue'
+import type { Task, TaskAction } from '../task-queue/cms-task-queue'
 import { isNoCommitsBetweenError, isRefAlreadyGoneError } from '../github-service'
 import {
   BranchMetadataCorruptError,
@@ -56,6 +56,7 @@ export type TaskRunnerContext = Pick<
   | 'remoteGitPath'
   | 'contentBranchesPath'
   | 'taskTimeoutMs'
+  | 'gitSyncIntervalMs'
   | 'maxTasksPerCycle'
   | 'maxRetries'
   | 'log'
@@ -92,10 +93,13 @@ class TaskAbortedForShutdownError extends Error {}
  */
 class NothingToSubmitTaskError extends PermanentTaskError {}
 
+/** The task a submit queues (api/github-sync.ts). */
+const SUBMIT_ACTION = 'push-and-create-or-update-pr' satisfies TaskAction
+
 /**
- * GitHub's branch moved past what this deployment published. A retry of the same push cannot land,
- * but the next sync brings those commits in (worker/github-commits.ts), so the submit that failed
- * is the editor's to repeat.
+ * GitHub's branch moved past what this deployment published. An immediate retry of the same push
+ * cannot land, but the next sync brings those commits in (worker/github-commits.ts), so a submit's
+ * task, which also updates the PR, runs again after it.
  */
 class GitHubMovedTaskError extends PermanentTaskError {}
 
@@ -283,12 +287,20 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
       const permanent = isPermanentTaskFailure(err)
       const retryCount = task.retryCount ?? 0
       const maxRetries = task.maxRetries ?? ctx.maxRetries
-      if (!permanent && retryCount < maxRetries) {
+      const moved = err instanceof GitHubMovedTaskError
+      if (moved && task.action === SUBMIT_ACTION && retryCount < maxRetries) {
+        await retryTask(ctx.taskDir, task.id, persistedMessage, ctx.log, {
+          delayMs: ctx.gitSyncIntervalMs,
+        })
+        workerLog(`  Will retry after the next sync (attempt ${retryCount + 1}/${maxRetries})`)
+      } else if (!permanent && retryCount < maxRetries) {
         await retryTask(ctx.taskDir, task.id, persistedMessage, ctx.log)
         workerLog(`  Will retry (attempt ${retryCount + 1}/${maxRetries})`)
       } else {
         await failTask(ctx.taskDir, task.id, persistedMessage, ctx.log)
-        await updateBranchMetadataOnFailure(ctx, task, persistedMessage, unlockFor(err))
+        await updateBranchMetadataOnFailure(ctx, task, persistedMessage, {
+          unlock: err instanceof NothingToSubmitTaskError,
+        })
         workerLogError(
           permanent
             ? '  Permanently failed (non-retryable error)'
@@ -558,6 +570,7 @@ export async function executeTask(
         branch: editorBranchOf(payload, branch),
         editorUrl,
         body: pr.body,
+        reviewBlockOnly: payload.reviewBlockOnly === true,
         warn: workerLogWarn,
       })
       if (body === undefined) return { updated: false, skipped: 'unchanged' }
@@ -661,15 +674,15 @@ export async function updateBranchMetadata(
  * syncFailureReason so the editor can show WHY, not just that it failed.
  *
  * `unlock` also returns the branch to 'editing', but only while it is still in
- * the submit this task carries (its `submittedAt`): a withdraw, a newer submit,
- * or a review decision that landed meanwhile is left alone. `unlock.withPr` says
- * whether a branch with a PR qualifies.
+ * the submit this task carries (its `submittedAt`), 'submitted' with no PR: a
+ * withdraw, a newer submit, or a review decision that landed meanwhile is left
+ * alone.
  */
 async function updateBranchMetadataOnFailure(
   ctx: TaskRunnerContext,
   task: Task,
   error: string,
-  { unlock }: { unlock?: { withPr: boolean; nextStep: string } },
+  options: { unlock: boolean },
 ): Promise<void> {
   const branch = metadataBranchOf(task)
   if (!branch) return
@@ -686,20 +699,20 @@ async function updateBranchMetadataOnFailure(
     const failed = { syncStatus: 'sync-failed', syncFailureReason: error } as const
     const submittedAt = task.payload.submittedAt
     const unlocked =
-      unlock !== undefined &&
+      options.unlock &&
       typeof submittedAt === 'string' &&
       (await meta.saveIf(
         {
           branch: {
             ...failed,
             status: 'editing',
-            syncFailureReason: `${error} The branch is unlocked for editing; ${unlock.nextStep}`,
+            syncFailureReason: `${error} The branch is unlocked for editing; save a change, then submit again.`,
           },
         },
         (existing) =>
           existing?.branch.name === branch &&
           existing.branch.status === 'submitted' &&
-          (unlock.withPr || existing.branch.pullRequestNumber === undefined) &&
+          existing.branch.pullRequestNumber === undefined &&
           existing.branch.submittedAt === submittedAt,
       )) !== null
     if (!unlocked) {
@@ -715,24 +728,6 @@ async function updateBranchMetadataOnFailure(
       err instanceof Error ? err.message : err,
     )
   }
-}
-
-/** What a failed task's error does to the branch: {@link updateBranchMetadataOnFailure}. */
-function unlockFor(err: unknown): { unlock?: { withPr: boolean; nextStep: string } } {
-  if (err instanceof NothingToSubmitTaskError) {
-    return { unlock: { withPr: false, nextStep: 'save a change, then submit again.' } }
-  }
-  if (err instanceof GitHubMovedTaskError) {
-    return {
-      unlock: {
-        withPr: true,
-        nextStep:
-          "submit again once CanopyCMS's next sync has brought those commits in, within a few " +
-          'minutes. If this keeps happening, ask an administrator to check System Health.',
-      },
-    }
-  }
-  return {}
 }
 
 /**
@@ -789,6 +784,13 @@ export async function pushBranchToGitHub(
   const branchPath = ctx.branchWorkspacePath(branch)
   const metaFile = await BranchMetadataFileManager.loadOnly(branchPath).catch(() => null)
   const marker = metaFile?.branch.historyRewrittenFrom
+  // github-commits.ts recorded it: this push would restore what someone removed from GitHub.
+  if (metaFile?.branch.rewrittenOnGitHub !== undefined) {
+    throw new PermanentTaskError(
+      `Not pushing branch "${branch}": it was force-pushed or rewritten on GitHub and no longer ` +
+        `contains ${metaFile.branch.rewrittenOnGitHub}. System Health says how to continue.`,
+    )
+  }
   const readSha = async () => {
     const sha = await readPublishedSha(ctx, branch)
     if (sha === null) {

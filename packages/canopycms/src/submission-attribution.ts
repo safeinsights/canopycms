@@ -360,6 +360,7 @@ export function buildReviewBlock(
 }
 
 const MAX_LISTED_KEPT_PATHS = 20
+const MAX_KEPT_PATH_LENGTH = 120
 
 /** The paths as code spans, one per line and bounded: a path comes from a commit on GitHub. */
 function keptOverGitHubNote(paths: readonly string[]): string {
@@ -368,7 +369,7 @@ function keptOverGitHubNote(paths: readonly string[]): string {
     .slice(0, MAX_LISTED_KEPT_PATHS)
     .flatMap((p) => {
       const clean = cleanPath(p)
-      return clean ? [`- ${codeSpan(clean)}`] : []
+      return clean ? [`- ${codeSpan(truncate(clean, MAX_KEPT_PATH_LENGTH))}`] : []
     })
     .join('\n')
   const more = paths.length - MAX_LISTED_KEPT_PATHS

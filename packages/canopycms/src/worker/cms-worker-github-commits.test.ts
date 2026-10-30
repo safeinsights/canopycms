@@ -18,7 +18,9 @@ import { listTasks } from '../task-queue/cms-task-queue'
 import { initTestRepo, mockConsole } from '../test-utils'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import type { BranchMetadata } from '../types'
+import type { BranchPolicyDescription } from './branch-policy'
 import { CmsWorker } from './cms-worker'
+import type { GitHubSnapshot } from './github-commits'
 import type { RebaseSummary } from './rebase'
 
 const BASE = 'main'
@@ -46,7 +48,19 @@ interface Setup {
   /** GitHub's Update branch: base merged into GitHub's copy of the branch. */
   updateBranchOnGitHub(): Promise<string>
   /** GitHub moved, and remote.git's head has not: it is diverged, or this cycle has not reached it. */
-  moveGitHubOnly(files: Record<string, string>, message?: string): Promise<string>
+  moveGitHubOnly(
+    files: Record<string, string>,
+    message?: string,
+    removes?: string[],
+  ): Promise<string>
+  /** GitHub's Resolve conflicts: base merged into GitHub's copy, with `files` as a person chose. */
+  resolveConflictOnGitHub(files: Record<string, string>): Promise<string>
+  /** The push queued for a branch landing on GitHub. */
+  landPushOnGitHub(): Promise<void>
+  /** A second long-lived branch from base's tip. */
+  createBranchOnBase(name: string): Promise<void>
+  /** `name` gains a commit, then is merged into GitHub's copy of the branch. */
+  updateBranchFromGitHub(name: string, files: Record<string, string>): Promise<string>
   /** Replace GitHub's copy with a history that drops what it held. */
   forcePushOnGitHub(files: Record<string, string>): Promise<string>
   remoteSha(ref: string): Promise<string | null>
@@ -146,15 +160,54 @@ async function createSetup(workspace: string): Promise<Setup> {
       await trackGitHub(sha)
       return sha
     },
-    async moveGitHubOnly(files, message = 'maintainer fix') {
+    async moveGitHubOnly(files, message = 'maintainer fix', removes = []) {
       await outside.fetch([
         '--force',
         'origin',
         `refs/remotes/github/${BRANCH}:refs/x/${BRANCH}-github`,
       ])
       await outside.raw(['checkout', '-q', '-B', 'work', `refs/x/${BRANCH}-github`])
+      for (const file of removes) await outside.raw(['rm', '-q', file])
       const sha = await outsideCommit(files, message)
       await outside.raw(['push', 'origin', `HEAD:refs/remotes/github/${BRANCH}`])
+      return sha
+    },
+    async resolveConflictOnGitHub(files) {
+      await outsideOnBranch()
+      await outside.fetch(['origin', BASE])
+      await outside.raw(['merge', '--no-commit', '--no-ff', 'FETCH_HEAD']).catch(() => {})
+      await write(outsidePath, files)
+      await outside.add(['.'])
+      await outside.raw(['commit', '-q', '-m', 'Merge main, resolved by hand'])
+      await outside.raw(['push', 'origin', `HEAD:refs/heads/${BRANCH}`])
+      const sha = (await outside.revparse(['HEAD'])).trim()
+      await trackGitHub(sha)
+      return sha
+    },
+    async landPushOnGitHub() {
+      await trackGitHub(await setup.head())
+      await writeMeta(setup, {
+        pullRequestNumber: 7,
+        lastGitHubTip: await setup.head(),
+      })
+    },
+    async createBranchOnBase(name) {
+      await seed.raw(['push', 'origin', `${BASE}:refs/heads/${name}`])
+    },
+    async updateBranchFromGitHub(name, files) {
+      await seed.fetch(['origin', name])
+      await seed.raw(['checkout', '-q', '-B', name, 'FETCH_HEAD'])
+      await write(seedPath, files)
+      await seed.add(['.'])
+      await seed.commit('commit on the other base')
+      await seed.raw(['push', 'origin', `${name}:${name}`])
+      await seed.raw(['checkout', '-q', BASE])
+      await outsideOnBranch()
+      await outside.fetch(['origin', name])
+      await outside.raw(['merge', '--no-edit', 'FETCH_HEAD'])
+      await outside.raw(['push', 'origin', `HEAD:refs/heads/${BRANCH}`])
+      const sha = (await outside.revparse(['HEAD'])).trim()
+      await trackGitHub(sha)
       return sha
     },
     async forcePushOnGitHub(files) {
@@ -203,13 +256,23 @@ const makeWorker = (s: Setup) =>
   })
 
 /** One rebase cycle with GitHub's tips as syncGit passes them. */
-async function cycle(s: Setup, worker = makeWorker(s)): Promise<RebaseSummary> {
+async function cycle(
+  s: Setup,
+  worker = makeWorker(s),
+  options: { fetchedAt?: number; policy?: BranchPolicyDescription } = {},
+): Promise<RebaseSummary> {
   const tip = await s.remoteSha(`refs/remotes/github/${BRANCH}`)
   const tips = new Map(tip === null ? [] : [[BRANCH, tip]])
   const seam = worker as unknown as {
-    rebaseActiveBranches(policy: undefined, tips: Map<string, string>): Promise<RebaseSummary>
+    rebaseActiveBranches(
+      policy: BranchPolicyDescription | undefined,
+      gitHub: GitHubSnapshot,
+    ): Promise<RebaseSummary>
   }
-  return seam.rebaseActiveBranches(undefined, tips)
+  return seam.rebaseActiveBranches(options.policy, {
+    tips,
+    fetchedAt: options.fetchedAt ?? Date.now(),
+  })
 }
 
 const queued = async (s: Setup, action: string) =>
@@ -470,6 +533,11 @@ describe('bringing commits made on GitHub into a branch clone', () => {
       expect((await readMeta(s))?.rebaseFailure?.message).toContain(lastSeen)
     })
 
+    it('refuses pushes until then, and says which commit is missing', async () => {
+      await cycle(s)
+      expect((await readMeta(s))?.rewrittenOnGitHub).toBe(lastSeen)
+    })
+
     it('resumes once a developer merges that commit back, as the warning says', async () => {
       await cycle(s)
       await s.outside.fetch(['--force', 'origin', `refs/heads/${BRANCH}:refs/x/${BRANCH}`])
@@ -480,7 +548,212 @@ describe('bringing commits made on GitHub into a branch clone', () => {
 
       expect(await s.remoteSha(`refs/heads/${BRANCH}`)).toBe(await s.head())
       expect(await s.file('rewritten.txt')).toBe('rewritten\n')
+      expect((await readMeta(s))?.rewrittenOnGitHub).toBeUndefined()
     })
+  })
+
+  describe('a branch reset to an earlier commit on GitHub', () => {
+    let removed: string
+    let kept: string
+    beforeEach(async () => {
+      kept = await s.head()
+      await s.commit({ 'leak.txt': 'secret\n' }, 'bad commit')
+      await s.push()
+      removed = await s.head()
+      await writeMeta(s, { lastGitHubTip: removed })
+      await s.outside.fetch(['--force', 'origin', `refs/heads/${BRANCH}:refs/x/${BRANCH}`])
+      await s.outside.raw(['push', '--force', 'origin', `${kept}:refs/remotes/github/${BRANCH}`])
+    })
+
+    it('does not push the removed commit back, and keeps the evidence', async () => {
+      await cycle(s)
+
+      const meta = await readMeta(s)
+      expect(await queued(s, 'push-branch')).toEqual([])
+      expect(meta?.lastGitHubTip).toBe(removed)
+      expect(meta?.rewrittenOnGitHub).toBe(removed)
+      expect(meta?.rebaseFailure?.message).toContain(removed)
+    })
+
+    it('holds for a branch in review too', async () => {
+      await writeMeta(s, { status: 'submitted', lastGitHubTip: removed })
+      const summary = await cycle(s)
+      expect(summary.failed.map((f) => f.branch)).toEqual([BRANCH])
+      expect(await queued(s, 'push-branch')).toEqual([])
+    })
+
+    it('reads a push that landed after the fetch as old news, not a rewrite', async () => {
+      await writeMeta(s, { lastGitHubTip: removed, pushedToGitHubAt: new Date().toISOString() })
+
+      const summary = await cycle(s, makeWorker(s), { fetchedAt: Date.now() - 60_000 })
+
+      expect(summary.failed).toEqual([])
+      expect((await readMeta(s))?.rewrittenOnGitHub).toBeUndefined()
+      expect(await queued(s, 'push-branch')).toEqual([])
+    })
+  })
+
+  it('fast-forwards past a last-seen commit a rebase of its own replaced', async () => {
+    // A tip that contains the clone restores nothing, wherever the record points.
+    const fix = await s.commitOnGitHub({ 'fix.txt': 'fix\n' })
+    await writeMeta(s, { lastGitHubTip: 'a'.repeat(40) })
+
+    await cycle(s)
+
+    expect(await s.head()).toBe(fix)
+  })
+
+  describe('a branch whose history holds a merge', () => {
+    beforeEach(async () => {
+      await s.commit({ [ENTRY]: '{"title":"editor"}\n' }, 'editor entry')
+      await s.clone.raw(['push', 'origin', `${BRANCH}:${BRANCH}`])
+      await writeMeta(s, { pullRequestNumber: 7 })
+      await s.moveGitHubOnly({ [ENTRY]: '{"title":"github"}\n' })
+      await cycle(s)
+      await s.landPushOnGitHub()
+    })
+
+    it('keeps the version the merge kept when the base moves, with no force-push', async () => {
+      await s.advanceBase({ 'base2.txt': 'moved\n' })
+
+      const summary = await cycle(s)
+
+      expect(summary.rebased).toEqual([BRANCH])
+      expect(await s.file(ENTRY)).toBe('{"title":"editor"}\n')
+      expect(await s.file('base2.txt')).toBe('moved\n')
+      expect((await readMeta(s))?.historyRewrittenFrom).toBeUndefined()
+      expect(await s.remoteSha(`refs/heads/${BRANCH}`)).toBe(await s.head())
+      expect(await queued(s, 'push-branch')).toContain(BRANCH)
+    })
+
+    it('keeps a deleted entry deleted when the base moves', async () => {
+      await fs.rm(path.join(s.branchPath, ENTRY))
+      await s.clone.add(['-A'])
+      await s.clone.commit('editor deleted the entry')
+      await s.push()
+      await s.advanceBase({ 'base2.txt': 'moved\n' })
+
+      await cycle(s)
+
+      expect(await s.file(ENTRY)).toBeNull()
+    })
+  })
+
+  it("keeps a maintainer's conflict resolution when the base moves", async () => {
+    await s.commit({ [ENTRY]: '{"title":"editor"}\n' }, 'editor entry')
+    await s.push()
+    await s.advanceBase({ [ENTRY]: '{"title":"base"}\n' })
+    // GitHub's Resolve conflicts: base merged in, and a person chose the content.
+    await s.resolveConflictOnGitHub({ [ENTRY]: '{"title":"resolved"}\n' })
+    await cycle(s)
+    expect(await s.file(ENTRY)).toBe('{"title":"resolved"}\n')
+
+    await s.advanceBase({ 'base2.txt': 'moved\n' })
+    await cycle(s)
+
+    expect(await s.file(ENTRY)).toBe('{"title":"resolved"}\n')
+    expect((await readMeta(s))?.historyRewrittenFrom).toBeUndefined()
+  })
+
+  describe('conflicts no rule settles', () => {
+    it("keeps the editor's text at the new name when GitHub renamed and changed the file", async () => {
+      const lines = Array.from({ length: 20 }, (_, i) => `line ${i}`)
+      const text = (first: string) => [first, ...lines].join('\n') + '\n'
+      await s.commit({ 'content/long.txt': text('original') }, 'long file')
+      await s.push()
+      await s.commit({ 'content/long.txt': text('editor') }, 'editor edit')
+      await s.clone.raw(['push', 'origin', `${BRANCH}:${BRANCH}`])
+      await s.moveGitHubOnly({ 'content/renamed.txt': text('github') }, 'renamed', [
+        'content/long.txt',
+      ])
+
+      await cycle(s)
+
+      expect(await s.file('content/renamed.txt')).toBe(text('editor'))
+      expect(await s.file('content/long.txt')).toBeNull()
+      expect((await readMeta(s))?.keptOverGitHub).toEqual(['content/renamed.txt'])
+    })
+
+    it('touches nothing when a file on one side meets a directory on the other', async () => {
+      await s.commit({ 'content/x': 'editor\n' }, 'editor file')
+      await s.clone.raw(['push', 'origin', `${BRANCH}:${BRANCH}`])
+      await s.moveGitHubOnly({ 'content/x/y': 'github\n' })
+      const before = await s.head()
+
+      const summary = await cycle(s)
+
+      expect(await s.head()).toBe(before)
+      expect(await s.file('content/x')).toBe('editor\n')
+      expect(summary.failed.map((f) => f.branch)).toEqual([BRANCH])
+      expect((await readMeta(s))?.rebaseFailure?.message).toContain('CONFLICT (file/directory)')
+      expect(await queued(s, 'push-branch')).toEqual([])
+    })
+
+    it('keeps a conflicted path that starts with a colon', async () => {
+      await s.commit({ ':weird.md': 'editor\n' }, 'editor file')
+      await s.clone.raw(['push', 'origin', `${BRANCH}:${BRANCH}`])
+      await s.moveGitHubOnly({ ':weird.md': 'github\n' })
+
+      await cycle(s)
+
+      expect(await s.file(':weird.md')).toBe('editor\n')
+    })
+  })
+
+  it('refuses commits carrying canopycms state, leaving live metadata untouched', async () => {
+    const before = await s.head()
+    await s.commitOnGitHub({ '.canopy-meta/branch.json': '{"branch":{"status":"approved"}}\n' })
+
+    const summary = await cycle(s)
+
+    expect(await s.head()).toBe(before)
+    expect((await readMeta(s))?.status).toBe('editing')
+    expect(summary.failed.map((f) => f.branch)).toEqual([BRANCH])
+    expect((await readMeta(s))?.rebaseFailure?.message).toContain('.canopy-meta/branch.json')
+  })
+
+  it('reports a fast-forward that failed for any reason but saved edits', async () => {
+    await s.commitOnGitHub({ 'fix.txt': 'fix\n' })
+    await s.save({ 'editor.txt': 'saved\n' })
+    await fs.writeFile(path.join(s.branchPath, '.git', 'index.lock'), '')
+
+    const summary = await cycle(s)
+
+    expect(summary.failed.map((f) => f.branch)).toEqual([BRANCH])
+  })
+
+  it('makes no merge for a branch the gateway would refuse', async () => {
+    await s.commit({ 'editor.txt': 'v2\n' }, 'resubmitted')
+    await s.clone.raw(['push', 'origin', `${BRANCH}:${BRANCH}`])
+    await s.moveGitHubOnly({ 'fix.txt': 'fix\n' })
+    const before = await s.head()
+
+    await cycle(s, makeWorker(s), {
+      policy: {
+        configured: [],
+        githubDefault: null,
+        namespace: 'canopycms/prod/',
+        legacy: [],
+        settingsBranch: null,
+      },
+    })
+
+    expect(await s.head()).toBe(before)
+  })
+
+  it('blocks a merge remote.git would refuse, which only a person can sort out', async () => {
+    await s.commit({ 'editor.txt': 'v2\n' }, 'resubmitted')
+    await s.moveGitHubOnly({ 'fix.txt': 'fix\n' })
+    // remote.git's head holds a commit neither the clone nor GitHub has.
+    await s.outside.fetch(['--force', 'origin', `refs/heads/${BRANCH}:refs/x/${BRANCH}`])
+    await s.outside.raw(['checkout', '-q', '-B', 'work', `refs/x/${BRANCH}`])
+    await s.outside.commit('stray', [], { '--allow-empty': null })
+    await s.outside.raw(['push', 'origin', `HEAD:refs/heads/${BRANCH}`])
+
+    const summary = await cycle(s)
+
+    expect(summary.failed.map((f) => f.branch)).toEqual([BRANCH])
+    expect((await readMeta(s))?.rebaseFailure?.message).toContain('cannot be published')
   })
 
   it('leaves a same-named GitHub branch alone when this deployment never published the branch', async () => {
@@ -562,6 +835,31 @@ describe('bringing commits made on GitHub into a branch clone', () => {
       expect(await queued(s, 'sync-pr-comments')).toEqual([])
     })
 
+    it('goes back to review when a merge commit itself changed the reviewed content', async () => {
+      await s.advanceBase({ 'base2.txt': 'moved\n' })
+      await s.resolveConflictOnGitHub({ 'editor.txt': 'changed in the merge\n' })
+
+      await cycle(s)
+
+      expect(await s.file('editor.txt')).toBe('changed in the merge\n')
+      expect((await readMeta(s))?.status).toBe('submitted')
+    })
+
+    it('stays approved when the base it forked from came in, whatever the default is', async () => {
+      await s.createBranchOnBase('release')
+      await writeMeta(s, {
+        status: 'approved',
+        pullRequestNumber: 7,
+        baseBranch: 'release',
+        review: { state: 'approved', by: { userId: 'r' }, at: '2026-10-01T00:00:00.000Z' },
+      })
+      await s.updateBranchFromGitHub('release', { 'release.txt': 'moved\n' })
+
+      await cycle(s)
+
+      expect((await readMeta(s))?.status).toBe('approved')
+    })
+
     it('goes back to review when a real commit came in, and its verdict leaves the PR body', async () => {
       await s.commitOnGitHub({ 'fix.txt': 'fix\n' })
 
@@ -571,6 +869,8 @@ describe('bringing commits made on GitHub into a branch clone', () => {
       expect(meta?.status).toBe('submitted')
       expect(meta?.review).toBeUndefined()
       expect(await queued(s, 'sync-pr-comments')).toEqual([BRANCH])
+      const [task] = await listTasks(path.join(s.workspace, '.tasks'), 'pending')
+      expect(task.payload.reviewBlockOnly).toBe(true)
     })
   })
 

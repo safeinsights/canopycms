@@ -119,6 +119,11 @@ export interface BranchMetadata {
    */
   keptOverGitHub?: string[]
   /**
+   * The commit GitHub's branch held and no longer contains, set while a rewrite there stands
+   * unresolved. The worker pushes nothing for this branch until GitHub's tip contains it.
+   */
+  rewrittenOnGitHub?: string
+  /**
    * Short, sanitized reason the last GitHub sync failed, set alongside
    * `syncStatus: 'sync-failed'` by the worker's updateBranchMetadataOnFailure or a
    * direct-path submit -- e.g. a non-fast-forward push rejection naming the branch.

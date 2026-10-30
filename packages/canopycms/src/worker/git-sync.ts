@@ -652,6 +652,7 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     // deadline: the wait for the gateway's GitHub fetch, which runs on detached, then the gateway's
     // bundle, the unbundle and the ref update; a killed ref update leaves each ref as it was or
     // fully moved.
+    const fetchedAt = Date.now()
     const { refs: githubTips, needsOperator } = await fetchGitHubIntoRemoteGit(
       ctx,
       ctx.shutdownSignal(),
@@ -703,7 +704,10 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
         workerLogError('Failed to write worker status:', getErrorMessage(writeErr)),
       )
     }
-    const rebaseSummary = await runRebaseCycle(ctx, branchPolicy, githubTips)
+    const rebaseSummary = await runRebaseCycle(ctx, branchPolicy, {
+      tips: githubTips,
+      fetchedAt,
+    })
     if (stoppedForDrain(ctx, 'the cleanup sweeps')) return
 
     await cleanupOldTasks(ctx.taskDir, undefined, ctx.log)
