@@ -1924,11 +1924,15 @@ describe('toBranchListItem', () => {
         updatedAt: '2026-10-01T00:00:00.000Z',
         keptOverGitHub: ['content/secret.json'],
         lastGitHubTip: 'a'.repeat(40),
+        rewrittenOnGitHub: 'a'.repeat(40),
+        rebaseFailure: { message: 'content/secret.json', firstAt: 'x', lastAt: 'x' },
       },
       { type: 'authenticated', userId: 'v', groups: [] },
     )
     expect(item).not.toHaveProperty('keptOverGitHub')
     expect(item).not.toHaveProperty('lastGitHubTip')
+    expect(item).not.toHaveProperty('rewrittenOnGitHub')
+    expect(item).not.toHaveProperty('rebaseFailure')
   })
 
   it('leaves the reviewer out, for a privileged viewer too', () => {

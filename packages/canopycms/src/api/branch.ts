@@ -53,7 +53,7 @@ const log = createDebugLogger({ prefix: 'BranchAPI' })
  */
 export interface BranchListItem extends Omit<
   BranchMetadata,
-  'review' | 'keptOverGitHub' | 'lastGitHubTip' | 'rewrittenOnGitHub'
+  'review' | 'keptOverGitHub' | 'lastGitHubTip' | 'rewrittenOnGitHub' | 'rebaseFailure'
 > {
   /**
    * What pull request links carry for this branch, which `?branch=` and the `/:branch` segment
@@ -272,13 +272,15 @@ export const toBranchListItem = (
   viewer: CanopyUser,
 ): BranchListItem => {
   const protection = getBranchWriteProtection(config, branch.name, branch.baseBranch, branch.status)
-  // `review` names the reviewer, whom the editor has no use for. `keptOverGitHub` names files,
-  // which a viewer's path rules can hide; the other two are the worker's.
+  // `review` names the reviewer, whom the editor has no use for. `keptOverGitHub` and
+  // `rebaseFailure` can name files, which a viewer's path rules can hide; System Health reads
+  // failures from the admin endpoint. The other two are the worker's.
   const {
     review: _review,
     keptOverGitHub: _kept,
     lastGitHubTip: _tip,
     rewrittenOnGitHub: _rewritten,
+    rebaseFailure: _failure,
     ...listed
   } = branch
   return {

@@ -1609,6 +1609,53 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     expect(meta?.branch.syncStatus).not.toBe('sync-failed')
   })
 
+  describe('a submit retried after GitHub moved', () => {
+    const branch = 'canopycms/prod/feature-retried'
+    const dir = () => path.join(contentBranchesPath, 'canopycms-prod-feature-retried')
+    const submittedAt = '2026-10-01T00:00:00.000Z'
+
+    const retrySubmit = async (live: Record<string, unknown>) => {
+      await seedBranchInRemoteGit(branch, 'hello')
+      await fs.mkdir(dir(), { recursive: true })
+      await getBranchMetadataFileManager(dir(), contentBranchesPath).save({
+        branch: { name: branch, pullRequestNumber: 12, ...live },
+      })
+      const worker = makePushWorker()
+      ;(worker as unknown as { running: boolean }).running = true
+      const id = await enqueueTask(taskDir, {
+        action: 'push-and-create-or-update-pr',
+        payload: { branch, title: 't', body: '', baseBranch: 'main', submittedAt },
+      })
+      // As the queue has it after one refused attempt: the delay is spent, the count kept.
+      const pendingFile = path.join(taskDir, 'pending', `${id}.json`)
+      const task = JSON.parse(await fs.readFile(pendingFile, 'utf-8'))
+      await fs.writeFile(pendingFile, JSON.stringify({ ...task, retryCount: 1 }))
+      await worker.processTaskQueue()
+      return getTask(taskDir, id)
+    }
+
+    it('does nothing for a branch withdrawn since, which would ready its PR again', async () => {
+      const task = await retrySubmit({ status: 'editing', submittedAt, syncStatus: 'sync-failed' })
+
+      expect(task?.status).toBe('completed')
+      await expect(shaOf(githubFixture, `refs/heads/${branch}`)).rejects.toThrow()
+      const meta = await BranchMetadataFileManager.loadOnly(dir())
+      expect(meta?.branch.syncStatus).toBe('sync-failed')
+    })
+
+    it('does nothing once a newer submit has replaced it', async () => {
+      await retrySubmit({ status: 'submitted', submittedAt: '2026-10-02T00:00:00.000Z' })
+
+      await expect(shaOf(githubFixture, `refs/heads/${branch}`)).rejects.toThrow()
+    })
+
+    it('runs while the branch is still in that submit', async () => {
+      await retrySubmit({ status: 'submitted', submittedAt })
+
+      expect(await shaOf(githubFixture, `refs/heads/${branch}`)).toBeTruthy()
+    })
+  })
+
   it('pushes nothing for a branch rewritten on GitHub, which would restore what was removed', async () => {
     const branch = 'canopycms/prod/feature-rewritten'
     const dir = path.join(contentBranchesPath, 'canopycms-prod-feature-rewritten')

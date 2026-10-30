@@ -37,6 +37,7 @@ import { commitsApart, conflictFilesToContentIds, recordConflicts } from './bran
 import {
   bringInGitHubCommits,
   mergeIntoBranch,
+  returnToReview,
   type GitHubCommitsArgs,
   type GitHubSnapshot,
 } from './github-commits'
@@ -426,10 +427,12 @@ async function carryForwardRewrittenHistory(
     branchRef: string
     publishedSha: string | null
     preRebaseHead: string
+    rebasedHead: string
     gatewayPolicy: BranchPolicyDescription | undefined
   },
 ): Promise<void> {
   const { branchPath, branchDir, branchRef, publishedSha, preRebaseHead, gatewayPolicy } = args
+  const { rebasedHead } = args
   if (publishedSha !== null) {
     if (publishedSha === preRebaseHead) {
       // ARMING GUARD: remote.git holds EXACTLY what this clone just rebased
@@ -452,7 +455,7 @@ async function carryForwardRewrittenHistory(
       // reconcilePendingRewrite() completes on a later cycle. Pushing first
       // would leave remote.git rewritten, GitHub stale and nothing recorded --
       // unrecoverable, and diagnosed as a false "another deployment" collision.
-      if (!(await markHistoryRewritten(ctx, branchPath, branchRef, publishedSha))) {
+      if (!(await markHistoryRewritten(ctx, branchPath, branchRef, publishedSha, rebasedHead))) {
         workerLogWarn(
           `  ${branchDir}: rebased, but its branch.json is gone or names another branch than ` +
             `${branchRef}, so the rewrite is not published`,
@@ -707,9 +710,25 @@ async function clearRebaseFailure(
   branchRef: string,
 ): Promise<void> {
   await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).saveIf(
-    { branch: { rebaseFailure: undefined } },
+    { branch: { rebaseFailure: undefined, rewrittenOnGitHub: undefined } },
     (current) => current?.branch.name === branchRef,
   )
+}
+
+/** A branch github-commits.ts left for a person: logged, recorded, and in the cycle's summary. */
+async function recordBlocked(
+  ctx: RebaseContext,
+  branchDir: string,
+  branchPath: string,
+  branchRef: string,
+  reason: string,
+): Promise<BranchRebaseOutcome> {
+  // [REDACT] failed[] folds into worker-status.json, served to the browser, and these reasons name
+  // paths from commits.
+  const error = redactCredentials(reason)
+  workerLogWarn(`  ${branchDir}: ${error}`)
+  await recordRebaseFailure(ctx, branchPath, branchDir, error, branchRef)
+  return { kind: 'failed', error }
 }
 
 /** Whether `remote.git` holds commits for `branchRef` that this clone lacks. */
@@ -744,7 +763,9 @@ async function bringInCommitsForBranchInReview(
     const gitHubTip = gitHub?.tips.get(branchRef)
     // No branch on GitHub leaves nothing to bring in, and nothing a past failure can still be about.
     if (gitHubTip === undefined) {
-      if (metaFile.branch.rebaseFailure !== undefined) {
+      if (gitHub === undefined) return { kind: 'none' }
+      const { rebaseFailure, rewrittenOnGitHub } = metaFile.branch
+      if (rebaseFailure !== undefined || rewrittenOnGitHub !== undefined) {
         await clearRebaseFailure(ctx, branchPath, branchRef)
       }
       return { kind: 'none' }
@@ -779,7 +800,7 @@ async function bringInCommitsForBranchInReview(
     }
     try {
       const status = await branchGit.status([...SHARED_REPO_STATUS_ARGS])
-      const outcome = await bringInGitHubCommits(ctx, {
+      const commitArgs: GitHubCommitsArgs = {
         git: branchGit,
         branchPath,
         branchDir,
@@ -789,11 +810,12 @@ async function bringInCommitsForBranchInReview(
         dirty: status.files.some((f) => !isCanopyInternalPath(f.path)),
         gatewayPolicy,
         lockLost: () => contentLockCompromised || isProvisioningLockCompromised(),
-      })
+      }
+      const outcome = await bringInGitHubCommits(ctx, commitArgs)
       if (outcome.kind === 'blocked') {
-        workerLogWarn(`  ${branchDir}: ${outcome.reason}`)
-        await recordRebaseFailure(ctx, branchPath, branchDir, outcome.reason, branchRef)
-        return { kind: 'failed', error: outcome.reason }
+        // What is on GitHub is not what was approved, and the verdict must not say otherwise.
+        await returnToReview(ctx, commitArgs)
+        return recordBlocked(ctx, branchDir, branchPath, branchRef, outcome.reason)
       }
       if (outcome.kind === 'in-step' && metaFile.branch.rebaseFailure !== undefined) {
         await clearRebaseFailure(ctx, branchPath, branchRef)
@@ -1033,9 +1055,7 @@ async function rebaseOneBranch(
       if (commitArgs !== null) {
         const outcome = await bringInGitHubCommits(ctx, commitArgs)
         if (outcome.kind === 'blocked') {
-          workerLogWarn(`  ${branchDir}: ${outcome.reason}`)
-          await recordRebaseFailure(ctx, branchPath, branchDir, outcome.reason, branchRef)
-          return { kind: 'failed', error: outcome.reason }
+          return recordBlocked(ctx, branchDir, branchPath, branchRef, outcome.reason)
         }
         if (outcome.kind !== 'in-step') {
           return editorDirt.length > 0 ? { kind: 'skippedDirty' } : { kind: 'none' }
@@ -1052,6 +1072,10 @@ async function rebaseOneBranch(
       // replaying a branch commit that touched it writes historical bytes over
       // the live file, and the abort that follows deletes it. So the index and
       // the bytes stay untouched, and the wedge is recorded for an operator.
+      // Read again if it has any: the commits brought in above can have stopped tracking it.
+      if (trackedCanopyStateChanges(dirtyCheck).length > 0) {
+        dirtyCheck = await branchGit.status([...SHARED_REPO_STATUS_ARGS])
+      }
       const trackedState = trackedCanopyStateChanges(dirtyCheck)
       if (trackedState.length > 0) {
         await fetchFromRemoteGit(branchGit, ctx.remoteGitPath, ctx.baseBranch)
@@ -1151,9 +1175,7 @@ async function rebaseOneBranch(
           fromGitHub: false,
         })
         if (outcome.kind === 'blocked') {
-          workerLogWarn(`  ${branchDir}: ${outcome.reason}`)
-          await recordRebaseFailure(ctx, branchPath, branchDir, outcome.reason, branchRef)
-          return { kind: 'failed', error: outcome.reason }
+          return recordBlocked(ctx, branchDir, branchPath, branchRef, outcome.reason)
         }
         if (outcome.kind !== 'merged') return { kind: 'none' }
         await clearRebaseFailure(ctx, branchPath, branchRef)
@@ -1276,6 +1298,7 @@ async function rebaseOneBranch(
         branchRef,
         publishedSha,
         preRebaseHead,
+        rebasedHead: (await branchGit.revparse(['HEAD'])).trim(),
         gatewayPolicy,
       })
 

@@ -418,6 +418,10 @@ export async function executeTask(
       // list->tiebreak->update/create logic and the draft->ready conversion
       // live in one place.
       const branch = requireString(payload, 'branch')
+      if (await isSupersededSubmit(ctx, task, branch)) {
+        workerLog(`Not retrying the submit of ${branch}: the branch has moved on from it`)
+        return { superseded: true }
+      }
       const base = optionalString(payload, 'baseBranch', ctx.baseBranch)
       // Defense-in-depth: refuse head===base even if the 'submittableBranch'
       // API guard and the syncSubmitPr backstop were both bypassed.
@@ -584,6 +588,27 @@ export async function executeTask(
 }
 
 /**
+ * Whether a retried submit no longer describes the branch: it was withdrawn or sent back meanwhile,
+ * so running it would ready the PR someone pulled back, or submitted again, so it would overwrite
+ * the newer title and body. Only a retry: a first run can start before the API has recorded the
+ * submit it queued.
+ */
+async function isSupersededSubmit(
+  ctx: TaskRunnerContext,
+  task: Task,
+  branch: string,
+): Promise<boolean> {
+  const { submittedAt } = task.payload
+  if (!task.retryCount || typeof submittedAt !== 'string') return false
+  const live = await BranchMetadataFileManager.loadOnly(ctx.branchWorkspacePath(branch))
+  if (live === null) return false
+  const { status } = live.branch
+  return (
+    (status !== 'submitted' && status !== 'approved') || live.branch.submittedAt !== submittedAt
+  )
+}
+
+/**
  * The name links and a fallback title give the branch: the short name the API queued
  * (branch-param.ts), else the ref, which the editor resolves too.
  */
@@ -621,7 +646,7 @@ export async function updateBranchMetadata(
   result: Record<string, unknown>,
 ): Promise<void> {
   const branch = metadataBranchOf(task)
-  if (!branch) return
+  if (!branch || result.superseded === true) return
 
   const branchPath = ctx.branchWorkspacePath(branch)
   try {

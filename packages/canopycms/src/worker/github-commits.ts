@@ -10,6 +10,7 @@ import { GITHUB_TRACKING_REF_PREFIX } from '../git-manager'
 import { SYNC_PR_COMMENTS_ACTION } from '../pr-comments'
 import { enqueueTask } from '../task-queue/cms-task-queue'
 import { getErrorMessage } from '../utils/error'
+import { escapeForLog } from '../utils/escape-text'
 import { isCanopyInternalPath } from '../utils/git'
 import { publishesBranch, type BranchPolicyDescription } from './branch-policy'
 import {
@@ -20,7 +21,7 @@ import {
   publishPlainToLocalRemote,
   recordConflicts,
 } from './branch-merge'
-import { MAX_REPORTED_PATHS, TRACKED_CANOPY_STATE_FIX } from './canopy-state'
+import { MAX_REPORTED_PATHS, TRACKED_CANOPY_STATE_FIX, untrackInIndex } from './canopy-state'
 import { enqueueGitHubPush, readPublishedSha } from './history-rewrite'
 import { workerLog, workerLogWarn } from './log'
 import { assertNoIncomingSubmodules, fetchFromRemoteGit } from './shared-repo-git'
@@ -86,6 +87,7 @@ export interface GitHubCommitsArgs {
 }
 
 const COMMIT_ID = /^[0-9a-f]{40}([0-9a-f]{24})?$/
+const MAX_LISTED_PATH_LENGTH = 200
 
 /** A branch this deployment put on GitHub. Any other GitHub branch of that name is not its own. */
 function isPublished({ branch }: BranchMetadataFile): boolean {
@@ -107,6 +109,10 @@ export async function bringInGitHubCommits(
   if (branch.name !== branchRef || !isPublished(metaFile)) return { kind: 'in-step' }
 
   const gitHubTip = args.gitHub?.tips.get(branchRef)
+  // No GitHub branch leaves nothing a push could restore.
+  if (args.gitHub !== undefined && gitHubTip === undefined && branch.rewrittenOnGitHub) {
+    await clearRewritten(ctx, args)
+  }
   const published = await readPublishedSha(ctx, branchRef)
   const tip = gitHubTip ?? published
   if (tip === null) return { kind: 'in-step' }
@@ -128,19 +134,21 @@ export async function bringInGitHubCommits(
   }
 
   // First, before any step reads this tip as commits to take in or a push to make: both would
-  // restore what someone removed. A tip that contains the clone loses nothing the clone holds.
-  const lastSeen = branch.lastGitHubTip
-  if (
-    args.gitHub !== undefined &&
-    gitHubTip !== undefined &&
-    lastSeen !== undefined &&
-    COMMIT_ID.test(lastSeen) &&
-    !(await contains(git, tip, lastSeen)) &&
-    !(await contains(git, tip, head))
-  ) {
-    return (await pushedSinceFetch(args, args.gitHub.fetchedAt))
-      ? { kind: 'wait' }
-      : blockAsRewritten(ctx, args, lastSeen)
+  // restore what someone removed.
+  let rewriteResolved = false
+  if (args.gitHub !== undefined && gitHubTip !== undefined) {
+    // Unreadable means the tip's objects did not reach this clone, which says nothing about GitHub.
+    if (!(await hasCommit(git, tip))) return { kind: 'wait' }
+    const lastSeen = await rewrittenFrom(args, tip, head)
+    if (lastSeen !== null) {
+      return (await pushedSinceFetch(args, args.gitHub.fetchedAt))
+        ? { kind: 'wait' }
+        : blockAsRewritten(ctx, args, lastSeen)
+    }
+    if (branch.rewrittenOnGitHub !== undefined) {
+      await clearRewritten(ctx, args)
+      rewriteResolved = true
+    }
   }
 
   // A crash after a merge reached remote.git leaves the clone behind it, like any fast-forward
@@ -185,7 +193,7 @@ export async function bringInGitHubCommits(
     gitHubTip !== undefined &&
     published !== null &&
     published !== tip &&
-    branch.syncStatus !== 'sync-failed' &&
+    (branch.syncStatus !== 'sync-failed' || rewriteResolved) &&
     (!gatewayPolicy || publishesBranch(gatewayPolicy, branchRef)) &&
     (await contains(git, published, tip))
   ) {
@@ -207,16 +215,37 @@ async function pushedSinceFetch(
   return pushedAt !== undefined && Date.parse(pushedAt) >= fetchedAt
 }
 
-/** Record the rewrite, which refuses pushes (task-runner.ts) until the tip contains `lastSeen`. */
+/**
+ * The commit a rewrite on GitHub removed, or null. Any commit GitHub is known to hold counts: the
+ * last tip seen, and the commit a pending rewrite of the worker's own replaced, since GitHub stays
+ * there until that push lands. A tip that contains the clone loses nothing the clone holds.
+ */
+async function rewrittenFrom(
+  { git, metaFile }: GitHubCommitsArgs,
+  tip: string,
+  head: string,
+): Promise<string | null> {
+  const { lastGitHubTip, historyRewrittenFrom } = metaFile.branch
+  const known = [lastGitHubTip, historyRewrittenFrom].filter(
+    (sha): sha is string => sha !== undefined && COMMIT_ID.test(sha),
+  )
+  if (known.length === 0 || (await contains(git, tip, head))) return null
+  for (const sha of known) if (await contains(git, tip, sha)) return null
+  return known[0]
+}
+
+/** Record the rewrite, which refuses pushes (task-runner.ts) for as long as it stands. */
 async function blockAsRewritten(
   ctx: GitHubCommitsContext,
-  { branchPath, branchRef }: GitHubCommitsArgs,
+  { branchPath, branchRef, metaFile }: GitHubCommitsArgs,
   lastSeen: string,
 ): Promise<GitHubCommitsOutcome> {
-  await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).saveIf(
-    { branch: { rewrittenOnGitHub: lastSeen } },
-    (current) => current?.branch.name === branchRef,
-  )
+  if (metaFile.branch.rewrittenOnGitHub !== lastSeen) {
+    await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).saveIf(
+      { branch: { rewrittenOnGitHub: lastSeen } },
+      (current) => current?.branch.name === branchRef,
+    )
+  }
   return {
     kind: 'blocked',
     reason:
@@ -227,34 +256,64 @@ async function blockAsRewritten(
   }
 }
 
-/** What stops `to` entering this clone, or null. Checked before anything moves. */
+async function clearRewritten(
+  ctx: GitHubCommitsContext,
+  { branchPath, branchRef }: GitHubCommitsArgs,
+): Promise<void> {
+  await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).saveIf(
+    { branch: { rewrittenOnGitHub: undefined } },
+    (current) => current?.branch.name === branchRef,
+  )
+}
+
+/** A short, one-line list of paths from a commit, safe in a log line and on branch metadata. */
+function listPaths(paths: readonly string[]): string {
+  return paths
+    .slice(0, MAX_REPORTED_PATHS)
+    .map((file) => escapeForLog(file).slice(0, MAX_LISTED_PATH_LENGTH))
+    .join(', ')
+}
+
+/**
+ * What stops `to` entering this clone, or null, with any canopycms state it deletes untracked
+ * first, so the deletion cannot reach the live files. `.git/info/exclude` hides that directory, and
+ * git overwrites an ignored file without asking, so a commit that changes it would replace the
+ * live branch.json and comments.
+ */
 async function refuseIncoming(
   { git, branchPath }: GitHubCommitsArgs,
   from: string,
   to: string,
 ): Promise<GitHubCommitsOutcome | null> {
   await assertNoIncomingSubmodules(git, branchPath, from, to)
-  // `.git/info/exclude` hides this directory, and git overwrites an ignored file without asking,
-  // so a commit that carries it would replace the live branch.json and comments.
-  const changed = await git.raw([
-    'diff-tree',
-    '-r',
-    '-z',
-    '--name-only',
-    '--no-renames',
-    '--end-of-options',
-    from,
-    to,
-  ])
-  const state = changed.split('\0').filter(isCanopyInternalPath)
-  if (state.length === 0) return null
-  return {
-    kind: 'blocked',
-    reason:
-      `Commits for this branch change canopycms's own state, which must not be committed ` +
-      `(${state.slice(0, MAX_REPORTED_PATHS).join(', ')}). Nothing was brought in. To fix, ` +
-      `${TRACKED_CANOPY_STATE_FIX}.`,
+  const fields = (
+    await git.raw([
+      'diff-tree',
+      '-r',
+      '-z',
+      '--name-status',
+      '--no-renames',
+      '--end-of-options',
+      from,
+      to,
+    ])
+  ).split('\0')
+  const deleted: string[] = []
+  const changed: string[] = []
+  for (let i = 0; i + 1 < fields.length; i += 2) {
+    if (!isCanopyInternalPath(fields[i + 1])) continue
+    ;(fields[i] === 'D' ? deleted : changed).push(fields[i + 1])
   }
+  if (changed.length > 0) {
+    return {
+      kind: 'blocked',
+      reason:
+        `Commits for this branch change canopycms's own state, which must not be committed ` +
+        `(${listPaths(changed)}). Nothing was brought in. To fix, ${TRACKED_CANOPY_STATE_FIX}.`,
+    }
+  }
+  await untrackInIndex(git, deleted)
+  return null
 }
 
 /**
@@ -308,8 +367,8 @@ export async function mergeIntoBranch(
       kind: 'blocked',
       reason:
         `Git cannot merge ${other} into ${branchRef} by rule (${built.conflicts.join(', ')}, in ` +
-        `${built.paths.slice(0, MAX_REPORTED_PATHS).join(', ')}). Nothing was changed. To ` +
-        `continue, a developer merges them on GitHub.`,
+        `${listPaths(built.paths)}). Nothing was changed. To continue, a developer merges them ` +
+        `on GitHub.`,
     }
   }
   const { sha, conflicted } = built
@@ -320,6 +379,9 @@ export async function mergeIntoBranch(
     await returnToReview(ctx, args)
   }
 
+  // Recorded before the merge is visible anywhere: the next cycle only fast-forwards to it, and
+  // the conflicts cannot be read back from the merge.
+  if (conflicted.length > 0) await recordKeptVersions(ctx, args, conflicted, fromGitHub)
   if ((await readPublishedSha(ctx, branchRef)) !== null) {
     if (!(await publishPlainToLocalRemote(ctx, branchPath, branchRef, sha))) {
       return {
@@ -332,7 +394,9 @@ export async function mergeIntoBranch(
     }
     await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
   }
-  if (conflicted.length > 0) await recordKeptVersions(ctx, args, conflicted, fromGitHub)
+  if (conflicted.length > 0 && fromGitHub) {
+    await enqueueReviewBlockSync(ctx, branchRef, args.metaFile)
+  }
   await git.raw(['merge', '--ff-only', '--end-of-options', sha])
   await invalidateBranchContentCaches(branchPath)
   if (fromGitHub) await recordGitHubTip(ctx, args, other)
@@ -342,6 +406,14 @@ export async function mergeIntoBranch(
       : `  ${branchDir}: merged ${other.slice(0, 7)}`,
   )
   return { kind: 'merged' }
+}
+
+async function hasCommit(git: SimpleGit, sha: string): Promise<boolean> {
+  // `--quiet` exits 1 with no output for a missing object, which simple-git resolves.
+  const found = await git
+    .raw(['rev-parse', '--verify', '--quiet', '--end-of-options', `${sha}^{commit}`])
+    .catch(() => '')
+  return found.trim() !== ''
 }
 
 /** Whether `commit` contains `ancestor`. A commit this clone does not hold counts as no. */
@@ -378,7 +450,7 @@ async function changesWhatWasReviewed(
  * moves, and a failed save throws, so a crash or a failure leaves the commits for the next cycle
  * to judge again rather than an approval standing over them.
  */
-async function returnToReview(
+export async function returnToReview(
   ctx: GitHubCommitsContext,
   { branchPath, branchDir, branchRef, metaFile }: GitHubCommitsArgs,
 ): Promise<void> {
@@ -394,7 +466,7 @@ async function returnToReview(
 /** Record what a merge kept, for the editor and, for GitHub's commits, the PR body. */
 async function recordKeptVersions(
   ctx: GitHubCommitsContext,
-  { branchPath, branchRef, metaFile }: GitHubCommitsArgs,
+  { branchPath, branchRef }: GitHubCommitsArgs,
   conflicted: readonly string[],
   fromGitHub: boolean,
 ): Promise<void> {
@@ -415,7 +487,6 @@ async function recordKeptVersions(
         }
       : null,
   )
-  if (fromGitHub) await enqueueReviewBlockSync(ctx, branchRef, metaFile)
 }
 
 /**
@@ -449,9 +520,7 @@ async function recordGitHubTip(
   { branchPath, branchRef, metaFile, gitHub }: GitHubCommitsArgs,
   tip: string,
 ): Promise<void> {
-  const { lastGitHubTip, rewrittenOnGitHub } = metaFile.branch
-  if (gitHub?.tips.get(branchRef) !== tip) return
-  if (lastGitHubTip === tip && rewrittenOnGitHub === undefined) return
+  if (gitHub?.tips.get(branchRef) !== tip || metaFile.branch.lastGitHubTip === tip) return
   await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).saveIf(
     { branch: { lastGitHubTip: tip, rewrittenOnGitHub: undefined } },
     (current) => current?.branch.name === branchRef,
