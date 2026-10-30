@@ -1329,24 +1329,39 @@ describe('SystemHealthPanel', () => {
       expect(screen.queryByTestId('held-pr-held-editing')).toBeNull()
     })
 
+    const rewritten = (dirName: string, status: 'editing' | 'archived'): BranchHealthEntry => ({
+      dirName,
+      kind: 'healthy',
+      branch: {
+        name: dirName,
+        status,
+        access: {},
+        createdBy: 'user-1',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-02T00:00:00.000Z',
+        rewrittenOnGitHub: 'a'.repeat(40),
+      },
+    })
+
+    it('marks no rewrite on an archived branch, which nothing can act on', async () => {
+      mockClient.admin.branchHealth.mockResolvedValue(
+        mockSuccess({
+          entries: [rewritten('live', 'editing'), rewritten('gone', 'archived')],
+          generatedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      )
+      renderPanel()
+      await userEvent.click(screen.getByText('Branches'))
+      await waitFor(() => expect(screen.getByText('gone')).toBeTruthy())
+
+      expect(screen.getByTestId('held-pr-live')).toBeTruthy()
+      expect(screen.queryByTestId('held-pr-gone')).toBeNull()
+    })
+
     it('gives a rewritten branch the fix itself, not a pointer back to this tab', async () => {
       mockClient.admin.branchHealth.mockResolvedValue(
         mockSuccess({
-          entries: [
-            {
-              dirName: 'rewritten',
-              kind: 'healthy',
-              branch: {
-                name: 'rewritten',
-                status: 'editing',
-                access: {},
-                createdBy: 'user-1',
-                createdAt: '2026-01-01T00:00:00.000Z',
-                updatedAt: '2026-01-02T00:00:00.000Z',
-                rewrittenOnGitHub: 'a'.repeat(40),
-              },
-            },
-          ] satisfies BranchHealthEntry[],
+          entries: [rewritten('rewritten', 'editing')],
           generatedAt: '2026-01-01T00:00:00.000Z',
         }),
       )

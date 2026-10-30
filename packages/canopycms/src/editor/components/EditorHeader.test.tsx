@@ -1001,6 +1001,18 @@ describe('EditorHeader - blocked controls say why on focus and ignore their clic
       expect(status?.textContent).toContain('Use "Request changes"')
     })
 
+    it('keeps Withdraw on a rewritten branch in review: it is the way back to editing', () => {
+      renderHeader({
+        branchStatus: 'submitted',
+        branchWriteBlocked: true,
+        branchHold: { kind: 'rewritten' },
+        userContext: author,
+        branchCreatedBy: 'u1',
+      })
+
+      expect(screen.getByTestId('withdraw-button').getAttribute('aria-disabled')).toBeNull()
+    })
+
     it('waits for the branch to load', () => {
       renderHeader({ branchHold: { kind: 'rewritten' }, branchPending: true })
 
@@ -1009,7 +1021,7 @@ describe('EditorHeader - blocked controls say why on focus and ignore their clic
 
     it.each([
       [undefined, /until an admin sorts out/],
-      [[RESERVED_GROUPS.ADMINS], /See the "Branches" tab in "System health"/],
+      [[RESERVED_GROUPS.ADMINS], /until the changes made to it on GitHub/],
     ])('blocks Submit on a rewritten branch with a reason for %s', async (groups, reason) => {
       const onSubmit = vi.fn()
       renderHeader({

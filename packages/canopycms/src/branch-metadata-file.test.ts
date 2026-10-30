@@ -107,6 +107,27 @@ describe('readBranchMetadataFile', () => {
     })
   })
 
+  it('reads a pull request hold, and drops a malformed one rather than failing the read', async () => {
+    const hold = { kind: 'retargeted', base: 'release' }
+    await writeFile({
+      schemaVersion: 1,
+      version: 1,
+      branch: { ...fullBranch, pullRequestHold: hold },
+    })
+    expect((await readBranchMetadataFile(branchRoot))?.branch.pullRequestHold).toEqual(hold)
+
+    for (const bad of ['conflicts', { kind: 'unheard-of' }, { kind: 'retargeted' }]) {
+      await writeFile({
+        schemaVersion: 1,
+        version: 1,
+        branch: { ...fullBranch, pullRequestHold: bad },
+      })
+      const read = await readBranchMetadataFile(branchRoot)
+      expect(read?.branch.name).toBe('feature-a')
+      expect(read?.branch.pullRequestHold).toBeUndefined()
+    }
+  })
+
   it('reads a review, and drops a malformed one rather than failing the read', async () => {
     const review = {
       state: 'approved',

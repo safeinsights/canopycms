@@ -635,7 +635,7 @@ describe('BranchManager', () => {
     it('points an admin at System health for a blocked submit, and anyone else at an admin', async () => {
       openRewritten(adminUser)
       await userEvent.hover(screen.getByTestId('submit-branch-button-main'))
-      expect(await screen.findByText(/See the "Branches" tab in "System health"/)).toBeTruthy()
+      expect(await screen.findByText(/until the changes made to it on GitHub/)).toBeTruthy()
       cleanup()
 
       openRewritten(creatorUser)
