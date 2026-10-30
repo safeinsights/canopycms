@@ -649,6 +649,16 @@ describe('bringing commits made on GitHub into a branch clone', () => {
       expect(await s.file('fix.txt')).toBe('fix\n')
     })
 
+    it('merges a commit GitHub gained on the replaced history, which is no rewrite', async () => {
+      await s.moveGitHubOnly({ 'fix.txt': 'fix\n' })
+
+      const summary = await cycle(s)
+
+      expect(summary.failed).toEqual([])
+      expect((await readMeta(s))?.rewrittenOnGitHub).toBeUndefined()
+      expect(await s.file('fix.txt')).toBe('fix\n')
+    })
+
     it('is still told from a force-push while its own push is pending', async () => {
       await s.forcePushOnGitHub({ 'rewritten.txt': 'rewritten\n' })
 
