@@ -129,6 +129,7 @@ export const answers = {
       node_id: z.string().max(256),
       body: pullRequestText.body.nullable(),
       mergeable_state: z.string().max(64).optional(),
+      baseRef: z.string().max(256).optional(),
     })
     .strict(),
   createOrUpdatePullRequest: pullRequestRef.extend({ created: z.boolean() }).strict(),

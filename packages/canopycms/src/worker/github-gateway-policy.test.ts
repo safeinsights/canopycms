@@ -518,6 +518,7 @@ describe('reading a pull request by number', () => {
       mergeable_state: 'behind',
     })
     expect(pr.mergeable_state).toBe('behind')
+    expect(pr.baseRef).toBe('main')
   })
 
   it('answers the body of one whose head is in the namespace, in this repository', async () => {

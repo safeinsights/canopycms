@@ -133,7 +133,7 @@ export interface RebaseSummary {
  * markAsMerged API so both paths produce identical archived-branch metadata.
  * closed-without-merge -> record pullRequestState only; an admin decides the
  * workflow transition. Best-effort: a failure is logged, swallowed and retried
- * next sync cycle. Resolves GitHub's answer for a pull request still open.
+ * next sync cycle. Resolves GitHub's answer for a pull request not merged.
  */
 export async function pollMergeState(
   ctx: RebaseContext,
@@ -826,16 +826,22 @@ async function bringInCommitsForBranchInReview(
 }
 
 /**
- * Merge the base into a submitted or approved branch whose pull request GitHub reports `behind`,
- * so it can merge. It keeps the approval and the PR body: the pull request's diff is what was
- * reviewed. Only from a clone, `remote.git` and GitHub all at one commit, since anything else is
- * work still on its way. A conflict leaves the branch as it is; withdrawing it brings the rebase
- * loop's rule into play, where an editor can see the result. Never throws.
+ * Merge the base into a submitted or approved branch whose open pull request GitHub reports
+ * `behind`, so it can merge. It keeps the approval and the PR body: the pull request's diff is what
+ * was reviewed. Only from a clone, `remote.git` and GitHub all at one commit, since anything else
+ * is work still on its way, and only for the base GitHub measured against: a pull request someone
+ * retargeted would gain another branch's commits under its approval. A branch with a failed sync
+ * is left for its next submit, as a push here would clear that failure with the PR still stale. A
+ * conflict leaves the branch as it is; withdrawing it brings the rebase loop's rule into play,
+ * where an editor can see the result. A failure goes in the cycle's summary only: the step before
+ * this one clears `rebaseFailure` each cycle, so recording it would reset its age every time.
+ * Never throws.
  */
 async function updateBranchInReviewFromBase(
   ctx: RebaseContext,
   branchDir: string,
   branchPath: string,
+  pullRequest: GitHubPullRequest,
   isProvisioningLockCompromised: () => boolean,
   gatewayPolicy: BranchPolicyDescription | undefined,
   gitHub: GitHubSnapshot | undefined,
@@ -856,9 +862,12 @@ async function updateBranchInReviewFromBase(
       async (lockLost) => {
         // Read fresh: the poll above can have archived it, and a person withdrawn it.
         const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
-        const { status: state, name, baseBranch } = metaFile?.branch ?? {}
+        const { status: state, name, baseBranch, syncStatus } = metaFile?.branch ?? {}
         if (metaFile === null || name !== branchRef) return { kind: 'none' }
         if (state !== 'submitted' && state !== 'approved') return { kind: 'none' }
+        if (syncStatus === 'sync-failed') return { kind: 'none' }
+        const base = baseBranch ?? ctx.baseBranch
+        if (pullRequest.baseRef !== base) return { kind: 'none' }
         const head = (await branchGit.revparse(['HEAD'])).trim()
         if (head !== gitHubTip || (await readPublishedSha(ctx, branchRef)) !== head) {
           return { kind: 'none' }
@@ -866,7 +875,6 @@ async function updateBranchInReviewFromBase(
         const status = await branchGit.status([...SHARED_REPO_STATUS_ARGS])
         if (status.files.some((f) => !isCanopyInternalPath(f.path))) return { kind: 'none' }
 
-        const base = baseBranch ?? ctx.baseBranch
         await fetchFromRemoteGit(branchGit, ctx.remoteGitPath, base)
         const baseTip = (await branchGit.revparse(['FETCH_HEAD'])).trim()
         if ((await commitsApart(branchGit, head, baseTip)).onlyB === 0) return { kind: 'none' }
@@ -889,7 +897,9 @@ async function updateBranchInReviewFromBase(
           stopOnConflict: true,
         })
         if (outcome.kind === 'blocked') {
-          return recordBlocked(ctx, branchDir, branchPath, branchRef, outcome.reason)
+          const error = redactCredentials(outcome.reason)
+          workerLogWarn(`  ${branchDir}: ${error}`)
+          return { kind: 'failed', error }
         }
         return outcome.kind === 'merged' ? { kind: 'rebased' } : { kind: 'none' }
       },
@@ -897,7 +907,6 @@ async function updateBranchInReviewFromBase(
   } catch (err) {
     const message = redactCredentials(getErrorMessage(err))
     workerLogWarn(`  ${branchDir}: could not update it from the base: ${message}`)
-    await recordRebaseFailure(ctx, branchPath, branchDir, message)
     return { kind: 'failed', error: message }
   }
 }
@@ -991,11 +1000,16 @@ async function rebaseOneBranch(
       const pullRequest = await pollMergeState(ctx, branchDir, branchPath, metaFile)
       // GitHub reports `behind` only where up-to-date branches are required, so a repository
       // that doesn't require them gets no commits or CI runs from this.
-      if (outcome.kind === 'none' && pullRequest?.mergeable_state === 'behind') {
+      if (
+        outcome.kind === 'none' &&
+        pullRequest?.state === 'open' &&
+        pullRequest.mergeable_state === 'behind'
+      ) {
         return updateBranchInReviewFromBase(
           ctx,
           branchDir,
           branchPath,
+          pullRequest,
           isProvisioningLockCompromised,
           gatewayPolicy,
           gitHub,

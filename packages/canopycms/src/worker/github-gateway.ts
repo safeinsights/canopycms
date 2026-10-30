@@ -160,6 +160,8 @@ export type GitHubPullRequest = Pick<
   body: string | null
   /** GitHub's own word on what stands between the pull request and a merge; `behind` needs the base. */
   mergeable_state?: string
+  /** The branch the pull request merges into on GitHub, which a person can change. */
+  baseRef?: string
 }
 
 export type GitHubCreateOrUpdatePullRequest = Omit<
@@ -1095,6 +1097,7 @@ class LocalGitHubGateway implements GitHubGateway {
         node_id: data.node_id,
         body: ours ? (data.body ?? '') : null,
         mergeable_state: data.mergeable_state,
+        baseRef: data.base.ref,
       }
     })
   }

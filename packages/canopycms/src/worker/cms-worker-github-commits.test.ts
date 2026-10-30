@@ -37,7 +37,7 @@ interface Setup {
   clone: SimpleGit
   /** A repository with its own view of remote.git: stands in for a person working on GitHub. */
   outside: SimpleGit
-  advanceBase(files: Record<string, string>): Promise<void>
+  advanceBase(files: Record<string, string>, options?: { force?: boolean }): Promise<void>
   /** A commit in the clone, as submit makes, without the push. */
   commit(files: Record<string, string>, message?: string): Promise<void>
   /** What submit's push does. */
@@ -137,9 +137,9 @@ async function createSetup(workspace: string): Promise<Setup> {
     contentBranches,
     clone,
     outside,
-    async advanceBase(files) {
+    async advanceBase(files, { force = false } = {}) {
       await write(seedPath, files)
-      await seed.add(['.'])
+      await seed.raw(['add', ...(force ? ['-f'] : []), '.'])
       await seed.commit('base commit')
       await seed.raw(['push', 'origin', `${BASE}:${BASE}`])
     },
@@ -298,7 +298,11 @@ const queued = async (s: Setup, action: string) =>
     .map((t) => t.payload.branch)
 
 /** A worker whose gateway answers each pull request read with `mergeableState`. */
-function workerWithPullRequest(s: Setup, mergeableState: string) {
+function workerWithPullRequest(
+  s: Setup,
+  mergeableState: string,
+  { state = 'open', base = BASE }: { state?: string; base?: string } = {},
+) {
   const worker = makeWorker(s)
   useLocalGitHubGateway(worker, {
     octokit: {
@@ -307,12 +311,12 @@ function workerWithPullRequest(s: Setup, mergeableState: string) {
           data: {
             merged: false,
             merged_at: null,
-            state: 'open',
+            state,
             node_id: 'PR_7',
             body: '',
             mergeable_state: mergeableState,
             head: { ref: BRANCH, repo: { id: 1 } },
-            base: { ref: BASE, repo: { id: 1 } },
+            base: { ref: base, repo: { id: 1 } },
           },
         }),
       },
@@ -378,6 +382,38 @@ describe('an open pull request GitHub reports behind', () => {
     }
     expect(await s.head()).toBe(before)
     expect(await queued(s, 'push-branch')).toEqual([])
+  })
+
+  it('leaves a closed pull request, which GitHub still measures', async () => {
+    await cycle(s, workerWithPullRequest(s, 'behind', { state: 'closed' }))
+
+    expect(await s.file('base2.txt')).toBeNull()
+    expect(await queued(s, 'push-branch')).toEqual([])
+  })
+
+  it('leaves a pull request retargeted to another base, under its approval', async () => {
+    await cycle(s, workerWithPullRequest(s, 'behind', { base: 'release' }))
+
+    expect(await s.file('base2.txt')).toBeNull()
+    expect(await queued(s, 'push-branch')).toEqual([])
+  })
+
+  it('leaves a branch whose sync failed, as a push would clear that failure', async () => {
+    await writeMeta(s, { ...submitted, syncStatus: 'sync-failed', syncFailureReason: 'x' })
+
+    await cycle(s, workerWithPullRequest(s, 'behind'))
+
+    expect(await s.file('base2.txt')).toBeNull()
+    expect((await readMeta(s))?.syncFailureReason).toBe('x')
+  })
+
+  it('reports a refused update in the summary, with no failure to reset each cycle', async () => {
+    await s.advanceBase({ '.canopy-meta/state.json': '{}\n' }, { force: true })
+
+    const summary = await cycle(s, workerWithPullRequest(s, 'behind'))
+
+    expect(summary.failed.map((f) => f.branch)).toEqual([BRANCH])
+    expect((await readMeta(s))?.rebaseFailure).toBeUndefined()
   })
 
   it('leaves a conflict as it is, with nothing recorded as kept', async () => {
@@ -449,7 +485,7 @@ describe('an open pull request GitHub reports behind', () => {
     await s.advanceReleaseBranch('release', { 'release.txt': 'moved\n' })
     await writeMeta(s, { ...submitted, baseBranch: 'release' })
 
-    await cycle(s, workerWithPullRequest(s, 'behind'))
+    await cycle(s, workerWithPullRequest(s, 'behind', { base: 'release' }))
 
     expect(await s.file('release.txt')).toBe('moved\n')
   })
