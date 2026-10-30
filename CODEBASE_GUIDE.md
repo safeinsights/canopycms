@@ -703,7 +703,7 @@ All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 - `branch-sparse.ts` — `sparseConeFor`: the content-root sparse cone for content-branch clones, recorded in `.sparse-cone.json`
 - `schema-registry-record.ts` — `recordServedSchemaRegistry`: the serving editor's schema names in `.schema-registry.json`, for the worker's schema gate
 - `branch-health.ts` — admin scan classifying every dir under a branches root healthy, corrupt-metadata or orphan
-- `branch-schema-cache.ts` — per-branch schema caching, always file-based; `getSchema` returns `issues`; exports `SCHEMA_GENERATION_RESOURCE`, `SCHEMA_CACHE_FILE`; the cache lives in `.git/canopycms/` in a clone (`schemaCacheDir`)
+- `branch-schema-cache.ts` — per-branch schema caching, file-based, parse-memoized; `getSchema` returns `issues`; exports `SCHEMA_GENERATION_RESOURCE`, `SCHEMA_CACHE_FILE`; the cache lives in `.git/canopycms/` in a clone (`schemaCacheDir`)
 - `settings-workspace.ts` — the settings branch workspace, with a rename guard before workspace initialization
 - `settings-branch-utils.ts` — settings branch helpers
 - `github-service.ts` — GitHub API integration: `createOrUpdatePullRequest`, `createCanopyOctokit`, `isRefAlreadyGoneError`, the rate-limit retry predicates

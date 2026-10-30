@@ -1,5 +1,7 @@
-import fs from 'node:fs/promises'
+import type { BigIntStats } from 'node:fs'
+import fs, { type FileHandle } from 'node:fs/promises'
 import path from 'node:path'
+import { LRUCache } from 'lru-cache'
 
 import type { RootCollectionConfig } from './config'
 import type { FlatSchemaItem } from './config/types'
@@ -30,6 +32,9 @@ const SCHEMA_CACHE_VERSION = 4
 
 /** Minimum interval between mtime staleness checks (ms) */
 const MTIME_CHECK_DEBOUNCE_MS = 1000
+
+/** Cap on the parsed snapshots one process keeps, counted in bytes of their files. */
+const SNAPSHOT_MEMO_MAX_BYTES = 64 * 1024 * 1024
 
 /** File name of the schema cache inside {@link schemaCacheDir}. */
 export const SCHEMA_CACHE_FILE = 'schema-cache.json'
@@ -112,6 +117,21 @@ async function isStaleByMtime(dir: string, cachedAt: Date): Promise<boolean> {
   return false
 }
 
+interface MemoizedSnapshot {
+  /** {@link fileIdentity} of the file `entry` was parsed from. */
+  identity: string
+  entry: BranchSchemaCacheEntry
+  bytes: number
+}
+
+/**
+ * Names one version of a file. Every write of the schema cache renames a new temp file into
+ * place, so a rewrite always changes the inode, whatever token or content it carries.
+ */
+function fileIdentity(stat: BigIntStats): string {
+  return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}`
+}
+
 /**
  * Directory holding a branch's schema cache: `{branchRoot}/.git/canopycms` when
  * the branch root is a full clone (every canopycms branch workspace is), else
@@ -131,8 +151,15 @@ async function schemaCacheDir(branchRoot: string): Promise<string> {
 }
 
 /**
- * Per-branch schema cache: one file in {@link schemaCacheDir} with no in-memory
- * layer, so it stays coherent across Lambda invocations.
+ * Per-branch schema cache: one file in {@link schemaCacheDir}, the only state
+ * shared across processes. Each process keeps the entries it parsed or wrote,
+ * keyed by the file's identity, so it parses an unchanged file once while the
+ * entry stays in its size-bounded memo. Every call still opens the file and
+ * runs every freshness check below on the entry, and the file is only ever
+ * replaced by rename (see {@link fileIdentity}), so a process is as fresh as if
+ * it re-read the file. The identity is fstat'ed on an open handle because NFS
+ * revalidates attributes on open (close-to-open), while a bare stat() may
+ * answer from its attribute cache.
  *
  * Freshness follows the generation-marker protocol owned by
  * resource-generation.ts, and this is one of that protocol's durable-snapshot
@@ -156,6 +183,21 @@ async function schemaCacheDir(branchRoot: string): Promise<string> {
 export class BranchSchemaCache {
   /** Tracks when we last checked mtimes per contentRoot, to debounce rapid requests */
   private lastMtimeCheck = new Map<string, number>()
+
+  /** Parsed cache files, by absolute path; see the class doc. */
+  private readonly snapshots = new LRUCache<string, MemoizedSnapshot>({
+    maxSize: SNAPSHOT_MEMO_MAX_BYTES,
+    sizeCalculation: (snapshot) => Math.max(1, snapshot.bytes),
+  })
+
+  /**
+   * In-flight resolves of the checkout during a build, by content root and registry. A build
+   * reads a checkout that does not change under it, so those two are its whole input and the
+   * result needs no revalidation. Only {@link isBuildMode}: `CANOPY_BUILD_MODE` is a build and
+   * script switch, and a long-lived process setting it would see a schema edit only on
+   * restart. A rejected resolve is dropped, so a strict-mode failure fails every read.
+   */
+  private readonly buildResolves = new Map<string, Promise<ResolvedBranchSchema>>()
 
   private readonly devMode: boolean
 
@@ -209,17 +251,14 @@ export class BranchSchemaCache {
 
     const fromCheckout = this.readsCheckout(branchRoot)
 
+    if (fromCheckout && isBuildMode()) {
+      return this.resolveForBuild(branchRoot, entrySchemaRegistry, contentRootName)
+    }
+
     if (!fromCheckout) {
       const cachePath = path.join(await schemaCacheDir(branchRoot), SCHEMA_CACHE_FILE)
 
-      let cacheData: BranchSchemaCacheEntry | null = null
-      try {
-        const cacheContent = await fs.readFile(cachePath, 'utf-8')
-        cacheData = JSON.parse(cacheContent) as BranchSchemaCacheEntry
-      } catch {
-        // Cache doesn't exist or can't be read
-        cacheData = null
-      }
+      let cacheData = await this.readSnapshot(cachePath)
 
       // Strict version check, not truthiness: a snapshot from an older version
       // left on EFS by a rolling deploy has no `generation` field, and an
@@ -262,6 +301,46 @@ export class BranchSchemaCache {
     return this.resolveFreshAndPersist(branchRoot, entrySchemaRegistry, contentRootName, {
       fromCheckout,
     })
+  }
+
+  private resolveForBuild(
+    branchRoot: string,
+    entrySchemaRegistry: EntrySchemaRegistry,
+    contentRootName: string,
+  ): Promise<ResolvedBranchSchema> {
+    const key = `${path.resolve(branchRoot, contentRootName)}\0${registryFingerprint(entrySchemaRegistry)}`
+    let pending = this.buildResolves.get(key)
+    if (!pending) {
+      pending = this.resolveFreshAndPersist(branchRoot, entrySchemaRegistry, contentRootName, {
+        fromCheckout: true,
+      })
+      this.buildResolves.set(key, pending)
+      pending.catch(() => this.buildResolves.delete(key))
+    }
+    return pending
+  }
+
+  /** The parsed cache file, or null when it is absent or unreadable. */
+  private async readSnapshot(cachePath: string): Promise<BranchSchemaCacheEntry | null> {
+    let handle: FileHandle
+    try {
+      handle = await fs.open(cachePath, 'r')
+    } catch {
+      return null
+    }
+    try {
+      const stat = await handle.stat({ bigint: true })
+      const identity = fileIdentity(stat)
+      const memo = this.snapshots.get(cachePath)
+      if (memo?.identity === identity) return memo.entry
+      const entry = JSON.parse(await fs.readFile(handle, 'utf-8')) as BranchSchemaCacheEntry
+      this.snapshots.set(cachePath, { identity, entry, bytes: Number(stat.size) })
+      return entry
+    } catch {
+      return null
+    } finally {
+      await handle.close().catch(() => {})
+    }
   }
 
   /**
@@ -338,15 +417,28 @@ export class BranchSchemaCache {
 
         // Temp file then rename, with the temp file unlinked on a failed
         // rename so a transient error leaves no stray `.tmp` beside the cache.
+        // The memo is seeded from the temp file's own identity, which the
+        // rename keeps: stat'ing cachePath afterwards could see a concurrent
+        // writer's file and pair it with this entry. It holds the parsed body,
+        // as every reader does, not the resolver's objects, which alias the
+        // registry and keep values JSON changes or drops.
         await fs.mkdir(cacheDir, { recursive: true })
         const tmpPath = path.join(cacheDir, `schema-cache.tmp.${Date.now()}.${Math.random()}.json`)
-        await fs.writeFile(tmpPath, JSON.stringify(newCache, null, 2), 'utf-8')
+        const body = JSON.stringify(newCache)
+        let identity: string
         try {
+          await fs.writeFile(tmpPath, body, 'utf-8')
+          identity = fileIdentity(await fs.stat(tmpPath, { bigint: true }))
           await fs.rename(tmpPath, cachePath)
         } catch (err) {
           await fs.unlink(tmpPath).catch(() => {})
           throw err
         }
+        this.snapshots.set(cachePath, {
+          identity,
+          entry: JSON.parse(body) as BranchSchemaCacheEntry,
+          bytes: Buffer.byteLength(body),
+        })
       }
       // else: the marker read failed for a reason other than "never bumped",
       // so no token can be attributed to this resolve, and a snapshot stamped
