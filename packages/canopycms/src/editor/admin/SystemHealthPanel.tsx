@@ -1270,7 +1270,13 @@ function BranchHealthRow({
               </Badge>
             )}
             {hold && (
-              <TooltipDetail detail={branchHoldMessage(hold, { role: 'none', isAdmin: true })}>
+              <TooltipDetail
+                detail={branchHoldMessage(hold, {
+                  role: 'none',
+                  isAdmin: true,
+                  inSystemHealth: true,
+                })}
+              >
                 <Badge
                   color={HOLD_BADGE.color}
                   variant="light"

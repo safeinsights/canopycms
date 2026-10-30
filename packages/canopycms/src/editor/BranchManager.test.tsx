@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { SWRConfig } from 'swr'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { BranchManager, getBranchPermissions } from './BranchManager'
-import { HOLD_BADGE, SYNC_FAILED_FALLBACK, SYNC_FAILED_IN_REVIEW_NOTE } from './branch-status'
+import { HOLD_BADGE, SYNC_FAILED_IN_REVIEW_NOTE, syncFailedFallback } from './branch-status'
 import type { BranchSummary } from './BranchManager'
 import { CanopyCMSProvider } from './theme'
 import { BranchesDrawer } from './components/BranchesDrawer'
@@ -426,6 +426,8 @@ describe('BranchManager', () => {
   const adminUser = { userId: 'admin', groups: [RESERVED_GROUPS.ADMINS] }
   // Creator user for testing branch operations
   const creatorUser = { userId: 'user1', groups: [] }
+  // Reviews a branch somebody else made
+  const reviewerUser = { userId: 'reviewer', groups: [RESERVED_GROUPS.REVIEWERS] }
 
   const baseBranches: BranchSummary[] = [
     {
@@ -546,7 +548,9 @@ describe('BranchManager', () => {
     const badge = screen.getByTestId('sync-failed-badge-main')
     expect(badge.textContent).toBe('Sync failed')
     expect(badge.style.getPropertyValue('--badge-bg')).toBe('var(--mantine-color-red-light)')
-    expect(screen.getByTestId('sync-failed-reason-main').textContent).toBe(SYNC_FAILED_FALLBACK)
+    expect(screen.getByTestId('sync-failed-reason-main').textContent).toBe(
+      syncFailedFallback({ isAdmin: false, held: false }),
+    )
   })
 
   it('shows the recorded failure reason on the row instead of the generic line', async () => {
@@ -603,6 +607,42 @@ describe('BranchManager', () => {
       expect(screen.getByTestId('sync-failed-badge-main')).toBeTruthy()
     })
 
+    it('leaves a sync failure with no reason to the fact, beside a hold', () => {
+      held({ kind: 'conflicts' }, { syncStatus: 'sync-failed', pullRequestNumber: 1 })
+      expect(screen.getByTestId('sync-failed-reason-main').textContent).toBe('GitHub sync failed.')
+    })
+
+    it('keeps a long unbroken name inside the card', () => {
+      held({ kind: 'conflicts' })
+      const title = screen.getByText('main')
+      expect(title.style.overflowWrap).toBe('anywhere')
+    })
+
+    const rewritten: BranchSummary = {
+      ...baseBranches[0],
+      hold: { kind: 'rewritten' },
+      submitBlocked: true,
+    }
+    const openRewritten = (user: typeof adminUser | typeof creatorUser) =>
+      renderBranchManager({ branches: [rewritten], currentBranchName: 'main', user, mode: 'prod' })
+
+    it('moves the workflow action below a hold, which it would squeeze beside the title', () => {
+      openRewritten(creatorUser)
+      const row = screen.getByTestId('branch-action-row-main')
+      expect(within(row).getByTestId('submit-branch-button-main')).toBeTruthy()
+    })
+
+    it('points an admin at System health for a blocked submit, and anyone else at an admin', async () => {
+      openRewritten(adminUser)
+      await userEvent.hover(screen.getByTestId('submit-branch-button-main'))
+      expect(await screen.findByText(/See the "Branches" tab in "System health"/)).toBeTruthy()
+      cleanup()
+
+      openRewritten(creatorUser)
+      await userEvent.hover(screen.getByTestId('submit-branch-button-main'))
+      expect(await screen.findByText(/until an admin sorts out/)).toBeTruthy()
+    })
+
     it('keeps a hold and a separate sync failure to one instruction', () => {
       held(
         { kind: 'conflicts' },
@@ -619,7 +659,7 @@ describe('BranchManager', () => {
     renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
 
     expect(screen.getByTestId('sync-failed-reason-main').textContent).toBe(
-      `${SYNC_FAILED_FALLBACK} ${SYNC_FAILED_IN_REVIEW_NOTE}`,
+      `${syncFailedFallback({ isAdmin: false, held: false })} ${SYNC_FAILED_IN_REVIEW_NOTE}`,
     )
   })
 
@@ -629,7 +669,9 @@ describe('BranchManager', () => {
     ]
     renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
 
-    expect(screen.getByTestId('sync-failed-reason-main').textContent).toBe(SYNC_FAILED_FALLBACK)
+    expect(screen.getByTestId('sync-failed-reason-main').textContent).toBe(
+      syncFailedFallback({ isAdmin: false, held: false }),
+    )
   })
 
   it('tells the author to withdraw when the failed branch is still submitted', () => {
@@ -647,6 +689,21 @@ describe('BranchManager', () => {
     expect(screen.getByTestId('sync-failed-reason-main').textContent).toBe(
       `Push rejected. ${SYNC_FAILED_IN_REVIEW_NOTE} Withdraw the branch from review to make changes.`,
     )
+  })
+
+  it('tells only someone who may withdraw to, on a failed branch in review', () => {
+    const branches: BranchSummary[] = [
+      {
+        ...baseBranches[0],
+        status: 'submitted',
+        syncStatus: 'sync-failed',
+        syncFailureReason: 'Push rejected.',
+        pullRequestNumber: 1,
+      },
+    ]
+    renderBranchManager({ branches, user: reviewerUser, mode: 'prod' })
+
+    expect(screen.getByTestId('sync-failed-reason-main').textContent).not.toContain('Withdraw')
   })
 
   it('shows a gray Syncing badge with a tooltip when sync is pending', async () => {

@@ -40,6 +40,7 @@ export function TooltipDetail({
           aria-label={name}
           aria-describedby={detailId}
           className="mantine-focus-auto"
+          display="inline-flex"
         >
           {children}
         </Box>

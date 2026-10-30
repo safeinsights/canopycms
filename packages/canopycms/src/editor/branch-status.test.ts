@@ -4,6 +4,7 @@ import {
   PROTECTED_BRANCH_PRESENTATION,
   branchHoldMessage,
   branchStatusPresentation,
+  syncFailedFallback,
 } from './branch-status'
 
 describe('branchHoldMessage', () => {
@@ -19,7 +20,7 @@ describe('branchHoldMessage', () => {
     const hold = { kind: 'conflicts' } as const
     expect(branchHoldMessage(hold, author)).toContain('Use "Withdraw from review"')
     const reviewer = branchHoldMessage(hold, { role: 'review', isAdmin: false })
-    expect(reviewer).toContain('Request changes')
+    expect(reviewer).toContain('Use "Request changes"')
     expect(reviewer).not.toContain('Withdraw')
     expect(branchHoldMessage(hold, { role: 'none', isAdmin: false })).toContain(
       'Its editor needs to withdraw it',
@@ -31,6 +32,38 @@ describe('branchHoldMessage', () => {
     expect(branchHoldMessage(hold, author)).toContain('Ask an admin')
     expect(branchHoldMessage(hold, author)).not.toContain('System health')
     expect(branchHoldMessage(hold, { role: 'none', isAdmin: true })).toContain('"System health"')
+  })
+
+  it('names the fix in System health, which it would otherwise send an admin back to', () => {
+    const line = branchHoldMessage(
+      { kind: 'rewritten' },
+      { role: 'none', isAdmin: true, inSystemHealth: true },
+    )
+    expect(line).toContain('merge the missing commit back')
+    expect(line).not.toContain('"System health"')
+  })
+
+  it('tells only a non-admin to ask an admin about a retargeted pull request', () => {
+    const hold = { kind: 'retargeted', base: 'release' } as const
+    expect(branchHoldMessage(hold, author)).toContain('or ask an admin')
+    expect(branchHoldMessage(hold, { role: 'none', isAdmin: true })).toMatch(
+      /Update it on the pull request\.$/,
+    )
+  })
+})
+
+describe('syncFailedFallback', () => {
+  it('sends only an admin to System health', () => {
+    expect(syncFailedFallback({ isAdmin: true, held: false })).toContain(
+      'the "Tasks" tab in "System health"',
+    )
+    const editor = syncFailedFallback({ isAdmin: false, held: false })
+    expect(editor).toBe('GitHub sync failed. Ask an admin to retry it.')
+  })
+
+  it('leaves the way forward to a hold beside it', () => {
+    expect(syncFailedFallback({ isAdmin: true, held: true })).toBe('GitHub sync failed.')
+    expect(syncFailedFallback({ isAdmin: false, held: true })).toBe('GitHub sync failed.')
   })
 })
 

@@ -857,12 +857,16 @@ async function recordPullRequestHold(
   metaFile: BranchMetadataFile,
   pullRequest: GitHubPullRequest,
 ): Promise<void> {
-  const { name, baseBranch, pullRequestHold } = metaFile.branch
+  const { name, baseBranch, pullRequestHold, submittedAt } = metaFile.branch
   const hold = pullRequestHoldOf(pullRequest, baseBranch ?? ctx.baseBranch)
   if (hold === null || JSON.stringify(hold) === JSON.stringify(pullRequestHold)) return
   try {
     await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update(
-      (current) => (current?.branch.name === name ? { branch: { pullRequestHold: hold } } : null),
+      // A newer submit's pull request isn't the one measured.
+      (current) =>
+        current?.branch.name === name && current.branch.submittedAt === submittedAt
+          ? { branch: { pullRequestHold: hold } }
+          : null,
       { keepUpdatedAt: true },
     )
   } catch (err) {

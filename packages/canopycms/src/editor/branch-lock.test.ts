@@ -182,24 +182,3 @@ describe('describeBranchLock', () => {
     )
   })
 })
-
-describe('branchBarStatus for a held branch', () => {
-  it('shows an editable branch that something holds, which nothing else would say', () => {
-    const status = branchBarStatus({
-      branchStatus: 'editing',
-      isProtected: false,
-      hold: { kind: 'rewritten' },
-    })
-    expect(status).toEqual({ label: 'Needs action', value: 'held', readOnly: false })
-  })
-
-  it('leaves a locked branch to its lock', () => {
-    const status = branchBarStatus({
-      branchStatus: 'submitted',
-      branchWriteBlocked: true,
-      isProtected: false,
-      hold: { kind: 'conflicts' },
-    })
-    expect(status.value).toBe('submitted')
-  })
-})

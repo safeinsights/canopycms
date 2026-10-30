@@ -824,9 +824,8 @@ export async function pushBranchToGitHub(
   // github-commits.ts recorded it: this push would restore what someone removed from GitHub.
   if (metaFile?.branch.rewrittenOnGitHub !== undefined) {
     throw new PermanentTaskError(
-      `Not pushing branch "${branch}": it was force-pushed or rewritten on GitHub and no longer ` +
-        `contains ${metaFile.branch.rewrittenOnGitHub}. An administrator can see how to continue ` +
-        `in System Health.`,
+      `This branch was changed on GitHub in a way CanopyCMS can't combine with the work here, ` +
+        `so nothing was pushed. Nothing is lost.`,
     )
   }
   const readSha = async () => {

@@ -301,24 +301,31 @@ const queued = async (s: Setup, action: string) =>
 function workerWithPullRequest(
   s: Setup,
   mergeableState: string,
-  { state = 'open', base = BASE }: { state?: string; base?: string } = {},
+  {
+    state = 'open',
+    base = BASE,
+    onFetch,
+  }: { state?: string; base?: string; onFetch?: () => Promise<unknown> } = {},
 ) {
   const worker = makeWorker(s)
   useLocalGitHubGateway(worker, {
     octokit: {
       pulls: {
-        get: async () => ({
-          data: {
-            merged: false,
-            merged_at: null,
-            state,
-            node_id: 'PR_7',
-            body: '',
-            mergeable_state: mergeableState,
-            head: { ref: BRANCH, repo: { id: 1 } },
-            base: { ref: base, repo: { id: 1 } },
-          },
-        }),
+        get: async () => {
+          await onFetch?.()
+          return {
+            data: {
+              merged: false,
+              merged_at: null,
+              state,
+              node_id: 'PR_7',
+              body: '',
+              mergeable_state: mergeableState,
+              head: { ref: BRANCH, repo: { id: 1 } },
+              base: { ref: base, repo: { id: 1 } },
+            },
+          }
+        },
       },
     } as never,
   })
@@ -457,6 +464,19 @@ describe('an open pull request GitHub reports behind', () => {
 
     it('records nothing for a pull request retargeted but not behind', async () => {
       await cycle(s, workerWithPullRequest(s, 'clean', { base: 'release' }))
+      expect((await readMeta(s))?.pullRequestHold).toBeUndefined()
+    })
+
+    it('records nothing about a pull request a newer submit replaced as it was measured', async () => {
+      const resubmitted = '2026-10-02T00:00:00.000Z'
+      await writeMeta(s, { ...submitted, submittedAt: '2026-10-01T00:00:00.000Z' })
+      const worker = workerWithPullRequest(s, 'dirty', {
+        onFetch: () => writeMeta(s, { ...submitted, submittedAt: resubmitted }),
+      })
+
+      await cycle(s, worker)
+
+      expect((await readMeta(s))?.submittedAt).toBe(resubmitted)
       expect((await readMeta(s))?.pullRequestHold).toBeUndefined()
     })
 

@@ -1,5 +1,6 @@
 import React, { useRef, type ReactNode, type Ref } from 'react'
 import {
+  Badge,
   Box,
   Button,
   Group,
@@ -17,12 +18,13 @@ import type { BranchHold, BranchStatus, PullRequestState } from '../../types'
 import type { SaveAllProgress } from '../hooks/save-all'
 import { isAdmin, isLockedOutOfBranch, isReviewer } from '../../authorization/helpers'
 import { branchBarStatus, describeBranchLock, type BranchBarStatus } from '../branch-lock'
-import { branchHoldMessage } from '../branch-status'
-import { EDITOR_ACTIONS, REWRITTEN_SUBMIT_REASON } from '../copy'
+import { HOLD_BADGE, branchHoldMessage } from '../branch-status'
+import { EDITOR_ACTIONS, rewrittenSubmitReason } from '../copy'
 import { reviewRoleOf, type ReviewRole } from '../../authorization/review-role'
 import { SYSTEM_USER_ID } from '../../system-users'
 import { TopBar } from '../shell/TopBar'
 import { BranchPill } from './BranchPill'
+import { TooltipDetail } from './TooltipDetail'
 import { ReasonedMenuItem } from './ReasonedMenuItem'
 import { UnsavedMark } from './UnsavedMark'
 import { DraftStorageWarning, HIDDEN_STYLE, SaveAllButton } from './SaveAllButton'
@@ -168,15 +170,11 @@ export function EditorHeader({
     pullRequestClosed: reviewRole === 'reviewing-closed',
   }
   const branchLockReason = describeBranchLock(lock)
-  const status = branchBarStatus({
-    ...lock,
-    isProtected: branchServerProtected,
-    hold: branchHold,
-  })
-  const holdReason =
-    status.value === 'held' && branchHold
+  const status = branchBarStatus({ ...lock, isProtected: branchServerProtected })
+  const holdMessage =
+    branchName && branchHold && status.value !== 'loading'
       ? branchHoldMessage(branchHold, {
-          role: workflow?.permitted ? 'withdraw' : 'none',
+          role: workflow?.kind === 'review' ? 'review' : workflow?.permitted ? 'withdraw' : 'none',
           isAdmin: isAdmin(userContext?.groups ?? []),
         })
       : undefined
@@ -231,7 +229,8 @@ export function EditorHeader({
           />
           <BranchStatusLabel
             status={branchName ? status : { value: 'none', readOnly: false }}
-            reason={branchLockReason ?? holdReason}
+            reason={branchLockReason}
+            holdMessage={holdMessage}
           />
           {modifiedCount > 0 && (
             <Tooltip
@@ -342,29 +341,49 @@ function unsavedTooltip(
   return `${edits} They can be saved once the branch is editable again.`
 }
 
-/** The branch's state beside the pill, heard in words with its reason, but not while it loads. */
-function BranchStatusLabel({ status, reason }: { status: BranchBarStatus; reason?: string }) {
+/**
+ * The branch's state beside the pill, heard in words with its reason, but not while it loads. A
+ * hold follows it whatever the lock, since a lock doesn't say that the branch is stuck.
+ */
+function BranchStatusLabel({
+  status,
+  reason,
+  holdMessage,
+}: {
+  status: BranchBarStatus
+  reason?: string
+  holdMessage?: string
+}) {
   const spoken =
     status.label && status.value !== 'loading'
       ? [status.label.replace(' · ', ', '), reason].filter(Boolean).join('. ')
       : ''
   return (
     // Always mounted, so a lock that arrives is announced.
-    <Box role="status" style={status.label ? { flexShrink: 0 } : HIDDEN_STYLE}>
-      {status.label && (
-        <Group
-          gap={4}
-          wrap="nowrap"
-          aria-hidden="true"
-          data-testid="branch-status"
-          data-status={status.value}
-        >
-          {status.readOnly && <IconLock size={14} />}
-          <Text span size="sm">
-            {status.label}
-          </Text>
-        </Group>
-      )}
+    <Box role="status" style={status.label || holdMessage ? { flexShrink: 0 } : HIDDEN_STYLE}>
+      <Group gap="xs" wrap="nowrap">
+        {status.label && (
+          <Group
+            gap={4}
+            wrap="nowrap"
+            aria-hidden="true"
+            data-testid="branch-status"
+            data-status={status.value}
+          >
+            {status.readOnly && <IconLock size={14} />}
+            <Text span size="sm">
+              {status.label}
+            </Text>
+          </Group>
+        )}
+        {holdMessage && (
+          <TooltipDetail detail={holdMessage}>
+            <Badge color={HOLD_BADGE.color} variant="light" data-testid="branch-hold-status">
+              {HOLD_BADGE.label}
+            </Badge>
+          </TooltipDetail>
+        )}
+      </Group>
       <VisuallyHidden>{spoken}</VisuallyHidden>
     </Box>
   )
@@ -513,7 +532,7 @@ function workflowAction({
     reason: savingAll
       ? 'Wait for Save all to finish.'
       : rewritten && isEditing
-        ? REWRITTEN_SUBMIT_REASON
+        ? rewrittenSubmitReason(isAdmin(userContext?.groups ?? []))
         : // No branch data (`branchStatus === undefined`) must not be
           // interpolated raw into this label. Guarded explicitly here rather
           // than left to the early return above, which hides the action

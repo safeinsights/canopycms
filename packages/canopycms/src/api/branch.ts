@@ -78,7 +78,8 @@ export interface BranchListItem extends Omit<
    */
   writeBlocked?: boolean
   /**
-   * Populated from {@link BranchWriteProtection.submitBlockedIncludingStatus}
+   * Populated from {@link BranchWriteProtection.submitBlockedIncludingStatus},
+   * or true for a branch rewritten on GitHub
    * -- READ THAT DOC COMMENT before touching this field. On the wire this
    * name means the COMPOUND answer (base-branch OR non-'editing' status),
    * mirroring how `writeBlocked` above is the compound of `readOnly` + status

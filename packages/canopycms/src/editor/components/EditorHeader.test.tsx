@@ -959,6 +959,75 @@ describe('EditorHeader - blocked controls say why on focus and ignore their clic
     )
   })
 
+  describe('a held branch', () => {
+    const author = { userId: 'u1' }
+
+    it('says so on an editable branch, where nothing else would', () => {
+      renderHeader({ branchHold: { kind: 'rewritten' } })
+
+      expect(screen.getByTestId('branch-hold-status').textContent).toBe('Needs action')
+      expect(screen.queryByTestId('branch-status')).toBeNull()
+    })
+
+    it('says so beside the lock of a branch in review, in words anyone can reach', async () => {
+      renderHeader({
+        branchStatus: 'submitted',
+        branchWriteBlocked: true,
+        branchHold: { kind: 'conflicts' },
+        userContext: author,
+        branchCreatedBy: 'u1',
+      })
+
+      expect(barStatus().textContent).toBe('In review · read-only')
+      const badge = screen.getByTestId('branch-hold-status')
+      const trigger = badge.closest('[aria-describedby]') as HTMLElement
+      expect(trigger.tabIndex).toBe(0)
+      act(() => trigger.focus())
+      const detail = document.getElementById(trigger.getAttribute('aria-describedby') ?? '')
+      expect(detail?.textContent).toContain('Use "Withdraw from review"')
+      expect(detail?.closest('[role="status"]')).toBeTruthy()
+    })
+
+    it("speaks a reviewer's way forward, not an author's", () => {
+      renderHeader({
+        branchStatus: 'submitted',
+        branchWriteBlocked: true,
+        branchHold: { kind: 'conflicts' },
+        userContext: { userId: 'r', groups: [RESERVED_GROUPS.REVIEWERS] },
+        branchCreatedBy: 'u1',
+      })
+
+      const status = screen.getByTestId('branch-hold-status').closest('[role="status"]')
+      expect(status?.textContent).toContain('Use "Request changes"')
+    })
+
+    it('waits for the branch to load', () => {
+      renderHeader({ branchHold: { kind: 'rewritten' }, branchPending: true })
+
+      expect(screen.queryByTestId('branch-hold-status')).toBeNull()
+    })
+
+    it.each([
+      [undefined, /until an admin sorts out/],
+      [[RESERVED_GROUPS.ADMINS], /See the "Branches" tab in "System health"/],
+    ])('blocks Submit on a rewritten branch with a reason for %s', async (groups, reason) => {
+      const onSubmit = vi.fn()
+      renderHeader({
+        branchHold: { kind: 'rewritten' },
+        userContext: { userId: 'u1', groups },
+        branchCreatedBy: 'u1',
+        onSubmit,
+      })
+      const submit = screen.getByTestId('submit-button')
+
+      expect(submit.getAttribute('aria-disabled')).toBe('true')
+      act(() => submit.focus())
+      expect(await screen.findByText(reason)).toBeTruthy()
+      await userEvent.click(submit)
+      expect(onSubmit).not.toHaveBeenCalled()
+    })
+  })
+
   it('keeps a Submit for review the user may not use focusable, explains it on focus, and ignores its click', async () => {
     const onSubmit = vi.fn()
     renderHeader({

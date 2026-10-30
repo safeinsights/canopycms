@@ -417,8 +417,9 @@ interface BranchSummary {
   writeBlocked: boolean
   /**
    * Server-computed compound submit rule: true when the branch can never be
-   * submitted for review, for EITHER reason -- it is the protected base
-   * branch, or its workflow status has moved past 'editing'. Mirrors
+   * submitted for review, for ANY reason -- it is the protected base
+   * branch, its workflow status has moved past 'editing', or it was rewritten
+   * on GitHub (`toBranchListItem`). Mirrors
    * `writeBlocked`'s shape (a base-branch half + a status half, combined),
    * except this one is built from `isProtected`/`submitBlocked` (both modes)
    * rather than `readOnly` (prod-only) -- see

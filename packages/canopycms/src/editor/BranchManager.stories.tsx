@@ -134,7 +134,7 @@ export const HeldPullRequests: Story = {
         pullRequestUrl: 'https://github.com/owner/repo/pull/125',
         pullRequestNumber: 125,
         hold: { kind: 'rewritten' },
-        submitBlocked: false,
+        submitBlocked: true,
       },
       {
         name: 'feature/sync-failed',

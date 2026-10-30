@@ -1329,6 +1329,38 @@ describe('SystemHealthPanel', () => {
       expect(screen.queryByTestId('held-pr-held-editing')).toBeNull()
     })
 
+    it('gives a rewritten branch the fix itself, not a pointer back to this tab', async () => {
+      mockClient.admin.branchHealth.mockResolvedValue(
+        mockSuccess({
+          entries: [
+            {
+              dirName: 'rewritten',
+              kind: 'healthy',
+              branch: {
+                name: 'rewritten',
+                status: 'editing',
+                access: {},
+                createdBy: 'user-1',
+                createdAt: '2026-01-01T00:00:00.000Z',
+                updatedAt: '2026-01-02T00:00:00.000Z',
+                rewrittenOnGitHub: 'a'.repeat(40),
+              },
+            },
+          ] satisfies BranchHealthEntry[],
+          generatedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      )
+      renderPanel()
+      await userEvent.click(screen.getByText('Branches'))
+      await waitFor(() => expect(screen.getByText('rewritten')).toBeTruthy())
+
+      const badge = screen.getByTestId('held-pr-rewritten')
+      const detail = badge.closest('[aria-describedby]')?.getAttribute('aria-describedby')
+      const text = document.getElementById(detail ?? '')?.textContent
+      expect(text).toContain('merge the missing commit back')
+      expect(text).not.toContain('"System health"')
+    })
+
     it('reaches the rebase failure by keyboard: a named focusable icon described by the message', async () => {
       renderPanel()
       await userEvent.click(screen.getByText('Branches'))

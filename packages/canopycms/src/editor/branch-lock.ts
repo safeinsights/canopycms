@@ -1,5 +1,5 @@
-import type { BranchHold, BranchStatus } from '../types'
-import { HOLD_BADGE, branchStatusPresentation } from './branch-status'
+import type { BranchStatus } from '../types'
+import { branchStatusPresentation } from './branch-status'
 import { CLOSED_PULL_REQUEST_REASON } from './copy'
 
 export interface BranchLockInput {
@@ -66,8 +66,6 @@ export function describeBranchLock(lock: BranchLockInput): string | undefined {
 export interface BranchBarStatusInput extends BranchLockInput {
   /** The listed branch's `isProtected`, with no fallback here: no listed branch names no protection. */
   isProtected: boolean | undefined
-  /** What holds the branch, which the bar shows only where no lock already says it's stuck. */
-  hold?: BranchHold
 }
 
 export interface BranchBarStatus {
@@ -114,9 +112,7 @@ export function branchBarStatus(input: BranchBarStatusInput): BranchBarStatus {
   if (!statusLocked)
     return input.isProtected === true
       ? { label: 'Protected', value: 'protected-editable', readOnly: false }
-      : input.hold
-        ? { label: HOLD_BADGE.label, value: 'held', readOnly: false }
-        : { value: 'editable', readOnly: false }
+      : { value: 'editable', readOnly: false }
   // A lock with no status is `branchDataUnavailable`, handled above.
   const label = capitalize(branchStatusPresentation(status)?.label ?? String(status))
   return {
