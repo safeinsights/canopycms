@@ -24,6 +24,8 @@ const MOCK_CLIENT_FILE = path.join(API_DIR, '__test__/mock-client.ts')
 // Import all API modules to populate ROUTE_REGISTRY
 // These imports execute the defineEndpoint() calls
 import '../src/api/branch.js'
+import '../src/api/branch-changes.js'
+import '../src/api/branch-entry-changes.js'
 import '../src/api/branch-status.js'
 import '../src/api/comments.js'
 import '../src/api/content.js'
@@ -159,6 +161,7 @@ function namespaceToModule(namespace: string): string {
   const mapping: Record<string, string> = {
     branches: 'branch',
     workflow: 'branch-status',
+    changes: 'branch-changes',
     comments: 'comments',
     content: 'content',
     resolveReferences: 'resolve-references',
@@ -181,6 +184,7 @@ function typeNameToModule(typeName: string): string | null {
     ResolveReferencesResponse: 'resolve-references',
     ResolveReferencesBody: 'resolve-references',
     ReferenceOptionsResponse: 'reference-options',
+    BranchEntryChangeResponse: 'branch-entry-changes',
     // Schema types come from the schema-store-types module (client-safe)
     CreateCollectionInput: '../schema/schema-store-types',
     UpdateCollectionInput: '../schema/schema-store-types',
@@ -299,6 +303,13 @@ export interface ApiClientOptions {
 
   /** Called whenever the server refuses \`editorMode\` (code \`EDITOR_MODE_MISMATCH\`). @internal */
   onEditorModeMismatch?: () => void
+
+  /**
+   * Maps a branch name to the \`/:branch\` segment its requests carry. The editor maps each
+   * listed branch to its exact form (\`~canopycms~prod~spring\`, \`exactBranchSegment\`), which the
+   * server resolves to that branch alone, whatever the base or active branch is. @internal
+   */
+  branchSegment?: (branch: string) => string
 }
 
 /**
@@ -319,6 +330,7 @@ export class CanopyApiClient {
   private onUnauthorized: (() => void) | undefined
   private editorMode: OperatingMode | undefined
   private onEditorModeMismatch: (() => void) | undefined
+  private branchSegment: ((branch: string) => string) | undefined
 
 ${namespacesCode}
 
@@ -330,6 +342,7 @@ ${namespacesCode}
     this.onUnauthorized = options.onUnauthorized
     this.editorMode = options.editorMode
     this.onEditorModeMismatch = options.onEditorModeMismatch
+    this.branchSegment = options.branchSegment
   }
 
   private buildPath(template: string, params: Record<string, string>): string {
@@ -341,7 +354,8 @@ ${namespacesCode}
       const restParamPattern = \`...$\{key}\`
 
       if (result.includes(pathParamPattern)) {
-        result = result.replace(pathParamPattern, encodeURIComponent(String(value)))
+        const segment = key === 'branch' && this.branchSegment ? this.branchSegment(value) : value
+        result = result.replace(pathParamPattern, encodeURIComponent(String(segment)))
       } else if (result.includes(restParamPattern)) {
         // For rest parameters, encode each segment separately to preserve slashes
         const encoded = String(value).split('/').map(segment => encodeURIComponent(segment)).join('/')

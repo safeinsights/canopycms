@@ -9,6 +9,8 @@ import type { ApiResponse } from '../types'
 import { createLogicalPath, createPhysicalPath } from '../../paths'
 import type { ContentId } from '../../paths'
 import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, CreateBranchBody, UpdateBranchAccessBody } from '../branch'
+import type { BranchChangesResponse } from '../branch-changes'
+import type { BranchEntryChangeResponse } from '../branch-entry-changes'
 import type { BranchMergeResponse, RequestChangesBody, SubmitBranchBody, SubmitBranchResponse } from '../branch-status'
 import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from '../comments'
 import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse, RenameEntryBody, RenameEntryResponse, ValidateReferencesBody, WriteContentBody } from '../content'
@@ -46,6 +48,11 @@ export function createMockApiClient(): MockApiClient {
     create: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"test-branch","status":"editing","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})),
     delete: vi.fn().mockResolvedValue(mockSuccess({"deleted":true})),
     updateAccess: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"test-branch","status":"editing","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})),
+  },
+
+  changes: {
+    list: vi.fn().mockResolvedValue(mockSuccess({"base":"main","entries":[],"collections":[],"hiddenChanges":false})),
+    entry: vi.fn().mockResolvedValue(mockSuccess({"before":null,"after":null,"mergeBaseSha":""})),
   },
 
   workflow: {
@@ -123,7 +130,7 @@ export function createMockApiClient(): MockApiClient {
     purgeBranchDir: vi.fn().mockResolvedValue(mockSuccess({"trashedAs":".trash-example-branch-20240101T000000Z"})),
     repairBranchDir: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"example-branch","status":"editing","access":{},"createdBy":"admin","createdAt":"2024-01-01T00:00:00.000Z","updatedAt":"2024-01-01T00:00:00.000Z"},"archivedAs":"branch.json.corrupt-20240101T000000Z","reset":{"status":"editing","access":{},"createdBy":"admin"}})),
     repairContentDuplicates: vi.fn().mockResolvedValue(mockSuccess({"resolved":[{"id":"a1b2c3d4e5f6","keptPath":"content/posts/dune.a1b2c3d4e5f6.json","archivedAs":[".duplicate-content-id.20240101T000000Z.post.dune-old.a1b2c3d4e5f6.json"]}]})),
-    status: vi.fn().mockResolvedValue(mockSuccess({"generatedAt":"2024-01-01T00:00:00.000Z","mode":"prod","queue":{"pending":0,"processing":0,"completed":0,"failed":0,"corrupt":0},"worker":{"state":"absent"},"workerStatus":null,"build":{"canopycmsVersion":"0.0.0"},"assetStore":{"configured":false},"imageProcessing":{"available":true}})),
+    status: vi.fn().mockResolvedValue(mockSuccess({"generatedAt":"2024-01-01T00:00:00.000Z","mode":"prod","queue":{"pending":0,"processing":0,"completed":0,"failed":0,"corrupt":0},"worker":{"state":"absent"},"workerStatus":null,"build":{"canopycmsVersion":"0.0.0"},"assetStore":{"configured":false},"imageProcessing":{"available":true},"branchNamespace":{"ok":true,"namespace":"canopycms/prod/"}})),
     listTasks: vi.fn().mockResolvedValue(mockSuccess({"tasks":[]})),
     retryTask: vi.fn().mockResolvedValue(mockSuccess({"newTaskId":"00000000-0000-0000-0000-000000000000"})),
     deleteTask: vi.fn().mockResolvedValue(mockSuccess({"deleted":true})),
@@ -157,6 +164,14 @@ export function mockBranchListItemResponse(): BranchListItemResponse {
 
 export function mockBranchDeleteResponse(): BranchDeleteResponse {
   return mockSuccess({"deleted":true})
+}
+
+export function mockBranchChangesResponse(): BranchChangesResponse {
+  return mockSuccess({"base":"main","entries":[],"collections":[],"hiddenChanges":false})
+}
+
+export function mockBranchEntryChangeResponse(): BranchEntryChangeResponse {
+  return mockSuccess({"before":null,"after":null,"mergeBaseSha":""})
 }
 
 export function mockBranchMergeResponse(): BranchMergeResponse {
@@ -320,7 +335,7 @@ export function mockRepairContentDuplicatesResponse(): RepairContentDuplicatesRe
 }
 
 export function mockAdminStatusResponse(): AdminStatusResponse {
-  return mockSuccess({"generatedAt":"2024-01-01T00:00:00.000Z","mode":"prod","queue":{"pending":0,"processing":0,"completed":0,"failed":0,"corrupt":0},"worker":{"state":"absent"},"workerStatus":null,"build":{"canopycmsVersion":"0.0.0"},"assetStore":{"configured":false},"imageProcessing":{"available":true}})
+  return mockSuccess({"generatedAt":"2024-01-01T00:00:00.000Z","mode":"prod","queue":{"pending":0,"processing":0,"completed":0,"failed":0,"corrupt":0},"worker":{"state":"absent"},"workerStatus":null,"build":{"canopycmsVersion":"0.0.0"},"assetStore":{"configured":false},"imageProcessing":{"available":true},"branchNamespace":{"ok":true,"namespace":"canopycms/prod/"}})
 }
 
 export function mockAdminTasksResponse(): AdminTasksResponse {

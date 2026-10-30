@@ -231,6 +231,60 @@ describe('branch status api', () => {
     )
   })
 
+  it("clears the last round's review on submit, so the next round starts fresh", async () => {
+    mockMetadataUpdate.mockClear()
+
+    const res = await submitBranchForMerge(
+      makeCtx(true),
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+      undefined,
+    )
+
+    expect(res.ok).toBe(true)
+    const saved = mockMetadataUpdate.mock.calls.at(-1)![0].branch
+    expect(saved.status).toBe('submitted')
+    expect(saved).toHaveProperty('review', undefined)
+  })
+
+  describe('the stored review', () => {
+    const review = {
+      state: 'changes-requested' as const,
+      by: { userId: 'rev1' },
+      at: '2026-10-28T14:05:00.000Z',
+    }
+    const user: CanopyUser = { type: 'authenticated', userId: 'u1', groups: [] }
+    const params = { branch: 'feature/x' as BranchName }
+
+    it('is cleared in a save of its own before the PR is written, then in the status save', async () => {
+      mockMetadataUpdate.mockClear()
+      const ctx = makeCtx(true)
+      ctx.getBranchContext = vi.fn().mockResolvedValue({
+        ...baseContext,
+        branch: { ...baseContext.branch, review },
+      })
+
+      const res = await submitBranchForMerge(ctx, { user }, params, undefined)
+
+      expect(res.ok).toBe(true)
+      expect(mockMetadataUpdate).toHaveBeenCalledTimes(2)
+      expect(mockMetadataUpdate).toHaveBeenNthCalledWith(1, {
+        branch: { name: 'feature/x', review: undefined },
+      })
+      expect(mockMetadataUpdate.mock.calls[1]![0].branch.status).toBe('submitted')
+    })
+
+    it('costs no extra save when there is none to clear', async () => {
+      mockMetadataUpdate.mockClear()
+
+      const res = await submitBranchForMerge(makeCtx(true), { user }, params, undefined)
+
+      expect(res.ok).toBe(true)
+      expect(mockMetadataUpdate).toHaveBeenCalledTimes(1)
+      expect(mockMetadataUpdate.mock.calls[0]![0].branch.status).toBe('submitted')
+    })
+  })
+
   it('never writes the conflict record, leaving it for the reviewer', async () => {
     mockMetadataUpdate.mockClear()
 
@@ -540,6 +594,28 @@ describe('branch status api', () => {
       expect(mockMetadataUpdate).toHaveBeenCalledWith({
         branch: { name: 'feature/x', pushedToGitHubAt: expect.any(String) },
       })
+      consoleSpy.restore()
+    })
+
+    it('quotes a namespace branch by its short name when GitHub finds no commits', async () => {
+      const consoleSpy = mockConsole()
+      const ctx = directCtx(vi.fn().mockRejectedValue(await noCommitsBetweenError()))
+      ctx.getBranchContext = vi
+        .fn()
+        .mockResolvedValue(
+          createMockBranchContext({ branchName: 'canopycms/prod/spring', createdBy: 'u1' }),
+        )
+
+      const res = await submitBranchForMerge(
+        ctx,
+        { user },
+        { branch: 'spring' as BranchName },
+        undefined,
+      )
+
+      expect(res.error).toBe(
+        'Nothing to submit yet: "spring" has no saved changes compared with "main". Save your edits, then submit.',
+      )
       consoleSpy.restore()
     })
 

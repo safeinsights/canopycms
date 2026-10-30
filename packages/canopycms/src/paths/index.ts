@@ -40,6 +40,8 @@ export {
   isValidContentId,
   parseContentId,
   parseBranchName,
+  parseBranchRef,
+  parseCreatedBranchName,
   parseSlug,
 } from './validation'
 
@@ -57,6 +59,6 @@ export {
 export {
   sanitizeBranchName,
   RESERVED_SETTINGS_BRANCH_PREFIX,
-  RESERVED_ROUTE_BRANCH_NAMES,
+  branchShortName,
   isSettingsBranchName,
 } from './branch-name'

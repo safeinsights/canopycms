@@ -118,6 +118,17 @@ describe('syncPrComments, direct path', () => {
     )
   })
 
+  it('links a namespace branch by its short name, which ?branch= resolves', async () => {
+    await addThread('Hi')
+    const service = github()
+
+    await syncPrComments(directCtx(service), branchWithPr({ name: 'canopycms/prod/spring' }))
+
+    expect(service.updatePullRequest.mock.calls[0]![1].body).toContain(
+      '(https://cms.example.org/edit?branch=spring&entry=',
+    )
+  })
+
   it('writes nothing when the block is unchanged or missing', async () => {
     for (const body of [submittedBody, 'A body a human rewrote', null]) {
       const service = github(body)
@@ -164,7 +175,7 @@ describe('syncPrComments, direct path', () => {
 
       expect(service.getPullRequest.mock.calls[0]?.[1]).toBeInstanceOf(AbortSignal)
       expect(service.getPullRequest.mock.calls[0]?.[1].aborted).toBe(true)
-      expect(consoleSpy).toHaveWarned(/editor comments on PR #7.*did not answer within 10 s/)
+      expect(consoleSpy).toHaveWarned(/review state on PR #7.*did not answer within 10 s/)
     } finally {
       consoleSpy.restore()
       vi.useRealTimers()
@@ -180,7 +191,7 @@ describe('syncPrComments, direct path', () => {
     await syncPrComments(directCtx(service), branchWithPr())
 
     expect(service.updatePullRequest).not.toHaveBeenCalled()
-    expect(consoleSpy).toHaveWarned(/editor comments on PR #7/)
+    expect(consoleSpy).toHaveWarned(/editor comments of feature\/x/)
     consoleSpy.restore()
   })
 
@@ -192,7 +203,7 @@ describe('syncPrComments, direct path', () => {
 
     await expect(syncPrComments(directCtx(service), branchWithPr())).resolves.toBeUndefined()
 
-    expect(consoleSpy).toHaveWarned(/editor comments on PR #7 for feature\/x.*502/)
+    expect(consoleSpy).toHaveWarned(/review state on PR #7 for feature\/x.*502/)
     consoleSpy.restore()
   })
 })
@@ -212,12 +223,35 @@ describe('syncPrComments, queued path', () => {
     expect(tasks.map((t) => [t.action, t.payload])).toEqual([
       [
         'sync-pr-comments',
-        { branch: 'feature/x', pullRequestNumber: 7, editorUrl: 'https://cms.example.org/edit' },
+        {
+          branch: 'feature/x',
+          pullRequestNumber: 7,
+          editorUrl: 'https://cms.example.org/edit',
+          editorBranch: 'feature/x',
+        },
       ],
       [
         'sync-pr-comments',
-        { branch: 'feature/y', pullRequestNumber: 7, editorUrl: 'https://cms.example.org/edit' },
+        {
+          branch: 'feature/y',
+          pullRequestNumber: 7,
+          editorUrl: 'https://cms.example.org/edit',
+          editorBranch: 'feature/y',
+        },
       ],
+    ])
+  })
+
+  it('queues a namespace branch with its short name for the links', async () => {
+    await syncPrComments(queuedCtx(), branchWithPr({ name: 'canopycms/prod/spring' }))
+
+    expect((await pending()).map((t) => t.payload)).toEqual([
+      {
+        branch: 'canopycms/prod/spring',
+        pullRequestNumber: 7,
+        editorUrl: 'https://cms.example.org/edit',
+        editorBranch: 'spring',
+      },
     ])
   })
 

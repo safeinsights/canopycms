@@ -16,6 +16,7 @@
 
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { simpleGit } from 'simple-git'
 import type { Task, TaskStatus } from '../../../../packages/canopycms/src/task-queue/types'
 import type { BranchMetadata, WorkerStatusReport } from '../../../../packages/canopycms/src/types'
 // Static import (not a dynamic `await import(...)`): a dynamic import of this
@@ -183,14 +184,18 @@ export async function seedUnparseableWorkerStatus(raw = '{ not json'): Promise<v
  * Two behaviours depend on this: the registry QUARANTINES the directory (the
  * branch silently drops out of the branch list instead of 500ing the whole
  * list), and the admin branch-health scan classifies it `corrupt-metadata`
- * and offers Repair.
+ * and offers Repair. Repair records the branch the clone has checked out, so a directory meant
+ * to be repaired names one (`checkedOut`).
  */
 export async function seedCorruptBranchDir(
   dirName: string,
-  raw = '{ this is not json',
+  { raw = '{ this is not json', checkedOut }: { raw?: string; checkedOut?: string } = {},
 ): Promise<string> {
   const dir = path.join(BRANCHES_DIR, dirName)
   await fs.mkdir(path.join(dir, '.canopy-meta'), { recursive: true })
+  if (checkedOut !== undefined) {
+    await simpleGit({ baseDir: dir }).init(['--initial-branch', checkedOut])
+  }
   await fs.writeFile(path.join(dir, '.canopy-meta', 'branch.json'), raw, 'utf8')
   await bumpBranchRegistry()
   return dir

@@ -12,6 +12,7 @@ import { simpleGit } from 'simple-git'
 import type { BranchListItemResponse } from '../../api/branch'
 import { setProvisioningTestHooks } from '../../branch-workspace'
 import { createApiClient } from '../test-utils/api-client'
+import { branchKey } from '../test-utils/branch-names'
 import { createMockAuthPlugin, TEST_USERS } from '../test-utils/multi-user'
 import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-workspace'
 
@@ -47,7 +48,10 @@ describe('POST /branches over provisioning outcomes', () => {
 
   const readAccess = async () =>
     JSON.parse(
-      await fs.readFile(path.join(baseRoot, 'feat', '.canopy-meta', 'branch.json'), 'utf8'),
+      await fs.readFile(
+        path.join(baseRoot, branchKey('feat'), '.canopy-meta', 'branch.json'),
+        'utf8',
+      ),
     ).branch.access
 
   it('409s when another request published the name first, leaving that branch as it was', async () => {
@@ -61,7 +65,7 @@ describe('POST /branches over provisioning outcomes', () => {
 
     expect(res.status).toBe(409)
     expect((await res.json<BranchListItemResponse>()).error).toBe(
-      'A branch with this name already exists',
+      'A branch named "feat" already exists',
     )
     expect(await readAccess()).toEqual({ allowedUsers: ['someone-else'] })
   })
@@ -98,7 +102,7 @@ describe('POST /branches over provisioning outcomes', () => {
   })
 
   it('503s while the name holds a fresh, unfinished clone', async () => {
-    const finalPath = path.join(baseRoot, 'feat')
+    const finalPath = path.join(baseRoot, branchKey('feat'))
     await fs.mkdir(baseRoot, { recursive: true })
     await simpleGit().raw([
       'clone',

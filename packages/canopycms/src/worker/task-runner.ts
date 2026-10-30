@@ -168,10 +168,9 @@ function isRateLimitSignal403(err: unknown): boolean {
 // Payload validation helpers — fail fast with clear errors instead of silent `as` casts
 
 /**
- * Whether `branch` carries the reserved settings-branch prefix. Matching on the prefix
- * alone, never on a configured name, is what keeps a content branch out: branch creation
- * rejects the prefix, while a configured name the worker and API disagree on could be a
- * content branch's.
+ * Whether `branch` carries the reserved settings-branch prefix, which routes a submit to a push
+ * with no pull request. A configured settings name without the prefix is not matched here; the
+ * gateway refuses its pull request (`BranchPolicy.assertPullRequestHeadAllowed`).
  */
 function isSettingsBranch(branch: string) {
   return branch.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX)
@@ -370,7 +369,7 @@ export async function executeTask(
         {
           head: branch,
           base: optionalString(payload, 'baseBranch', ctx.baseBranch),
-          title: optionalString(payload, 'title', `Submit ${branch}`),
+          title: optionalString(payload, 'title', `Submit ${editorBranchOf(payload, branch)}`),
           body: optionalString(payload, 'body', ''),
         },
         signal,
@@ -385,7 +384,7 @@ export async function executeTask(
       await ctx.github().updatePullRequest(
         prNumber,
         {
-          title: optionalString(payload, 'title', `Submit ${branch}`),
+          title: optionalString(payload, 'title', `Submit ${editorBranchOf(payload, branch)}`),
           body: optionalString(payload, 'body', ''),
         },
         signal,
@@ -426,7 +425,7 @@ export async function executeTask(
       const body = mergeSectionIntoBody
         ? await refreshCommentsBlock({
             branchRoot: ctx.branchWorkspacePath(branch),
-            branch,
+            branch: editorBranchOf(payload, branch),
             editorUrl: typeof payload.editorUrl === 'string' ? payload.editorUrl : undefined,
             section: queuedBody,
             warn: workerLogWarn,
@@ -438,7 +437,7 @@ export async function executeTask(
           {
             head: branch,
             base,
-            title: optionalString(payload, 'title', `Submit ${branch}`),
+            title: optionalString(payload, 'title', `Submit ${editorBranchOf(payload, branch)}`),
             body,
             // Content submits (api/github-sync.ts) set both.
             markReadyIfDraft: payload.markReadyIfDraft === true,
@@ -540,24 +539,38 @@ export async function executeTask(
       }
       const pr = await ctx.github().getPullRequest(prNumber, signal)
       if (pr.state !== 'open') return { updated: false, skipped: 'not-open' }
-      // A comments.json that does not parse stays so until a comment write rewrites it.
+      // Withheld: GitHub reports a head the gateway would not update the pull request of
+      // (`LocalGitHubGateway.getPullRequest`): a settings branch, one outside the namespace and not a
+      // `legacyBranches` entry, a protected one, or one in another repository.
+      if (pr.body === null) {
+        workerLog(`Not updating PR #${prNumber} for ${branch}: the gateway withholds its body`)
+        return { updated: false, skipped: 'body-withheld' }
+      }
+      // A corrupt file leaves its block as it is and the other block still updates; any other read
+      // error throws, so the task is retried.
       const body = await renderPrCommentsBody({
         branchRoot: branchPath,
-        branch,
+        branch: editorBranchOf(payload, branch),
         editorUrl,
         body: pr.body,
-      }).catch((err: unknown) => {
-        if (err instanceof SyntaxError) throw new PermanentTaskError(getErrorMessage(err))
-        throw err
+        warn: workerLogWarn,
       })
       if (body === undefined) return { updated: false, skipped: 'unchanged' }
       await ctx.github().updatePullRequest(prNumber, { body }, signal)
-      workerLog(`Updated the editor comments on PR #${prNumber} for ${branch}`)
+      workerLog(`Updated the comment and review blocks of PR #${prNumber} for ${branch}`)
       return { updated: true }
     }
     default:
       throw new PermanentTaskError(`Unknown task action: ${action}`)
   }
+}
+
+/**
+ * The name links and a fallback title give the branch: the short name the API queued
+ * (branch-param.ts), else the ref, which the editor resolves too.
+ */
+function editorBranchOf(payload: Record<string, unknown>, branch: string): string {
+  return optionalString(payload, 'editorBranch', branch)
 }
 
 /**
@@ -571,7 +584,18 @@ function metadataBranchOf(task: Task): string | null {
 }
 
 /**
- * Update branch metadata after successful task completion.
+ * Logs an outcome write skipped because `branch`'s workspace has no branch.json whose `name` is
+ * `branch`: none at all, or another branch's that shares its key.
+ */
+function noMetadataToRecord(branch: string, what: string): void {
+  workerLogWarn(`Not recording the ${what} for ${branch}: its workspace has no branch.json for it`)
+}
+
+/**
+ * Update branch metadata after successful task completion. Like every outcome write here, it
+ * updates only a branch.json whose `name` is the task's ref: a workspace without one is not a
+ * branch whose name could be recorded, and one naming another ref is that branch's
+ * (`noMetadataToRecord`).
  */
 export async function updateBranchMetadata(
   ctx: TaskRunnerContext,
@@ -590,32 +614,34 @@ export async function updateBranchMetadata(
 
   try {
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
-    const updates: Record<string, unknown> = {
-      name: branch,
-      syncStatus: 'synced',
-      // save()'s merge only overwrites keys present in this update, so a prior
-      // syncFailureReason would survive this successful sync forever unless
-      // cleared explicitly (same pattern as rebaseFailure elsewhere).
-      syncFailureReason: undefined,
-    }
-    if (result.prUrl) updates.pullRequestUrl = result.prUrl
-    if (result.prNumber) {
-      updates.pullRequestNumber = result.prNumber
-      // As soon as the PR exists the field reads 'open', rather than staying
-      // absent until the next poll cycle observes it. Exception: the git-sync
-      // loop may have archived this branch (PR merged/closed) while the task
-      // was in flight, and a late completion must not downgrade that terminal
-      // state back to 'open'.
-      const current = await BranchMetadataFileManager.loadOnly(branchPath)
-      const terminal =
-        current?.branch.status === 'archived' ||
-        current?.branch.pullRequestState === 'merged' ||
-        current?.branch.pullRequestState === 'closed'
-      if (!terminal) {
-        updates.pullRequestState = 'open'
+    const saved = await meta.update((existing) => {
+      if (existing?.branch.name !== branch) return null
+      const updates: Record<string, unknown> = {
+        syncStatus: 'synced',
+        // save()'s merge only overwrites keys present in this update, so a prior
+        // syncFailureReason would survive this successful sync forever unless
+        // cleared explicitly (same pattern as rebaseFailure elsewhere).
+        syncFailureReason: undefined,
       }
-    }
-    await meta.save({ branch: updates })
+      if (result.prUrl) updates.pullRequestUrl = result.prUrl
+      if (result.prNumber) {
+        updates.pullRequestNumber = result.prNumber
+        // As soon as the PR exists the field reads 'open', rather than staying
+        // absent until the next poll cycle observes it. Exception: the git-sync
+        // loop may have archived this branch (PR merged/closed) while the task
+        // was in flight, and a late completion must not downgrade that terminal
+        // state back to 'open'.
+        const terminal =
+          existing.branch.status === 'archived' ||
+          existing.branch.pullRequestState === 'merged' ||
+          existing.branch.pullRequestState === 'closed'
+        if (!terminal) {
+          updates.pullRequestState = 'open'
+        }
+      }
+      return { branch: updates }
+    })
+    if (saved === null) noMetadataToRecord(branch, `${task.action} outcome`)
   } catch (err) {
     workerLogError(
       `Failed to update metadata for ${branch}:`,
@@ -652,7 +678,7 @@ async function updateBranchMetadataOnFailure(
 
   try {
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
-    const failed = { name: branch, syncStatus: 'sync-failed', syncFailureReason: error } as const
+    const failed = { syncStatus: 'sync-failed', syncFailureReason: error } as const
     const submittedAt = task.payload.submittedAt
     const unlocked =
       options.unlock &&
@@ -666,11 +692,18 @@ async function updateBranchMetadataOnFailure(
           },
         },
         (existing) =>
-          existing?.branch.status === 'submitted' &&
+          existing?.branch.name === branch &&
+          existing.branch.status === 'submitted' &&
           existing.branch.pullRequestNumber === undefined &&
           existing.branch.submittedAt === submittedAt,
       )) !== null
-    if (!unlocked) await meta.save({ branch: failed })
+    if (!unlocked) {
+      const saved = await meta.saveIf(
+        { branch: failed },
+        (existing) => existing?.branch.name === branch,
+      )
+      if (saved === null) noMetadataToRecord(branch, `${task.action} failure`)
+    }
   } catch (err) {
     workerLogError(
       `Failed to update failure metadata for ${branch}:`,
@@ -842,9 +875,11 @@ async function recordPushedToGitHub(
     return
   }
   try {
-    await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).save({
-      branch: { name: branch, pushedToGitHubAt: new Date().toISOString() },
-    })
+    const saved = await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).saveIf(
+      { branch: { pushedToGitHubAt: new Date().toISOString() } },
+      (existing) => existing?.branch.name === branch,
+    )
+    if (saved === null) noMetadataToRecord(branch, 'GitHub push')
   } catch (err) {
     workerLogError(`Failed to record the GitHub push for ${branch}:`, getErrorMessage(err))
   }

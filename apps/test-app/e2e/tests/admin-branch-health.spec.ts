@@ -5,6 +5,7 @@ import { test, expect, type Page } from '@playwright/test'
 import { DEV_ADMIN_USER_ID } from 'canopycms-auth-dev'
 import { EditorPage } from '../fixtures/editor-page'
 import { AdminPage } from '../fixtures/admin-page'
+import { branchKey, branchRef } from '../fixtures/branch-page'
 import { switchUser, installE2EFlag } from '../fixtures/test-users'
 import {
   resetWorkspace,
@@ -60,14 +61,11 @@ async function refreshBranchesTab(adminPage: AdminPage): Promise<void> {
 /**
  * The dirName the server currently considers `isBaseBranch`.
  *
- * NOT necessarily `'main'`: dev mode's effective base branch is
- * `config.defaultBaseBranch ?? 'main'`, and `defaultBaseBranch` is left unset
- * in the test app, so on a checkout whose git HEAD branch isn't literally
- * named `main` (true for this very worktree, e.g. `test/e2e-coverage-sweep`)
- * the server auto-provisions a SEPARATE sanitized-git-branch-named directory
- * and flags THAT one `isBaseBranch`, while the fixtures' own `main` content
- * branch (created explicitly by `ensureMainBranch`) stays a perfectly healthy
- * but non-base branch. Asserting the "base" badge must therefore look up
+ * NOT necessarily `'main'`: dev mode's base branch is the checkout's git HEAD branch when
+ * `defaultBaseBranch` is unset, as in the test app, so on a checkout whose HEAD branch isn't
+ * `main` the server provisions a separate directory for it and flags THAT one `isBaseBranch`,
+ * while `main`, the test app's active branch (provisioned by `ensureMainBranch`), stays a
+ * healthy but non-base branch. Asserting the "base" badge must therefore look up
  * whichever entry the scan actually flagged, not assume the literal name.
  */
 async function getBaseBranchDirName(page: Page): Promise<string> {
@@ -94,6 +92,7 @@ test.describe('Admin Branch Health', () => {
 
   test('lists the base branch and a healthy created branch', async ({ page }) => {
     const branchName = `healthy-${Date.now()}`
+    const key = branchKey(branchName)
     await createBranchViaAPI(BASE_URL, branchName, 'admin')
 
     const adminPage = await openBranchesTab(page)
@@ -107,7 +106,7 @@ test.describe('Admin Branch Health', () => {
     await expect(baseRow).toBeVisible()
     await expect(baseRow.getByText('Base', { exact: true })).toBeVisible()
 
-    const branchRow = adminPage.branchRow(branchName)
+    const branchRow = adminPage.branchRow(key)
     await expect(branchRow).toBeVisible()
     await expect(branchRow).toContainText('Editing')
   })
@@ -116,7 +115,7 @@ test.describe('Admin Branch Health', () => {
     page,
   }) => {
     const dirName = `broken-${Date.now()}`
-    await seedCorruptBranchDir(dirName)
+    await seedCorruptBranchDir(dirName, { checkedOut: dirName })
 
     const adminPage = await openBranchesTab(page)
     await expect(adminPage.branchRow(dirName)).toContainText('Corrupt metadata')
@@ -140,10 +139,9 @@ test.describe('Admin Branch Health', () => {
       .toBe(true)
 
     // Poll rather than read once: the server archives the corrupt file
-    // (fs.rename) under one lock hold, RELEASES the lock, resolves the
-    // repaired branch name (a git spawn), and only then re-acquires the lock
-    // to write the fresh branch.json (repairBranchDirHandler). Between the
-    // rename and that write, branch.json does not exist -- a single
+    // (fs.rename) under one lock hold, RELEASES the lock, and only then
+    // re-acquires it to write the fresh branch.json (repairBranchDirHandler).
+    // Between the rename and that write, branch.json does not exist -- a single
     // readBranchMetadata here can land in the window and throw ENOENT.
     //
     // Expected createdBy is NOT the fixture's 'test-admin' label from
@@ -264,21 +262,22 @@ test.describe('Admin Branch Health', () => {
     page,
   }) => {
     const branchName = `rebase-fail-${Date.now()}`
+    const key = branchKey(branchName)
     await createBranchViaAPI(BASE_URL, branchName, 'admin')
 
     const now = new Date().toISOString()
     const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60_000).toISOString()
-    await patchBranchMetadata(branchName, {
+    await patchBranchMetadata(key, {
       rebaseFailure: { message: 'could not apply abc123', firstAt: twoHoursAgo, lastAt: now },
     })
 
     const adminPage = await openBranchesTab(page)
-    await expect(adminPage.rebaseFailureIcon(branchName)).toBeVisible()
+    await expect(adminPage.rebaseFailureIcon(key)).toBeVisible()
 
     await test.step('suppressed once the branch is submitted', async () => {
-      await patchBranchMetadata(branchName, { status: 'submitted' })
+      await patchBranchMetadata(key, { status: 'submitted' })
       await refreshBranchesTab(adminPage)
-      await expect(adminPage.rebaseFailureIcon(branchName)).toHaveCount(0)
+      await expect(adminPage.rebaseFailureIcon(key)).toHaveCount(0)
     })
   })
 
@@ -286,6 +285,8 @@ test.describe('Admin Branch Health', () => {
     page,
   }) => {
     const branchName = `merge-approved-${Date.now()}`
+    const ref = branchRef(branchName)
+    const key = branchKey(branchName)
     // The editor makes the branch: its creator cannot approve it.
     await createBranchViaAPI(BASE_URL, branchName, 'editor')
     await saveHomeChangeViaAPI(BASE_URL, branchName, 'editor')
@@ -293,10 +294,10 @@ test.describe('Admin Branch Health', () => {
     expect(submitRes.ok).toBe(true)
     const approveRes = await approveBranchViaAPI(BASE_URL, branchName, 'admin')
     expect(approveRes.ok).toBe(true)
-    await patchBranchMetadata(branchName, { pullRequestNumber: 42 })
+    await patchBranchMetadata(key, { pullRequestNumber: 42 })
 
     const adminPage = await openBranchesTab(page)
-    const markMergedButton = adminPage.markMergedButton(branchName)
+    const markMergedButton = adminPage.markMergedButton(ref)
     await expect(markMergedButton).toBeEnabled()
 
     await markMergedButton.click()
@@ -305,22 +306,23 @@ test.describe('Admin Branch Health', () => {
     // Before commit c101cde this button rendered for 'approved' branches too,
     // but the server only accepted 'submitted' and 400'd -- this is that
     // regression, end to end.
-    await expect.poll(async () => (await readBranchMetadata(branchName)).status).toBe('archived')
+    await expect.poll(async () => (await readBranchMetadata(key)).status).toBe('archived')
   })
 
   test('duplicate content IDs: the badge opens its own confirmation; cancel changes nothing, confirm archives the duplicate', async ({
     page,
   }) => {
     const branchName = `dup-ids-${Date.now()}`
+    const key = branchKey(branchName)
     await createBranchViaAPI(BASE_URL, branchName, 'admin')
-    const { keptFile, droppedFile } = await seedDuplicateContentId(branchName)
+    const { keptFile, droppedFile } = await seedDuplicateContentId(key)
     const repairRequests: string[] = []
     page.on('request', (req) => {
       if (req.url().includes('/repair-content-duplicates')) repairRequests.push(req.url())
     })
 
     const adminPage = await openBranchesTab(page)
-    const badge = adminPage.duplicateIdsBadge(branchName)
+    const badge = adminPage.duplicateIdsBadge(key)
     await expect(badge).toHaveText('1 duplicate ID')
     const dialog = page.getByRole('dialog', { name: 'Fix duplicate content IDs' })
 
@@ -333,7 +335,7 @@ test.describe('Admin Branch Health', () => {
       await expect(dialog).toBeHidden()
 
       expect(repairRequests).toEqual([])
-      const files = await listPostsCollectionFiles(branchName)
+      const files = await listPostsCollectionFiles(key)
       expect(files).toEqual(expect.arrayContaining([keptFile, droppedFile]))
       expect(files.some((f) => f.startsWith('.duplicate-content-id.'))).toBe(false)
       await expect(badge).toBeVisible()
@@ -346,7 +348,7 @@ test.describe('Admin Branch Health', () => {
       await expect.poll(() => repairRequests.length).toBe(1)
       await expect
         .poll(async () => {
-          const files = await listPostsCollectionFiles(branchName)
+          const files = await listPostsCollectionFiles(key)
           return {
             kept: files.includes(keptFile),
             dropped: files.includes(droppedFile),

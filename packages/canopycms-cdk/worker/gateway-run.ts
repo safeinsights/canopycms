@@ -24,7 +24,9 @@ import {
   redactEgress,
   registerPrivateKey,
   registerSecretText,
+  resolveBranchNamespace,
   resolveWorkerGitHubAuth,
+  resolveWorkerSettingsBranch,
   type GitHubGateway,
   type GitHubGatewayListen,
   type GitHubGatewayServer,
@@ -42,7 +44,12 @@ import {
 import type { GetSecretOptions } from './secrets'
 import type { ReactiveSecret } from './credential-refresh'
 import { createClerkSnapshotFetcher, parseClerkOrganizationsAsGroups } from './clerk-refresh'
-import { parseProtectedBranches, readRepoEnv, readWorkerCredentials } from './run'
+import {
+  parseLegacyBranches,
+  parseProtectedBranches,
+  readRepoEnv,
+  readWorkerCredentials,
+} from './run'
 import type { TerminationNotice, TerminationWatchOptions } from './termination-watch'
 
 /**
@@ -195,6 +202,19 @@ async function buildGateway(
     timeoutMs: DEFAULT_TASK_TIMEOUT,
     baseBranch: env.CANOPYCMS_BASE_BRANCH || undefined,
     protectedBranches: parseProtectedBranches(env),
+    // Resolved as the worker resolves its own (`CANOPYCMS_SETTINGS_BRANCH`, else from
+    // `CANOPYCMS_DEPLOYMENT_NAME`), so the one settings branch pushed is the worker's.
+    settingsBranch: resolveWorkerSettingsBranch({
+      settingsBranch: env.CANOPYCMS_SETTINGS_BRANCH,
+      deploymentName: env.CANOPYCMS_DEPLOYMENT_NAME,
+    }),
+    legacyBranches: parseLegacyBranches(env),
+    // From this unit's own environment: never from anything the CMS Lambda can write.
+    branchNamespace: resolveBranchNamespace(
+      { deploymentName: env.CANOPYCMS_DEPLOYMENT_NAME },
+      'prod',
+      env,
+    ),
     authSnapshot: createClerkSnapshotFetcher({
       secret: clerkSecret,
       useOrganizationsAsGroups,
@@ -226,7 +246,13 @@ export function failedGateway(
       fatalError: message,
       preflight: 'pending',
       clerkConfigured: false,
-      protectedBranches: { configured: [], githubDefault: null },
+      branchPolicy: {
+        configured: [],
+        githubDefault: null,
+        namespace: '',
+        legacy: [],
+        settingsBranch: null,
+      },
     }),
     defaultBranch: refuse,
     isProtectedBranch: refuse,

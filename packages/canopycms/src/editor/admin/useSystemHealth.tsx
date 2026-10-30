@@ -318,6 +318,7 @@ export function useSystemHealth(options: UseSystemHealthOptions): UseSystemHealt
       try {
         const result = await apiClient.workflow.markMerged({ branch: branchName })
         if (!result.ok) throw new Error(result.error || 'Failed to mark branch as merged')
+        // Diagnosis keeps the full ref; the Branches table beside it shows the workspace directory.
         notifications.show({ message: `Branch "${branchName}" marked as merged`, color: 'green' })
         await refresh()
       } catch (err) {

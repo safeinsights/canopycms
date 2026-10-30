@@ -39,12 +39,14 @@ collapses two cases that would otherwise both fetch:
 
 Each manager hook's imperative reload function (`loadBranches`,
 `loadComments`, `useEntryManager.refreshEntries`) does **not** call SWR's
-`mutate(key)` revalidate form. It fetches directly (an independent,
-un-deduped network call — callers that just mutated content need to see
-their own write reflected immediately, not coalesced with a
-still-in-flight automatic load) and then writes the result into the SWR
+`mutate(key)` revalidate form. It fetches directly (un-deduped, so a caller that just wrote
+sees its own write, not a still-in-flight automatic load) and then writes the result into the SWR
 cache with `mutate(key, data, { revalidate: false })`. That keeps the
 bound data hook's reactive `data` in sync without a second request.
+
+`useBranchChangesData.ts` (`canopy:changes:${branch}[:${logicalPath}[?from=${from}][#${id}]]`) reloads by revalidating
+(`mutate()`), which keeps the last-started read, and drops an older read's late error, which SWR
+2.4 shows.
 
 `useEntryManager.refreshEntries` additionally guards every commit (from
 both the automatic load and explicit calls) with a shared monotonic
@@ -63,8 +65,8 @@ share cache state through SWR's real global cache.
 
 Branch switch → `branchName` state changes → each data hook's key changes →
 SWR fetches the new key automatically (previous key's cache slot is
-untouched, so a slow response for the branch you switched away from can
-never land in the new branch's state):
+untouched, so a slow response for the old branch never lands in the new
+one's state):
 
 - `useBranchesData` is NOT branch-keyed (the branches list isn't
   branch-scoped data), so a branch switch does not re-fetch it

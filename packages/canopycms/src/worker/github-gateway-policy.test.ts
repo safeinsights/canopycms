@@ -66,7 +66,26 @@ function octokitStub() {
       create: vi.fn().mockResolvedValue({ data: { number: 1, html_url: 'https://x.test/1' } }),
       update: vi.fn().mockResolvedValue({ data: {} }),
       list: vi.fn().mockResolvedValue({ data: [] }),
+      get: vi.fn().mockResolvedValue({ data: pullRequestHead('canopycms/prod/feature') }),
     },
+    graphql: vi.fn().mockResolvedValue({}),
+  }
+}
+
+/** The id of the repository the gateway asks about, and so of every pull request's base. */
+const REPO_ID = 1001
+
+/** A `pulls.get` answer whose head is `ref` in the repository `repoId` (null: a deleted fork). */
+function pullRequestHead(
+  ref: string,
+  repoId: number | null = REPO_ID,
+  fullName = 'test-owner/test-repo',
+) {
+  return {
+    number: 2,
+    node_id: 'PR_2',
+    head: { ref, repo: repoId === null ? null : { id: repoId, full_name: fullName } },
+    base: { ref: 'main', repo: { id: REPO_ID, full_name: 'test-owner/test-repo' } },
   }
 }
 
@@ -88,6 +107,7 @@ function gateway(
       workspacePath: path.join(root, 'workspace'),
       timeoutMs: 30_000,
       remoteUrl: githubPath,
+      settingsBranch: 'canopycms-settings-prod',
       ...overrides,
     }),
   )
@@ -180,11 +200,14 @@ describe('pushes', () => {
   })
 
   it('pushes a branch that differs from a protected one only in case, a ref of its own on GitHub', async () => {
-    const sha = await onMain('production')
+    const sha = await onMain('canopycms/prod/production')
 
-    await pushVia(gateway({ baseBranch: 'Production' }), 'production')
+    await pushVia(
+      gateway({ protectedBranches: ['canopycms/prod/Production'] }),
+      'canopycms/prod/production',
+    )
 
-    expect(await tip('refs/heads/production')).toBe(sha)
+    expect(await tip('refs/heads/canopycms/prod/production')).toBe(sha)
   })
 
   it('pushes the settings branch whatever glob protectedBranches holds', async () => {
@@ -213,20 +236,20 @@ describe('pushes', () => {
   })
 
   it("reads GitHub's default branch once per TTL", async () => {
-    await onMain('feature')
+    await onMain('canopycms/prod/feature')
     const github = gateway({ fetchCoalesceMs: 0 })
     const credentialed = spyCredentialedGit()
     const now = Date.now()
     const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
 
-    await pushVia(github, 'feature')
-    await commitAndPush(remoteGitPath, 'refs/heads/feature', 'second.txt')
-    await pushVia(github, 'feature')
+    await pushVia(github, 'canopycms/prod/feature')
+    await commitAndPush(remoteGitPath, 'refs/heads/canopycms/prod/feature', 'second.txt')
+    await pushVia(github, 'canopycms/prod/feature')
     expect(credentialed.filter((command) => command === 'ls-remote')).toHaveLength(1)
 
     clock.mockReturnValue(now + DEFAULT_BRANCH_TTL_MS)
-    await commitAndPush(remoteGitPath, 'refs/heads/feature', 'third.txt')
-    await pushVia(github, 'feature')
+    await commitAndPush(remoteGitPath, 'refs/heads/canopycms/prod/feature', 'third.txt')
+    await pushVia(github, 'canopycms/prod/feature')
     expect(credentialed.filter((command) => command === 'ls-remote')).toHaveLength(2)
   })
 })
@@ -252,10 +275,10 @@ describe('deletions', () => {
   it('deletes any other branch', async () => {
     const octokit = octokitStub()
 
-    await gateway({ octokit: octokit as unknown as Octokit }).deleteBranch('feature')
+    await gateway({ octokit: octokit as unknown as Octokit }).deleteBranch('canopycms/prod/feature')
 
     expect(octokit.git.deleteRef).toHaveBeenCalledWith(
-      expect.objectContaining({ ref: 'heads/feature' }),
+      expect.objectContaining({ ref: 'heads/canopycms/prod/feature' }),
     )
   })
 })
@@ -288,10 +311,10 @@ describe('pull requests', () => {
     const octokit = octokitStub()
     const github = gateway({ octokit: octokit as unknown as Octokit, baseBranch: 'production' })
 
-    await github.createPullRequest(request('feature', 'production'))
+    await github.createPullRequest(request('canopycms/prod/feature', 'production'))
 
     expect(octokit.pulls.create).toHaveBeenCalledWith(
-      expect.objectContaining({ head: 'feature', base: 'production' }),
+      expect.objectContaining({ head: 'canopycms/prod/feature', base: 'production' }),
     )
   })
 
@@ -300,13 +323,319 @@ describe('pull requests', () => {
     const github = gateway({ octokit: octokit as unknown as Octokit })
 
     await expect(
-      github.createPullRequest({ ...request('feature'), title: 't'.repeat(1025) }),
+      github.createPullRequest({ ...request('canopycms/prod/feature'), title: 't'.repeat(1025) }),
     ).rejects.toMatchObject({ reason: 'too-long' })
     await expect(github.updatePullRequest(3, { body: 'b'.repeat(65_537) })).rejects.toMatchObject({
       reason: 'too-long',
     })
     expect(octokit.pulls.create).not.toHaveBeenCalled()
     expect(octokit.pulls.update).not.toHaveBeenCalled()
+  })
+})
+
+describe('the namespace', () => {
+  it('refuses to push a branch outside it, plain or leased, leaving GitHub alone', async () => {
+    await onMain('developer-branch')
+    const github = gateway()
+
+    for (const lease of [undefined, '0'.repeat(40)]) {
+      const caught = await pushVia(github, 'developer-branch', lease).catch((err: unknown) => err)
+      expect(caught).toBeInstanceOf(RefusedPushError)
+      expect(caught).toMatchObject({ reason: 'outside-namespace' })
+      expect(isPermanentTaskFailure(caught)).toBe(true)
+    }
+    expect(await tip('refs/heads/developer-branch')).toBeNull()
+  })
+
+  it('refuses to push into it while GitHub has a branch named after part of it', async () => {
+    await git('--git-dir', githubPath, 'branch', 'canopycms/prod', 'main')
+    await onMain('canopycms/prod/spring')
+    const github = gateway()
+
+    const caught = await pushVia(github, 'canopycms/prod/spring').catch((err: unknown) => err)
+
+    expect(caught).toBeInstanceOf(RefusedPushError)
+    expect(caught).toMatchObject({
+      message: expect.stringContaining('GitHub has a branch named "canopycms/prod"'),
+    })
+    expect(isPermanentTaskFailure(caught)).toBe(true)
+  })
+
+  it('refuses to push a branch while GitHub has a branch inside it, and pushes one beside it', async () => {
+    await git('--git-dir', githubPath, 'branch', 'canopycms/prod/spring/draft', 'main')
+    await onMain('canopycms/prod/spring')
+    const besideSha = await onMain('canopycms/prod/spring-draft')
+    const github = gateway()
+
+    const caught = await pushVia(github, 'canopycms/prod/spring').catch((err: unknown) => err)
+    await pushVia(github, 'canopycms/prod/spring-draft')
+
+    expect(caught).toBeInstanceOf(RefusedPushError)
+    expect(caught).toMatchObject({
+      message: expect.stringContaining(
+        'GitHub has a branch named "canopycms/prod/spring/draft" inside it',
+      ),
+    })
+    expect(isPermanentTaskFailure(caught)).toBe(true)
+    expect(await tip('refs/heads/canopycms/prod/spring-draft')).toBe(besideSha)
+  })
+
+  it('pushes a legacyBranches entry, by its exact name', async () => {
+    const sha = await onMain('spring/update')
+    const github = gateway({ legacyBranches: ['spring/update'] })
+
+    await pushVia(github, 'spring/update')
+
+    expect(await tip('refs/heads/spring/update')).toBe(sha)
+  })
+
+  it("refuses another deployment's settings branch, and pushes its own outside the prefix", async () => {
+    await onMain('canopycms-settings-staging')
+    const ownSha = await onMain('site-settings')
+    const github = gateway({ settingsBranch: 'site-settings' })
+
+    const caught = await pushVia(github, 'canopycms-settings-staging').catch((err: unknown) => err)
+    await pushVia(github, 'site-settings')
+
+    expect(caught).toMatchObject({ reason: 'other-settings' })
+    expect(await tip('refs/heads/canopycms-settings-staging')).toBeNull()
+    expect(await tip('refs/heads/site-settings')).toBe(ownSha)
+  })
+
+  it('refuses to delete, or open a pull request from, a branch outside it', async () => {
+    const octokit = octokitStub()
+    const github = gateway({ octokit: octokit as unknown as Octokit })
+    const request = { head: 'developer-branch', base: 'main', title: 'T', body: 'B' }
+
+    for (const refused of [
+      () => github.deleteBranch('developer-branch'),
+      () => github.createPullRequest(request),
+      () => github.createOrUpdatePullRequest(request),
+    ]) {
+      await expect(refused()).rejects.toMatchObject({ reason: 'outside-namespace' })
+    }
+    expect(octokit.git.deleteRef).not.toHaveBeenCalled()
+    expect(octokit.pulls.create).not.toHaveBeenCalled()
+    expect(octokit.pulls.list).not.toHaveBeenCalled()
+  })
+
+  it('says a refused delete leaves the branch on GitHub, and how to delete it there', async () => {
+    const caught = await gateway({ octokit: octokitStub() as unknown as Octokit })
+      .deleteBranch('developer-branch')
+      .catch((err: unknown) => err)
+
+    expect(String(caught)).toContain('so the branch stays on GitHub')
+    expect(String(caught)).toContain('add it to legacyBranches, retry this task in System health')
+  })
+})
+
+describe('pull requests by number', () => {
+  /** Update, close and draft pull request 2, each settled to its error or null. */
+  async function actOnPullRequest(github: GitHubGateway) {
+    const settle = (work: Promise<void>) =>
+      work.then(
+        () => null,
+        (err: unknown) => err,
+      )
+    return [
+      await settle(github.updatePullRequest(2, { title: 'T', body: 'B' })),
+      await settle(github.updatePullRequest(2, { state: 'closed' })),
+      await settle(github.convertPullRequestToDraft(2)),
+    ]
+  }
+
+  it.each([
+    ['outside the namespace', pullRequestHead('developer-branch'), 'outside-namespace'],
+    ['protected', pullRequestHead('main'), 'protected'],
+    ['a settings branch', pullRequestHead('canopycms-settings-prod'), 'settings'],
+    // A fork may share the repository's name; only its id tells it apart.
+    ['in a fork', pullRequestHead('canopycms/prod/feature', 2002), 'outside-namespace'],
+    ['in a deleted fork', pullRequestHead('canopycms/prod/feature', null), 'outside-namespace'],
+  ] as const)('refuses one whose head is %s, permanently', async (_label, answer, reason) => {
+    const octokit = octokitStub()
+    octokit.pulls.get.mockResolvedValue({ data: answer })
+    const github = gateway({ octokit: octokit as unknown as Octokit })
+
+    for (const caught of await actOnPullRequest(github)) {
+      expect(caught).toBeInstanceOf(GatewayRefusalError)
+      expect(caught).toMatchObject({ operation: 'pull-request', reason })
+      expect(isPermanentTaskFailure(caught)).toBe(true)
+    }
+    expect(octokit.pulls.update).not.toHaveBeenCalled()
+    expect(octokit.graphql).not.toHaveBeenCalled()
+  })
+
+  it("acts on one whose head is this repository's, in the namespace or on the legacy list", async () => {
+    for (const [answer, options] of [
+      // Renamed since it was configured: GitHub answers the new name, and the same id.
+      [pullRequestHead('canopycms/prod/feature', REPO_ID, 'new-owner/new-name'), {}],
+      [pullRequestHead('spring'), { legacyBranches: ['spring'] }],
+    ] as const) {
+      const octokit = octokitStub()
+      octokit.pulls.get.mockResolvedValue({ data: answer })
+      const github = gateway({ ...options, octokit: octokit as unknown as Octokit })
+
+      expect(await actOnPullRequest(github)).toEqual([null, null, null])
+      expect(octokit.pulls.update).toHaveBeenCalledTimes(2)
+      expect(octokit.graphql).toHaveBeenCalledTimes(1)
+    }
+  })
+
+  it('fails as the read failed, not as a refusal, when the pull request cannot be read', async () => {
+    const octokit = octokitStub()
+    octokit.pulls.get.mockRejectedValue(await octokitErrorFor(502, { message: 'Bad Gateway' }))
+    const github = gateway({ octokit: octokit as unknown as Octokit })
+
+    for (const caught of await actOnPullRequest(github)) {
+      expect(caught).not.toBeInstanceOf(GatewayRefusalError)
+      expect(caught).toMatchObject({ status: 502 })
+    }
+    expect(octokit.pulls.update).not.toHaveBeenCalled()
+  })
+})
+
+describe('reading a pull request by number', () => {
+  const read = async (
+    answer: object,
+    options: Partial<LocalGitHubGatewayOptions> = {},
+    octokit = octokitStub(),
+  ) => {
+    octokit.pulls.get.mockResolvedValue({
+      data: {
+        merged: true,
+        merged_at: '2026-10-29T10:00:00Z',
+        state: 'closed',
+        body: 'Notes',
+        ...answer,
+      },
+    })
+    return gateway({ ...options, octokit: octokit as unknown as Octokit }).getPullRequest(2)
+  }
+
+  it('answers the body of one whose head is in the namespace, in this repository', async () => {
+    expect(await read(pullRequestHead('canopycms/prod/feature'))).toEqual({
+      merged: true,
+      merged_at: '2026-10-29T10:00:00Z',
+      state: 'closed',
+      node_id: 'PR_2',
+      body: 'Notes',
+    })
+  })
+
+  it('answers the body of one whose head is on the legacy list, as the gateway updates it', async () => {
+    const answer = await read(pullRequestHead('spring'), { legacyBranches: ['spring'] })
+
+    expect(answer.body).toBe('Notes')
+  })
+
+  it("answers an empty body as '', which only a withheld body is not", async () => {
+    expect((await read({ ...pullRequestHead('canopycms/prod/feature'), body: null })).body).toBe('')
+  })
+
+  it.each([
+    ['outside the namespace', pullRequestHead('developer-branch'), {}],
+    [
+      'outside the namespace and not on the legacy list',
+      pullRequestHead('summer'),
+      { legacyBranches: ['spring'] },
+    ],
+    [
+      'on the legacy list, in a fork',
+      pullRequestHead('spring', 2002),
+      { legacyBranches: ['spring'] },
+    ],
+    [
+      'on the legacy list, protected',
+      pullRequestHead('spring'),
+      { legacyBranches: ['spring'], protectedBranches: ['spring'] },
+    ],
+    ['the settings branch', pullRequestHead('canopycms-settings-prod'), {}],
+    ['protected, outside the namespace', pullRequestHead('main'), {}],
+    [
+      'protected, inside the namespace',
+      pullRequestHead('canopycms/prod/keep-1'),
+      { protectedBranches: ['canopycms/prod/keep-*'] },
+    ],
+    ['in a fork', pullRequestHead('canopycms/prod/feature', 2002), {}],
+    ['in a deleted fork', pullRequestHead('canopycms/prod/feature', null), {}],
+  ] as const)(
+    'withholds the body of one whose head is %s, answering its merge state',
+    async (_label, answer, options) => {
+      expect(await read(answer, options)).toEqual({
+        merged: true,
+        merged_at: '2026-10-29T10:00:00Z',
+        state: 'closed',
+        node_id: 'PR_2',
+        body: null,
+      })
+    },
+  )
+
+  it("withholds the body of one whose head is GitHub's default branch, inside the namespace", async () => {
+    const octokit = octokitStub()
+    octokit.repos.get.mockResolvedValue({ data: { default_branch: 'canopycms/prod/feature' } })
+
+    expect((await read(pullRequestHead('canopycms/prod/feature'), {}, octokit)).body).toBeNull()
+  })
+
+  it.each([
+    ['in the namespace', pullRequestHead('canopycms/prod/feature'), {}, 'Notes'],
+    [
+      'protected by protectedBranches',
+      pullRequestHead('canopycms/prod/keep-1'),
+      { protectedBranches: ['canopycms/prod/keep-*'] },
+      null,
+    ],
+    ['on the legacy list', pullRequestHead('spring'), { legacyBranches: ['spring'] }, 'Notes'],
+    ['outside the namespace', pullRequestHead('developer-branch'), {}, null],
+    ['in a fork', pullRequestHead('canopycms/prod/feature', 2002), {}, null],
+  ] as const)(
+    "answers merge state when GitHub's default branch cannot be read, judging a head %s by protectedBranches alone",
+    async (_label, answer, options, body) => {
+      const octokit = octokitStub()
+      octokit.repos.get.mockRejectedValue(await octokitErrorFor(502, { message: 'Bad Gateway' }))
+
+      expect(await read(answer, options, octokit)).toEqual({
+        merged: true,
+        merged_at: '2026-10-29T10:00:00Z',
+        state: 'closed',
+        node_id: 'PR_2',
+        body,
+      })
+    },
+  )
+})
+
+describe('a pull request read after the default branch read expired', () => {
+  it('withholds the body of one whose head is the default as last read when the re-read fails, answering its merge state', async () => {
+    const octokit = octokitStub()
+    octokit.repos.get.mockResolvedValue({ data: { default_branch: 'canopycms/prod/feature' } })
+    octokit.pulls.get.mockResolvedValue({
+      data: {
+        ...pullRequestHead('canopycms/prod/feature'),
+        merged: true,
+        merged_at: '2026-10-29T10:00:00Z',
+        state: 'closed',
+        body: 'Notes',
+      },
+    })
+    const github = gateway({ octokit: octokit as unknown as Octokit })
+    const now = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
+    await github.getPullRequest(2)
+    expect(octokit.repos.get).toHaveBeenCalledTimes(1)
+
+    clock.mockReturnValue(now + DEFAULT_BRANCH_TTL_MS)
+    octokit.repos.get.mockRejectedValue(await octokitErrorFor(502, { message: 'Bad Gateway' }))
+
+    expect(await github.getPullRequest(2)).toEqual({
+      merged: true,
+      merged_at: '2026-10-29T10:00:00Z',
+      state: 'closed',
+      node_id: 'PR_2',
+      body: null,
+    })
+    expect(octokit.repos.get).toHaveBeenCalledTimes(2)
   })
 })
 
@@ -344,7 +673,7 @@ describe('branch names', () => {
 
     await expect(
       gateway({ octokit: octokit as unknown as Octokit }).createPullRequest(
-        request('feature', name),
+        request('canopycms/prod/feature', name),
       ),
     ).rejects.toMatchObject({ reason: 'invalid' })
     expect(octokit.pulls.create).not.toHaveBeenCalled()
@@ -355,7 +684,7 @@ describe('branch names', () => {
 
     await expect(
       gateway({ octokit: octokit as unknown as Octokit }).createPullRequest(
-        request('feature', 'b'.repeat(256)),
+        request('canopycms/prod/feature', 'b'.repeat(256)),
       ),
     ).rejects.toMatchObject({ reason: 'invalid' })
     expect(octokit.pulls.create).not.toHaveBeenCalled()
@@ -365,7 +694,7 @@ describe('branch names', () => {
     const octokit = octokitStub()
 
     await gateway({ octokit: octokit as unknown as Octokit }).createPullRequest(
-      request('feature', 'd\u00e9veloppement'),
+      request('canopycms/prod/feature', 'd\u00e9veloppement'),
     )
 
     expect(octokit.pulls.create).toHaveBeenCalledWith(
@@ -376,11 +705,12 @@ describe('branch names', () => {
 
 describe('a hostile worker', () => {
   it('drives every refusal without arming the credential re-read or ending fetch reuse', async () => {
-    await onMain('feature')
+    await onMain('canopycms/prod/feature')
     await onMain('canopycms-settings-prod')
     const blob = await git('--git-dir', githubPath, 'rev-parse', 'main:main.txt')
     const provider = vi.fn(async () => undefined)
     const octokit = octokitStub()
+    octokit.pulls.get.mockResolvedValue({ data: pullRequestHead('developer-branch') })
     const github = gateway(
       { octokit: octokit as unknown as Octokit, protectedBranches: ['release/*'] },
       provider,
@@ -395,21 +725,32 @@ describe('a hostile worker', () => {
       pushOf('main', main),
       pushOf('release/1', main),
       pushOf('canopycms-settings-prod', main, main),
-      pushOf('feature', blob),
+      pushOf('canopycms/prod/feature', blob),
       pushOf('refs/heads/main', main),
       pushOf('m%61in', main),
       github.deleteBranch('main'),
       github.deleteBranch('canopycms-settings-prod'),
       github.deleteBranch('-x'),
-      github.createPullRequest({ head: 'main', base: 'feature', title: 'T', body: 'B' }),
+      github.createPullRequest({
+        head: 'main',
+        base: 'canopycms/prod/feature',
+        title: 'T',
+        body: 'B',
+      }),
       github.createOrUpdatePullRequest({ head: 'release/1', base: 'main', title: 'T', body: '' }),
       github.createPullRequest({
-        head: 'feature',
+        head: 'canopycms/prod/feature',
         base: 'main',
         title: 't'.repeat(2000),
         body: '',
       }),
       github.updatePullRequest(1, { title: 't'.repeat(2000) }),
+      pushOf('developer-branch', main),
+      pushOf('canopycms-settings-staging', main),
+      github.deleteBranch('developer-branch'),
+      github.createPullRequest({ head: 'developer-branch', base: 'main', title: 'T', body: '' }),
+      github.updatePullRequest(2, { state: 'closed' }),
+      github.convertPullRequestToDraft(2),
     ]
     const caught = await Promise.all(
       refusals.map((p) =>
@@ -432,6 +773,7 @@ describe('a hostile worker', () => {
     expect(octokit.git.deleteRef).not.toHaveBeenCalled()
     expect(octokit.pulls.create).not.toHaveBeenCalled()
     expect(octokit.pulls.update).not.toHaveBeenCalled()
+    expect(octokit.graphql).not.toHaveBeenCalled()
   })
 })
 
@@ -504,11 +846,13 @@ describe('the canary sweep', () => {
         create: vi.fn().mockRejectedValue(octokitError),
         get: vi.fn().mockResolvedValue({
           data: {
+            ...pullRequestHead('canopycms/prod/feature'),
             merged: false,
             merged_at: null,
             state: 'open',
             node_id: TOKEN,
             title: `x ${pair}`,
+            body: `y ${pair}`,
           },
         }),
       },
@@ -517,7 +861,7 @@ describe('the canary sweep', () => {
     const provider = vi.fn(async () => {
       throw new Error(`could not read the secret: ${FORMS.join(' ')}`)
     })
-    const sha = await onMain('feature')
+    const sha = await onMain('canopycms/prod/feature')
     const failing = tokenGateway(
       { remoteUrl: named, octokit: octokit as unknown as Octokit },
       provider,
@@ -530,9 +874,14 @@ describe('the canary sweep', () => {
     const caught = await Promise.all(
       [
         failing.fetch({ have: [] }),
-        failing.push({ branch: 'feature', sha, prerequisites: [] }),
+        failing.push({ branch: 'canopycms/prod/feature', sha, prerequisites: [] }),
         failingToo.fetch({ have: [] }),
-        failing.createPullRequest({ head: 'feature', base: 'main', title: 'T', body: 'B' }),
+        failing.createPullRequest({
+          head: 'canopycms/prod/feature',
+          base: 'main',
+          title: 'T',
+          body: 'B',
+        }),
       ].map((attempt) =>
         attempt.then(
           () => null,
@@ -560,7 +909,7 @@ describe('the canary sweep', () => {
 
 describe('an unread default branch', () => {
   it('fails a push as transient, caching nothing, when its ls-remote fails', async () => {
-    await onMain('feature')
+    await onMain('canopycms/prod/feature')
     const provider = vi.fn(async () => undefined)
     const github = gateway({}, provider)
     const sent: string[] = []
@@ -582,20 +931,20 @@ describe('an unread default branch', () => {
     }) as typeof childProcess.spawn)
     syncBuiltinESMExports()
 
-    const caught = await pushVia(github, 'feature').catch((err: unknown) => err)
+    const caught = await pushVia(github, 'canopycms/prod/feature').catch((err: unknown) => err)
     await new Promise((resolve) => setTimeout(resolve, 50))
 
     expect(caught).toBeInstanceOf(GitHubTransientError)
     expect(caught).toMatchObject({ code: 'default-branch-unread' })
     expect(isPermanentTaskFailure(caught)).toBe(false)
     expect(provider).toHaveBeenCalledTimes(1)
-    expect(await tip('refs/heads/feature')).toBeNull()
+    expect(await tip('refs/heads/canopycms/prod/feature')).toBeNull()
 
     failLsRemote = false
-    await pushVia(github, 'feature')
+    await pushVia(github, 'canopycms/prod/feature')
     // Read again, not taken from a cache the failure filled.
     expect(sent).toEqual(['ls-remote', 'ls-remote'])
-    expect(await tip('refs/heads/feature')).not.toBeNull()
+    expect(await tip('refs/heads/canopycms/prod/feature')).not.toBeNull()
   })
 
   it("passes a deletion's repos.get failure on unchanged, arming the re-read and caching nothing", async () => {
@@ -605,7 +954,7 @@ describe('an unread default branch', () => {
     const provider = vi.fn(async () => undefined)
     const github = gateway({ octokit: octokit as unknown as Octokit }, provider)
 
-    const caught = await github.deleteBranch('feature').catch((err: unknown) => err)
+    const caught = await github.deleteBranch('canopycms/prod/feature').catch((err: unknown) => err)
     await new Promise((resolve) => setTimeout(resolve, 50))
 
     if (GATEWAY_TRANSPORT === 'local') expect(caught).toBe(notFound)
@@ -615,7 +964,7 @@ describe('an unread default branch', () => {
     expect(provider).toHaveBeenCalledTimes(1)
     expect(octokit.git.deleteRef).not.toHaveBeenCalled()
 
-    await github.deleteBranch('feature')
+    await github.deleteBranch('canopycms/prod/feature')
     expect(octokit.repos.get).toHaveBeenCalledTimes(2)
     expect(octokit.git.deleteRef).toHaveBeenCalledTimes(1)
   })
@@ -642,7 +991,7 @@ describe("the pull request helper's warnings", () => {
     const github = gateway({ octokit: { ...octokit, graphql } as unknown as Octokit })
 
     await github.createOrUpdatePullRequest({
-      head: 'feature',
+      head: 'canopycms/prod/feature',
       base: 'main',
       title: 'T',
       body: 'B',

@@ -1,6 +1,7 @@
 export {
   ApiClientProvider,
   useApiClient,
+  useBranchSegments,
   useOptionalApiClient,
   type ApiClient,
   type ApiClientProviderProps,

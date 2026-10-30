@@ -122,6 +122,7 @@ const tokenDeployment = synth({
   clerkSecretKeySecretArn: ARN('clerk'),
   clerkSecretKeySecretJsonField: 'secretKey',
   protectedBranches: ['release/*'],
+  legacyBranches: ['spring'],
   workerCapacity: { type: 'spot' },
 })
 const appDeployment = synth({
@@ -134,7 +135,7 @@ const all = userDataLines(tokenDeployment)
 
 /** Names the worker must never hold: secrets, names of secrets, AWS and what only the gateway enforces. */
 const GATEWAY_ONLY =
-  /^(?:CANOPYCMS_GITHUB_TOKEN|CANOPYCMS_GITHUB_APP_|CLERK_SECRET_KEY|AWS_|CANOPYCMS_PROTECTED_BRANCHES$|CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS$|CANOPYCMS_WORKER_CAPACITY$)/
+  /^(?:CANOPYCMS_GITHUB_TOKEN|CANOPYCMS_GITHUB_APP_|CLERK_SECRET_KEY|AWS_|CANOPYCMS_PROTECTED_BRANCHES$|CANOPYCMS_BRANCH_NAMESPACE$|CANOPYCMS_LEGACY_BRANCHES$|CANOPYCMS_CLERK_ORGANIZATIONS_AS_GROUPS$|CANOPYCMS_WORKER_CAPACITY$)/
 
 describe('the environment, split between the two processes', () => {
   const envFiles = (t: Template) => {
@@ -160,6 +161,7 @@ describe('the environment, split between the two processes', () => {
         'CLERK_SECRET_KEY_SECRET_ARN',
         'CLERK_SECRET_KEY_SECRET_JSON_FIELD',
         'CANOPYCMS_PROTECTED_BRANCHES',
+        'CANOPYCMS_LEGACY_BRANCHES',
         WORKER_CAPACITY_ENV,
         'CANOPYCMS_SETTINGS_BRANCH',
       ],
@@ -221,9 +223,18 @@ describe('the environment, split between the two processes', () => {
     expect(splitWorker.get('CANOPYCMS_BASE_BRANCH')).toBe('trunk')
     expect(gateway.get('CANOPYCMS_BASE_BRANCH')).toBe('trunk')
     expect(gateway.get('CANOPYCMS_PROTECTED_BRANCHES')).toBe('release/*')
+    expect(gateway.get('CANOPYCMS_LEGACY_BRANCHES')).toBe('spring')
     expect(gateway.get(WORKER_CAPACITY_ENV)).toBe('spot')
     expect(gateway.has('CANOPYCMS_WORKSPACE_ROOT')).toBe(false)
     expect(splitWorker.get('CANOPYCMS_SETTINGS_BRANCH')).toBe('canopycms-settings-docs')
+  })
+
+  it('gives both the deployment name and the settings branch, which resolve the one settings branch pushed', () => {
+    const { splitWorker, gateway } = envFiles(tokenDeployment)
+    for (const name of ['CANOPYCMS_DEPLOYMENT_NAME', 'CANOPYCMS_SETTINGS_BRANCH']) {
+      expect(splitWorker.get(name), name).toBeDefined()
+      expect(gateway.get(name), name).toBe(splitWorker.get(name))
+    }
   })
 
   it.each([true, false])(
@@ -386,12 +397,12 @@ describe('the instance files', () => {
     const many = (count: number) => Array.from({ length: count }, (_, i) => `release-${i}/*`)
     expect(() => synth({ protectedBranches: many(200) })).not.toThrow()
     expect(() => synth({ protectedBranches: many(700) })).toThrow(
-      /user data could reach \d+ bytes, over the 16384 EC2 accepts; protectedBranches has 700 entries\./,
+      /user data could reach \d+ bytes, over the 16384 EC2 accepts; protectedBranches has 700 entries and legacyBranches has 0\./,
     )
     expect(() => synth({ workerLogGroupName: `/canopycms/${'g'.repeat(500)}` })).not.toThrow()
   })
 
-  it('state the protectedBranches count without blaming it when other names fill user data', () => {
+  it('state the branch counts without blaming them when other names fill user data', () => {
     const long = (name: string) =>
       `arn:aws:secretsmanager:us-east-1:123456789012:secret:${name}-${'x'.repeat(4_000)}`
     expect(() =>
@@ -401,7 +412,7 @@ describe('the instance files', () => {
         clerkSecretKeySecretArn: long('clerk'),
       }),
     ).toThrow(
-      /protectedBranches has 0 entries\. Protect branches with fewer, wider \* patterns, or shorten the other names/,
+      /protectedBranches has 0 entries and legacyBranches has 0\. Protect branches with fewer, wider \* patterns, list fewer legacyBranches, or shorten the other names/,
     )
   })
 
@@ -491,7 +502,7 @@ describe('the units', () => {
       `Environment=${WORKER_CONTRACT_ENV}=${SINGLE_PROCESS_UNIT_CONTRACT}`,
     )
     expect(SINGLE_PROCESS_UNIT_CONTRACT).toBe(GATEWAY_SPLIT_CONTRACT - 1)
-    expect(WORKER_CONTRACT_VERSION).toBe(GATEWAY_SPLIT_CONTRACT)
+    expect(WORKER_CONTRACT_VERSION).toBeGreaterThanOrEqual(GATEWAY_SPLIT_CONTRACT)
   })
 
   it('cuts the split worker off from the network, and points it at the gateway', () => {

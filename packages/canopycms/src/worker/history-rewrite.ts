@@ -3,8 +3,10 @@ import path from 'node:path'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
 import { sanitizeBranchName } from '../paths/branch-name'
 import { getErrorMessage, redactCredentials } from '../utils/error'
+import { escapeForLog } from '../utils/escape-text'
 import { isStaleLeaseRejection } from '../utils/git'
 import { enqueueTask, listTasks } from '../task-queue/cms-task-queue'
+import { publishesBranch, type BranchPolicyDescription } from './branch-policy'
 import { pinnedReceivePack, sharedRepoGit } from './shared-repo-git'
 import { workerLog, workerLogWarn } from './log'
 import type { WorkerContext } from './worker-context'
@@ -61,28 +63,38 @@ export async function readPublishedSha(
 }
 
 /**
- * Record that this worker rewrote `expectedSha` out of a branch's already
- * published history (see BranchMetadata.historyRewrittenFrom).
+ * Record that this worker rewrote `expectedSha` out of `branchRef`'s already
+ * published history (see BranchMetadata.historyRewrittenFrom), on a branch.json
+ * whose `name` is `branchRef` only: it never creates one, nor marks another
+ * branch's that shares the key.
  *
  * Set-once: an existing marker is LEFT ALONE. Across two rebases before any
  * GitHub push lands, GitHub still holds the commit the FIRST rebase replaced,
  * so advancing the marker would aim the lease at a commit GitHub never had and
  * permanently wedge the branch.
  *
- * Re-reads metadata rather than trusting the caller's snapshot: the task loop
- * runs concurrently with syncGit() and may have cleared the marker while this
- * branch was rebasing.
+ * Decided against the metadata on disk inside the write's lock, not the
+ * caller's snapshot: the task loop runs concurrently with syncGit() and may
+ * have cleared the marker while this branch was rebasing.
+ *
+ * Resolves whether `branchRef`'s branch.json now holds a marker, set here or kept by set-once.
+ * When it does not, the caller publishes nothing: a rewrite pushed without its marker leaves
+ * remote.git rewritten and the queued GitHub push failing with a false divergence diagnosis.
  */
 export async function markHistoryRewritten(
   ctx: Pick<HistoryRewriteContext, 'contentBranchesPath'>,
   branchPath: string,
-  branchDir: string,
+  branchRef: string,
   expectedSha: string,
-): Promise<void> {
-  const current = await BranchMetadataFileManager.loadOnly(branchPath)
-  if (typeof current?.branch.historyRewrittenFrom === 'string') return
+): Promise<boolean> {
   const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
-  await meta.save({ branch: { name: branchDir, historyRewrittenFrom: expectedSha } })
+  let marked = false
+  await meta.update((current) => {
+    marked = current?.branch.name === branchRef
+    if (!marked || typeof current?.branch.historyRewrittenFrom === 'string') return null
+    return { branch: { historyRewrittenFrom: expectedSha } }
+  })
+  return marked
 }
 
 /**
@@ -102,16 +114,22 @@ export async function markHistoryRewritten(
 export async function clearHistoryRewrittenMarker(
   ctx: Pick<HistoryRewriteContext, 'contentBranchesPath'>,
   branchPath: string,
-  branchDir: string,
+  branchRef: string,
 ): Promise<void> {
   try {
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
     // Explicit undefined clears the key -- save()'s merge only overwrites
-    // keys present in the update (same pattern as rebaseFailure).
-    await meta.save({ branch: { name: branchDir, historyRewrittenFrom: undefined } })
+    // keys present in the update (same pattern as rebaseFailure). Only a
+    // marker on `branchRef`'s own branch.json is cleared, so none is ever created here.
+    await meta.saveIf(
+      { branch: { historyRewrittenFrom: undefined } },
+      (current) =>
+        current?.branch.name === branchRef &&
+        typeof current.branch.historyRewrittenFrom === 'string',
+    )
   } catch (err) {
     workerLogWarn(
-      `  Failed to clear history-rewrite marker for ${branchDir}: ${getErrorMessage(err)}`,
+      `  Failed to clear history-rewrite marker for ${branchRef}: ${getErrorMessage(err)}`,
     )
   }
 }
@@ -172,13 +190,25 @@ export async function forcePublishToLocalRemote(
  *
  * Deliberately NOT skipped when a marker is already set: inferring "a task must
  * already be queued" from the marker starves this hop whenever a task was lost,
- * failed permanently, or was never written. Duplicate push tasks are bounded by
- * base-branch advances and are idempotent.
+ * failed permanently, or was never written. Skipped instead when `gatewayPolicy`,
+ * the gateway's own description, says it would refuse the branch: the marker
+ * clears only on a push that lands, so such a task would fail permanently on
+ * every cycle, and System health's unpublishable alert already names the branch.
+ * Without a description every hop is queued. So while a marker stands, at most
+ * one push task is in flight and one is added per sync cycle, only for a failure
+ * the policy does not predict; the tasks are idempotent.
  */
 export async function enqueueGitHubPush(
   ctx: Pick<HistoryRewriteContext, 'taskDir'>,
   branchRef: string,
+  gatewayPolicy: BranchPolicyDescription | undefined,
 ): Promise<void> {
+  if (gatewayPolicy && !publishesBranch(gatewayPolicy, branchRef)) {
+    workerLog(
+      `  Not queueing a GitHub push for ${escapeForLog(branchRef)}: the GitHub gateway would refuse it`,
+    )
+    return
+  }
   try {
     // Dedupe against tasks actually in flight rather than against the
     // marker: a branch whose GitHub push keeps failing would otherwise
@@ -215,9 +245,10 @@ export async function reconcilePendingRewrite(
     branchRef: string
     headSha: string
     marker: string
+    gatewayPolicy: BranchPolicyDescription | undefined
   },
 ): Promise<void> {
-  const { branchPath, branchDir, branchRef, headSha, marker } = options
+  const { branchPath, branchDir, branchRef, headSha, marker, gatewayPolicy } = options
   const publishedSha = await readPublishedSha(ctx, branchRef)
 
   if (publishedSha === null) {
@@ -229,14 +260,14 @@ export async function reconcilePendingRewrite(
   if (publishedSha === headSha) {
     // remote.git already carries the rewrite; only the GitHub hop is left
     // (a crash between the push and the queue, or a task that was lost).
-    await enqueueGitHubPush(ctx, branchRef)
+    await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
     return
   }
   if (publishedSha === marker) {
     // The publish into remote.git never landed -- a crash right after the
     // marker was written, or a lease refused by a concurrent submit.
     if (await forcePublishToLocalRemote(ctx, branchPath, branchRef, marker)) {
-      await enqueueGitHubPush(ctx, branchRef)
+      await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
     }
     return
   }

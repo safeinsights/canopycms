@@ -61,12 +61,14 @@ const SETTINGS_TRASH_MAX_AGE_MS = 30 * 24 * 60 * 60_000
 
 /**
  * Retriable: another process is setting this branch up, or what is at its path is too recently
- * touched (or under an admin repair) to judge. Callers answer 503.
+ * touched (or under an admin repair) to judge. Callers answer 503. The message names the branch
+ * by `shortName`, which an editor knows it by, not by its workspace directory.
  */
 export class BranchProvisioningBusyError extends Error {
   constructor(
     readonly dirName: string,
-    message = `Branch '${dirName}' is still being set up. Try again in a minute.`,
+    shortName = dirName,
+    message = `Branch '${shortName}' is still being set up. Try again in a minute.`,
   ) {
     super(message)
     this.name = 'BranchProvisioningBusyError'
@@ -466,6 +468,7 @@ export async function stageBranchWorkspace(options: StageBranchOptions): Promise
 export async function lockBranchName(
   baseRoot: string,
   dirName: string,
+  shortName = dirName,
 ): Promise<() => Promise<void>> {
   try {
     return await acquireProvisioningLockWithin(
@@ -474,7 +477,9 @@ export async function lockBranchName(
       PUBLISH_LOCK_WAIT_MS,
     )
   } catch (err: unknown) {
-    if (isNodeError(err) && err.code === 'ELOCKED') throw new BranchProvisioningBusyError(dirName)
+    if (isNodeError(err) && err.code === 'ELOCKED') {
+      throw new BranchProvisioningBusyError(dirName, shortName)
+    }
     throw err
   }
 }
@@ -485,6 +490,8 @@ export type BlockingKind = 'live' | 'protected' | 'residue'
 export interface PublishOptions {
   baseRoot: string
   dirName: string
+  /** What a busy answer calls the branch; defaults to `dirName`. */
+  shortName?: string
   stagingPath: string
   /** branch.json's `writeId` in the staged workspace: proof the rename was ours. */
   writeId: string | undefined
@@ -512,9 +519,9 @@ const RENAME_BLOCKED = new Set(['EEXIST', 'ENOTEMPTY', 'ENOTDIR'])
  * `writeId`. The caller removes the staging directory on any outcome but `published`.
  */
 export async function publishStaging(options: PublishOptions): Promise<'published' | 'exists'> {
-  const { baseRoot, dirName, stagingPath } = options
+  const { baseRoot, dirName, stagingPath, shortName = dirName } = options
   const finalPath = path.join(baseRoot, dirName)
-  const release = await lockBranchName(baseRoot, dirName)
+  const release = await lockBranchName(baseRoot, dirName, shortName)
   try {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
@@ -532,7 +539,7 @@ export async function publishStaging(options: PublishOptions): Promise<'publishe
 
       const blocking = await (options.inspectBlocked ?? inspectBlocking)(finalPath)
       if (blocking === 'live') return 'exists'
-      if (blocking === 'protected') throw new BranchProvisioningBusyError(dirName)
+      if (blocking === 'protected') throw new BranchProvisioningBusyError(dirName, shortName)
       const result = await quarantineResidueAt(baseRoot, dirName, {
         minQuietMs: CREATE_RESIDUE_MIN_QUIET_MS,
         expectedRemoteUrl: options.expectedRemoteUrl,
@@ -544,9 +551,9 @@ export async function publishStaging(options: PublishOptions): Promise<'publishe
         return 'exists'
       }
       if (result.reason === 'foreign') throw new BranchDirOccupiedError(dirName)
-      throw new BranchProvisioningBusyError(dirName)
+      throw new BranchProvisioningBusyError(dirName, shortName)
     }
-    throw new BranchProvisioningBusyError(dirName)
+    throw new BranchProvisioningBusyError(dirName, shortName)
   } finally {
     await release().catch((err: unknown) => {
       canopyLogWarn(`[canopy] Failed to release the provisioning lock for ${dirName}:`, err)

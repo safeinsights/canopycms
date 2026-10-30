@@ -105,6 +105,12 @@ export interface ClientUnsafeStrategy extends ClientSafeStrategy {
     defaultBaseBranch?: string
   }): string
 
+  /**
+   * The prefix of every branch editors create, resolved from the namespace template with this
+   * mode's default deployment name (operating-mode/branch-namespace.ts).
+   */
+  getBranchNamespace(config: { branchNamespace?: string; deploymentName?: string }): string
+
   /** `{workspaceRoot}/settings`, where settings storage lives. */
   getSettingsRoot(sourceRoot?: string): string
 

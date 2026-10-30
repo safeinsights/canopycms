@@ -16,6 +16,7 @@ import {
 import type { BranchListItem } from '../../api/branch'
 import { BRANCHES_KEY } from './useBranchesData'
 import type { BranchMetadata } from '../../types'
+import type { CommentThread } from '../../comment-store'
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import { unsafeAsContentId } from '../../paths/test-utils'
 import {
@@ -533,8 +534,88 @@ describe('useBranchManager', () => {
       expect(result.current.branches).toHaveLength(2)
     })
 
-    expect(result.current.branchName).toBe('feature/x')
     expect(result.current.currentBranch).toEqual(sanitizedBranch)
+    await waitFor(() => expect(result.current.branchName).toBe('feature-x'))
+  })
+
+  it('opens a namespace branch named by its short name, unlocked and acting on its full name', async () => {
+    const spring: BranchListItem = {
+      ...mockBranches[1],
+      name: 'canopycms/local/spring',
+      shortName: 'spring',
+      status: 'editing',
+      writeBlocked: false,
+      submitBlocked: false,
+      isProtected: false,
+    }
+    mockClient.branches.list.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { branches: [mockBranches[0], spring], users: [] },
+    })
+    mockClient.workflow.submit.mockResolvedValueOnce({ ok: true, status: 200 })
+    const thread: CommentThread = {
+      id: 't1',
+      comments: [],
+      resolved: false,
+      createdAt: '2024-01-01',
+      type: 'branch',
+      authorId: 'user1',
+    }
+
+    const { result } = renderHook(
+      () => useBranchManager({ ...defaultOptions, initialBranch: 'spring', comments: [thread] }),
+      { wrapper },
+    )
+    await waitFor(() => expect(result.current.branches).toHaveLength(2))
+
+    expect(result.current.currentBranch?.name).toBe('canopycms/local/spring')
+    expect(result.current.currentBranch?.writeBlocked).toBe(false)
+    await waitFor(() => expect(result.current.branchName).toBe('canopycms/local/spring'))
+    expect(
+      result.current.branchSummaries.find((b) => b.name === 'canopycms/local/spring')?.commentCount,
+    ).toBe(1)
+
+    await act(async () => {
+      await result.current.handleSubmit('spring')
+    })
+    expect(mockClient.workflow.submit).toHaveBeenCalledWith(
+      { branch: 'canopycms/local/spring' },
+      expect.anything(),
+    )
+  })
+
+  it('leaves a deleted namespace branch opened by its short name', async () => {
+    const spring: BranchListItem = {
+      ...mockBranches[1],
+      name: 'canopycms/local/spring',
+      shortName: 'spring',
+      status: 'editing',
+    }
+    mockClient.branches.list
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        data: { branches: [mockBranches[0], spring], defaultBranch: 'main', users: [] },
+      })
+      .mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { branches: [mockBranches[0]], defaultBranch: 'main', users: [] },
+      })
+    mockClient.branches.delete.mockResolvedValueOnce({ ok: true, status: 200 })
+    const { result } = renderHook(
+      () => useBranchManager({ ...defaultOptions, initialBranch: 'spring' }),
+      { wrapper },
+    )
+    await waitFor(() => expect(result.current.currentBranch?.name).toBe('canopycms/local/spring'))
+
+    await act(async () => {
+      await result.current.handleDelete('spring')
+    })
+
+    expect(mockClient.branches.delete).toHaveBeenCalledWith({ branch: 'canopycms/local/spring' })
+    expect(result.current.branchName).toBe('main')
   })
 
   describe('branches created this session', () => {
@@ -958,7 +1039,7 @@ describe('useBranchManager', () => {
       expect(options.confirmProps).toEqual(
         expect.objectContaining({ 'data-testid': 'confirm-submit-branch' }),
       )
-      expect(body).toContain('Submit "feature" for review?')
+      expect(body).toContain('Submit “feature” for review?')
       expect(body).toContain('• Create a pull request for review')
       expect(body).not.toContain('Are you sure')
     })
@@ -976,7 +1057,7 @@ describe('useBranchManager', () => {
       expect(options.labels).toEqual({ confirm: 'Submit anyway', cancel: 'Cancel' })
       expect(body).toContain("2 entries have unsaved changes that won't be submitted")
       expect(body).toContain('Unsaved changes in: "Home", "About".')
-      expect(body).toContain('Submit "feature" for review?')
+      expect(body).toContain('Submit “feature” for review?')
     })
 
     it('checks the open branch opened by its unsanitized name, showing busy meanwhile', async () => {
@@ -1096,8 +1177,8 @@ describe('useBranchManager', () => {
       expect(options.confirmProps).toEqual(
         expect.objectContaining({ 'data-testid': 'confirm-withdraw-branch' }),
       )
-      expect(body).toContain('Withdraw "feature" from review?')
-      expect(body).toContain('• Change the branch status back to "editing"')
+      expect(body).toContain('Withdraw “feature” from review?')
+      expect(body).toContain('• Change the branch status back to “editing”')
       expect(body).not.toContain('Are you sure')
     })
 
@@ -1112,7 +1193,7 @@ describe('useBranchManager', () => {
       const { options, body } = await lastDialog()
       expect(options.title).toBe('Delete branch')
       expect(options.labels).toEqual({ confirm: 'Delete branch', cancel: 'Cancel' })
-      expect(body).toContain('Delete "feature"?')
+      expect(body).toContain('Delete “feature”?')
       expect(body).toContain('This cannot be undone.')
       expect(body).not.toContain('Are you sure')
     })
@@ -1666,6 +1747,255 @@ describe('useBranchManager', () => {
     expect(urlCall).toBeTruthy()
   })
 
+  describe('the branch in ?branch=', () => {
+    const spring: BranchListItem = {
+      ...mockBranches[1],
+      name: 'canopycms/local/spring',
+      shortName: 'spring',
+      status: 'editing',
+      isProtected: false,
+    }
+    const branchesOf = (...branches: BranchListItem[]) =>
+      mockClient.branches.list.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { branches: [mockBranches[0], ...branches], defaultBranch: 'main', users: [] },
+      })
+    const writtenBranches = () =>
+      vi
+        .mocked(window.history.replaceState)
+        .mock.calls.map(([, , url]) => new URL(String(url)).searchParams.get('branch'))
+
+    it('is the short name of the branch the state holds', async () => {
+      branchesOf(spring)
+      renderHook(() => useBranchManager({ ...defaultOptions, initialBranch: spring.name }), {
+        wrapper,
+      })
+
+      await waitFor(() => expect(writtenBranches()).toEqual(['spring']))
+    })
+
+    it('is left as the link wrote it until the listing resolves the branch', async () => {
+      mockClient.branches.list.mockReturnValue(new Promise(() => {}))
+      renderHook(() => useBranchManager({ ...defaultOptions, initialBranch: spring.name }), {
+        wrapper,
+      })
+
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(window.history.replaceState).not.toHaveBeenCalled()
+    })
+
+    it('is the full name the server lists for a namespace branch named after the active one', async () => {
+      // `shortNameOf` gives such a branch its full name as its short name.
+      const shadowed: BranchListItem = {
+        ...spring,
+        name: 'canopycms/local/main',
+        shortName: 'canopycms/local/main',
+      }
+      branchesOf(shadowed)
+      renderHook(() => useBranchManager({ ...defaultOptions, initialBranch: shadowed.name }), {
+        wrapper,
+      })
+
+      await waitFor(() => expect(writtenBranches()).toEqual(['canopycms/local/main']))
+    })
+
+    describe('beside a branch outside the namespace named its short name', () => {
+      const outside: BranchListItem = { ...spring, name: 'spring', shortName: 'spring' }
+      const listBoth = () =>
+        mockClient.branches.list.mockResolvedValue({
+          ok: true,
+          status: 200,
+          data: {
+            branches: [mockBranches[0], outside, spring],
+            defaultBranch: 'main',
+            users: [],
+          },
+        })
+      // Earlier tests leave the confirm mock dismissing; these confirm, then put it back.
+      let previousConfirm:
+        | (typeof import('@mantine/modals'))['modals']['openConfirmModal']
+        | undefined
+      beforeEach(async () => {
+        const { modals } = await import('@mantine/modals')
+        const confirm = vi.mocked(modals.openConfirmModal)
+        previousConfirm = confirm.getMockImplementation()
+        confirm.mockImplementation((options) => {
+          options.onConfirm?.()
+          return 'mock-modal-id'
+        })
+      })
+      afterEach(async () => {
+        const { modals } = await import('@mantine/modals')
+        if (previousConfirm) vi.mocked(modals.openConfirmModal).mockImplementation(previousConfirm)
+      })
+      const loaded = async (initialBranch: string) => {
+        listBoth()
+        const hook = renderHook(() => useBranchManager({ ...defaultOptions, initialBranch }), {
+          wrapper,
+        })
+        await waitFor(() => expect(hook.result.current.currentBranch).toBeDefined())
+        return hook
+      }
+
+      it('opens each by the name its card hands an action, and writes a URL that opens it', async () => {
+        const opened = await loaded('~spring')
+        expect(opened.result.current.currentBranch?.name).toBe('spring')
+        await waitFor(() => expect(writtenBranches()).toEqual(['~spring']))
+        opened.unmount()
+
+        const other = await loaded('canopycms/local/spring')
+        expect(other.result.current.currentBranch?.name).toBe('canopycms/local/spring')
+        await waitFor(() => expect(writtenBranches()).toEqual(['~spring', 'spring']))
+      })
+
+      it.each([
+        ['the outside branch', '~spring', 'spring'],
+        ['the namespace branch', 'canopycms/local/spring', 'canopycms/local/spring'],
+      ])('sends every action on %s under its own name', async (_label, address, sent) => {
+        const ok = { ok: true, status: 200 } as const
+        mockClient.workflow.submit.mockResolvedValue(ok)
+        mockClient.workflow.withdraw.mockResolvedValue(ok)
+        mockClient.workflow.approve.mockResolvedValue(ok)
+        mockClient.workflow.requestChanges.mockResolvedValue(ok)
+        mockClient.branches.delete.mockResolvedValue(ok)
+        const { result } = await loaded('main')
+
+        await act(async () => {
+          await result.current.handleSubmit(address)
+          await result.current.handleWithdraw(address)
+          await result.current.handleApprove(address)
+          await result.current.handleRequestChanges(address)
+          await result.current.handleDelete(address)
+        })
+
+        expect(mockClient.workflow.submit).toHaveBeenCalledWith({ branch: sent }, expect.anything())
+        expect(mockClient.workflow.withdraw).toHaveBeenCalledWith({ branch: sent })
+        expect(mockClient.workflow.approve).toHaveBeenCalledWith({ branch: sent })
+        expect(mockClient.workflow.requestChanges).toHaveBeenCalledWith({ branch: sent }, {})
+        expect(mockClient.branches.delete).toHaveBeenCalledWith({ branch: sent })
+      })
+
+      it('stays on the namespace branch when the outside one is deleted', async () => {
+        mockClient.branches.delete.mockResolvedValue({ ok: true, status: 200 })
+        const { result } = await loaded('spring')
+        expect(result.current.currentBranch?.name).toBe('canopycms/local/spring')
+
+        await act(async () => {
+          await result.current.handleDelete('~spring')
+        })
+
+        expect(mockClient.branches.delete).toHaveBeenCalledWith({ branch: 'spring' })
+        expect(result.current.branchName).toBe('canopycms/local/spring')
+      })
+
+      it('leaves the outside branch when it is the one open and deleted', async () => {
+        mockClient.branches.delete.mockResolvedValue({ ok: true, status: 200 })
+        const { result } = await loaded('~spring')
+        expect(result.current.currentBranch?.name).toBe('spring')
+
+        await act(async () => {
+          await result.current.handleDelete('~spring')
+        })
+
+        expect(result.current.branchName).toBe('main')
+      })
+
+      const listOnly = (...branches: BranchListItem[]) =>
+        mockClient.branches.list.mockResolvedValue({
+          ok: true,
+          status: 200,
+          data: { branches: [mockBranches[0], ...branches], defaultBranch: 'main', users: [] },
+        })
+
+      /** The hook, and every `branchName` it has given since the listing first resolved it. */
+      const tracked = async (initialBranch: string) => {
+        const given: string[] = []
+        const hook = renderHook(
+          () => {
+            const manager = useBranchManager({ ...defaultOptions, initialBranch })
+            if (manager.currentBranch) given.push(manager.branchName)
+            return manager
+          },
+          { wrapper },
+        )
+        await waitFor(() => expect(hook.result.current.currentBranch).toBeDefined())
+        return { ...hook, given }
+      }
+
+      it('keeps the outside branch, and the name its drafts are keyed by, as the shadow comes and goes', async () => {
+        listBoth()
+        const { result, given } = await tracked('~spring')
+        expect(result.current.currentBranch?.name).toBe('spring')
+
+        listOnly(outside)
+        await act(() => result.current.loadBranches())
+        listBoth()
+        await act(() => result.current.loadBranches())
+
+        expect(result.current.currentBranch?.name).toBe('spring')
+        expect(new Set(given)).toEqual(new Set(['spring']))
+      })
+
+      it('stays on the outside branch when a later listing gives its name to a namespace branch', async () => {
+        listOnly(outside)
+        const { result, given } = await tracked('spring')
+        expect(result.current.currentBranch?.name).toBe('spring')
+
+        listBoth()
+        await act(() => result.current.loadBranches())
+
+        expect(result.current.branches).toHaveLength(3)
+        expect(result.current.currentBranch?.name).toBe('spring')
+        expect(new Set(given)).toEqual(new Set(['spring']))
+      })
+
+      it('sends an action in the exact form once the listing drops its branch under the dialog', async () => {
+        const { modals } = await import('@mantine/modals')
+        let confirm: (() => void) | undefined
+        vi.mocked(modals.openConfirmModal).mockImplementation((options) => {
+          confirm = options.onConfirm
+          return 'mock-modal-id'
+        })
+        mockClient.branches.delete.mockResolvedValue({ ok: true, status: 200 })
+        const { result } = await loaded('main')
+
+        let deleting: Promise<void> | undefined
+        act(() => {
+          deleting = result.current.handleDelete('~spring')
+        })
+        await waitFor(() => expect(confirm).toBeDefined())
+        listOnly(spring)
+        await act(() => result.current.loadBranches())
+        await act(async () => {
+          confirm?.()
+          await deleting
+        })
+
+        expect(mockClient.branches.delete).toHaveBeenCalledWith({ branch: '~spring' })
+      })
+    })
+
+    it('opens no branch for a raw name that a namespace branch shadows, and writes no URL', async () => {
+      const outside: BranchListItem = { ...spring, name: 'feature-y', shortName: 'feature-y' }
+      const namespaced: BranchListItem = {
+        ...spring,
+        name: 'canopycms/local/feature-y',
+        shortName: 'feature-y',
+      }
+      branchesOf(outside, namespaced)
+      const { result } = renderHook(
+        () => useBranchManager({ ...defaultOptions, initialBranch: 'feature/y' }),
+        { wrapper },
+      )
+
+      await waitFor(() => expect(result.current.branches).toHaveLength(3))
+      expect(result.current.currentBranch).toBeUndefined()
+      expect(result.current.branchName).toBe('feature/y')
+      expect(window.history.replaceState).not.toHaveBeenCalled()
+    })
+  })
+
   it('leaves the URL alone once the page shown is not the editor', async () => {
     mockClient.branches.list.mockResolvedValue({
       ok: true,
@@ -1984,7 +2314,7 @@ describe('useBranchManager', () => {
         })
         const text = opened[0].children?.props.children ?? ''
         expect(text).not.toMatch(/pull request/i)
-        expect(text).toContain('• Change the branch status back to "editing"')
+        expect(text).toContain('• Change the branch status back to “editing”')
         act(() => opened[0].onClose?.())
       })
 
@@ -2281,7 +2611,7 @@ describe('useBranchManager', () => {
         expect.objectContaining({ color: 'brand', 'data-testid': 'confirm-approve-branch' }),
       )
       expect(body).toContain(
-        'Approve "feature"? Its pull request stays open on GitHub for someone with access to merge it.',
+        'Approve “feature”? Its pull request stays open on GitHub for someone with access to merge it.',
       )
     })
 
@@ -2295,7 +2625,7 @@ describe('useBranchManager', () => {
 
       const { body } = await dialogBody()
       expect(body).toContain(
-        'Approve "feature"? It stays locked until it is withdrawn or changes are requested.',
+        'Approve “feature”? It stays locked until it is withdrawn or changes are requested.',
       )
       expect(body).not.toContain('GitHub')
     })
@@ -2576,6 +2906,64 @@ describe('useBranchManager', () => {
       })
     })
 
+    describe('a namespace branch', () => {
+      const spring: BranchListItem = {
+        ...mockBranches[1],
+        name: 'canopycms/local/spring',
+        shortName: 'spring',
+        status: 'editing',
+        writeBlocked: false,
+        submitBlocked: false,
+        isProtected: false,
+      }
+      const loadedSpring = () => loaded([mockBranches[0], spring])
+
+      it.each([
+        ['submit', 'Submit “spring” for review?'],
+        ['withdraw', 'Withdraw “spring” from review?'],
+        ['approve', 'Approve “spring”?'],
+        ['request changes', 'Send “spring” back to its editor?'],
+        ['delete', 'Delete “spring”?'],
+      ] as const)('is called by its short name in the %s dialog', async (action, sentence) => {
+        const { result } = await loadedSpring()
+        const handlers = {
+          submit: result.current.handleSubmit,
+          withdraw: result.current.handleWithdraw,
+          approve: result.current.handleApprove,
+          'request changes': result.current.handleRequestChanges,
+          delete: result.current.handleDelete,
+        }
+
+        await act(async () => {
+          await handlers[action]('canopycms/local/spring').catch(() => {})
+        })
+
+        const { body } = await dialogBody()
+        expect(body).toContain(sentence)
+        expect(body).not.toContain('canopycms/local')
+      })
+
+      it('is called by its short name when an approve or request changes got no answer', async () => {
+        const { notifications } = await import('@mantine/notifications')
+        mockClient.workflow.approve.mockRejectedValueOnce(new ApiTimeoutError('POST', '/x', 1000))
+        mockClient.workflow.requestChanges.mockRejectedValueOnce(
+          new ApiTimeoutError('POST', '/x', 1000),
+        )
+        const { result } = await loadedSpring()
+
+        await act(async () => {
+          await result.current.handleApprove('spring').catch(() => {})
+          await result.current.handleRequestChanges('spring').catch(() => {})
+        })
+
+        const messages = vi.mocked(notifications.show).mock.calls.map(([n]) => n.message)
+        expect(messages).toContain(branchActionOutcomeUnknown('Approve “spring”'))
+        expect(messages).toContainEqual(
+          expect.stringContaining('Request changes on “spring” may have gone through'),
+        )
+      })
+    })
+
     it('says an approve that got no answer may have gone through, and reloads', async () => {
       const { notifications } = await import('@mantine/notifications')
       mockClient.workflow.approve.mockRejectedValueOnce(new ApiTimeoutError('POST', '/x', 1000))
@@ -2588,7 +2976,7 @@ describe('useBranchManager', () => {
 
       expect(notifications.show).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: branchActionOutcomeUnknown('Approve "feature"'),
+          message: branchActionOutcomeUnknown('Approve “feature”'),
           color: 'yellow',
           autoClose: false,
         }),
@@ -2610,7 +2998,7 @@ describe('useBranchManager', () => {
         expect.objectContaining({ color: 'red', 'data-testid': 'confirm-request-changes' }),
       )
       expect(body).toContain(
-        'Send "feature" back to its editor? It goes back to editing, and its pull request becomes a draft.',
+        'Send “feature” back to its editor? It goes back to editing, and its pull request becomes a draft.',
       )
       expect(body).toContain('Note to the editor')
       expect(body).toContain('Saved as a comment on the branch.')
@@ -2625,7 +3013,7 @@ describe('useBranchManager', () => {
       })
 
       expect((await dialogBody()).body).toContain(
-        'Send "feature" back to its editor? It goes back to editing.',
+        'Send “feature” back to its editor? It goes back to editing.',
       )
     })
 
@@ -2785,7 +3173,7 @@ describe('useBranchManager', () => {
         expect(notifications.show).toHaveBeenCalledWith(
           expect.objectContaining({
             message:
-              'Request changes on "feature" may have gone through even though the server didn\'t answer. Check the branch\'s status and its comments in "Comments".',
+              'Request changes on “feature” may have gone through even though the server didn\'t answer. Check the branch\'s status and its comments in "Comments".',
             color: 'yellow',
             autoClose: false,
           }),

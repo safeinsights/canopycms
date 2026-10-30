@@ -9,6 +9,7 @@ import { sanitizeBranchName } from '../paths/branch-name'
 import { buildPrSection, mergePrSection, type SubmissionEditor } from '../submission-attribution'
 import { isNoCommitsBetweenError, isRefAlreadyGoneError } from '../github-service'
 import { baseBranchOf } from '../utils/base-branch'
+import { shortNameOf } from '../branch-param'
 import { CommentStore } from '../comment-store'
 import { prBodyLockKey, refreshCommentsBlock } from '../pr-comments'
 import { withLock } from '../utils/async-mutex'
@@ -68,14 +69,16 @@ export async function syncSubmitPr(
 ): Promise<GitHubSyncResult> {
   const { githubService } = ctx.services
   const mode = ctx.services.config.mode
-  const prTitle = context.branch.title || `Submit ${context.branch.name}`
+  // Links and the title carry the short name, which `?branch=` resolves.
+  const shortName = shortNameOf(ctx.services.config, context.branch.name)
+  const prTitle = context.branch.title || `Submit ${shortName}`
   const threads = await readThreadsOrWarn(context)
   const prSection = buildPrSection({
     description: context.branch.description,
     submitter: submission.submitter,
     editors: submission.editors,
     changedPaths: submission.changedPaths,
-    branch: context.branch.name,
+    branch: shortName,
     editorUrl: submission.editorUrl,
     entryPaths: submission.entryPaths,
     threads,
@@ -111,7 +114,7 @@ export async function syncSubmitPr(
           // Re-read under the lock: a comment synced since the read above has the newer block.
           const section = await refreshCommentsBlock({
             branchRoot: context.branchRoot,
-            branch: context.branch.name,
+            branch: shortName,
             editorUrl: submission.editorUrl,
             section: prSection,
             warn: (message) => console.warn(`CanopyCMS: ${message}`),
@@ -206,6 +209,7 @@ export async function syncSubmitPr(
       mergeSectionIntoBody: true,
       // The worker re-renders the comment block from comments.json when the task runs.
       ...(submission.editorUrl ? { editorUrl: submission.editorUrl } : {}),
+      editorBranch: shortName,
       baseBranch,
       pullRequestNumber: context.branch.pullRequestNumber,
       // A content submit is an explicit "ready for review" action: convert a

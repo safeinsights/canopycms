@@ -26,6 +26,7 @@ import {
   type BranchHealthEntry,
 } from '../branch-health'
 import { formatDirStamp } from '../branch-provisioning'
+import { gitChildEnv } from '../git-manager'
 import { ContentIdIndex } from '../content-id-index'
 import { invalidateContentIndexesDurable } from '../content-index-generation'
 import { getDefaultBranchBase, sanitizeBranchName } from '../paths'
@@ -36,7 +37,7 @@ import {
   ContentWriteLockBusyError,
   DEFAULT_CONTENT_WRITE_LOCK_WAIT_MS,
 } from '../utils/content-write-lock'
-import { getErrorMessage, isNodeError, isNotFoundError } from '../utils/error'
+import { getErrorMessage, isNodeError, isNotFoundError, sanitizeErrorMessage } from '../utils/error'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
 import { baseBranchOf } from '../utils/base-branch'
@@ -415,6 +416,10 @@ const repairBranchDirHandler = async (
       : { ok: false, status: 409, error: 'No metadata file -- use purge for orphans' }
   }
 
+  const checkedOut = await checkedOutBranch(dirPath, params.dirName)
+  if (!checkedOut.ok) return { ok: false, status: 409, error: checkedOut.error }
+  const branchName = checkedOut.branch
+
   // Zero-retry provisioning lock, mirroring purge's: fails fast (409) on
   // genuine live contention instead of hanging the request.
   // Held until the `finally` below, AFTER save() completes.
@@ -461,10 +466,6 @@ const repairBranchDirHandler = async (
       }
     }
 
-    // Prefer the clone's actual checked-out branch over the
-    // (possibly sanitized) directory name -- see resolveRepairedBranchName.
-    const branchName = await resolveRepairedBranchName(dirPath, params.dirName)
-
     // Lock released above (we're outside the withOccFileLock callback now) --
     // save() takes its own hold on the same lock internally. Its defaults
     // path fabricates the rest of BranchMetadata and invalidates the
@@ -499,29 +500,60 @@ const repairBranchDirHandler = async (
   }
 }
 
+const LOCAL_BRANCH_PREFIX = 'refs/heads/'
+
 /**
- * Best-effort read of the branch actually checked out in the
- * clone at `dirPath`, falling back to `dirName` on any failure (no `.git`,
- * detached HEAD, corrupt repo, etc.). Workspace directory names are
- * sanitized (slashes stripped, see paths/branch.ts's `sanitizeBranchName`),
- * so a branch named `feature/foo` lives in a directory named `feature-foo`
- * -- writing `dirName` as `branch.name` would make later push/PR tasks
- * target the wrong ref.
+ * The branch checked out in the clone at `dirPath`, which repair records as `branch.name`, or why
+ * there is none. Nothing else names the branch: the directory is its key, which a ref's `/`s do
+ * not survive, and a guessed name would send later pushes and PRs to the wrong ref. The branch
+ * counts only when its key is `dirName`, the directory's own name; a clone on any other branch is
+ * not this directory's workspace. Git reads only this clone's `.git`, never a repository above it.
  */
-async function resolveRepairedBranchName(dirPath: string, dirName: string): Promise<string> {
+async function checkedOutBranch(
+  dirPath: string,
+  dirName: string,
+): Promise<{ ok: true; branch: string } | { ok: false; error: string }> {
+  const cannot = 'Cannot repair this branch: '
+  const then = ' Check out its branch in the clone, then repair again, or purge the directory.'
+  const gitDir = path.join(dirPath, '.git')
   const hasGitDir = await fs
-    .stat(path.join(dirPath, '.git'))
+    .stat(gitDir)
     .then(() => true)
     .catch(() => false)
-  if (!hasGitDir) return dirName
-
-  try {
-    const current = await simpleGit({ baseDir: dirPath }).revparse(['--abbrev-ref', 'HEAD'])
-    const trimmed = current.trim()
-    return trimmed || dirName
-  } catch {
-    return dirName
+  if (!hasGitDir) {
+    return {
+      ok: false,
+      error: `${cannot}the directory holds no git clone, so the branch it belongs to is unknown.${then}`,
+    }
   }
+  let ref: string
+  try {
+    // `-q` makes a detached HEAD a quiet failure, which simple-git resolves as empty output.
+    ref = (
+      await simpleGit({ baseDir: dirPath })
+        .env(gitChildEnv({ GIT_CEILING_DIRECTORIES: path.dirname(dirPath) }))
+        .raw(['--git-dir', gitDir, '--work-tree', dirPath, 'symbolic-ref', '-q', 'HEAD'])
+    ).trim()
+  } catch (err: unknown) {
+    return {
+      ok: false,
+      error: `${cannot}git could not read the clone's checked-out branch (${sanitizeErrorMessage(getErrorMessage(err))}).${then}`,
+    }
+  }
+  const branch = ref.startsWith(LOCAL_BRANCH_PREFIX) ? ref.slice(LOCAL_BRANCH_PREFIX.length) : ''
+  if (!branch) {
+    return {
+      ok: false,
+      error: `${cannot}its clone has no branch checked out (a detached HEAD), so the branch it belongs to is unknown.${then}`,
+    }
+  }
+  if (sanitizeBranchName(branch) !== dirName) {
+    return {
+      ok: false,
+      error: `${cannot}its clone has "${branch}" checked out, which is not the branch this directory holds.${then}`,
+    }
+  }
+  return { ok: true, branch }
 }
 
 /** Classify branch.json's current state for repair's precondition checks. */

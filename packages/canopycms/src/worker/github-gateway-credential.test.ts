@@ -123,7 +123,7 @@ async function pushVia(
 async function aheadOnRemoteGit(branch: string): Promise<string> {
   await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
   await git('--git-dir', githubPath, 'push', '-q', remoteGitPath, 'refs/heads/main:refs/heads/main')
-  return commitAndPush(remoteGitPath, `refs/heads/${branch}`, `${branch}.txt`)
+  return commitAndPush(remoteGitPath, `refs/heads/${branch}`, `${branch.replace(/\//g, '-')}.txt`)
 }
 
 const credentialDirs = async (): Promise<string[]> =>
@@ -207,7 +207,7 @@ afterEach(async () => {
 
 describe('the credential file', () => {
   it('reaches exactly the three GitHub-bound commands, and no argv, environment or trace', async () => {
-    const ahead = await aheadOnRemoteGit('feature')
+    const ahead = await aheadOnRemoteGit('canopycms/prod/feature')
     // Trace variables in the worker's own environment pass through to its other git, so they are
     // set here to prove they are stripped from the GitHub-bound commands, and that the trace files
     // the local commands write hold no form of the credential.
@@ -219,9 +219,11 @@ describe('the credential file', () => {
     const github = gateway()
 
     await github.fetch({ have: [] })
-    await pushVia(github, { branch: 'feature', sha: ahead })
+    await pushVia(github, { branch: 'canopycms/prod/feature', sha: ahead })
 
-    expect(await git('--git-dir', githubPath, 'rev-parse', 'refs/heads/feature')).toBe(ahead)
+    expect(
+      await git('--git-dir', githubPath, 'rev-parse', 'refs/heads/canopycms/prod/feature'),
+    ).toBe(ahead)
     const credentialed = observed.filter((spawn) => spawn.env.GIT_CONFIG_GLOBAL !== undefined)
     // The one GitHub fetch, which both push calls join; then the push's default-branch ls-remote
     // and the push itself.
@@ -282,7 +284,7 @@ describe('the credential file', () => {
   })
 
   it('is gone after the command is aborted', async () => {
-    const ahead = await aheadOnRemoteGit('feature')
+    const ahead = await aheadOnRemoteGit('canopycms/prod/feature')
     // "GitHub" holds the push open, so the abort lands while git runs.
     await fs.writeFile(path.join(githubPath, 'hooks', 'pre-receive'), '#!/bin/sh\nsleep 5\n', {
       mode: 0o755,
@@ -303,7 +305,7 @@ describe('the credential file', () => {
     }) as typeof childProcess.spawn)
 
     await expect(
-      pushVia(gateway(), { branch: 'feature', sha: ahead }, controller.signal),
+      pushVia(gateway(), { branch: 'canopycms/prod/feature', sha: ahead }, controller.signal),
     ).rejects.toThrow()
 
     expect(killedPush).toBe(true)
@@ -382,13 +384,15 @@ describe('against a server that checks the credential', () => {
 
   it('authenticates a fetch and a push with the header, scoped to the remote origin', async () => {
     server.acceptedTokens.add(CANARY)
-    const ahead = await aheadOnRemoteGit('feature')
+    const ahead = await aheadOnRemoteGit('canopycms/prod/feature')
     const github = gateway({ remoteUrl: server.url('repo.git') })
 
     await github.fetch({ have: [] })
-    await pushVia(github, { branch: 'feature', sha: ahead })
+    await pushVia(github, { branch: 'canopycms/prod/feature', sha: ahead })
 
-    expect(await git('--git-dir', githubPath, 'rev-parse', 'refs/heads/feature')).toBe(ahead)
+    expect(
+      await git('--git-dir', githubPath, 'rev-parse', 'refs/heads/canopycms/prod/feature'),
+    ).toBe(ahead)
     expect(server.authorizations.length).toBeGreaterThan(0)
     expect(new Set(server.authorizations)).toEqual(new Set([basic(CANARY)]))
   })
@@ -437,12 +441,12 @@ describe('re-reading the credential', () => {
   })
 
   it("is armed by a failing GitHub fetch, a push's first GitHub-bound command, which answers transient", async () => {
-    const ahead = await aheadOnRemoteGit('feature')
+    const ahead = await aheadOnRemoteGit('canopycms/prod/feature')
     const provider = vi.fn(async () => undefined)
     const observed = spySpawns()
 
     const caught = await gateway({ remoteUrl: path.join(root, 'missing.git') }, provider)
-      .push({ branch: 'feature', sha: ahead, prerequisites: [] })
+      .push({ branch: 'canopycms/prod/feature', sha: ahead, prerequisites: [] })
       .catch((err: unknown) => err)
     await settle()
 
@@ -453,7 +457,7 @@ describe('re-reading the credential', () => {
   })
 
   it("passes a push's refused mint through with its HTTP status, so the task fails for good", async () => {
-    const ahead = await aheadOnRemoteGit('feature')
+    const ahead = await aheadOnRemoteGit('canopycms/prod/feature')
     const refusal = Object.assign(new Error('Not Found'), { status: 404 })
     const auth = {
       ...resolveWorkerGitHubAuth({ githubToken: CANARY }),
@@ -463,7 +467,7 @@ describe('re-reading the credential', () => {
     }
 
     const caught = await gateway({ auth })
-      .push({ branch: 'feature', sha: ahead, prerequisites: [] })
+      .push({ branch: 'canopycms/prod/feature', sha: ahead, prerequisites: [] })
       .catch((err: unknown) => err)
 
     expect(caught).not.toBeInstanceOf(GitHubTransientError)
@@ -479,7 +483,14 @@ describe('re-reading the credential', () => {
   it("is armed by a failing ls-remote, the push's default-branch read", async () => {
     await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
     const main = await git('--git-dir', githubPath, 'rev-parse', 'refs/heads/main')
-    await git('--git-dir', githubPath, 'push', '-q', githubPath, 'main:refs/heads/feature')
+    await git(
+      '--git-dir',
+      githubPath,
+      'push',
+      '-q',
+      githubPath,
+      'main:refs/heads/canopycms/prod/feature',
+    )
     const provider = vi.fn(async () => undefined)
     const credentialed: string[] = []
     // Only the ls-remote is sent somewhere that does not exist.
@@ -498,7 +509,7 @@ describe('re-reading the credential', () => {
 
     await expect(
       gateway({}, provider).push({
-        branch: 'feature',
+        branch: 'canopycms/prod/feature',
         sha: main,
         prerequisites: [],
       }),
@@ -523,7 +534,7 @@ describe('re-reading the credential', () => {
     )
 
     await expect(
-      github.createPullRequest({ head: 'f', base: 'main', title: 'T', body: 'B' }),
+      github.createPullRequest({ head: 'canopycms/prod/f', base: 'main', title: 'T', body: 'B' }),
     ).rejects.toThrow('Nope')
     await settle()
 
@@ -545,7 +556,9 @@ describe('re-reading the credential', () => {
       provider,
     )
 
-    await expect(github.deleteBranch('gone')).rejects.toThrow('Reference does not exist')
+    await expect(github.deleteBranch('canopycms/prod/gone')).rejects.toThrow(
+      'Reference does not exist',
+    )
     await settle()
 
     expect(provider).not.toHaveBeenCalled()
@@ -566,7 +579,7 @@ describe('re-reading the credential', () => {
       provider,
     )
 
-    await expect(github.deleteBranch('feature')).rejects.toThrow('Not Found')
+    await expect(github.deleteBranch('canopycms/prod/feature')).rejects.toThrow('Not Found')
     await settle()
 
     expect(provider).toHaveBeenCalledTimes(1)
@@ -621,12 +634,14 @@ describe('re-reading the credential', () => {
   })
 
   it('is armed by a lock that GitHub reports on a remote: line', async () => {
-    const ahead = await aheadOnRemoteGit('feature')
-    await fs.writeFile(path.join(githubPath, 'refs', 'heads', 'feature.lock'), '')
+    const ahead = await aheadOnRemoteGit('canopycms/prod/feature')
+    const lockPath = path.join(githubPath, 'refs', 'heads', 'canopycms', 'prod', 'feature.lock')
+    await fs.mkdir(path.dirname(lockPath), { recursive: true })
+    await fs.writeFile(lockPath, '')
     const provider = vi.fn(async () => undefined)
 
     const caught = await pushVia(gateway({}, provider), {
-      branch: 'feature',
+      branch: 'canopycms/prod/feature',
       sha: ahead,
     }).catch((err: unknown) => err)
     await settle()
@@ -648,7 +663,7 @@ describe('re-reading the credential', () => {
     ).rejects.toBeInstanceOf(RefusedPushError)
     await expect(
       github.push({
-        branch: 'feature',
+        branch: 'canopycms/prod/feature',
         sha: 'not-an-id',
         prerequisites: [],
       }),
@@ -656,9 +671,9 @@ describe('re-reading the credential', () => {
       // Over the socket the wire format refuses it, before the gateway sees it.
       GATEWAY_TRANSPORT === 'http' ? /malformed push request/ : /Not a commit ID/,
     )
-    await expect(github.push({ branch: 'feature', sha: blob, prerequisites: [] })).rejects.toThrow(
-      /is not a commit/,
-    )
+    await expect(
+      github.push({ branch: 'canopycms/prod/feature', sha: blob, prerequisites: [] }),
+    ).rejects.toThrow(/is not a commit/)
     await settle()
 
     expect(provider).not.toHaveBeenCalled()

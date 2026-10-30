@@ -115,10 +115,12 @@ Which guards run, in what order, and what each one catches are in
 
 Route handlers, one file per endpoint namespace:
 
-- `branch.ts` — `/branches`: create, list, delete; `toBranchListItem` shapes every branch response, with server-computed `isProtected` / `readOnly`
+- `branch.ts` — `/branches`: create, list, delete; `toBranchListItem` shapes branch responses, with server-computed `isProtected` / `readOnly`
 - `branch-status.ts` — `/branch-status`: status and submit (`SubmitBranchResponse`)
 - `branch-withdraw.ts` — `/branch-withdraw`: withdraw a PR
-- `branch-review.ts` — `/branch-review`: request changes
+- `branch-review.ts` — `/branch-review`: approve, request changes
+- `branch-changes.ts` — `GET /:branch/changes`
+- `branch-entry-changes.ts` — `GET /:branch/changes/...entryPath`
 - `branch-merge.ts` — `/branch-merge`: merge and clean up
 - `content.ts` — `/content`: read and write; runs entry-link and adopter `validateEntry` validation on write
 - `entries.ts` — `/entries`: entry management; cursor-paginated listing
@@ -133,7 +135,7 @@ Route handlers, one file per endpoint namespace:
 - `admin.ts` — admin status (incl. sharp availability) and task-queue endpoints, and the single `ADMIN_ROUTES` export
 - `admin-branch-health.ts` — admin branch-health scan, purge and repair endpoints; see [ARCHITECTURE.md](ARCHITECTURE.md#admin-observability-and-recovery-api)
 - `github-sync.ts` — `syncSubmitPr` / `syncConvertToDraft` / `syncDeleteRemoteBranch`: direct GitHub call or queued task; see [GitHub Sync](#github-sync-direct-vs-async)
-- `pr-comment-sync.ts` — `syncPrComments`: re-renders a PR's editor-comment summary after a comment change, directly or as one queued task per branch
+- `pr-comment-sync.ts` — `syncPrComments`: re-renders a PR's comment and review blocks, directly or as one queued task per branch
 
 Support files:
 
@@ -234,14 +236,14 @@ direction, and every invariant.
 - `cms-worker.ts` — the `CmsWorker` class: lifecycle (draining `stop()`, `selfStopped`), worker lock, scheduling, `remote.git` provisioning, base-branch detection (`resolveBaseBranch`, `recordBaseBranchInRemoteHead`), and one delegating method per cluster
 - `worker-context.ts` — `WorkerContext`, the only channel between the class and its clusters
 - `task-runner.ts` — the task-queue cluster below `processTaskQueue`, including `PermanentTaskError`
-- `git-sync.ts` — the git-sync cluster below `syncGit`: tracking, settings push, base refresh (returns `BaseRefreshReport`), trash sweep, `repairBranchDirResidue`
+- `git-sync.ts` — the git-sync cluster below `syncGit`: tracking, settings push, base refresh (`BaseRefreshReport`), trash sweep, `repairBranchDirResidue`, `unpublishable-branches.ts` (`readCarriedGatewayPolicy`)
 - `remote-git-maintenance.ts` — `maintainRemoteGit`: the logged repack of `remote.git` (rule: `git-manager.ts` `repackBareRemoteIfNeeded`)
 - `sparse-cone.ts` — `reapplySparseCones`: re-cones sparse clones after a content-root change
 - `schema-gate.ts` — `decideBaseAdvance`: holds the base branch while incoming content names a schema the serving editor lacks
 - `stale-mirror.ts` — `settleStaleMirror`: a `remote.git` head without editor work follows GitHub
 - `canopy-state.ts` — how sync treats adopter-tracked `.canopy-meta/` state: `listTrackedCanopyState`, `trackedCanopyStateChanges`, `splitByUpstreamTracking`, `untrackInIndex`, `restoreRetiredSchemaCache`
 - `provisioned-workspace.ts` — `holdProvisionedWorkspace`: the zero-retry provisioning-lock hold around base refresh and each rebase
-- `rebase.ts` — the rebase loop, `runRebaseCycle`, and `pollMergeState`
+- `rebase.ts` — the rebase loop, `runRebaseCycle`, `pollMergeState`
 - `github-gateway.ts` — GitHub access; `branch-policy.ts`, `gateway-egress.ts`, `github-gateway-http.ts` its policy, scrubbing, socket
 - `github-mirror.ts`, `github-mirror-upkeep.ts`, `shared-repo-git.ts` — isolated git
 - `github-transfer.ts`, `bundle-header.ts`, `git-process.ts` — bundle transfer; `self-checks.ts` — boot checks
@@ -438,7 +440,7 @@ array then alphabetical; with it, the comparator replaces that and runs after `e
 
 **Location**: `packages/canopycms/src/content-listing.ts`
 
-- `content-listing.ts` — `listEntries()`, `listCollectionEntries()`, `sortByOrder()`, `withoutUnavailableEntries()`
+- `content-listing.ts` — `listEntries()`, `listCollectionEntries()`, `sortByOrder()`, `withoutUnavailableEntries()`, `entryRefFromRepoPath()`
 
 `ListEntriesItem` carries `pathSegments`, `urlPath`, `slug`, `entryPath`, `entryId`, `collectionId`,
 `updatedAt`, `data` and an optional `schema`. `ListEntriesOptions` takes `extract`, `filter`,
@@ -520,6 +522,7 @@ Top-level components and helpers:
 - `raw-asset-base.ts` — `authenticatedAssetBase`, `readAssetBase`
 - `canopy-path.ts` — field-path spelling (`normalizeCanopyPath`) and `isPathFieldName`
 - `field-breadcrumb.ts` / `field-target.ts` — a field path's label breadcrumb; `findFieldTarget`, `focusFieldTarget`, `revealField`
+- `entry-diff.ts` — `computeEntryDiff`
 - `schema-label.ts` — `schemaLabel`: a field's, group's or template's label, else its humanised name
 - `undo-removal.ts` — `FieldRemoval`, `restoreRemoval`, `openThreadsWithin` — undo for a form Remove or Clear
 - `user-display.ts` — `SYSTEM_USER_LABEL`, `userIdLabel`
@@ -530,6 +533,7 @@ Top-level components and helpers:
 - `theme.tsx` — theme, default control sizes
 - `branch-status.ts` — status labels and colours
 - `branch-lock.ts` — `branchBarStatus`, the bar's lock-state table; `describeBranchLock`
+- `branch-names.ts` — `displayBranchName`, `resolveListedBranch`, `branchUrlName`, `branchAddress`, `requestSegments`
 - `copy.ts` — fixed action verbs
 - `platform.ts` — `modKeyLabel()`, ⌘ or Ctrl
 - `slug.ts` — `slugFromTitle`; `validateEntrySlug`, the one slug validator
@@ -565,7 +569,7 @@ Manager hooks, in `editor/hooks/` — see
 - `useUserContext.tsx` / `useUserMetadata.ts` — current user (`EditorAuthGate` identity, else `whoami`); SWR user metadata, `seedUserProfiles`
 - `useReferenceResolution.ts` — preview value and `isLoading`, for `Editor.tsx`
 - `useEntryLinkResolution.ts` — resolves `entry:ID` patterns in preview data
-- `useBranchesData.ts` / `useEntriesData.ts` / `useCommentsData.ts` — the three SWR hooks; keys in the README
+- `useBranchesData.ts` / `useEntriesData.ts` / `useCommentsData.ts` / `useBranchChangesData.ts` — the SWR hooks; keys in the README
 - `index.ts` — only the nine hooks `Editor.tsx` and `media/MediaLibraryBody.tsx` import
 
 Field components, in `editor/fields/`:
@@ -599,7 +603,7 @@ Components, in `editor/components/`:
 - `UnsavedMark.tsx` — the unsaved dot
 - `EditorRail.tsx` — the rail's buttons and Settings menu
 - `EntryCreateModal.tsx` / `RenameEntryModal.tsx` / `ConfirmDeleteModal.tsx` — entry lifecycle dialogs
-- `BranchesDrawer.tsx` — Branches drawer
+- `BranchesDrawer.tsx` / `EntryChangesDrawer.tsx` — Branches, changes drawers
 - `StagedChangesDrawer.tsx` — unsaved-changes drawer
 - `UserBadge.tsx` — user avatar and name
 - `BranchAccessList.tsx` — a branch card's access list
@@ -688,8 +692,9 @@ All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 
 **Location**: `packages/canopycms/src/`
 
-- `git-manager.ts` — the `simple-git` wrapper: `cloneRepo` / `cloneWorkspace` (`CloneRepoOptions`), `resolveCloneRemoteUrl`, `setSparseCone`, `repoExistsAt`, `gitChildEnv`, `addAllExceptCanopyState()`, `listBaseFiles`, `detectBaseBranch`, `resolveWorkspaceBaseBranch`
-- `branch-registry.ts` — branch tracking and listing over a generation-token snapshot cache; quarantines a dir whose metadata will not load
+- `git-manager.ts` — the `simple-git` wrapper: `cloneRepo` / `cloneWorkspace` (`CloneRepoOptions`), `resolveCloneRemoteUrl`, `setSparseCone`, `repoExistsAt`, `gitChildEnv`, `addAllExceptCanopyState()`, `listBaseFiles`, `mergeBaseWithBase`, `diffNameStatusAgainst`, `bareRemoteBranchesInside`, `detectBaseBranch`, `resolveWorkspaceBaseBranch`
+- `branch-registry.ts` — branch tracking and listing over a generation-token snapshot cache, `getByKey`; quarantines a dir whose metadata will not load
+- `branch-param.ts` — `resolveBranchParam` (the exact form first), `shortNameOf`
 - `branch-metadata.ts` — `branch.json` persistence under layered concurrency; `baseBranch` immutable; `buildMergedBranchUpdate`, `buildInitialBranchMetadata`; `update` (a computed save), `recordEditor`, `markEditorsCommitted`, `recordBranchEditor`
 - `branch-metadata-file.ts` — schema-checked `branch.json` reads; a deliberate leaf module
 - `branch-metadata-error.ts` — the corrupt-metadata error, node-free
@@ -704,7 +709,7 @@ All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 - `github-service.ts` — GitHub API integration: `createOrUpdatePullRequest`, `createCanopyOctokit`, `isRefAlreadyGoneError`, the rate-limit retry predicates
 - `submission-attribution.ts` — sanitized editor identity, `describeEditors`: `Edited-by:` / `Co-authored-by:` commit trailers and the PR body's marker-delimited section
 - `editor-url.ts` — the editor URL PR bodies link to, and its deep links
-- `pr-comments.ts` — the PR body's editor-comment summary, re-rendered from comments.json
+- `pr-comments.ts` — the PR body's comment and review blocks, re-rendered from disk
 
 Key types: `BranchContext` (branch state plus `branchRoot` / `baseRoot`), `BranchMetadata`,
 `BranchPaths`, `SyncStatus` (`synced`, `pending-sync`, `sync-failed`).
@@ -775,18 +780,18 @@ prefer the branch's recorded `context.branch.baseBranch` over the config value. 
 - `types.ts` — the branded types plus the `ROOT_COLLECTION_ID` sentinel
 - `normalize.ts` — client-safe normalization: `createLogicalPath`, `createPhysicalPath`, the `unsafeAs*` casts
 - `normalize-server.ts` — the server-only normalization needing `node:path`
-- `validation.ts` — security validation: `parseLogicalPath`, `parsePhysicalPath`, `parseBranchName`, `parseContentId`, `parseSlug`
+- `validation.ts` — security validation: `parseLogicalPath`, `parsePhysicalPath`, `parseBranchName`, `parseBranchRef`, `exactBranchSegment` / `exactBranchName`, `parseContentId`, `parseSlug`
 - `resolve.ts` — `resolveLogicalPath`
 - `branch.ts` — branch workspace path resolution; imports `node:fs` and the mode strategies, so server-only
-- `branch-name.ts` — the dependency-free home of `sanitizeBranchName`, `RESERVED_SETTINGS_BRANCH_PREFIX`, `isSettingsBranchName` and `RESERVED_ROUTE_BRANCH_NAMES`
-- `index.ts` — the barrel, which re-exports `branch.ts` and so is not client-safe
+- `branch-name.ts` — dependency-free home of `sanitizeBranchName`, `RESERVED_SETTINGS_BRANCH_PREFIX`, `isSettingsBranchName`, `branchShortName`
+- `index.ts` — the barrel; re-exports `branch.ts`, so not client-safe
 - `test-utils.ts` — test-only casts `unsafeAsBranchName` and `unsafeAsSlug`, not exported from the barrel
 
 **Client-bundle boundary**: import `sanitizeBranchName` from `branch-name.ts`, never the barrel or
 `branch.ts`; `pnpm lint:bundle` enforces it — see
-[DEVELOPING.md](DEVELOPING.md#client-bundle-boundary-check). Which branch names are reserved, and
-why the list is hand-maintained rather than derived, is in
-[ARCHITECTURE.md](ARCHITECTURE.md#reserved-branch-names).
+[DEVELOPING.md](DEVELOPING.md#client-bundle-boundary-check). How editors' branch names form,
+and what keeps them clear of routes and settings branches, is in
+[ARCHITECTURE.md](ARCHITECTURE.md#branch-names).
 
 The branded types: `LogicalPath` (content-relative, no embedded IDs, used for every collection
 path), `PhysicalPath` (filesystem paths that may carry embedded IDs), `BranchName`,
@@ -939,6 +944,7 @@ the split.
 - `https-git-server.ts` — `startHttpsGitServer()`
 - `worker-gateway.ts` — `useLocalGitHubGateway()`, `fixtureCredential()`
 - `render-errors.ts` — `silenceReportedRenderErrors()`
+- `branch-wire.ts` — `listedBranchPath()`, `plainBranchPath()`
 - `index.ts` — exports
 
 ## Example App

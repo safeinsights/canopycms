@@ -12,6 +12,7 @@ import { BLOG_SCHEMA } from '../fixtures/schemas'
 import type { BranchListItemResponse, BranchListResponse } from '../../api/branch'
 import type { EntriesResponse } from '../../api/entries'
 import type { ApiResponse } from '../../api/types'
+import { branchRef } from '../test-utils/branch-names'
 
 describe('API Editing Workflow Integration', () => {
   let workspace: TestWorkspace
@@ -51,7 +52,7 @@ describe('API Editing Workflow Integration', () => {
     expect(createResponse.status).toBe(200)
     expect(createResponse.ok).toBe(true)
     const createData = await createResponse.json<BranchListItemResponse>()
-    expect(createData.data?.branch.name).toBe('feature-new-post')
+    expect(createData.data?.branch.name).toBe(branchRef('feature-new-post'))
     expect(createData.data?.branch.status).toBe('editing')
 
     // STEP 2: Write content via API (path-based routing)
@@ -239,6 +240,8 @@ describe('API Editing Workflow Integration', () => {
     const editorListResponse = await editorClient.get('/api/canopycms/branches')
     expect(editorListResponse.status).toBe(200)
     const editorBranches = await editorListResponse.json<BranchListResponse>()
-    expect(editorBranches.data?.branches.some((b) => b.name === 'editor-branch')).toBe(true)
+    expect(editorBranches.data?.branches.some((b) => b.name === branchRef('editor-branch'))).toBe(
+      true,
+    )
   })
 })

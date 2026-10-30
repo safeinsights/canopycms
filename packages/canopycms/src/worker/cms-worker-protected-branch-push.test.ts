@@ -189,15 +189,17 @@ describe('the worker refuses to push protected branches', () => {
   })
 
   it('still pushes editor branches and the settings branch', async () => {
-    await commitInRemoteGit('feature/x', 'on-main')
+    await commitInRemoteGit('canopycms/prod/feature/x', 'on-main')
     await commitInRemoteGit('canopycms-settings-prod', 'unrelated')
-    await queuePush('feature/x')
+    await queuePush('canopycms/prod/feature/x')
     await queuePush('canopycms-settings-prod')
 
     await runQueue()
 
     expect(await failedErrors()).toEqual([])
-    expect(await githubLog('feature/x')).toBe('B: feature/x on-main\nA: base')
+    expect(await githubLog('canopycms/prod/feature/x')).toBe(
+      'B: canopycms/prod/feature/x on-main\nA: base',
+    )
     expect(await githubLog('canopycms-settings-prod')).toBe('B: canopycms-settings-prod unrelated')
     expect(await githubLog('main')).toBe('A: base')
   })

@@ -28,7 +28,6 @@ import type { CanopyUser } from './user'
 import type { CanopyServices } from './services'
 import type { ReadContentInput, ContentReadMeta } from './content-reader'
 import type { BranchContext } from './types'
-import type { OperatingMode } from './operating-mode'
 import type { FlatSchemaItem } from './config'
 import { isDeployedStatic, isBuildMode, readsFromCheckout, STATIC_DEPLOY_USER } from './build-mode'
 import { createContentReaderInternal } from './content-reader'
@@ -41,7 +40,8 @@ import {
   type Slug,
 } from './paths'
 import { resolveUrlPathCandidates } from './url-path-resolver'
-import { loadBranchContext, loadOrCreateBranchContext } from './branch-workspace'
+import { loadOrCreateBranchContext } from './branch-workspace'
+import { resolveBranchParam, type BranchParamConfig } from './branch-param'
 import {
   buildContentTree as buildContentTreeImpl,
   type BuildContentTreeOptions,
@@ -94,16 +94,16 @@ interface ListingSource {
 }
 
 /**
- * A branch that already has a workspace, or null. A name that cannot name one
- * is null too (`namesNoWorkspace`): it arrives from the request, so it reads as
- * not-found rather than failing the page.
+ * The existing branch `param` names (`resolveBranchParam`), or null. A name that cannot name one
+ * is null too (`namesNoWorkspace`): it arrives from the request, so it reads as not-found rather
+ * than failing the page.
  */
 async function loadExistingBranch(
-  branchName: string,
-  mode: OperatingMode,
+  param: string,
+  config: BranchParamConfig,
 ): Promise<BranchContext | null> {
   try {
-    return await loadBranchContext({ branchName, mode })
+    return await resolveBranchParam(param, config)
   } catch (err) {
     if (namesNoWorkspace(err)) return null
     throw err
@@ -326,7 +326,7 @@ export function createCanopyContext(options: CanopyContextOptions) {
           remoteUrl: services.config.defaultRemoteUrl,
         })
       }
-      const context = await loadExistingBranch(requested, services.config.mode)
+      const context = await loadExistingBranch(requested, services.config)
       if (!context) return null
       if (enforceAcls && !services.checkBranchAccess(context, user).allowed) return null
       return context

@@ -20,6 +20,7 @@ export const EDITOR_ACTIONS = {
   undoClear: 'Undo clear',
   changeUrl: 'Change URL',
   changeSlug: 'Change slug',
+  showChanges: 'Show changes',
 } as const
 
 /**

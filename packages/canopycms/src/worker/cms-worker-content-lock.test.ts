@@ -369,13 +369,14 @@ describe('rebase vs. content write exclusion', () => {
     const setup = await createConflictSetup(tmpDir, 'my-feature')
 
     // Throw from inside the locked region: the post-rebase metadata save.
-    const saveSpy = vi
-      .spyOn(BranchMetadataFileManager.prototype, 'save')
+    const updateSpy = vi
+      .spyOn(BranchMetadataFileManager.prototype, 'update')
       .mockRejectedValue(new Error('boom'))
 
     const worker = makeWorker(tmpDir)
     await runRebase(worker)
-    saveSpy.mockRestore()
+    expect(updateSpy).toHaveBeenCalled()
+    updateSpy.mockRestore()
 
     // The lock must be free -- a stranded lock would wedge every subsequent
     // write on this branch until it went stale.

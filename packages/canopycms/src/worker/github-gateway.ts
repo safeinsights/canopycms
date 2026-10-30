@@ -23,7 +23,12 @@ import {
   type MirrorSession,
   type ReceivedBundle,
 } from './github-mirror'
-import { BranchPolicy, GatewayRefusalError, assertPullRequestText } from './branch-policy'
+import {
+  BranchPolicy,
+  GatewayRefusalError,
+  assertPullRequestText,
+  type BranchPolicyDescription,
+} from './branch-policy'
 import {
   gatewayLog,
   gatewayLogError,
@@ -145,8 +150,15 @@ export function describeMove(update: Extract<GitHubRefUpdate, { moved: true }>):
 /** The fields of a pull request the worker reads. */
 export type GitHubPullRequest = Pick<
   RestEndpointMethodTypes['pulls']['get']['response']['data'],
-  'merged' | 'merged_at' | 'state' | 'node_id' | 'body'
->
+  'merged' | 'merged_at' | 'state' | 'node_id'
+> & {
+  /**
+   * The pull request's body, `''` when it has none. `null` when the gateway withholds it, as it
+   * does for every pull request it would not update (`LocalGitHubGateway.getPullRequest`). A pull
+   * request a person opened from a branch in the namespace has its body answered.
+   */
+  body: string | null
+}
 
 export type GitHubCreateOrUpdatePullRequest = Omit<
   CreateOrUpdatePullRequestParams,
@@ -269,8 +281,8 @@ export interface GitHubGatewayHealth {
   preflight: 'not-an-app' | 'verified' | 'unverified' | 'pending'
   /** Whether the gateway holds a Clerk secret key. */
   clerkConfigured: boolean
-  /** The protected set (worker/branch-policy.ts): configured names and globs, and GitHub's default as last read. */
-  protectedBranches: { configured: string[]; githubDefault: string | null }
+  /** The branch policy as it stands (`BranchPolicy.describe`). */
+  branchPolicy: BranchPolicyDescription
 }
 
 /** `GatewayInstanceOptions` carries the termination watch and the lifecycle completion. */
@@ -300,6 +312,12 @@ export interface LocalGitHubGatewayOptions extends GatewayInstanceOptions {
   baseBranch?: string
   /** Further branches it protects alike: names and `*` globs (worker/branch-policy.ts). */
   protectedBranches?: readonly string[]
+  /** This deployment's settings branch, the only settings branch the gateway pushes. */
+  settingsBranch?: string
+  /** The branch namespace it writes, resolved (operating-mode/branch-namespace.ts). */
+  branchNamespace?: string
+  /** Branches outside the namespace it may still write: exact names (worker/branch-policy.ts). */
+  legacyBranches?: readonly string[]
   /**
    * Fetches the auth provider's snapshot with the provider's key; its presence is
    * `health().clerkConfigured`. Without it, `authSnapshot()` throws.
@@ -373,6 +391,9 @@ class LocalGitHubGateway implements GitHubGateway {
     this.policy = new BranchPolicy({
       baseBranch: options.baseBranch,
       protectedBranches: options.protectedBranches,
+      settingsBranch: options.settingsBranch,
+      legacyBranches: options.legacyBranches,
+      namespace: options.branchNamespace,
     })
   }
 
@@ -659,7 +680,7 @@ class LocalGitHubGateway implements GitHubGateway {
       fatalError,
       preflight: this.preflight,
       clerkConfigured: this.options.authSnapshot !== undefined,
-      protectedBranches: this.policy.describe(),
+      branchPolicy: this.policy.describe(),
     }
   }
 
@@ -1017,7 +1038,9 @@ class LocalGitHubGateway implements GitHubGateway {
     signal?: AbortSignal,
   ): Promise<void> {
     return this.credentialed(signal, async (reach) => {
-      assertPullRequestText(`Refusing to update pull request #${number}`, `#${number}`, update)
+      const refusing = `Refusing to ${update.state === 'closed' ? 'close' : 'update'} pull request #${number}`
+      assertPullRequestText(refusing, `#${number}`, update)
+      await this.assertOwnPullRequest(reach, number, refusing, signal)
       await this.api(reach, () =>
         this.octokit.pulls.update({
           ...this.repo,
@@ -1029,17 +1052,79 @@ class LocalGitHubGateway implements GitHubGateway {
     })
   }
 
+  /**
+   * Pull request `number`'s merge state, for any number, and its body only when `updatePullRequest`
+   * would take its head: a branch of this repository that `BranchPolicy.takesPullRequestFrom`
+   * admits (the namespace or a `legacyBranches` entry) and that is not protected, whoever opened
+   * the pull request. Withholding more would protect nothing a write cannot change. When GitHub's
+   * default branch cannot be read, the configured protected set and the default as last read
+   * decide. The number comes from the worker, which a compromised CMS Lambda can steer; the head is
+   * GitHub's record.
+   */
   getPullRequest(number: number, signal?: AbortSignal): Promise<GitHubPullRequest> {
-    return this.credentialed(signal, (reach) => this.pullRequest(reach, number, signal))
+    return this.credentialed(signal, async (reach) => {
+      const { data } = await this.api(reach, () =>
+        this.octokit.pulls.get({ ...this.repo, pull_number: number, request: { signal } }),
+      )
+      const head = data.head.ref
+      // By id, as `assertOwnPullRequest` compares; a deleted fork has no repo. A protected head is
+      // one the gateway refuses to update the pull request of, so its body is withheld too.
+      let ours = data.head.repo?.id === data.base.repo.id && this.policy.takesPullRequestFrom(head)
+      if (ours) {
+        try {
+          ours = !(await this.policy.isProtected(head, () => this.readDefaultBranch(reach, signal)))
+        } catch (err) {
+          // `isProtected` reads GitHub only for a head the configured set (the base branch and
+          // each `protectedBranches` entry) does not cover. The merge poll needs the merge state,
+          // so an unread default branch leaves the body to that set and to the default as last
+          // read, however old: `updatePullRequest` judges the head again before writing it.
+          if (signal?.aborted) throw err
+          if (this.policy.matchesLastReadDefault(head)) ours = false
+          gatewayLogWarn(
+            `Could not read GitHub's default branch for pull request #${number} ` +
+              `(${redactEgress(getErrorMessage(err))}); judging its head by the configured protected set and the default as last read`,
+          )
+        }
+      }
+      return {
+        merged: data.merged,
+        merged_at: data.merged_at,
+        state: data.state,
+        node_id: data.node_id,
+        body: ours ? (data.body ?? '') : null,
+      }
+    })
   }
 
-  private async pullRequest(
+  /**
+   * Read pull request `number` and refuse it unless its head is a branch of this repository that
+   * a pull request may come from (`BranchPolicy.assertPullRequestHeadAllowed`). The number comes
+   * from the worker; the head is GitHub's record, which the worker cannot choose.
+   */
+  private async assertOwnPullRequest(
     reach: GitHubReach,
     number: number,
+    refusing: string,
     signal?: AbortSignal,
   ): Promise<GitHubPullRequest> {
     const { data } = await this.api(reach, () =>
       this.octokit.pulls.get({ ...this.repo, pull_number: number, request: { signal } }),
+    )
+    const head = data.head.ref
+    // By id, not name: the configured name keeps working after a rename or transfer, and the base
+    // repository is the one asked. A deleted fork has no repo.
+    if (data.head.repo?.id !== data.base.repo.id) {
+      throw new GatewayRefusalError(
+        'pull-request',
+        head,
+        'outside-namespace',
+        `${refusing}: its head is not a branch of this repository`,
+      )
+    }
+    await this.policy.assertPullRequestHeadAllowed(
+      `${refusing}, whose head is ${JSON.stringify(head)}`,
+      head,
+      () => this.readDefaultBranch(reach, signal),
     )
     return data
   }
@@ -1065,7 +1150,12 @@ class LocalGitHubGateway implements GitHubGateway {
   convertPullRequestToDraft(number: number, signal?: AbortSignal): Promise<void> {
     return this.credentialed(signal, async (reach) => {
       // The REST API cannot convert a PR to a draft; GraphQL can.
-      const pr = await this.pullRequest(reach, number, signal)
+      const pr = await this.assertOwnPullRequest(
+        reach,
+        number,
+        `Refusing to convert pull request #${number} to a draft`,
+        signal,
+      )
       await this.api(reach, () =>
         this.octokit.graphql(
           `mutation($id: ID!) { convertPullRequestToDraft(input: { pullRequestId: $id }) { pullRequest { isDraft } } }`,

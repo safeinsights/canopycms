@@ -60,7 +60,13 @@ function fakeGateway(): FakeGateway {
       fatalError: null,
       preflight: 'not-an-app' as const,
       clerkConfigured: false,
-      protectedBranches: { configured: ['main'], githubDefault: 'main' },
+      branchPolicy: {
+        configured: ['main'],
+        githubDefault: 'main',
+        namespace: 'canopycms/prod/',
+        legacy: [],
+        settingsBranch: null,
+      },
     })),
     defaultBranch: vi.fn(async () => 'main'),
     isProtectedBranch: vi.fn(async () => false),
@@ -819,9 +825,9 @@ describe('operations across the socket', () => {
     expect(gateway.deleteBranch).toHaveBeenCalledWith('f', expect.any(AbortSignal))
   })
 
-  it('carries only the pull request fields the worker reads', async () => {
+  it('carries only the pull request fields the worker reads, and a withheld body as null', async () => {
     const gateway = fakeGateway()
-    // The in-process gateway hands back all of Octokit's `data`.
+    // More than the type holds: the server sends the five fields alone.
     const full = {
       merged: true,
       merged_at: '2026-01-01T00:00:00Z',
@@ -1566,21 +1572,31 @@ describe('the instance operations over the socket', () => {
       fatalError: null,
       preflight: 'not-an-app' as const,
       clerkConfigured: false,
-      protectedBranches: { configured: entries, githubDefault: 'main' },
+      branchPolicy: {
+        configured: entries,
+        githubDefault: 'main',
+        namespace: 'canopycms/prod/',
+        legacy: [],
+        settingsBranch: null,
+      },
     })
     await serve(gateway)
     const client = connectGitHubGateway(socketPath)
 
-    expect((await client.health()).protectedBranches.configured).toHaveLength(
-      MAX_PROTECTED_BRANCHES + 1,
-    )
+    expect((await client.health()).branchPolicy.configured).toHaveLength(MAX_PROTECTED_BRANCHES + 1)
 
     gateway.health.mockResolvedValue({
       ready: true,
       fatalError: null,
       preflight: 'not-an-app' as const,
       clerkConfigured: false,
-      protectedBranches: { configured: [...entries, 'one-more'], githubDefault: 'main' },
+      branchPolicy: {
+        configured: [...entries, 'one-more'],
+        githubDefault: 'main',
+        namespace: 'canopycms/prod/',
+        legacy: [],
+        settingsBranch: null,
+      },
     })
     await expect(client.health()).rejects.toThrow(/health answer does not fit/)
   })

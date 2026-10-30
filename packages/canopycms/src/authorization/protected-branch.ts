@@ -61,9 +61,9 @@ export interface BranchWriteProtection extends BranchProtection {
 /**
  * Whether `branchName` is the protected base branch for `config`.
  *
- * The comparison is sanitization-aware: branch metadata names are sanitized but
- * `config.defaultBaseBranch` holds the raw git name, so both sides go through
- * `sanitizeBranchName` first.
+ * The comparison is sanitization-aware: both sides go through `sanitizeBranchName`
+ * first, the form a workspace directory takes, so a base workspace whose recorded
+ * name is sanitized still matches the raw git name `config.defaultBaseBranch` holds.
  *
  * `recordedBaseBranch` (a branch's own recorded fork point) is a second, purely
  * additive clause: a branch whose fork point equals its own name IS a base

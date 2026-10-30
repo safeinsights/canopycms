@@ -466,6 +466,26 @@ describe('BranchRegistry', () => {
     })
   })
 
+  describe('getByKey()', () => {
+    it('returns the branch whose workspace directory is the key, and get() only by exact name', async () => {
+      const root = await tmpDir()
+      const branchDir = path.join(root, 'canopycms-local-spring')
+      await fs.mkdir(branchDir)
+      await getBranchMetadataFileManager(branchDir, root).save({
+        branch: { name: 'canopycms/local/spring', status: 'editing', createdBy: 'user-1' },
+      })
+
+      const registry = new BranchRegistry(root)
+
+      expect((await registry.getByKey('canopycms-local-spring'))?.branch.name).toBe(
+        'canopycms/local/spring',
+      )
+      expect(await registry.getByKey('canopycms/local/spring')).toBeUndefined()
+      expect((await registry.get('canopycms/local/spring'))?.branchRoot).toBe(branchDir)
+      expect(await registry.get('canopycms-local-spring')).toBeUndefined()
+    })
+  })
+
   describe('invalidate()', () => {
     it('causes next list() to regenerate cache', async () => {
       const root = await tmpDir()

@@ -109,6 +109,15 @@ const branchMetadataShape = {
   syncFailureReason: z.string().optional(),
   editors: z.array(z.string()).optional(),
   uncommittedEditors: z.array(z.string()).optional(),
+  // Dropped when malformed: it only decorates the PR body, so it never fails a read.
+  review: z
+    .object({
+      state: z.enum(['approved', 'changes-requested']),
+      by: z.object({ userId: z.string(), name: z.string().optional() }),
+      at: z.string(),
+    })
+    .optional()
+    .catch(undefined),
 } satisfies { [K in keyof BranchMetadata]-?: z.ZodTypeAny }
 
 /** The `branch` object, also embedded in the registry snapshot (branch-registry.ts). */

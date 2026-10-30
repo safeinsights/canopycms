@@ -2,7 +2,7 @@
  * worker-status.json: the CmsWorker daemon's self-reported liveness/health
  * snapshot, written under the task queue directory
  * (`{taskDir}/worker-status.json`) and read tolerantly by the admin API
- * (api/admin.ts's `readWorkerStatus`). Wire shape: `WorkerStatusReport` in
+ * (`readWorkerStatus`). Wire shape: `WorkerStatusReport` in
  * ../types.
  *
  * Single-writer by intent (only the lock-holding CmsWorker -- see
@@ -24,10 +24,31 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import { atomicWriteFile } from '../utils/atomic-write'
-import { isNotFoundError } from '../utils/error'
+import { getErrorMessage, isNotFoundError } from '../utils/error'
 import type { WorkerStatusReport } from '../types'
 
 export const WORKER_STATUS_FILE = 'worker-status.json'
+
+/** The status file as last written, null when there is none, and why it could not be read. */
+export async function readWorkerStatus(
+  taskDir: string,
+): Promise<{ workerStatus: WorkerStatusReport | null; statusReadError?: string }> {
+  let content: string
+  try {
+    content = await fs.readFile(path.join(taskDir, WORKER_STATUS_FILE), 'utf-8')
+  } catch (err) {
+    if (isNotFoundError(err)) return { workerStatus: null }
+    return { workerStatus: null, statusReadError: getErrorMessage(err) }
+  }
+  try {
+    // Cast, not validated. The CMS Lambda can write this file too, since it mounts the same EFS,
+    // but every caller of this reader runs in the Lambda, so a forged file misleads only the
+    // Lambda itself and the System health it serves.
+    return { workerStatus: JSON.parse(content) as WorkerStatusReport }
+  } catch (err) {
+    return { workerStatus: null, statusReadError: getErrorMessage(err) }
+  }
+}
 
 /**
  * What a new worker carries from the previous status file into its first snapshot:

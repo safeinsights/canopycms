@@ -12,6 +12,7 @@ import { BranchProvisioningBusyError } from '../branch-provisioning'
 import { WORKER_NOT_READY_MESSAGE } from './worker-not-ready'
 import { resolveCanopyUser } from '../resolve-canopy-user'
 import { ANONYMOUS_USER } from '../user'
+import { exactBranchSegment } from '../paths/validation'
 
 // Mock the BranchWorkspaceManager to avoid git operations
 vi.mock('../branch-workspace', () => {
@@ -37,6 +38,13 @@ vi.mock('../branch-workspace', () => {
     loadBranchContext: vi.fn().mockResolvedValue(null),
   }
 })
+
+// The resolver every /:branch segment goes through, spied on and finding nothing.
+const resolveBranchParam = vi.hoisted(() => vi.fn())
+vi.mock('../branch-param', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../branch-param')>()),
+  resolveBranchParam,
+}))
 
 // Mock the permissions loader to avoid file system operations
 vi.mock('../resolve-canopy-user', async (importOriginal) => {
@@ -112,6 +120,7 @@ const createMockServices = () => ({
   createGitManagerFor: vi.fn(),
   registry: {
     get: vi.fn().mockResolvedValue(null),
+    getByKey: vi.fn().mockResolvedValue(undefined),
     list: vi.fn().mockResolvedValue([]),
   },
   bootstrapAdminIds: new Set<string>(),
@@ -148,6 +157,17 @@ describe('createCanopyRequestHandler', () => {
 
     expect(response.status).toBe(200)
     expect(response.body).toHaveProperty('ok', true)
+  })
+
+  it('resolves a /:branch segment through resolveBranchParam, with the live config', async () => {
+    resolveBranchParam.mockResolvedValue(null)
+    const services: any = createMockServices()
+    const handler = createCanopyRequestHandler({ services, authPlugin: createMockAuthPlugin() })
+
+    const response = await handler(createMockRequest(), ['spring', 'status'])
+
+    expect(resolveBranchParam).toHaveBeenCalledWith('spring', services.config)
+    expect(response.status).toBe(404)
   })
 
   it('returns 404 for unknown routes', async () => {
@@ -988,10 +1008,11 @@ describe('buildContext: the settings branch is never a content branch', () => {
     const handler = createCanopyRequestHandler({ services, authPlugin: createMockAuthPlugin() })
     vi.mocked(BranchWorkspaceManager).mockClear()
     vi.mocked(loadBranchContext).mockClear()
+    resolveBranchParam.mockClear()
     const response = await handler(
       createMockRequest({
         method: 'GET',
-        url: `http://localhost:3000/api/canopycms/${branch}/status`,
+        url: `http://localhost:3000/api/canopycms/${encodeURIComponent(branch)}/status`,
       }),
       [branch, 'status'],
     )
@@ -1004,7 +1025,8 @@ describe('buildContext: the settings branch is never a content branch', () => {
       )
       .map(([opts]) => (opts as { branchName: string }).branchName)
     const loaded = vi.mocked(loadBranchContext).mock.calls.map(([opts]) => opts.branchName)
-    return { response, created, loaded }
+    const resolved = resolveBranchParam.mock.calls.map(([param]) => param as string)
+    return { response, created, loaded, resolved }
   }
 
   it('answers 404 for the deployment-namespaced settings branch, provisioning and loading nothing', async () => {
@@ -1035,9 +1057,33 @@ describe('buildContext: the settings branch is never a content branch', () => {
     expect(loaded).not.toContain('canopycms-settings-other')
   })
 
+  it.each([
+    ['the deployment-namespaced settings branch', 'canopycms-settings-acme'],
+    ["an adopter's configured settings branch", 'site-settings'],
+    ["another deployment's settings branch", 'canopycms-settings-other'],
+  ])('answers 404 for %s by its exact form, resolving nothing', async (_label, name) => {
+    const exact = exactBranchSegment(name)
+    const { response, created, resolved } = await request(exact, (config) => {
+      config.deploymentName = 'acme'
+      config.settingsBranch = 'site-settings'
+    })
+
+    expect(response.status).toBe(404)
+    expect(created).not.toContain(name)
+    expect(resolved).not.toContain(exact)
+  })
+
   it('records the base branch it provisions on every request (so the spies above can see a call)', async () => {
     const { created } = await request('main')
 
     expect(created).toContain('main')
+  })
+
+  it('provisions the base named by its exact form as it does by its full name, never the form', async () => {
+    const plain = await request('main')
+    const exact = await request(exactBranchSegment('main'))
+
+    expect(exact.created).toEqual(plain.created)
+    expect(exact.created).not.toContain(exactBranchSegment('main'))
   })
 })

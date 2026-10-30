@@ -841,6 +841,133 @@ describe('BranchManager', () => {
       )
     })
 
+    it('shows below the field the short name a typed name creates, and no prefix', async () => {
+      renderBranchManager({
+        branches: baseBranches,
+        onCreate: vi.fn(async () => true),
+        mode: 'prod',
+      })
+      await userEvent.click(screen.getByRole('button', { name: 'New branch…' }))
+      const input = await screen.findByLabelText(/branch name/i)
+
+      expect(screen.queryByText(/canopycms-/)).toBeNull()
+
+      await userEvent.type(input, 'spring/update')
+      const preview = screen.getByText('Will be named spring-update')
+      expect(input.getAttribute('aria-describedby')).toContain(preview.id)
+      // After the input, so a preview that wraps never moves the field being typed in.
+      expect(input.compareDocumentPosition(preview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      expect(screen.getByTestId('create-branch-submit').hasAttribute('disabled')).toBe(false)
+    })
+
+    it('says nothing of a name when sanitizing left what was typed as it was', async () => {
+      renderBranchManager({
+        branches: baseBranches,
+        onCreate: vi.fn(async () => true),
+        mode: 'prod',
+      })
+      await userEvent.click(screen.getByRole('button', { name: 'New branch…' }))
+      const input = await screen.findByLabelText(/branch name/i)
+
+      await userEvent.type(input, 'spring-update')
+      expect(screen.queryByText(/^Will be named/)).toBeNull()
+
+      await userEvent.clear(input)
+      await userEvent.type(input, '@spring')
+      expect(screen.getByText('Will be named spring')).toBeTruthy()
+    })
+
+    it("shows the server's refusal under the field, keeping the form as typed, until the name changes", async () => {
+      const refusal = '"spring" is already the name of another branch. Choose a different name.'
+      const onCreate = vi.fn(async () => ({ refusal }))
+      renderBranchManager({ branches: baseBranches, onCreate, mode: 'prod' })
+      await userEvent.click(screen.getByRole('button', { name: 'New branch…' }))
+      const input = (await screen.findByLabelText(/branch name/i)) as HTMLInputElement
+      await userEvent.type(input, 'spring')
+
+      await userEvent.click(screen.getByTestId('create-branch-submit'))
+
+      expect(await screen.findByText(refusal)).toBeTruthy()
+      expect(input.getAttribute('aria-invalid')).toBe('true')
+      expect(input.value).toBe('spring')
+      // On the field, whose description the error is, so a screen reader reads why.
+      await waitFor(() => expect(document.activeElement).toBe(input))
+
+      await userEvent.type(input, '2')
+      expect(screen.queryByText(refusal)).toBeNull()
+    })
+
+    it('shows a refusal without the name it would have taken', async () => {
+      const refusal = '"spring" is already the name of another branch. Choose a different name.'
+      renderBranchManager({
+        branches: baseBranches,
+        onCreate: vi.fn(async () => ({ refusal })),
+        mode: 'prod',
+      })
+      await userEvent.click(screen.getByRole('button', { name: 'New branch…' }))
+      const input = await screen.findByLabelText(/branch name/i)
+      await userEvent.type(input, '@spring')
+      expect(screen.getByText('Will be named spring')).toBeTruthy()
+
+      await userEvent.click(screen.getByTestId('create-branch-submit'))
+
+      expect(await screen.findByText(refusal)).toBeTruthy()
+      expect(screen.queryByText('Will be named spring')).toBeNull()
+    })
+
+    it.each([
+      ['Cancel', async () => userEvent.click(screen.getByRole('button', { name: 'Cancel' }))],
+      [
+        'a create that then passes',
+        async () => {
+          await userEvent.click(screen.getByTestId('create-branch-submit'))
+          await waitFor(() =>
+            expect(screen.getByRole('button', { name: 'New branch…' })).toBeTruthy(),
+          )
+        },
+      ],
+    ])('forgets a refusal after %s', async (_after, leave) => {
+      const refusal = '"spring" is already the name of another branch. Choose a different name.'
+      const onCreate = vi
+        .fn<() => Promise<boolean | { refusal: string }>>()
+        .mockResolvedValueOnce({ refusal })
+        .mockResolvedValue(true)
+      renderBranchManager({ branches: baseBranches, onCreate, mode: 'prod' })
+      await userEvent.click(screen.getByRole('button', { name: 'New branch…' }))
+      const input = (await screen.findByLabelText(/branch name/i)) as HTMLInputElement
+      await userEvent.type(input, 'spring')
+      await userEvent.click(screen.getByTestId('create-branch-submit'))
+      expect(await screen.findByText(refusal)).toBeTruthy()
+
+      await leave()
+      await userEvent.click(screen.getByRole('button', { name: 'New branch…' }))
+      if (!input.value) await userEvent.type(input, 'spring')
+
+      expect(input.value).toBe('spring')
+      expect(screen.queryByText(refusal)).toBeNull()
+    })
+
+    it.each([
+      ['spring update', /cannot contain spaces/],
+      ['a..b', /cannot contain "\.\."/],
+      ['a'.repeat(251), /too long \(max 250 characters\)/],
+      ['_', /needs at least one letter \(a–z\) or digit/],
+    ])('says why %s cannot be created, and offers no create', async (typed, why) => {
+      const onCreate = vi.fn(async () => true)
+      renderBranchManager({ branches: baseBranches, onCreate, mode: 'prod' })
+      await userEvent.click(screen.getByRole('button', { name: 'New branch…' }))
+      const input = await screen.findByLabelText(/branch name/i)
+
+      await userEvent.click(input)
+      await userEvent.paste(typed)
+
+      expect(screen.getByText(why)).toBeTruthy()
+      expect(input.getAttribute('aria-invalid')).toBe('true')
+      expect(screen.queryByText(/^Will be named/)).toBeNull()
+      expect(screen.getByTestId('create-branch-submit').hasAttribute('disabled')).toBe(true)
+      expect(onCreate).not.toHaveBeenCalled()
+    })
+
     it('keeps the form open with the entered values when the create resolves false', async () => {
       const pending = deferred()
       const onCreate = vi.fn(() => pending.promise)
@@ -1356,11 +1483,21 @@ describe('BranchManager', () => {
   })
 
   describe('actions menu', () => {
-    it('labels its trigger with the branch it acts on', () => {
-      renderBranchManager({ branches: baseBranches, user: creatorUser, mode: 'prod' })
+    it('labels its trigger with the branch it acts on, by its short name', () => {
+      const spring: BranchSummary = {
+        ...baseBranches[1],
+        name: 'canopycms/prod/spring',
+        shortName: 'spring',
+      }
+      renderBranchManager({
+        branches: [...baseBranches, spring],
+        user: creatorUser,
+        mode: 'prod',
+      })
 
       expect(screen.getByRole('button', { name: 'More actions for main' })).toBeTruthy()
       expect(screen.getByRole('button', { name: 'More actions for feature/test' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'More actions for spring' })).toBeTruthy()
     })
 
     it('shows the workflow action of another branch with the reason it cannot act', async () => {
@@ -1679,4 +1816,72 @@ describe('BranchManager', () => {
       expect(screen.queryByText('Name unavailable')).toBeNull()
     })
   })
+})
+
+describe('a branch outside the namespace whose name a namespace branch takes as its short name', () => {
+  const outside: BranchSummary = {
+    name: 'spring',
+    shortName: 'spring',
+    status: 'editing',
+    submitBlocked: false,
+  }
+  const namespaced: BranchSummary = { ...outside, name: 'canopycms/prod/spring' }
+  const reviewerAdmin = {
+    userId: 'reviewer',
+    groups: [RESERVED_GROUPS.ADMINS, RESERVED_GROUPS.REVIEWERS],
+  }
+
+  /** Click `testId`, from the card's "…" menu when the card does not show it. */
+  const choose = async (testId: string, name: string) => {
+    if (!screen.queryByTestId(testId)) {
+      await userEvent.click(screen.getByTestId(`branch-actions-menu-${name}`))
+      await screen.findByRole('menu')
+    }
+    await userEvent.click(screen.getByTestId(testId))
+  }
+
+  it.each([
+    ['outside', outside, '~spring'],
+    ['namespace', namespaced, 'canopycms/prod/spring'],
+  ])(
+    "hands every action on the %s branch's card a name that opens that branch",
+    async (_label, branch, address) => {
+      const props = {
+        onSelect: vi.fn(),
+        onSubmit: vi.fn(),
+        onDelete: vi.fn(),
+        onWithdraw: vi.fn(),
+        onApprove: vi.fn(),
+        onRequestChanges: vi.fn(),
+      }
+      const editing = renderBranchManager({
+        branches: [outside, namespaced],
+        user: reviewerAdmin,
+        mode: 'prod',
+        ...props,
+      })
+      await choose(`switch-to-branch-button-${branch.name}`, branch.name)
+      await choose(`submit-branch-button-${branch.name}`, branch.name)
+      await choose(`delete-branch-button-${branch.name}`, branch.name)
+      editing.unmount()
+
+      const submitted = (b: BranchSummary) => ({ ...b, status: 'submitted', createdBy: 'author' })
+      renderBranchManager({
+        branches: [submitted(outside), submitted(namespaced)],
+        user: reviewerAdmin,
+        mode: 'prod',
+        ...props,
+      })
+      await choose(`withdraw-branch-button-${branch.name}`, branch.name)
+      await choose(`approve-branch-button-${branch.name}`, branch.name)
+      await choose(`request-changes-branch-button-${branch.name}`, branch.name)
+
+      const calls = Object.fromEntries(
+        Object.entries(props).map(([prop, handler]) => [prop, handler.mock.calls]),
+      )
+      expect(calls).toEqual(
+        Object.fromEntries(Object.keys(props).map((prop) => [prop, [[address]]])),
+      )
+    },
+  )
 })

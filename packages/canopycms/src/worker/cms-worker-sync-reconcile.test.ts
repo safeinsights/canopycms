@@ -30,12 +30,14 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { simpleGit, type SimpleGit } from 'simple-git'
 
-import { getBranchMetadataFileManager } from '../branch-metadata'
+import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
+import { BRANCH_META_DIR, BRANCH_META_FILE } from '../branch-metadata-file'
 import { enqueueTask } from '../task-queue/cms-task-queue'
 import { mockConsole, openBareRepo, useLocalGitHubGateway } from '../test-utils'
 import { branchProvisioningLockName, tryAcquireProvisioningLock } from '../utils/provisioning-lock'
 import type { WorkerStatusReport } from '../types'
 import { CmsWorker } from './cms-worker'
+import type { GitHubGateway } from './github-gateway'
 import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
 
 /**
@@ -233,29 +235,264 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
 
-  /** A branch workspace at `dirName`, as the Lambda publishes one: a clone with branch.json. */
-  const giveWorkspace = async (dirName: string) => {
+  /**
+   * A branch workspace at `dirName`, as the Lambda publishes one: a clone with branch.json, whose
+   * `name` is the ref.
+   */
+  const giveWorkspace = async (dirName: string, name = dirName) => {
     const branchPath = path.join(workspacePath, 'content-branches', dirName)
     await fs.mkdir(path.join(branchPath, '.git'), { recursive: true })
     await getBranchMetadataFileManager(branchPath, path.dirname(branchPath)).save({
-      branch: { name: dirName },
+      branch: { name },
     })
   }
 
-  const makeWorker = () => {
+  const makeWorker = (extra: { branchNamespace?: string; protectedBranches?: string[] } = {}) => {
     const worker = new CmsWorker({
       workspacePath,
       githubOwner: 'test-owner',
       githubRepo: 'test-repo',
       githubToken: 'fake-token',
       baseBranch: 'main',
+      ...extra,
     })
     // Point the GitHub fetch/push URL at the local bare fixture instead of a
     // real GitHub URL (same technique as cms-worker.test.ts's syncGit suite).
-    useLocalGitHubGateway(worker, { remoteUrl: () => githubPath })
+    gateway = useLocalGitHubGateway(worker, { remoteUrl: () => githubPath })
     ;(worker as unknown as { running: boolean }).running = true
     return worker
   }
+  let gateway: GitHubGateway
+
+  describe('the gateway branch namespace in the status report', () => {
+    beforeEach(() => {
+      // The worker resolves its namespace from these first.
+      vi.stubEnv('CANOPYCMS_BRANCH_NAMESPACE', '')
+      vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', '')
+    })
+    afterEach(() => {
+      vi.unstubAllEnvs()
+    })
+
+    it('records the default namespace the gateway writes after a sync', async () => {
+      await makeWorker().syncGit()
+
+      expect((await readStatus()).gatewayBranchNamespace).toBe('canopycms/prod/')
+    })
+
+    it('records the configured namespace, which is what System health compares', async () => {
+      await makeWorker({ branchNamespace: 'editor-production/' }).syncGit()
+
+      expect((await readStatus()).gatewayBranchNamespace).toBe('editor-production/')
+    })
+
+    it('records the exact names the gateway protects, which branch creation refuses', async () => {
+      await makeWorker({ protectedBranches: ['release', 'deploy-*'] }).syncGit()
+
+      expect((await readStatus()).gatewayProtectedBranches).toEqual(['release', 'main'])
+    })
+
+    it('records the namespace and protected names when the cycle fails after reading them', async () => {
+      // A branch workspace, so the rebase cycle reaches the step made to fail.
+      await giveWorkspace('spring')
+      const worker = makeWorker({ protectedBranches: ['release'] })
+      let healthRead = false
+      const readHealth = gateway.health.bind(gateway)
+      vi.spyOn(gateway, 'health').mockImplementation(async (signal) => {
+        const health = await readHealth(signal)
+        healthRead = true
+        return health
+      })
+      const internals = worker as unknown as { ensureSettingsBranch(): string }
+      const settingsBranch = internals.ensureSettingsBranch.bind(worker)
+      vi.spyOn(internals, 'ensureSettingsBranch').mockImplementation(() => {
+        if (healthRead) throw new Error('a later step failed')
+        return settingsBranch()
+      })
+
+      await expect(worker.syncGit()).rejects.toThrow('a later step failed')
+
+      const status = await readStatus()
+      expect(status.lastGitSyncError?.message).toContain('a later step failed')
+      expect(status.gatewayBranchNamespace).toBe('canopycms/prod/')
+      expect(status.gatewayProtectedBranches).toEqual(['release', 'main'])
+    })
+
+    it('reports, then stops reporting, an editor branch the gateway will not publish', async () => {
+      await giveWorkspace('old-unprefixed')
+      await giveWorkspace('canopycms-prod-fresh', 'canopycms/prod/fresh')
+
+      const worker = makeWorker()
+      const before = Date.now()
+      await worker.syncGit()
+      const { unpublishableBranches } = await readStatus()
+      expect(unpublishableBranches).toEqual({
+        branches: [{ name: 'old-unprefixed' }],
+        count: 1,
+        at: expect.any(String),
+      })
+      expect(Date.parse(unpublishableBranches?.at ?? '')).toBeGreaterThanOrEqual(before - 1000)
+
+      await fs.rm(path.join(workspacePath, 'content-branches', 'old-unprefixed'), {
+        recursive: true,
+      })
+      await worker.syncGit()
+      expect((await readStatus()).unpublishableBranches).toBeUndefined()
+    })
+
+    it('restores a namespace branch an older worker renamed before listing it as unpublishable', async () => {
+      await giveWorkspace('canopycms-prod-spring')
+      const branchPath = path.join(workspacePath, 'content-branches', 'canopycms-prod-spring')
+      await fs.writeFile(
+        path.join(branchPath, '.git', 'HEAD'),
+        'ref: refs/heads/canopycms/prod/spring\n',
+      )
+
+      await makeWorker().syncGit()
+
+      expect((await BranchMetadataFileManager.loadOnly(branchPath))?.branch.name).toBe(
+        'canopycms/prod/spring',
+      )
+      expect((await readStatus()).unpublishableBranches).toBeUndefined()
+    })
+
+    it('leaves the last report standing while the gateway cannot describe its policy', async () => {
+      await giveWorkspace('old-unprefixed')
+      const worker = makeWorker()
+      await worker.syncGit()
+
+      vi.spyOn(gateway, 'health').mockRejectedValue(new Error('The GitHub gateway is unreachable'))
+      await fs.rm(path.join(workspacePath, 'content-branches', 'old-unprefixed'), {
+        recursive: true,
+      })
+      await worker.syncGit()
+
+      expect((await readStatus()).unpublishableBranches?.branches).toEqual([
+        { name: 'old-unprefixed' },
+      ])
+    })
+
+    /** A restarted worker's first snapshot, stopping its start() right after writing it. */
+    const firstSnapshot = async () => {
+      const restarted = makeWorker()
+      const internals = restarted as unknown as {
+        ensureRemoteGit(): Promise<void>
+        ensureStatusReport(): WorkerStatusReport
+      }
+      internals.ensureRemoteGit = async () => {
+        throw new Error('stop after the start snapshot')
+      }
+      await expect(restarted.start()).rejects.toThrow(/stop after the start snapshot/)
+      return internals.ensureStatusReport()
+    }
+
+    it("carries the report into a restarted worker's first snapshot", async () => {
+      await giveWorkspace('old-unprefixed')
+      await makeWorker().syncGit()
+      const reported = (await readStatus()).unpublishableBranches
+
+      expect(reported?.count).toBe(1)
+      expect((await firstSnapshot()).unpublishableBranches).toEqual(reported)
+    })
+
+    it('carries no report the file holds in another shape', async () => {
+      await fs.mkdir(path.dirname(statusPath()), { recursive: true })
+      await fs.writeFile(
+        statusPath(),
+        JSON.stringify({
+          version: 1,
+          startedAt: '2026-10-29T08:00:00.000Z',
+          updatedAt: '2026-10-29T09:00:00.000Z',
+          unpublishableBranches: { names: ['old-unprefixed'], count: 1 },
+        }),
+      )
+
+      expect((await firstSnapshot()).unpublishableBranches).toBeUndefined()
+    })
+
+    it("carries the gateway's namespace and protected names into a restarted worker's first snapshot", async () => {
+      await makeWorker({ protectedBranches: ['release'] }).syncGit()
+
+      const snapshot = await firstSnapshot()
+      expect(snapshot.gatewayBranchNamespace).toBe('canopycms/prod/')
+      expect(snapshot.gatewayProtectedBranches).toEqual(['release', 'main'])
+      // Written to the file too, which is what branch creation reads.
+      expect((await readStatus()).gatewayBranchNamespace).toBe('canopycms/prod/')
+    })
+
+    it('leaves the last report standing while the gateway answers from a failed boot', async () => {
+      await giveWorkspace('old-unprefixed')
+      const worker = makeWorker()
+      await worker.syncGit()
+      const reported = (await readStatus()).unpublishableBranches
+
+      vi.spyOn(gateway, 'health').mockResolvedValue({
+        ready: false,
+        fatalError: 'the cause',
+        preflight: 'pending',
+        clerkConfigured: false,
+        branchPolicy: {
+          configured: [],
+          githubDefault: null,
+          namespace: '',
+          legacy: [],
+          settingsBranch: null,
+        },
+      })
+      await fs.rm(path.join(workspacePath, 'content-branches', 'old-unprefixed'), {
+        recursive: true,
+      })
+      await worker.syncGit()
+
+      expect(reported?.count).toBe(1)
+      const status = await readStatus()
+      expect(status.unpublishableBranches).toEqual(reported)
+      expect(status.gatewayBranchNamespace).toBe('canopycms/prod/')
+    })
+
+    it('leaves the last report standing while the gateway reports a fatal error', async () => {
+      await giveWorkspace('old-unprefixed')
+      const worker = makeWorker()
+      await worker.syncGit()
+      const reported = (await readStatus()).unpublishableBranches
+
+      const health = await gateway.health()
+      vi.spyOn(gateway, 'health').mockResolvedValue({ ...health, fatalError: 'the cause' })
+      await fs.rm(path.join(workspacePath, 'content-branches', 'old-unprefixed'), {
+        recursive: true,
+      })
+      await worker.syncGit()
+
+      expect(reported?.count).toBe(1)
+      expect((await readStatus()).unpublishableBranches).toEqual(reported)
+    })
+
+    it('leaves the last report standing while a branch.json cannot be read', async () => {
+      await giveWorkspace('old-unprefixed')
+      const worker = makeWorker()
+      await worker.syncGit()
+      const reported = (await readStatus()).unpublishableBranches
+
+      // branch.json a directory: reading it fails with EISDIR, which is neither missing nor corrupt.
+      const unreadable = path.join(workspacePath, 'content-branches', 'unreadable')
+      await fs.mkdir(path.join(unreadable, BRANCH_META_DIR, BRANCH_META_FILE), { recursive: true })
+      await fs.rm(path.join(workspacePath, 'content-branches', 'old-unprefixed'), {
+        recursive: true,
+      })
+      const consoleSpy = mockConsole()
+      await worker.syncGit()
+
+      expect(reported?.count).toBe(1)
+      expect((await readStatus()).unpublishableBranches).toEqual(reported)
+      expect(
+        consoleSpy
+          .all()
+          .warn.some((line) =>
+            line.includes('Could not list the branches the gateway will not publish'),
+          ),
+      ).toBe(true)
+    })
+  })
 
   it('does not delete a branch that exists only in remote.git (unpushed editor work)', async () => {
     // Never reaches GitHub -- simulates GitManager.push() landing editor
@@ -706,8 +943,9 @@ describe('CmsWorker.syncGit() stale branch copies', () => {
       githubRepo: 'test-repo',
       githubToken: 'fake-token',
       baseBranch: 'main',
-      settingsBranch: 'not a valid ref',
     })
+    // The gateway is built first, naming the default settings branch; only the sync's own
+    // resolution then fails.
     useLocalGitHubGateway(worker, { remoteUrl: () => githubPath, fetchCoalesceMs: 0 })
     ;(worker as unknown as { running: boolean }).running = true
     ;(worker as unknown as { ensureSettingsBranch: () => string }).ensureSettingsBranch = () => {

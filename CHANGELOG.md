@@ -54,6 +54,146 @@ entries under **Released**.
 
 ## Released
 
+### 0.8.0
+
+<!-- changeset: merge-main-0-7-1-into-int-e -->
+
+#### New branches are created in the branch namespace, and pull request links carry their short names — **behaviour change**
+
+<!-- changeset: branches-created-in-namespace -->
+
+_First in 0.8.0._
+
+**What changed.** A branch an editor creates is named with the deployment's
+[branch namespace](#the-github-gateway-writes-only-its-deployments-branch-namespace--security-fix-template-first) in front of the typed name, sanitized: typing
+`spring/update` creates `canopycms/prod/spring-update` by default. Its short name
+(`spring-update`) is what the branch listing returns as `shortName`, what `?branch=` links in pull
+request bodies carry, and what a pull request without a title is named after (`Submit
+spring-update`); `?branch=` and the API's `/:branch` segment accept it or the full name. A branch
+outside the namespace is reached by its full name, or only by its exact form, `~<name>`, when a
+namespace branch's short name is that name. Creation refuses a short name that another branch already has (the
+base, the active branch, a branch outside the namespace, an exact name the gateway protects), one equal to
+an API route (`admin`, `assets`, …), one kept for settings (`canopycms-settings-…` or the settings
+branch), a name typed with the namespace in front, a name the remote holds a branch inside
+(`spring/draft` for `spring`), and any name while the CMS and the gateway resolve different
+namespaces or the remote has a branch named after part of the namespace. The gateway refuses a push
+into the namespace while GitHub has a branch named after part of it or inside the one pushed.
+
+**To adopt.** Update any CI workflow, ruleset or script that matches the names of branches the
+editor creates, for example to skip them with `branches-ignore: ['canopycms/**']`. Branches that
+already exist keep their names.
+
+#### The editor shows a branch by its short name
+
+<!-- changeset: editor-short-branch-names -->
+
+_First in 0.8.0._
+
+**What changed.** For a branch in the [branch namespace](#new-branches-are-created-in-the-branch-namespace-and-pull-request-links-carry-their-short-names--behaviour-change), the
+editor shows `spring` where it showed `canopycms/prod/spring`: on the branch pill, the Branches
+drawer, the Submit for review, Withdraw, Approve, Request changes and Delete dialogs, the comments
+panel and the toasts. The editor's `?branch=` carries the short name too, as do the preview and its
+page link; an old link with the full name still opens the branch, and the editor shortens it. A
+branch outside the namespace, or nested deeper in it, is shown and linked by its full name, except
+that one named like a namespace branch's short name is linked as `~<name>` (`%7E<name>` in the
+address bar), its exact form, which only those links show; System health keeps the full ref and
+workspace directory. The editor's API requests name a listed branch by its exact form, an internal
+detail: `~` and the full name, each `/` as `~` (`/~canopycms~prod~spring/entries`). Git allows no
+`~` in a branch name, so the form reaches the branch shown even when another answers to its short
+name. Drafts saved in a browser stay with the branch, whichever name opened it.
+
+The New branch field says "Will be named …" only when sanitizing changed what was typed, and shows
+why a name is refused under the field, where it used to toast. A name with no letter
+(a–z) or digit, such as `_`, is now refused. The "still being set up" answer a create or
+open can get names the branch by its short name, not its workspace directory.
+
+**To adopt.** Nothing. A script that reads the editor's `?branch=` gets the short name; the API
+accepts it and the full name alike.
+
+#### Pull request bodies show the CanopyCMS review state
+
+<!-- changeset: pr-body-review-state -->
+
+_First in 0.8.0._
+
+**What changed.** The pull request body now shows whether a reviewer approved the branch or requested changes in CanopyCMS, and who, since an approval in CanopyCMS is not a GitHub review. It says "Not yet reviewed" until a reviewer acts, is updated when one does, and starts fresh when the branch is submitted or withdrawn.
+
+#### `legacyBranches` keeps branches from outside the namespace publishing, and System health names any that cannot — **template first**
+
+<!-- changeset: legacy-branches-and-unpublishable-warning -->
+
+_First in 0.8.0._
+
+**What changed.** `CanopyCmsService` takes `legacyBranches`: exact names of branches outside
+[the gateway's namespace](#the-github-gateway-writes-only-its-deployments-branch-namespace--security-fix-template-first) that editors are still working on, which
+the GitHub gateway may still write. It writes them, comma-separated, to the gateway's
+`CANOPYCMS_LEGACY_BRANCHES`, and refuses at synth any list the gateway would refuse at boot,
+such as an entry holding `*` or a comma, inside the resolved namespace, a branch the namespace
+sits under, or repeated. Each git sync, the worker checks every editor branch against the
+gateway's policy, and System health lists by full name the ones it would refuse to publish, with
+what to do. The gateway now returns a pull request's body only when it would update that pull
+request: its head is in the namespace or on `legacyBranches`, not protected, and in this
+repository. For any other pull request it returns the merge state alone. So a legacy branch's
+pull request keeps its comment and review blocks current, as a namespace branch's does.
+
+**To adopt.** Before deploying, open the editor's branch list and pass every open branch whose
+name is outside the namespace as `legacyBranches`; a hand install sets `CANOPYCMS_LEGACY_BRANCHES`
+in `gateway.env` instead. After the deploy, System health names any you missed. Remove an entry
+once its branch is merged or deleted.
+
+#### The Content panel lists what a branch changes — **behaviour change**
+
+<!-- changeset: content-panel-changed-filter -->
+
+_First in 0.8.0._
+
+**What changed.** The Content panel's filter now offers All, Unsaved and Changed. Unsaved is the
+filter that used to be called Changed: entries with edits not yet saved. Changed lists the entries
+that differ from the base branch, marked New, Edited or Moved, with deleted entries beneath the
+tree, so a reviewer can see what a submitted branch changes without leaving the editor. It reads
+the new `GET /:branch/changes` endpoint, which the catch-all API route already serves.
+
+#### Show changes on a changed entry
+
+<!-- changeset: entry-show-changes -->
+
+_First in 0.8.0._
+
+**What changed.** Reviewers and editors can open "Show changes" on a changed entry to see each
+changed field's old and new values against the base branch, with text differences highlighted.
+It opens from the entry header, and from each entry the Content panel's Changed filter lists as
+deleted. It reads the new `GET /:branch/changes/...entryPath` endpoint, which the catch-all API
+route already serves.
+
+#### The GitHub gateway writes only its deployment's branch namespace — **security fix, template first**
+
+<!-- changeset: gateway-branch-namespace -->
+
+_First in 0.8.0._
+
+**What changed.** The GitHub gateway now pushes, force-pushes, deletes and opens pull requests only
+for branches in its namespace and the exact names in a new legacy list. The namespace is a template
+ending with `/`, where `{deployment}` stands for the deployment name: `canopycms/{deployment}/` by
+default, so `canopycms/prod/`. It is set by `CanopyCmsService`'s new `branchNamespace` prop (or
+`CANOPYCMS_BRANCH_NAMESPACE`, then `branchNamespace` in `canopycms.config.ts`), and the gateway
+reads it from its own environment only. Of the settings branches it pushes only this deployment's
+own, as before: no lease, deletion or pull request. It updates, closes or drafts a pull request only
+after GitHub shows that its head is such a branch of this repository, so a compromised CMS Lambda
+cannot aim it elsewhere. System health says when the CMS and gateway resolve different namespaces.
+
+**To adopt.** Deploy the stack template first: it now writes `CANOPYCMS_DEPLOYMENT_NAME`,
+`CANOPYCMS_SETTINGS_BRANCH` and `CANOPYCMS_BRANCH_NAMESPACE`, which the gateway now reads, to
+`gateway.env` too (a hand install adds them, as `gateway.env.example` shows). The bundle needs
+worker contract 3, which an older template's roll gate refuses. Roll the worker bundle
+(`canopycms-cdk`) with or before the CMS image, which creates no branch until the worker reports its
+namespace. Stacks sharing a repository keep `{deployment}` in one template. Then list every open
+branch outside the namespace, as [`legacyBranches`](#legacybranches-keeps-branches-from-outside-the-namespace-publishing-and-system-health-names-any-that-cannot--template-first)
+describes. Until listed, a branch's publishes, pull request updates and deletion fail permanently,
+naming the list. A rolled-back worker can rename namespace branches, breaking their links and open
+editors; this release's worker restores them on its next sync. Submit none while rolled back: that
+pushes the branch under its directory name, without its earlier commits, which this release
+publishes only if `legacyBranches` lists it.
+
 ### 0.7.1
 
 <!-- changeset: worker-platform-ci -->

@@ -227,7 +227,7 @@ interface TokenBound {
 function addUserData(
   userData: ec2.UserData,
   bounds: TokenBound[],
-  protectedBranchCount: number,
+  counts: { protectedBranches: number; legacyBranches: number },
   ...lines: string[]
 ): void {
   userData.addCommands(...lines)
@@ -245,9 +245,10 @@ function addUserData(
   if (bytes > USER_DATA_MAX_BYTES) {
     throw new Error(
       `CanopyCmsService: the worker's user data could reach ${bytes} bytes, over the ` +
-        `${USER_DATA_MAX_BYTES} EC2 accepts; protectedBranches has ${protectedBranchCount} ` +
-        `entries. Protect branches with fewer, wider * patterns, or shorten the other names ` +
-        `passed in (secret ARNs and fields, branches, the repository, the worker log group).`,
+        `${USER_DATA_MAX_BYTES} EC2 accepts; protectedBranches has ${counts.protectedBranches} ` +
+        `entries and legacyBranches has ${counts.legacyBranches}. Protect branches with fewer, ` +
+        `wider * patterns, list fewer legacyBranches, or shorten the other names passed in ` +
+        `(secret ARNs and fields, branches, the repository, the worker log group).`,
     )
   }
 }
@@ -382,6 +383,155 @@ function assertValidProtectedBranches(entries: readonly string[]): string[] {
       const message = err instanceof Error ? err.message : String(err)
       throw new Error(message.replace(JSON.stringify(asName), JSON.stringify(entry)))
     }
+    return entry
+  })
+}
+
+/** The one placeholder a `branchNamespace` template may hold. */
+const DEPLOYMENT_PLACEHOLDER = '{deployment}'
+
+/** The `branchNamespace` template used when the prop is unset. */
+const DEFAULT_BRANCH_NAMESPACE_TEMPLATE = `canopycms/${DEPLOYMENT_PLACEHOLDER}/`
+
+/**
+ * The branch namespace `template` names for `deploymentName`, refused at synth when the GitHub
+ * gateway or the policy would refuse it at boot, which would crash-loop the gateway.
+ *
+ * A local copy of `resolveBranchNamespaceTemplate` and `branchNamespaceProblem`
+ * (packages/canopycms/src/operating-mode/branch-namespace.ts), which this module cannot import.
+ * cms-deploy.test.ts holds the two to the fixtures in
+ * packages/canopycms/src/operating-mode/branch-namespace-fixtures.ts; add a case there when you
+ * change either copy. `{deployment}` is the only placeholder. `baseBranch` and `settingsBranch`
+ * may not lie inside the namespace, share a workspace directory with a branch in it, or be named
+ * after part of it, which the policy refuses at boot too.
+ */
+export function resolveBranchNamespaceProp(
+  template: string,
+  deploymentName: string,
+  branches: { baseBranch?: string; settingsBranch?: string } = {},
+): string {
+  const reject = (why: string): never => {
+    throw new Error(
+      `CanopyCmsService: invalid branchNamespace ${JSON.stringify(template)} -- ${why}.`,
+    )
+  }
+  const unknown = template.replaceAll(DEPLOYMENT_PLACEHOLDER, '').match(/\{[^}]*\}?/)
+  if (unknown) {
+    reject(
+      `${JSON.stringify(unknown[0])} is not a placeholder; the only one is ${DEPLOYMENT_PLACEHOLDER}`,
+    )
+  }
+  const namespace = template.replaceAll(DEPLOYMENT_PLACEHOLDER, deploymentName)
+  const sample = `${namespace}x`
+  if (!namespace.endsWith('/')) reject('it must end with "/"')
+  if (!/^[\x21-\x7e]+$/.test(namespace)) reject('it is not printable ASCII without spaces')
+  if (/["%{}]/.test(namespace)) reject('it contains ", %, { or }')
+  if (/^(?:refs|heads|tags|remotes)\//i.test(namespace)) {
+    reject("it starts with 'refs/', 'heads/', 'tags/' or 'remotes/'")
+  }
+  if (sample.length > 250) reject('a branch in it would be over 250 characters')
+  if (sample.includes('..')) reject("it contains '..'")
+  if (sample.startsWith('/') || sample.includes('//')) reject('it has an empty path component')
+  if (sample.startsWith('-')) reject("a leading '-' parses as a git option")
+  if (/[~^:?*[\\]/.test(sample)) reject('it contains a character git forbids in a branch name')
+  if (sample.split('/').some((part) => part.startsWith('.') || part.endsWith('.lock'))) {
+    reject("a part of it starts with '.' or ends with '.lock'")
+  }
+  const sanitized = sample
+    .replace(/[^a-zA-Z0-9._-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^\.+/, '')
+    .replace(/(?<!\.)\.+$/, '')
+  const directoryPrefix = namespace
+    .replace(/[^a-zA-Z0-9._-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^\.+/, '')
+    .replace(/(?<!\.)\.+$/, '')
+  if (
+    'canopycms-settings-'.startsWith(directoryPrefix) ||
+    sanitized.startsWith('canopycms-settings-')
+  ) {
+    reject('some branches in it would be canopycms-settings-* settings branches')
+  }
+  for (const [propName, branch] of [
+    ['baseBranch', branches.baseBranch],
+    ['settingsBranch', branches.settingsBranch],
+  ] as const) {
+    const sanitize = (name: string) =>
+      name
+        .replace(/[^a-zA-Z0-9._-]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^\.+/, '')
+        .replace(/(?<!\.)\.+$/, '')
+    if (
+      branch !== undefined &&
+      (branch.startsWith(namespace) || sanitize(branch).startsWith(sanitize(namespace)))
+    ) {
+      reject(
+        `the ${propName} ${JSON.stringify(branch)} is inside it, or shares a workspace directory ` +
+          'with a branch in it, and the namespace holds only the branches editors create',
+      )
+    }
+    if (branch !== undefined && namespace.startsWith(`${branch}/`)) {
+      reject(
+        `the ${propName} ${JSON.stringify(branch)} is a branch named after part of it, so git can hold no branch in it`,
+      )
+    }
+  }
+  return namespace
+}
+
+/**
+ * The most `legacyBranches` entries the gateway takes (`MAX_LEGACY_BRANCHES`,
+ * packages/canopycms/src/worker/branch-policy.ts). A local constant: this module imports nothing
+ * from core.
+ */
+const MAX_LEGACY_BRANCHES = 1024
+
+/**
+ * Refuse `legacyBranches` the GitHub gateway would refuse at boot in `namespace`, which would
+ * crash-loop it (`legacyBranchProblem` and the `BranchPolicy` constructor,
+ * packages/canopycms/src/worker/branch-policy.ts): more than {@link MAX_LEGACY_BRANCHES} entries,
+ * a repeated entry, and any entry that is not an exact branch name held to git's rules and the
+ * gateway's (`assertGatewayBranchName`), so none holds a `*`. No entry may be a settings branch,
+ * which the gateway pushes unlisted, start with the namespace, which it already writes, or be
+ * named after part of it, since git then holds no branch in it. A comma separates entries in the
+ * env file, so none may hold one. cms-deploy.test.ts holds this copy and core's to
+ * packages/canopycms/src/worker/legacy-branch-fixtures.ts; add a case there when you change
+ * either copy.
+ * @internal Exported for tests.
+ */
+export function assertValidLegacyBranches(entries: readonly string[], namespace: string): string[] {
+  if (entries.length > MAX_LEGACY_BRANCHES) {
+    throw new Error(
+      `CanopyCmsService: legacyBranches has ${entries.length} entries; the most it takes is ${MAX_LEGACY_BRANCHES}.`,
+    )
+  }
+  const seen = new Set<string>()
+  return entries.map((entry) => {
+    const reject = (why: string): never => {
+      throw new Error(
+        `CanopyCmsService: invalid legacyBranches entry ${JSON.stringify(entry)} -- ${why}.`,
+      )
+    }
+    if (entry.includes(',')) reject('it contains a comma, which separates entries')
+    if (entry.includes('*'))
+      reject('an entry is an exact branch name, and * is not a wildcard here')
+    assertGatewayBranchName('legacyBranches entry', entry)
+    assertValidGitBranchName('legacyBranches entry', entry)
+    if (entry.startsWith('canopycms-settings-')) {
+      reject('it is a settings branch, which the gateway pushes without being listed')
+    }
+    if (entry.startsWith(namespace)) {
+      reject(`it starts with the branch namespace ${namespace}, so it is already in the namespace`)
+    }
+    if (namespace.startsWith(`${entry}/`)) {
+      reject(
+        `it is a branch named after part of the branch namespace ${namespace}, so git can hold no branch in it`,
+      )
+    }
+    if (seen.has(entry)) reject('it is listed twice')
+    seen.add(entry)
     return entry
   })
 }
@@ -1048,6 +1198,33 @@ export interface CanopyCmsServiceProps {
   protectedBranches?: string[]
 
   /**
+   * The prefix of every branch editors create, which the GitHub gateway confines its writes to
+   * (default: `canopycms/{deployment}/`). A template in which `{deployment}` is this stack's
+   * deployment name (`deploymentName`, including an `environment.CANOPYCMS_DEPLOYMENT_NAME`
+   * override: exactly the value stamped as `CANOPYCMS_DEPLOYMENT_NAME`) and the only placeholder
+   * allowed. It must end with `/`, and neither `baseBranch` nor `settingsBranch` may lie inside it,
+   * share a workspace directory with a branch in it, or be named after part of it.
+   * Resolved at synth, and stamped into both the CMS Lambda's environment and the gateway's
+   * `CANOPYCMS_BRANCH_NAMESPACE`, always, so the halves agree even when this prop is unset.
+   * Set the same value in `canopycms.config.ts`'s `branchNamespace` for local development; the
+   * environment wins. Use the same template in every stack sharing a repository, keeping
+   * `{deployment}` in it, so their namespaces never nest.
+   */
+  branchNamespace?: string
+
+  /**
+   * Exact names of branches from before the branch namespace that editors are still working on,
+   * which the gateway may still push, delete and open pull requests from (default: none). Every
+   * other branch outside the namespace is refused, bar the settings branch. No entry may hold a
+   * `*` or a comma, start with the resolved `branchNamespace` or be named after part of it, or
+   * repeat. At most 1024 entries, and fewer when long: synth refuses any set that could take the
+   * worker's user data past EC2's 16 KiB. Stamped, comma-separated, into the GitHub gateway's
+   * `CANOPYCMS_LEGACY_BRANCHES`, and validated at synth. Remove an entry once its branch is
+   * merged or deleted.
+   */
+  legacyBranches?: string[]
+
+  /**
    * Deployment name (default: 'prod'). Namespaces the settings branch
    * (`canopycms-settings-{deploymentName}`) so this stack's CMS Lambda/worker
    * don't fight another CanopyCMS deployment over the same orphan settings
@@ -1347,6 +1524,27 @@ export class CanopyCmsService extends Construct {
         : undefined
 
     const protectedBranches = assertValidProtectedBranches(props.protectedBranches ?? [])
+    // The construct stamps the namespace into both halves; an override in `environment` would reach
+    // the Lambda alone and be replaced there, so it is refused rather than silently ignored.
+    if (props.environment?.['CANOPYCMS_BRANCH_NAMESPACE'] !== undefined) {
+      throw new Error(
+        'CanopyCmsService: set the branch namespace with the branchNamespace prop, not ' +
+          'environment.CANOPYCMS_BRANCH_NAMESPACE: the prop reaches both the Lambda and the GitHub gateway.',
+      )
+    }
+    const branchNamespace = resolveBranchNamespaceProp(
+      props.branchNamespace ?? DEFAULT_BRANCH_NAMESPACE_TEMPLATE,
+      deploymentName,
+      { baseBranch, settingsBranch },
+    )
+    // The gateway alone reads the list, from its own env file; `environment` reaches the Lambda.
+    if (props.environment?.['CANOPYCMS_LEGACY_BRANCHES'] !== undefined) {
+      throw new Error(
+        'CanopyCmsService: set legacy branches with the legacyBranches prop, not ' +
+          'environment.CANOPYCMS_LEGACY_BRANCHES: the prop reaches the GitHub gateway, and the environment only the Lambda.',
+      )
+    }
+    const legacyBranches = assertValidLegacyBranches(props.legacyBranches ?? [], branchNamespace)
 
     const workerCapacity: WorkerCapacity = props.workerCapacity ?? { type: 'on-demand' }
     const workerInstanceTypes =
@@ -1641,12 +1839,14 @@ export class CanopyCmsService extends Construct {
         // config. The fix lives in the image: Dockerfile.cms.template runs
         // `git config --system safe.directory '*'`.
         ...props.environment,
-        // AFTER the spread, deliberately. Both values are already the adopter's
+        // AFTER the spread, deliberately. The values are already the adopter's
         // own choice (an `environment` override is folded into `deploymentName`
-        // above and validated; CANOPY_MODE is restricted to 'prod'), so nothing
-        // is taken away - the placement is what stops the Lambda and the
-        // worker's `.env` holding different strings.
+        // above and validated; `branchNamespace` is resolved and validated
+        // above; CANOPY_MODE is restricted to 'prod'), so nothing is taken
+        // away - the placement is what stops the Lambda and the gateway's
+        // env file holding different strings.
         CANOPYCMS_DEPLOYMENT_NAME: deploymentName,
+        CANOPYCMS_BRANCH_NAMESPACE: branchNamespace,
         CANOPY_MODE: 'prod',
       },
     })
@@ -1933,8 +2133,11 @@ export class CanopyCmsService extends Construct {
       // The SAME string the Lambda's environment gets above, including an
       // `environment.CANOPYCMS_DEPLOYMENT_NAME` override - the two halves
       // resolve one settings branch (`canopycms-settings-<name>`) between them,
-      // and disagreeing here is what the runtime warning detects.
-      ['CANOPYCMS_DEPLOYMENT_NAME', deploymentName, 'worker'],
+      // and disagreeing here is what the runtime warning detects. The gateway resolves the same
+      // settings branch from it, the only settings branch it pushes.
+      ['CANOPYCMS_DEPLOYMENT_NAME', deploymentName, 'both'],
+      // The gateway enforces it and a split worker refuses it; the Lambda gets the same string.
+      ['CANOPYCMS_BRANCH_NAMESPACE', branchNamespace, 'gateway'],
       // The AWS SDK JS v3 cannot resolve a region from IMDS on its own - without
       // this a bare `SecretsManagerClient({})` crash-loops with "Region is
       // missing".
@@ -2009,14 +2212,18 @@ export class CanopyCmsService extends Construct {
       envEntries.push([WORKER_CAPACITY_ENV, 'spot', 'gateway'])
     }
     if (settingsBranch !== undefined) {
-      // Only when explicitly set - an absent prop must keep today's behavior
-      // (the worker falls through to the computed `canopycms-settings-<name>`),
-      // so this must never stamp an empty string either way.
-      envEntries.push(['CANOPYCMS_SETTINGS_BRANCH', settingsBranch, 'worker'])
+      // Only when explicitly set: unset, the worker and the gateway both compute
+      // `canopycms-settings-<name>`, and an empty value would name no branch. Both read it: the
+      // gateway pushes no settings branch but the one the worker resolves.
+      envEntries.push(['CANOPYCMS_SETTINGS_BRANCH', settingsBranch, 'both'])
     }
     if (protectedBranches.length > 0) {
       // Only the gateway enforces it, and a split worker refuses it.
       envEntries.push(['CANOPYCMS_PROTECTED_BRANCHES', protectedBranches.join(','), 'gateway'])
+    }
+    if (legacyBranches.length > 0) {
+      // Only the gateway enforces it, and a split worker refuses it.
+      envEntries.push(['CANOPYCMS_LEGACY_BRANCHES', legacyBranches.join(','), 'gateway'])
     }
     const envFile = (readers: readonly EnvReader[]) =>
       envEntries
@@ -2044,7 +2251,7 @@ export class CanopyCmsService extends Construct {
           .filter(([, value]) => Token.isUnresolved(value))
           .map(([, value]) => ({ token: value, bytes: ENV_TOKEN_MAX_BYTES })),
       ],
-      protectedBranches.length,
+      { protectedBranches: protectedBranches.length, legacyBranches: legacyBranches.length },
       ...withoutShellComments(
         '#!/bin/bash',
         'set -euo pipefail',

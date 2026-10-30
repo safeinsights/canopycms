@@ -5,6 +5,9 @@ export default defineCanopyConfig({
   defaultPathAccess: 'allow',
   mode: 'dev',
   sourceRoot: 'apps/test-app',
+  // The e2e suite works in 'main' whatever the checkout's branch, and the API provisions the active
+  // branch on first use; an editor cannot create it, since editors' branches start with canopycms-.
+  defaultActiveBranch: 'main',
   gitBotAuthorName: 'CanopyCMS Test Bot',
   gitBotAuthorEmail: 'test@example.com',
   editor: {
