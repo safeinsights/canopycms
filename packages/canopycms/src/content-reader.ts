@@ -111,20 +111,34 @@ export interface ContentReadMeta {
   urlPath: string
 }
 
+/** What a content read resolves to. */
+export interface ContentReadResult<T = unknown> {
+  data: T
+  /**
+   * The requested `entryPath` and slug as a percent-encoded URL path, plus `?branch=<name>`.
+   * Through an entry-type `entryPath` it is not the entry's URL. Compare entries by
+   * `meta.urlPath`.
+   */
+  path: string
+  meta: ContentReadMeta
+}
+
 export interface ContentReader {
-  read: <T = unknown>(
-    input: ReadContentInput,
-    message?: string,
-  ) => Promise<{
-    data: T
-    /**
-     * The requested `entryPath` and slug as a percent-encoded URL path, plus `?branch=<name>`.
-     * Through an entry-type `entryPath` it is not the entry's URL. Compare entries by
-     * `meta.urlPath`.
-     */
-    path: string
-    meta: ContentReadMeta
-  }>
+  read: <T = unknown>(input: ReadContentInput, message?: string) => Promise<ContentReadResult<T>>
+}
+
+/** @internal The reader `CanopyContext` (context.ts) builds on. */
+export interface ContentReaderInternal extends ContentReader {
+  /**
+   * Read the first of `inputs` that resolves, against one store resolved once for their branch,
+   * so a lookup trying several paths resolves the branch and its schema once. Every input must
+   * name the same branch and user. An error `isMiss` accepts moves on to the next input; null
+   * when every input misses, or when resolving the branch itself throws a miss.
+   */
+  readFirst: <T = unknown>(
+    inputs: readonly ReadContentInput[],
+    isMiss: (err: unknown, input: ReadContentInput) => boolean,
+  ) => Promise<ContentReadResult<T> | null>
 }
 
 /**
@@ -132,6 +146,14 @@ export interface ContentReader {
  * reads as NOT_FOUND unless `allowCreateBranch` or a `getBranchContext` resolver says otherwise.
  */
 export const createContentReader = (options: ContentReaderOptions): ContentReader => {
+  const { read } = createContentReaderInternal(options)
+  return { read }
+}
+
+/** @internal {@link createContentReader} plus `readFirst`, for context.ts. */
+export const createContentReaderInternal = (
+  options: ContentReaderOptions,
+): ContentReaderInternal => {
   const services = options.services
   const operatingMode: OperatingMode = services.config.mode
   const basePathOverride = options.basePathOverride
@@ -260,9 +282,11 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     return appendBranch(url)
   }
 
-  const readDocument = async (input: ReadContentInput) => {
-    const { entryPath, slug, branchName, user } = resolveTarget(input)
-    const { context, branchRoot, store } = await resolveStore(branchName)
+  type ResolvedStore = Awaited<ReturnType<typeof resolveStore>>
+
+  const readDocument = async (input: ReadContentInput, resolved: ResolvedStore) => {
+    const { entryPath, slug, user } = resolveTarget(input)
+    const { context, branchRoot, store } = resolved
 
     // Rule 1 of urlAddressableOnly (see ReadContentInput): a published URL's non-slug segments
     // are collection names, so a candidate landing on an entry-TYPE item can only ever produce a
@@ -356,12 +380,13 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     }
   }
 
-  const read: ContentReader['read'] = async <T = unknown>(
+  const readResolved = async <T = unknown>(
     input: ReadContentInput,
+    resolved: ResolvedStore,
     message?: string,
-  ) => {
+  ): Promise<ContentReadResult<T>> => {
     const { entryPath, slug, branchName } = resolveTarget(input)
-    const result = await readDocument(input)
+    const result = await readDocument(input, resolved)
     if (!result || typeof result.doc !== 'object' || !('data' in result.doc)) {
       const defaultMessage = `Content not found for ${entryPath}${slug ? `/${slug}` : ''} on branch ${branchName}`
       throw new ContentStoreError(message ?? defaultMessage, 'NOT_FOUND')
@@ -389,5 +414,37 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     return { data, path, meta: { physicalPath, entryType, entryId, slug: entrySlug, urlPath } }
   }
 
-  return { read }
+  const read: ContentReader['read'] = async (input, message) => {
+    const { branchName } = resolveTarget(input)
+    return readResolved(input, await resolveStore(branchName), message)
+  }
+
+  const readFirst: ContentReaderInternal['readFirst'] = async <T = unknown>(
+    inputs: readonly ReadContentInput[],
+    isMiss: (err: unknown, input: ReadContentInput) => boolean,
+  ) => {
+    const [first] = inputs
+    if (!first) return null
+    if (inputs.some((input) => input.branch !== first.branch || input.user !== first.user)) {
+      throw new Error('readFirst: every input must name the same branch and user')
+    }
+    let resolved: ResolvedStore
+    try {
+      resolved = await resolveStore(resolveTarget(first).branchName)
+    } catch (err) {
+      if (isMiss(err, first)) return null
+      throw err
+    }
+    for (const input of inputs) {
+      try {
+        return await readResolved<T>(input, resolved)
+      } catch (err) {
+        if (isMiss(err, input)) continue
+        throw err
+      }
+    }
+    return null
+  }
+
+  return { read, readFirst }
 }
