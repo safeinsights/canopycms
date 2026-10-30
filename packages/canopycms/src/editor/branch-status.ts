@@ -73,7 +73,7 @@ export function branchHoldMessage(hold: BranchHold, viewer: HoldViewer): string 
       const stuck =
         "This branch was changed on GitHub in a way CanopyCMS can't combine with the work here, so changes here can't reach GitHub. Nothing is lost."
       if (viewer.inSystemHealth)
-        return `${stuck} A developer needs to merge the missing commit back into the branch on GitHub. The "Rebase failing" warning beside this names it.`
+        return `${stuck} A developer needs to merge the missing commit back into the branch on GitHub. The "Rebase failing" warning icon in this row names it.`
       return viewer.isAdmin
         ? `${stuck} See the "Branches" tab in "System health".`
         : `${stuck} Ask an admin for help.`

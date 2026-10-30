@@ -9,7 +9,7 @@ import { withdrawBranch } from './branch-withdraw'
 import { requestChanges, approveBranch } from './branch-review'
 import { markAsMerged } from './branch-merge'
 import { defineEndpoint } from './route-builder'
-import { canPerformWorkflowAction, getBranchProtection } from '../authorization'
+import { canPerformWorkflowAction, getBranchProtection, isAdmin } from '../authorization'
 import { syncSubmitPr } from './github-sync'
 import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from '../utils/error'
 import { isNonFastForwardRejection } from '../utils/git'
@@ -137,7 +137,10 @@ const submitBranchForMergeHandler = async (
       status: 409,
       error:
         "This branch was changed on GitHub in a way CanopyCMS can't combine with the work here, " +
-        "so it can't be submitted. Nothing is lost. Ask an admin for help.",
+        "so it can't be submitted. Nothing is lost. " +
+        (isAdmin(req.user.groups)
+          ? 'See the "Branches" tab in "System health".'
+          : 'Ask an admin for help.'),
     }
   }
 

@@ -10,6 +10,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { simpleGit } from 'simple-git'
 
+import { REWRITTEN_PUSH_REFUSAL } from './github-commits'
 import type { GitHubGateway } from './github-gateway'
 import { CmsWorker, PermanentTaskError, isPermanentTaskFailure } from './cms-worker'
 import { enqueueTask, dequeueTask, getTask } from '../task-queue/cms-task-queue'
@@ -1672,9 +1673,9 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
       branch: { name: branch, rewrittenOnGitHub: 'a'.repeat(40) },
     })
 
-    await expect(
-      (makePushWorker() as unknown as PushBranchInternals).pushBranchToGitHub(branch),
-    ).rejects.toBeInstanceOf(PermanentTaskError)
+    const refusal = (makePushWorker() as unknown as PushBranchInternals).pushBranchToGitHub(branch)
+    await expect(refusal).rejects.toBeInstanceOf(PermanentTaskError)
+    await expect(refusal).rejects.toThrow(REWRITTEN_PUSH_REFUSAL)
     await expect(shaOf(githubFixture, `refs/heads/${branch}`)).rejects.toThrow()
   })
 

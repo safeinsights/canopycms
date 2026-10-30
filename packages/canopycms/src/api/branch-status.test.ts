@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { RESERVED_GROUPS } from '../authorization'
 import type { BranchName } from '../paths/types'
 import type { BranchContext, BranchStatus } from '../types'
 import type { CanopyUser } from '../user'
@@ -234,6 +235,15 @@ describe('branch status api', () => {
     expect(res.status).toBe(409)
     expect(res.error).toContain('Ask an admin')
     expect(ctx.services.submitBranch).not.toHaveBeenCalled()
+
+    const asAdmin = await submitBranchForMerge(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      { branch: 'feature/x' as BranchName },
+      undefined,
+    )
+    expect(asAdmin.error).toContain('"System health"')
+    expect(asAdmin.error).not.toContain('Ask an admin')
   })
 
   it('clears what held the last submit, as the card reads it at once', async () => {

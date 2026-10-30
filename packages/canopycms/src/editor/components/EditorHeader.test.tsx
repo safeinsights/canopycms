@@ -1013,6 +1013,20 @@ describe('EditorHeader - blocked controls say why on focus and ignore their clic
       expect(screen.getByTestId('withdraw-button').getAttribute('aria-disabled')).toBeNull()
     })
 
+    it('treats a reviewer the branch was shared with as its editor, as the card does', () => {
+      renderHeader({
+        branchStatus: 'submitted',
+        branchWriteBlocked: true,
+        branchHold: { kind: 'conflicts' },
+        userContext: { userId: 'r', groups: [RESERVED_GROUPS.REVIEWERS] },
+        branchCreatedBy: 'u1',
+        branchAccess: { allowedUsers: ['r'] },
+      })
+
+      const status = screen.getByTestId('branch-hold-status').closest('[role="status"]')
+      expect(status?.textContent).toContain('Use "Withdraw from review"')
+    })
+
     it('waits for the branch to load', () => {
       renderHeader({ branchHold: { kind: 'rewritten' }, branchPending: true })
 

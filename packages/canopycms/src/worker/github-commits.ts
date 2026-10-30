@@ -9,6 +9,7 @@ import { invalidateBranchContentCaches } from '../content-index-generation'
 import { GITHUB_TRACKING_REF_PREFIX } from '../git-manager'
 import { SYNC_PR_COMMENTS_ACTION } from '../pr-comments'
 import { enqueueTask } from '../task-queue/cms-task-queue'
+import type { BranchMetadata } from '../types'
 import { getErrorMessage } from '../utils/error'
 import { escapeForLog } from '../utils/escape-text'
 import { isCanopyInternalPath } from '../utils/git'
@@ -93,6 +94,20 @@ export interface GitHubCommitsArgs {
 
 const COMMIT_ID = /^[0-9a-f]{40}([0-9a-f]{24})?$/
 const MAX_LISTED_PATH_LENGTH = 200
+
+/** Why a push was refused while a rewrite stands (task-runner.ts); editors read it as a failed sync. */
+export const REWRITTEN_PUSH_REFUSAL =
+  "This branch was changed on GitHub in a way CanopyCMS can't combine with the work here, so nothing was pushed. Nothing is lost."
+
+/**
+ * What clears a rewrite: the flag, and the failed sync its refused push left. That failure would go
+ * on saying the work can't be combined, and would keep the branch's pull request from updating.
+ */
+export function rewriteCleared({ syncFailureReason }: BranchMetadata): Partial<BranchMetadata> {
+  return syncFailureReason?.includes(REWRITTEN_PUSH_REFUSAL)
+    ? { rewrittenOnGitHub: undefined, syncStatus: 'synced', syncFailureReason: undefined }
+    : { rewrittenOnGitHub: undefined }
+}
 
 /** A branch this deployment put on GitHub. Any other GitHub branch of that name is not its own. */
 function isPublished({ branch }: BranchMetadataFile): boolean {
@@ -266,9 +281,8 @@ async function clearRewritten(
   ctx: GitHubCommitsContext,
   { branchPath, branchRef }: GitHubCommitsArgs,
 ): Promise<void> {
-  await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).saveIf(
-    { branch: { rewrittenOnGitHub: undefined } },
-    (current) => current?.branch.name === branchRef,
+  await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update((current) =>
+    current?.branch.name === branchRef ? { branch: rewriteCleared(current.branch) } : null,
   )
 }
 
@@ -559,7 +573,7 @@ async function recordGitHubTip(
   await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update(
     (current) =>
       current?.branch.name === branchRef
-        ? { branch: { lastGitHubTip: tip, rewrittenOnGitHub: undefined } }
+        ? { branch: { lastGitHubTip: tip, ...rewriteCleared(current.branch) } }
         : null,
     { keepUpdatedAt: true },
   )

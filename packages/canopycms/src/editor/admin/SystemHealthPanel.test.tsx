@@ -1340,6 +1340,8 @@ describe('SystemHealthPanel', () => {
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-02T00:00:00.000Z',
         rewrittenOnGitHub: 'a'.repeat(40),
+        syncStatus: 'sync-failed',
+        syncFailureReason: 'Nothing was pushed.',
       },
     })
 
@@ -1374,6 +1376,9 @@ describe('SystemHealthPanel', () => {
       const text = document.getElementById(detail ?? '')?.textContent
       expect(text).toContain('merge the missing commit back')
       expect(text).not.toContain('"System health"')
+      const sync = screen.getByText('Sync failed').closest('[aria-describedby]')
+      const syncDetail = document.getElementById(sync?.getAttribute('aria-describedby') ?? '')
+      expect(syncDetail?.textContent).toBe('Nothing was pushed.')
     })
 
     it('reaches the rebase failure by keyboard: a named focusable icon described by the message', async () => {
@@ -1531,7 +1536,7 @@ describe('SystemHealthPanel', () => {
       expect(document.activeElement).toBe(trigger)
       const describedBy = trigger.getAttribute('aria-describedby')
       expect(document.getElementById(describedBy!)?.textContent).toBe(
-        'Push rejected for branch "feature-d": it has moved on GitHub — retry from the "Tasks" tab',
+        'Push rejected for branch "feature-d": it has moved on GitHub\nRetry it from the "Tasks" tab.',
       )
       expect((await screen.findByRole('tooltip')).textContent).toMatch(/moved on GitHub/)
     })

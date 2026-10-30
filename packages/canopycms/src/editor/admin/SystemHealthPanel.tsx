@@ -1246,10 +1246,11 @@ function BranchHealthRow({
         <Table.Td>
           {b.syncStatus === 'sync-failed' ? (
             <TooltipDetail
+              preLine
               detail={
-                b.syncFailureReason
-                  ? `${b.syncFailureReason} — retry from the "Tasks" tab`
-                  : 'GitHub sync failed — retry from the "Tasks" tab'
+                // The worker refuses every push while a rewrite stands, so a retry can't pass.
+                `${b.syncFailureReason ?? 'GitHub sync failed.'}` +
+                (hold?.kind === 'rewritten' ? '' : '\nRetry it from the "Tasks" tab.')
               }
             >
               <Badge color="red" variant="light">

@@ -601,7 +601,7 @@ describe('BranchManager', () => {
     it('gives a rewrite one line: its failed sync is the same problem', () => {
       held(
         { kind: 'rewritten' },
-        { syncStatus: 'sync-failed', syncFailureReason: 'Not pushing branch' },
+        { syncStatus: 'sync-failed', syncFailureReason: 'Nothing was pushed.' },
       )
       expect(screen.queryByTestId('sync-failed-reason-main')).toBeNull()
       expect(screen.getByTestId('sync-failed-badge-main')).toBeTruthy()
@@ -659,7 +659,7 @@ describe('BranchManager', () => {
     renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
 
     expect(screen.getByTestId('sync-failed-reason-main').textContent).toBe(
-      `${syncFailedFallback({ isAdmin: false, held: false })} ${SYNC_FAILED_IN_REVIEW_NOTE}`,
+      `${syncFailedFallback({ isAdmin: false, held: false })} ${SYNC_FAILED_IN_REVIEW_NOTE} Withdraw the branch from review to make changes.`,
     )
   })
 
@@ -670,7 +670,7 @@ describe('BranchManager', () => {
     renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
 
     expect(screen.getByTestId('sync-failed-reason-main').textContent).toBe(
-      syncFailedFallback({ isAdmin: false, held: false }),
+      `${syncFailedFallback({ isAdmin: false, held: false })} Withdraw the branch from review to make changes.`,
     )
   })
 
@@ -688,6 +688,22 @@ describe('BranchManager', () => {
 
     expect(screen.getByTestId('sync-failed-reason-main').textContent).toBe(
       `Push rejected. ${SYNC_FAILED_IN_REVIEW_NOTE} Withdraw the branch from review to make changes.`,
+    )
+  })
+
+  it('treats a reviewer the branch was shared with as its editor, as the bar does', () => {
+    const branches: BranchSummary[] = [
+      {
+        ...baseBranches[0],
+        status: 'submitted',
+        access: { users: ['reviewer'] },
+        hold: { kind: 'conflicts' },
+      },
+    ]
+    renderBranchManager({ branches, user: reviewerUser, mode: 'prod' })
+
+    expect(screen.getByTestId('branch-hold-main').textContent).toContain(
+      'Use "Withdraw from review"',
     )
   })
 

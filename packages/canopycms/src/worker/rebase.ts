@@ -39,6 +39,7 @@ import {
   bringInGitHubCommits,
   mergeIntoBranch,
   returnToReview,
+  rewriteCleared,
   type GitHubCommitsArgs,
   type GitHubSnapshot,
 } from './github-commits'
@@ -713,9 +714,10 @@ async function clearRebaseFailure(
   branchPath: string,
   branchRef: string,
 ): Promise<void> {
-  await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).saveIf(
-    { branch: { rebaseFailure: undefined, rewrittenOnGitHub: undefined } },
-    (current) => current?.branch.name === branchRef,
+  await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update((current) =>
+    current?.branch.name === branchRef
+      ? { branch: { rebaseFailure: undefined, ...rewriteCleared(current.branch) } }
+      : null,
   )
 }
 

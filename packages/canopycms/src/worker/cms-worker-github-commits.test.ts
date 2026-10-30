@@ -21,7 +21,7 @@ import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import type { BranchMetadata } from '../types'
 import type { BranchPolicyDescription } from './branch-policy'
 import { CmsWorker } from './cms-worker'
-import type { GitHubSnapshot } from './github-commits'
+import { REWRITTEN_PUSH_REFUSAL, type GitHubSnapshot } from './github-commits'
 import type { RebaseSummary } from './rebase'
 
 const BASE = 'main'
@@ -995,6 +995,61 @@ describe('bringing commits made on GitHub into a branch clone', () => {
         expect(meta?.rewrittenOnGitHub).toBeUndefined()
       })
     }
+
+    describe("the failed sync a rewrite's refused push left", () => {
+      const refused = {
+        syncStatus: 'sync-failed',
+        syncFailureReason: REWRITTEN_PUSH_REFUSAL,
+      } as const
+
+      it('clears with a rewrite GitHub stands past', async () => {
+        const held = await s.head()
+        await writeMeta(s, { ...refused, rewrittenOnGitHub: flag, lastGitHubTip: held })
+        await s.commit({ 'editor.txt': 'v2\n' }, 'resubmitted')
+
+        await cycle(s)
+
+        const meta = await readMeta(s)
+        expect(meta?.syncStatus).toBe('synced')
+        expect(meta?.syncFailureReason).toBeUndefined()
+      })
+
+      it('clears with a rewrite GitHub is back from', async () => {
+        await writeMeta(s, { ...refused, rewrittenOnGitHub: flag, lastGitHubTip: await s.head() })
+
+        await cycle(s)
+
+        expect((await readMeta(s))?.syncStatus).toBe('synced')
+      })
+
+      for (const status of ['editing', 'submitted'] as const) {
+        it(`clears with a ${status} branch GitHub no longer has`, async () => {
+          await writeMeta(s, { ...refused, status, rewrittenOnGitHub: flag })
+          await s.dropGitHubBranch()
+
+          await cycle(s)
+
+          expect((await readMeta(s))?.syncFailureReason).toBeUndefined()
+        })
+      }
+
+      it('leaves any other failure, which says what still needs doing', async () => {
+        const syncFailureReason = 'Push rejected.'
+        await writeMeta(s, {
+          syncStatus: 'sync-failed',
+          syncFailureReason,
+          rewrittenOnGitHub: flag,
+          lastGitHubTip: await s.head(),
+        })
+
+        await cycle(s)
+
+        const meta = await readMeta(s)
+        expect(meta?.rewrittenOnGitHub).toBeUndefined()
+        expect(meta?.syncStatus).toBe('sync-failed')
+        expect(meta?.syncFailureReason).toBe(syncFailureReason)
+      })
+    })
 
     it('clears when GitHub is back exactly at the last tip seen', async () => {
       await writeMeta(s, { rewrittenOnGitHub: flag, lastGitHubTip: await s.head() })

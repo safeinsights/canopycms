@@ -417,7 +417,7 @@ const BranchCard: React.FC<BranchCardProps> = ({
 
   const inReview = b.status === 'submitted' || b.status === 'approved'
   const holdViewer: HoldViewer = {
-    role: perms.canRequestChanges ? 'review' : perms.canWithdraw ? 'withdraw' : 'none',
+    role: reviewing ? 'review' : perms.canWithdraw ? 'withdraw' : 'none',
     isAdmin: userIsAdmin,
   }
   return (
@@ -527,7 +527,7 @@ const BranchCard: React.FC<BranchCardProps> = ({
               {b.syncFailureReason ?? syncFailedFallback({ isAdmin: userIsAdmin, held: !!b.hold })}
               {!b.hold && inReview && b.pullRequestNumber && ` ${SYNC_FAILED_IN_REVIEW_NOTE}`}
               {!b.hold &&
-                b.status === 'submitted' &&
+                inReview &&
                 holdViewer.role === 'withdraw' &&
                 ' Withdraw the branch from review to make changes.'}
             </Text>

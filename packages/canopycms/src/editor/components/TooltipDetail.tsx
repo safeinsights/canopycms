@@ -41,6 +41,7 @@ export function TooltipDetail({
           aria-describedby={detailId}
           className="mantine-focus-auto"
           display="inline-flex"
+          style={{ borderRadius: 'var(--mantine-radius-xl)' }}
         >
           {children}
         </Box>

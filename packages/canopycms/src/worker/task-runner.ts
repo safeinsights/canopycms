@@ -29,6 +29,7 @@ import { pushToGitHub } from './github-transfer'
 import { clearHistoryRewrittenMarker, readPublishedSha } from './history-rewrite'
 import { writeWorkerStatus } from '../task-queue/worker-status'
 import { SYNC_PR_COMMENTS_ACTION, refreshCommentsBlock, renderPrCommentsBody } from '../pr-comments'
+import { REWRITTEN_PUSH_REFUSAL } from './github-commits'
 import { workerLog, workerLogError, workerLogWarn } from './log'
 import { assertSharedRepoConfig } from './shared-repo-git'
 import type { WorkerContext } from './worker-context'
@@ -823,10 +824,11 @@ export async function pushBranchToGitHub(
   const marker = metaFile?.branch.historyRewrittenFrom
   // github-commits.ts recorded it: this push would restore what someone removed from GitHub.
   if (metaFile?.branch.rewrittenOnGitHub !== undefined) {
-    throw new PermanentTaskError(
-      `This branch was changed on GitHub in a way CanopyCMS can't combine with the work here, ` +
-        `so nothing was pushed. Nothing is lost.`,
+    workerLogWarn(
+      `Not pushing ${branch}: GitHub's branch no longer contains ` +
+        `${metaFile.branch.rewrittenOnGitHub}`,
     )
+    throw new PermanentTaskError(REWRITTEN_PUSH_REFUSAL)
   }
   const readSha = async () => {
     const sha = await readPublishedSha(ctx, branch)
