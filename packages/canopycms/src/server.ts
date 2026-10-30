@@ -4,8 +4,9 @@
 // pattern for new top-level public re-exports (see DEVELOPING.md).
 
 /**
- * Server-side reader for one branch's content, with the user, branch and permission checks a
- * `CanopyContext.read` applies. Prefer the context; use this where no context exists.
+ * The lower-level reader under `CanopyContext.read`: reads one entry from a branch as a user
+ * the caller passes explicitly, checking that user's read access first except in a static
+ * deployment or a build. See README.md, "Advanced: Using createContentReader Directly".
  */
 export {
   createContentReader,

@@ -152,12 +152,14 @@ async function schemaCacheDir(branchRoot: string): Promise<string> {
 
 /**
  * Per-branch schema cache: one file in {@link schemaCacheDir}, the only state
- * shared across processes. Each process keeps the entries it parsed, keyed by
- * the file's identity, so an unchanged file is never parsed twice; every call
- * still opens the file and runs every freshness check below on the entry, so a
- * process is exactly as fresh as if it re-read the file. The identity is
- * fstat'ed on an open handle because NFS revalidates attributes on open (close-
- * to-open), while a bare stat() may answer from its attribute cache.
+ * shared across processes. Each process keeps the entries it parsed or wrote,
+ * keyed by the file's identity, so it parses an unchanged file once while the
+ * entry stays in its size-bounded memo. Every call still opens the file and
+ * runs every freshness check below on the entry, and the file is only ever
+ * replaced by rename (see {@link fileIdentity}), so a process is as fresh as if
+ * it re-read the file. The identity is fstat'ed on an open handle because NFS
+ * revalidates attributes on open (close-to-open), while a bare stat() may
+ * answer from its attribute cache.
  *
  * Freshness follows the generation-marker protocol owned by
  * resource-generation.ts, and this is one of that protocol's durable-snapshot
@@ -190,7 +192,7 @@ export class BranchSchemaCache {
 
   /**
    * In-flight resolves of the checkout during a build, by content root and registry. A build
-   * reads one commit that does not change under it, so those two are its whole input and the
+   * reads a checkout that does not change under it, so those two are its whole input and the
    * result needs no revalidation. Only {@link isBuildMode}: `CANOPY_BUILD_MODE` is a build and
    * script switch, and a long-lived process setting it would see a schema edit only on
    * restart. A rejected resolve is dropped, so a strict-mode failure fails every read.
@@ -419,7 +421,7 @@ export class BranchSchemaCache {
         // rename keeps: stat'ing cachePath afterwards could see a concurrent
         // writer's file and pair it with this entry. It holds the parsed body,
         // as every reader does, not the resolver's objects, which alias the
-        // registry and keep values JSON drops.
+        // registry and keep values JSON changes or drops.
         await fs.mkdir(cacheDir, { recursive: true })
         const tmpPath = path.join(cacheDir, `schema-cache.tmp.${Date.now()}.${Math.random()}.json`)
         const body = JSON.stringify(newCache)

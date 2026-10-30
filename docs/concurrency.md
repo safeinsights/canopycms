@@ -443,10 +443,10 @@ regenerations; if the snapshot is durable, add eager regen on the mutating host 
 suspicious-miss backstop. Reference implementations: `branch-registry.ts` (durable,
 with backstops) and `branch-schema-cache.ts`.
 
-**Adding a per-process memo over a durable snapshot**: memoize the parse, not the answer.
-Every read re-runs the snapshot's freshness checks, and the entry is keyed on the file's
-identity from an fstat of an open handle, because a marker match misses window E's
-same-token rewrite. `BranchSchemaCache`'s class doc and `snapshots` field give the rules.
+**Adding a per-process memo over a durable snapshot**: memoize only the parse. Every read
+re-runs the snapshot's freshness checks, and the entry is keyed on the file's identity from
+an fstat of an open handle, because a marker match misses window E's same-token rewrite.
+`BranchSchemaCache`'s class doc and its write path give the rules.
 
 **Adding a call-scoped memo** (a `Map` you create at the top of one operation and drop when
 it returns — e.g. `ReferenceResolveCache`): none of the above applies, and adding a marker
