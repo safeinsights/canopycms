@@ -17,8 +17,8 @@ import type { WorkerContext } from './worker-context'
 /**
  * Merging into a branch workspace's history without touching its working tree: the merge is built
  * as objects, and the clone only ever fast-forwards to it. So a refused merge changes nothing, and
- * a crash can never leave a clone mid-merge with conflicts in it, which would need a second copy
- * of the rebase loop's lossy interrupted-rebase recovery.
+ * a clone is never left stopped on a merge's conflicts, which would need a second copy of the
+ * rebase loop's lossy interrupted-rebase recovery.
  */
 
 const OBJECT_ID = /^[0-9a-f]{40}([0-9a-f]{24})?$/

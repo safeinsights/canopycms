@@ -108,9 +108,10 @@ export interface BranchMetadata {
    */
   historyRewrittenFrom?: string
   /**
-   * The newest commit this deployment knows GitHub's branch held: the last one it pushed, or the
-   * last tip it took in. A tip that no longer contains it was rewritten on GitHub, so it is not
-   * merged, which could restore what someone removed (worker/github-commits.ts).
+   * The newest commit this deployment knows GitHub's branch holds, or will once a queued push of
+   * a rewrite lands: the last one it pushed, took in or published. A tip that no longer contains
+   * it was rewritten on GitHub, so it is not merged, which could restore what someone removed
+   * (worker/github-commits.ts).
    */
   lastGitHubTip?: string
   /**
@@ -120,7 +121,8 @@ export interface BranchMetadata {
   keptOverGitHub?: string[]
   /**
    * The commit GitHub's branch held and no longer contains, set while a rewrite there stands
-   * unresolved. The worker pushes nothing for this branch until GitHub's tip contains it.
+   * unresolved. The worker pushes nothing for this branch until GitHub's tip contains a commit
+   * it is known to have held, or GitHub no longer has the branch.
    */
   rewrittenOnGitHub?: string
   /**

@@ -302,7 +302,7 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
           unlock: err instanceof NothingToSubmitTaskError,
         })
         workerLogError(
-          permanent
+          permanent && !moved
             ? '  Permanently failed (non-retryable error)'
             : `  Permanently failed after ${maxRetries} retries`,
         )
@@ -825,7 +825,8 @@ export async function pushBranchToGitHub(
   if (metaFile?.branch.rewrittenOnGitHub !== undefined) {
     throw new PermanentTaskError(
       `Not pushing branch "${branch}": it was force-pushed or rewritten on GitHub and no longer ` +
-        `contains ${metaFile.branch.rewrittenOnGitHub}. System Health says how to continue.`,
+        `contains ${metaFile.branch.rewrittenOnGitHub}. An administrator can see how to continue ` +
+        `in System Health.`,
     )
   }
   const readSha = async () => {

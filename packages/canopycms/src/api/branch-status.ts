@@ -184,7 +184,7 @@ const submitBranchForMergeHandler = async (
         error:
           `Could not submit "${shortName}": it has commits from GitHub that aren't in the editor ` +
           `yet. Your saved changes are safe. CanopyCMS brings those commits in at its next sync, ` +
-          `within a few minutes, so submit again then. If this keeps happening, ask an ` +
+          `usually within a few minutes, so submit again then. If this keeps happening, ask an ` +
           `administrator to check System Health.`,
       }
     }

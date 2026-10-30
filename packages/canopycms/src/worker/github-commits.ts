@@ -33,8 +33,8 @@ import type { WorkerContext } from './worker-context'
  * `remote.git` to them, but branch clones never fetch their own branch, so without this step the
  * clone's next rebase or commit diverges from `remote.git` and every submit after that is refused.
  *
- * Runs once per cycle for every branch this deployment has published, whatever its status, under
- * the provisioning and content-write locks the caller holds, ahead of the rebase. It never forces
+ * Runs once per cycle for every branch this deployment has published, in every status but
+ * archived, under the provisioning and content-write locks the caller holds, ahead of the rebase. It never forces
  * anything: a clone behind GitHub fast-forwards, and a clone with commits GitHub lacks gets a real
  * merge (branch-merge.ts), which keeps every commit on both sides.
  *
@@ -69,7 +69,7 @@ export type GitHubCommitsOutcome =
   | { kind: 'wait' }
   /** A merge landed. A rebase now would replace a merge GitHub has not received. */
   | { kind: 'merged' }
-  /** Left as it is until a person acts on GitHub. `reason` says what to do. */
+  /** Left as it is until a person acts. `reason` says what to do. */
   | { kind: 'blocked'; reason: string }
 
 export interface GitHubCommitsArgs {
@@ -148,7 +148,7 @@ export async function bringInGitHubCommits(
   }
 
   // A crash after a merge reached remote.git leaves the clone behind it, like any fast-forward
-  // reconcile made. Taken first, so a merge below always builds on what remote.git holds.
+  // reconcile made. Taken first, so a merge below builds on remote.git's head whenever it can.
   if (published !== null && published !== head) {
     if ((await commitsApart(git, head, published)).onlyA === 0) {
       const stopped = await fastForward(ctx, args, head, published)
@@ -374,9 +374,9 @@ export async function mergeIntoBranch(
     return {
       kind: 'blocked',
       reason:
-        `Git cannot merge ${other} into ${branchRef} by rule (${built.conflicts.join(', ')}, in ` +
-        `${listPaths(built.paths)}). Nothing was changed. To continue, a developer merges them ` +
-        `on GitHub.`,
+        `Git cannot merge ${other} into ${branchRef} by rule: ${built.conflicts.join(', ')}` +
+        `${built.paths.length > 0 ? ` (${listPaths(built.paths)})` : ''}. Nothing was changed. ` +
+        `To continue, a developer merges them on GitHub.`,
     }
   }
   const { sha, conflicted } = built

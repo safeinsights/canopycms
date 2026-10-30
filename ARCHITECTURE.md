@@ -438,7 +438,7 @@ A shared classifier recognizes that specific shape (git's `[rejected]` plus its 
 Both hops of a content branch's push classify it:
 
 - **Lambda → the local `remote.git`** (on submit): a rejection returns 409 rather than the generic 500. This hop targets the deployment's own local origin, which a foreign deployment cannot reach, so the commit it refuses came from GitHub, and the message says the next sync brings it in. Submit's commit stays, leaving the clean tree that merge needs. It never advises renaming the branch: a branch that reaches this push has usually been submitted before, and a rename can orphan an open PR. As with every error response, only the branch name and static guidance reach the client; full detail, redacted of credentials, goes to the server log.
-- **Worker → GitHub**: a rejection is a permanent failure, so the task fails immediately instead of burning its retry budget. This is the hop where a foreign deployment genuinely is a plausible cause, so the message says so; it too stops short of advising a rename. A submit refused here returns to editing, to be repeated after that sync.
+- **Worker → GitHub**: a rejection is a permanent failure, so the task fails immediately instead of burning its retry budget. This is the hop where a foreign deployment genuinely is a plausible cause, so the message says so; it too stops short of advising a rename. A submit refused here runs again after that sync.
 
 **A refused lease is a separate shape.** Force pushes of rewritten history use `--force-with-lease`, and git reports a refused lease as `[rejected] … (stale info)`, which shares none of the wording above and has its own predicate. A refusal is usually benign — an earlier attempt already landed, or the branch moved on — and git refuses a stale lease even when the update would be an ordinary fast-forward, so the push retries **plain**: a non-forced push succeeds only if it fast-forwards, so it can never destroy anything, and only a rejection of that retry is real divergence.
 
@@ -548,7 +548,9 @@ Between the local publish and the GitHub push landing, such a branch reads as di
 
 ### Commits Made on GitHub
 
-Update branch or a maintainer's fix puts commits on a PR branch that its clone never sees, so each cycle, in every status but archived, `worker/github-commits.ts` brings them in ahead of the rebase. A clone behind GitHub fast-forwards. One with commits of its own gets a real merge, never a force, keeping the branch's version of a file git cannot merge and listing that file in the PR body. A tip rewritten on GitHub is not merged, since that could restore what someone removed: a rebase failure stays recorded until a developer merges the last commit seen back in. A commit that is neither a merge nor on the base sends an approved branch back to review.
+Update branch or a maintainer's fix puts commits on a PR branch that its clone never sees, so each cycle, in every status but archived, `worker/github-commits.ts` brings them in ahead of the rebase. A clone behind GitHub fast-forwards. One with commits of its own gets a real merge, never a force, keeping the branch's version of a file git cannot merge and listing that file in the PR body. A conflict that moves or joins paths is left for a developer, as are commits that change `.canopy-meta/`. A tip rewritten on GitHub is not merged, since that could restore what someone removed: a rebase failure stays recorded, and pushes stop, until a developer merges the commit it names back in. A commit that is neither a merge nor on the base sends an approved branch back to review.
+
+A branch holding a merge commit catches up by merging the base rather than rebasing, because `git rebase` drops merge commits and would undo what they settled.
 
 ### Conflict Resolution Strategy
 

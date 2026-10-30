@@ -14,5 +14,6 @@ row: Commits made on GitHub reach the editor
 
 - If both sides changed a file, the editor's version is kept and the pull request lists the file.
 - A commit that isn't the base catching up sends an approved branch back to review.
-- A branch force-pushed on GitHub is left alone, with a warning in System Health.
-- A submit that GitHub refuses returns to editing, to be repeated after the next sync.
+- A branch that has merged GitHub's commits catches up with its base by merging it rather than rebasing, so nothing it settled is undone.
+- A branch force-pushed on GitHub is left alone, and nothing more is pushed for it. System Health says what a developer needs to do.
+- A submit GitHub refuses runs again after the next sync, unless the branch has moved on since.

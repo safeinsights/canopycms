@@ -99,8 +99,8 @@ export type RebaseContext = Pick<
  */
 export interface RebaseSummary {
   /**
-   * Branches that were behind and completed a rebase onto the base branch,
-   * whether or not conflicts were resolved via --theirs. Branches already up to
+   * Branches that were behind and caught up with the base branch, by a rebase or
+   * by merging it, whether or not conflicts were resolved. Branches already up to
    * date are NOT listed here.
    */
   rebased: string[]
@@ -704,6 +704,7 @@ async function holdAndRebaseOneBranch(
   }
 }
 
+/** Clear a recorded failure and any recorded rewrite: the caller knows neither stands. */
 async function clearRebaseFailure(
   ctx: RebaseContext,
   branchPath: string,
