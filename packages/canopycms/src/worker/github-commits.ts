@@ -46,8 +46,9 @@ import type { WorkerContext } from './worker-context'
  * and it stays behind GitHub only while a head is diverged; GitHub's tip, from this cycle's fetch,
  * is the one a diverged head is reconciled against.
  *
- * A merge commit in a branch's history is why the rebase loop merges base into it rather than
- * rebasing (rebase.ts): `git rebase` drops merge commits, and with them whatever they settled.
+ * A merge commit in a branch's history, or a commit touching canopycms state, is why the rebase
+ * loop merges base into it rather than rebasing (rebase.ts): `git rebase` drops merge commits, and
+ * with them whatever they settled, and replays commits over the live files.
  */
 export type GitHubCommitsContext = Pick<
   WorkerContext,
@@ -283,7 +284,7 @@ function listPaths(paths: readonly string[]): string {
  * What stops `to` entering this clone, or null. `.git/info/exclude` hides canopycms's own state, and
  * git overwrites an ignored file without asking, so a commit that changes it would replace the live
  * branch.json and comments. A deletion counts: taken in, it would delete the live file, and
- * untracking it first only defers that to the next rebase, which replays the commit.
+ * untracking it first leaves the branch holding a commit that does.
  */
 async function refuseIncoming(
   { git, branchPath }: GitHubCommitsArgs,
@@ -316,7 +317,7 @@ async function refuseIncoming(
     return {
       kind: 'blocked',
       reason:
-        `Commits for this branch change canopycms's own state, which must not be committed ` +
+        `Commits coming into this branch change canopycms's own state, which must not be committed ` +
         `(${listPaths(changed)}). Nothing was brought in. To fix, ${TRACKED_CANOPY_STATE_FIX}.`,
     }
   }
@@ -324,7 +325,7 @@ async function refuseIncoming(
     return {
       kind: 'blocked',
       reason:
-        `Commits for this branch stop tracking canopycms state this clone still tracks ` +
+        `Commits coming into this branch stop tracking canopycms state this clone still tracks ` +
         `(${listPaths(deleted)}). Nothing was brought in; the clone needs manual repair.`,
     }
   }
@@ -351,7 +352,7 @@ async function fastForward(
     await git.raw(['merge', '--ff-only', '--end-of-options', to])
   } catch (err) {
     if (!/would be overwritten/.test(getErrorMessage(err))) throw err
-    workerLog(`  ${branchDir}: saved edits overlap commits from GitHub, which wait for a submit`)
+    workerLog(`  ${branchDir}: local changes overlap commits from GitHub, which wait for a submit`)
     return { kind: 'wait' }
   }
   await invalidateBranchContentCaches(branchPath)
@@ -363,27 +364,39 @@ async function fastForward(
  * `other` merged into the branch: built, published to `remote.git`, queued for GitHub, and the
  * clone moved to it, in that order, so each step leaves what the next cycle picks up and only the
  * last touches the working tree. `fromGitHub` says `other` is GitHub's tip rather than the base.
+ * `stopOnConflict` leaves a branch in review as it is: nobody is at the editor to see what a kept
+ * version replaced, and GitHub's own conflict notice stands on the pull request.
  */
 export async function mergeIntoBranch(
   ctx: GitHubCommitsContext,
   args: GitHubCommitsArgs,
-  merge: { head: string; other: string; message: string; fromGitHub: boolean },
+  merge: {
+    head: string
+    other: string
+    message: string
+    fromGitHub: boolean
+    stopOnConflict?: boolean
+  },
 ): Promise<GitHubCommitsOutcome> {
   const { git, branchPath, branchDir, branchRef, gatewayPolicy, lockLost } = args
-  const { head, other, message, fromGitHub } = merge
+  const { head, other, message, fromGitHub, stopOnConflict } = merge
   const built = await buildMergeCommit(git, branchPath, {
     head,
     other,
     message,
     timeoutMs: ctx.taskTimeoutMs,
   })
+  if (stopOnConflict && (built.kind === 'unsettled' || built.conflicted.length > 0)) {
+    workerLog(`  ${branchDir}: conflicts with ${other.slice(0, 7)}, so it stays as it is`)
+    return { kind: 'wait' }
+  }
   if (built.kind === 'unsettled') {
     return {
       kind: 'blocked',
       reason:
         `Git cannot merge ${other} into ${branchRef} by rule: ${built.conflicts.join(', ')}` +
         `${built.paths.length > 0 ? ` (${listPaths(built.paths)})` : ''}. Nothing was changed. ` +
-        `To continue, a developer merges them on GitHub.`,
+        `To continue, a developer merges them by hand.`,
     }
   }
   const { sha, conflicted } = built

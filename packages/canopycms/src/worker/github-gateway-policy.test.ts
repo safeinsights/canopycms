@@ -512,6 +512,15 @@ describe('reading a pull request by number', () => {
     return gateway({ ...options, octokit: octokit as unknown as Octokit }).getPullRequest(2)
   }
 
+  it('answers what stands between a pull request and a merge', async () => {
+    const pr = await read({
+      ...pullRequestHead('canopycms/prod/feature'),
+      mergeable_state: 'behind',
+    })
+    expect(pr.mergeable_state).toBe('behind')
+    expect(pr.baseRef).toBe('main')
+  })
+
   it('answers the body of one whose head is in the namespace, in this repository', async () => {
     expect(await read(pullRequestHead('canopycms/prod/feature'))).toEqual({
       merged: true,
@@ -519,6 +528,7 @@ describe('reading a pull request by number', () => {
       state: 'closed',
       node_id: 'PR_2',
       body: 'Notes',
+      baseRef: 'main',
     })
   })
 
@@ -567,6 +577,7 @@ describe('reading a pull request by number', () => {
         state: 'closed',
         node_id: 'PR_2',
         body: null,
+        baseRef: 'main',
       })
     },
   )
@@ -601,6 +612,7 @@ describe('reading a pull request by number', () => {
         state: 'closed',
         node_id: 'PR_2',
         body,
+        baseRef: 'main',
       })
     },
   )
@@ -634,6 +646,7 @@ describe('a pull request read after the default branch read expired', () => {
       state: 'closed',
       node_id: 'PR_2',
       body: null,
+      baseRef: 'main',
     })
     expect(octokit.repos.get).toHaveBeenCalledTimes(2)
   })
