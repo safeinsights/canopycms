@@ -276,6 +276,7 @@ describe('pushes', () => {
 
     it('forces nothing: a push that would not fast-forward the tip is still rejected', async () => {
       const { kept, seen } = await published()
+      await seed.raw(['reset', '-q', '--hard', kept])
       await git('--git-dir', remoteGitPath, 'update-ref', `refs/heads/${branch}`, kept)
       await commitAndPush(remoteGitPath, `refs/heads/${branch}`, 'other.txt')
 
