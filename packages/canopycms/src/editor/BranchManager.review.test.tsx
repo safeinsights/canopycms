@@ -265,7 +265,9 @@ describe('BranchCard review actions', () => {
       await userEvent.click(approve)
       expect(onApprove).not.toHaveBeenCalled()
       await userEvent.hover(approve)
-      expect(await screen.findByText(/Ask an admin to retry the submit, or use/)).toBeTruthy()
+      expect((await screen.findByRole('tooltip')).textContent).toContain(
+        "can't be approved yet. Ask an admin to retry the submit",
+      )
 
       const requestChanges = screen.getByTestId(`request-changes-branch-button-${NAME}`)
       expect(requestChanges.getAttribute('aria-disabled')).toBeNull()
