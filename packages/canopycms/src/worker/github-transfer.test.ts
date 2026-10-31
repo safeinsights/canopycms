@@ -266,7 +266,7 @@ describe('fetchGitHubIntoRemoteGit', () => {
 })
 
 describe('pushToGitHub', () => {
-  it('reads the commit last seen on GitHub after the commit it pushes, for each attempt', async () => {
+  it('reads the commit last seen on GitHub after the commit it pushes', async () => {
     const reads: string[] = []
     const push = vi.fn(async () => ({
       kind: 'pushed' as const,
