@@ -807,7 +807,8 @@ async function updateBranchMetadataOnFailure(
           // An older submit running late has no step left to finish, and what it failed at says
           // nothing about the latest one.
           if (isOlderSubmit(task, existing.branch.submittedAt)) return null
-          // Nothing to submit means this submit left nothing out.
+          // Nothing to submit means this submit left nothing out, so it flags nothing. A flag a
+          // merge already set stands, for an admin to dismiss.
           if (options.unlock || task.action !== SUBMIT_ACTION) return { branch: failed }
           // Merged while this ran: nothing is left to finish it, as buildMergedBranchUpdate records.
           if (existing.branch.status === 'archived') {
@@ -912,14 +913,12 @@ export async function pushBranchToGitHub(
     return sha
   }
   // Read after the commit it goes with, each attempt: a merge records what it took from GitHub
-  // before `remote.git` holds it, so this names everything that commit brought in. A pending
-  // rewrite's stamp names the commit this push is taking to GitHub.
+  // before `remote.git` holds it, so this names everything that commit brought in. A push under a
+  // marker has a lease instead, and the marker's stamp names the commit it's taking to GitHub. One
+  // armed since this task began pushes without that lease, so it keeps the check.
   const readSeen = async () => {
-    const live = (await readMetadata())?.branch
-    const seen = live?.lastGitHubTip
-    return live?.historyRewrittenFrom === undefined && seen !== undefined && COMMIT_ID.test(seen)
-      ? seen
-      : undefined
+    const seen = (await readMetadata())?.branch.lastGitHubTip
+    return marker === undefined && seen !== undefined && COMMIT_ID.test(seen) ? seen : undefined
   }
   // The commit GitHub was sent: the transfer reads it again if the branch moves under it.
   let outgoingSha: string

@@ -456,10 +456,11 @@ async function reconcileTrackedBranches(
           await git.raw(['update-ref', '--no-deref', localRef, trackedSha, localSha])
           fastForwarded.push(name)
         } catch (err) {
-          // Concurrent Lambda push moved the ref since the read above --
-          // the guard did its job; this branch is simply revisited next cycle.
+          // Concurrent Lambda push moved the ref since the read above -- the guard did its job
+          // -- or the record couldn't be written. Either way the ref stays, and this branch is
+          // simply revisited next cycle.
           workerLogWarn(
-            `  Tracked-branch reconcile: failed to fast-forward ${escapeForLog(name)} (concurrent update?): ${escapeForLog(getErrorMessage(err))}`,
+            `  Tracked-branch reconcile: failed to fast-forward ${escapeForLog(name)} (concurrent update, or its branch.json?): ${escapeForLog(getErrorMessage(err))}`,
           )
         }
       } else if (localBehindCount === 0 && localAheadCount > 0) {

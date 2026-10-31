@@ -14,7 +14,7 @@ row: Commits made on GitHub reach the editor
 
 - If both sides changed a file, the editor's version is kept and the pull request lists the file.
 - A commit that isn't the base catching up sends an approved branch back to review.
-- A branch that has merged GitHub's commits catches up with its base by merging it rather than rebasing, so nothing it settled is undone.
+- A branch that has merged GitHub's commits catches up with its base by merging it rather than rebasing, so nothing it settled is undone. So does a branch whose push failed for good, whose commits GitHub never received.
 - A branch force-pushed on GitHub is left alone, and nothing more is pushed for it, so a commit removed there stays removed. System health says what a developer needs to do.
 - A submit or push GitHub rejects because its branch moved runs again after the next sync, unless the branch has moved on since.
 

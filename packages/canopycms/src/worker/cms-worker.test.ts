@@ -2106,9 +2106,23 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     })
     const worker = makePushWorker()
     ;(worker as unknown as { running: boolean }).running = true
+    // A rewrite armed once this task is under way, which leaves it no lease: the check must stand.
+    const realLoad = BranchMetadataFileManager.loadOnly.bind(BranchMetadataFileManager)
+    let reads = 0
+    const load = vi
+      .spyOn(BranchMetadataFileManager, 'loadOnly')
+      .mockImplementation(async (root) => {
+        if (root === branchPath && ++reads === 2) {
+          await getBranchMetadataFileManager(branchPath, contentBranchesPath).save({
+            branch: { historyRewrittenFrom: removed },
+          })
+        }
+        return realLoad(root)
+      })
 
     const id = await enqueueTask(taskDir, { action: 'push-branch', payload: { branch: name } })
     await worker.processTaskQueue()
+    load.mockRestore()
 
     await expect(shaOf(githubFixture, `refs/heads/${name}`)).resolves.toBe(kept)
     const task = await getTask(taskDir, id)

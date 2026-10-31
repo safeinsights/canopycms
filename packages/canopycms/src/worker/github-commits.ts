@@ -40,9 +40,9 @@ import type { WorkerContext } from './worker-context'
  * clone's next rebase or commit diverges from `remote.git` and every submit after that is refused.
  *
  * Runs once per cycle for every branch this deployment has published, in every status but
- * archived, under the provisioning and content-write locks the caller holds, ahead of the rebase. It never forces
- * anything: a clone behind GitHub fast-forwards, and a clone with commits GitHub lacks gets a real
- * merge (branch-merge.ts), which keeps every commit on both sides.
+ * archived, under the provisioning and content-write locks the caller holds, ahead of the rebase.
+ * It never forces anything: a clone behind GitHub fast-forwards, and a clone with commits GitHub
+ * lacks gets a real merge (branch-merge.ts), which keeps every commit on both sides.
  *
  * Two commits are compared. `remote.git`'s head is what the clone must contain for its next push,
  * and it stays behind GitHub only while a head is diverged; GitHub's tip, from this cycle's fetch,
@@ -185,7 +185,8 @@ export async function bringInGitHubCommits(
   }
 
   // A crash after a merge reached remote.git leaves the clone behind it, like any fast-forward
-  // reconcile made. Taken first, so a merge below builds on remote.git's head whenever it can.
+  // reconcile made, and the check above has ruled out a head GitHub dropped. Taken first, so a merge
+  // below builds on remote.git's head whenever it can.
   if (published !== null && published !== head) {
     if ((await commitsApart(git, head, published)).onlyA === 0) {
       const stopped = await fastForward(ctx, args, head, published)
