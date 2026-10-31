@@ -18,6 +18,8 @@ export interface BranchLockInput {
    * way forward is Withdraw and the reason says why Approve is not offered.
    */
   pullRequestClosed?: boolean
+  /** The server refuses Approve on this branch, so no reason may offer it. */
+  approveBlocked?: boolean
 }
 
 /**
@@ -53,9 +55,11 @@ export function describeBranchLock(lock: BranchLockInput): string | undefined {
   if (!statusLocked) return undefined
   if (lock.pullRequestClosed) return CLOSED_PULL_REQUEST_REASON
   if (lock.branchStatus === 'submitted')
-    return lock.reviewing
-      ? 'This branch is in review. Approve it, or request changes to send it back to its editor.'
-      : 'This branch is in review. Withdraw it to make changes.'
+    return !lock.reviewing
+      ? 'This branch is in review. Withdraw it to make changes.'
+      : lock.approveBlocked
+        ? 'This branch is in review. Request changes to send it back to its editor.'
+        : 'This branch is in review. Approve it, or request changes to send it back to its editor.'
   if (lock.branchStatus === 'approved')
     return lock.reviewing
       ? 'This branch is approved. Request changes to send it back to its editor.'

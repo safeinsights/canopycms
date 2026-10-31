@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
 
-import type { BranchAccessControl, BranchContext, BranchMetadata } from '../types'
+import type { BranchAccessControl, BranchContext, BranchHold, BranchMetadata } from '../types'
 import { BranchWorkspaceManager, type ProvisionOutcome } from '../branch-workspace'
 import {
   BranchDirOccupiedError,
@@ -51,7 +51,22 @@ const log = createDebugLogger({ prefix: 'BranchAPI' })
  * rather than silently behaving as if nothing changed. That is by design:
  * wire compatibility here means "doesn't break", not "behaves the same".
  */
-export interface BranchListItem extends Omit<BranchMetadata, 'review'> {
+export interface BranchListItem extends Omit<
+  BranchMetadata,
+  | 'review'
+  | 'keptOverGitHub'
+  | 'lastGitHubTip'
+  | 'rewrittenOnGitHub'
+  | 'submitUnfinished'
+  | 'unpublishedAtMerge'
+  | 'submitNotQueued'
+  | 'rebaseFailure'
+  | 'pullRequestHold'
+> {
+  /** What is stuck and needs a person, for the branch card. Names no file. */
+  hold?: BranchHold
+  /** The last submit didn't finish, which the server refuses Approve for. */
+  approveBlocked?: boolean
   /**
    * What pull request links carry for this branch, which `?branch=` and the `/:branch` segment
    * accept beside `name` (branch-param.ts's `shortNameOf`): `name` less the namespace for a branch
@@ -68,7 +83,8 @@ export interface BranchListItem extends Omit<BranchMetadata, 'review'> {
    */
   writeBlocked?: boolean
   /**
-   * Populated from {@link BranchWriteProtection.submitBlockedIncludingStatus}
+   * Populated from {@link BranchWriteProtection.submitBlockedIncludingStatus},
+   * or true for a branch rewritten on GitHub
    * -- READ THAT DOC COMMENT before touching this field. On the wire this
    * name means the COMPOUND answer (base-branch OR non-'editing' status),
    * mirroring how `writeBlocked` above is the compound of `readOnly` + status
@@ -269,16 +285,47 @@ export const toBranchListItem = (
   viewer: CanopyUser,
 ): BranchListItem => {
   const protection = getBranchWriteProtection(config, branch.name, branch.baseBranch, branch.status)
-  // `review` names the reviewer, whom the editor has no use for.
-  const { review: _review, ...listed } = branch
+  // `review` names the reviewer, whom the editor has no use for. `keptOverGitHub` and
+  // `rebaseFailure` can name files, which a viewer's path rules can hide; System Health reads
+  // failures from the admin endpoint. The others are the worker's.
+  const {
+    review: _review,
+    keptOverGitHub: _kept,
+    lastGitHubTip: _tip,
+    rewrittenOnGitHub: _rewritten,
+    submitUnfinished: _unfinished,
+    submitNotQueued,
+    unpublishedAtMerge: _unpublished,
+    rebaseFailure: _failure,
+    pullRequestHold,
+    ...listed
+  } = branch
+  const inReview = branch.status === 'submitted' || branch.status === 'approved'
+  const rewritten = branch.rewrittenOnGitHub !== undefined && branch.status !== 'archived'
+  const hold: BranchHold | undefined = rewritten
+    ? { kind: 'rewritten' }
+    : !inReview
+      ? branch.unpublishedAtMerge
+        ? { kind: 'unpublished-at-merge' }
+        : undefined
+      : branch.submitUnfinished
+        ? {
+            kind: 'submit-unfinished',
+            opened: branch.pullRequestNumber !== undefined,
+            notQueued: submitNotQueued,
+          }
+        : pullRequestHold
   return {
     ...listed,
+    hold,
+    approveBlocked: (inReview && branch.submitUnfinished) || undefined,
     shortName: shortNameOf(config, branch.name),
     ...accessForViewer(branch.access ?? {}, viewer),
     isProtected: protection.isProtected,
     readOnly: protection.readOnly,
     writeBlocked: protection.writeBlocked,
-    submitBlocked: protection.submitBlockedIncludingStatus,
+    // The worker refuses to push such a branch, so a submit could only fail later.
+    submitBlocked: protection.submitBlockedIncludingStatus || rewritten,
   }
 }
 
@@ -816,6 +863,17 @@ export const deleteBranchHandler = async (
       ok: false,
       status: 400,
       error: 'Cannot delete branch with open pull request',
+    }
+  }
+
+  // It may hold the only copy of commits the merge left out, and deleting it would drop the alert
+  // that says so.
+  if (branchContext.branch.unpublishedAtMerge && !isAdmin(req.user.groups)) {
+    return {
+      ok: false,
+      status: 409,
+      error:
+        'This branch may hold changes that never reached GitHub. Ask an admin to check it before deleting it.',
     }
   }
 

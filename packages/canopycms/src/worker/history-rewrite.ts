@@ -77,6 +77,10 @@ export async function readPublishedSha(
  * caller's snapshot: the task loop runs concurrently with syncGit() and may
  * have cleared the marker while this branch was rebasing.
  *
+ * `rewrittenTip` goes in the same write as `lastGitHubTip`, so a push that lands
+ * and dies before its stamp is never read as someone rewriting the branch on
+ * GitHub (github-commits.ts).
+ *
  * Resolves whether `branchRef`'s branch.json now holds a marker, set here or kept by set-once.
  * When it does not, the caller publishes nothing: a rewrite pushed without its marker leaves
  * remote.git rewritten and the queued GitHub push failing with a false divergence diagnosis.
@@ -86,13 +90,20 @@ export async function markHistoryRewritten(
   branchPath: string,
   branchRef: string,
   expectedSha: string,
+  rewrittenTip: string,
 ): Promise<boolean> {
   const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
   let marked = false
   await meta.update((current) => {
     marked = current?.branch.name === branchRef
-    if (!marked || typeof current?.branch.historyRewrittenFrom === 'string') return null
-    return { branch: { historyRewrittenFrom: expectedSha } }
+    if (!marked) return null
+    const marker = current?.branch.historyRewrittenFrom
+    return {
+      branch: {
+        historyRewrittenFrom: typeof marker === 'string' ? marker : expectedSha,
+        lastGitHubTip: rewrittenTip,
+      },
+    }
   })
   return marked
 }
@@ -301,4 +312,25 @@ export async function hasPendingHistoryRewrite(
   } catch {
     return false
   }
+}
+
+/**
+ * Records that GitHub's `branchName` holds `sha`, in `lastGitHubTip`. It runs before `remote.git`
+ * takes the commit, so `remote.git` never holds a GitHub commit the record doesn't name: a clone
+ * can lag `remote.git` for as long as it stays busy, and once GitHub drops that commit it could not
+ * be told from the branch's own work (github-commits.ts). A branch name with no workspace has no
+ * record, and a directory whose branch.json names another ref is that ref's.
+ */
+export async function recordSeenOnGitHub(
+  ctx: Pick<HistoryRewriteContext, 'contentBranchesPath'>,
+  branchName: string,
+  sha: string,
+): Promise<void> {
+  const branchPath = path.join(ctx.contentBranchesPath, sanitizeBranchName(branchName))
+  const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
+  if (metaFile?.branch.name !== branchName) return
+  await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update(
+    (current) => (current?.branch.name === branchName ? { branch: { lastGitHubTip: sha } } : null),
+    { keepUpdatedAt: true },
+  )
 }

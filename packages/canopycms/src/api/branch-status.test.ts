@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { RESERVED_GROUPS } from '../authorization'
 import type { BranchName } from '../paths/types'
 import type { BranchContext, BranchStatus } from '../types'
 import type { CanopyUser } from '../user'
@@ -36,6 +37,17 @@ vi.mock('../authorization', async (importOriginal) => {
       canPerformWorkflowActionSpy(...args)
       return original.canPerformWorkflowAction(...args)
     },
+  }
+})
+
+// What the sync reports for a submit, where a test needs an outcome the real one can't reach here.
+const submitOutcome = vi.hoisted(() => ({ next: null as Record<string, unknown> | null }))
+vi.mock('./github-sync', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./github-sync')>()
+  return {
+    ...original,
+    syncSubmitPr: async (...args: Parameters<typeof original.syncSubmitPr>) =>
+      submitOutcome.next ?? original.syncSubmitPr(...args),
   }
 })
 
@@ -213,6 +225,56 @@ describe('branch status api', () => {
     )
   })
 
+  it('refuses a branch rewritten on GitHub before committing anything', async () => {
+    const ctx = createMockApiContext({
+      branchContext: {
+        ...baseContext,
+        branch: { ...baseContext.branch, rewrittenOnGitHub: 'a'.repeat(40) },
+      },
+      allowBranchAccess: true,
+      services: { config: { defaultBranchAccess: 'allow' } as any },
+    })
+    ctx.services.submitBranch = vi.fn()
+
+    const res = await submitBranchForMerge(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+      undefined,
+    )
+
+    expect(res.status).toBe(409)
+    expect(res.error).toContain('"feature/x"')
+    expect(res.error).toContain('Ask an admin')
+    expect(ctx.services.submitBranch).not.toHaveBeenCalled()
+
+    const asAdmin = await submitBranchForMerge(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      { branch: 'feature/x' as BranchName },
+      undefined,
+    )
+    expect(asAdmin.error).toContain('"System health"')
+    expect(asAdmin.error).not.toContain('Ask an admin')
+  })
+
+  it('clears what held the last submit, as the card reads it at once', async () => {
+    mockMetadataUpdate.mockClear()
+
+    await submitBranchForMerge(
+      makeCtx(true),
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+      undefined,
+    )
+
+    expect(mockMetadataUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        branch: expect.objectContaining({ pullRequestHold: undefined }),
+      }),
+    )
+  })
+
   it('clears rebaseFailure on submit (PR-W2 M2)', async () => {
     mockMetadataUpdate.mockClear()
 
@@ -365,17 +427,29 @@ describe('branch status api', () => {
     expect(res.ok).toBe(false)
     expect(res.status).toBe(409)
     expect(res.error).toContain('feature/x')
-    // States the observable fact and names no cause. This push targets the
-    // deployment's OWN local origin, which a foreign deployment cannot reach,
-    // so blaming one was actively misleading -- and it must never advise a
-    // rename: a branch that reaches this point has usually been submitted
+    // Says what is true and what happens next. This push targets the deployment's
+    // OWN remote.git, which a foreign deployment cannot reach, and it must never
+    // advise a rename: a branch that reaches this point has usually been submitted
     // before, so a rename can orphan an open PR.
-    expect(res.error).toContain('diverged')
+    expect(res.error).toContain("commits from GitHub that aren't in the editor")
+    expect(res.error).toContain('Your saved changes are safe')
+    expect(res.error).toContain('submit again')
+    expect(res.error).not.toContain('try again shortly')
     expect(res.error).not.toContain('another CanopyCMS deployment')
     expect(res.error).not.toMatch(/rename/i)
     // No raw git output (branch/ref internals, hint text) leaks to the client.
     expect(res.error).not.toContain('rejected')
     expect(res.error).not.toContain('/tmp/canopy-test')
+    expect(res.error).toContain('ask an admin to check "System health"')
+
+    const asAdmin = await submitBranchForMerge(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      { branch: 'feature/x' as BranchName },
+      undefined,
+    )
+    expect(asAdmin.error).toContain('check "System health"')
+    expect(asAdmin.error).not.toContain('ask an admin')
     consoleSpy.restore()
   })
 
@@ -642,6 +716,32 @@ describe('branch status api', () => {
         }),
       })
       consoleSpy.restore()
+    })
+
+    it('records a submit no task will run as unfinished, naming why, and a later one clears it', async () => {
+      mockMetadataUpdate.mockClear()
+      submitOutcome.next = {
+        syncStatus: 'sync-failed',
+        syncFailureReason: 'not queued',
+        submitNotQueued: true,
+      }
+      await submitBranchForMerge(makeCtx(true), { user }, params, undefined)
+      submitOutcome.next = null
+
+      expect(mockMetadataUpdate.mock.calls[0]?.[0].branch).toMatchObject({
+        status: 'submitted',
+        syncStatus: 'sync-failed',
+        syncFailureReason: 'not queued',
+        submitUnfinished: true,
+        submitNotQueued: true,
+      })
+
+      mockMetadataUpdate.mockClear()
+      await submitBranchForMerge(makeCtx(true), { user }, params, undefined)
+
+      const saved = mockMetadataUpdate.mock.calls[0]?.[0].branch
+      expect(saved).toHaveProperty('submitUnfinished', undefined)
+      expect(saved).toHaveProperty('submitNotQueued', undefined)
     })
 
     it('stamps submittedAt and clears a stale failure reason on a successful submit', async () => {

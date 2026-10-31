@@ -9,7 +9,7 @@ import { withdrawBranch } from './branch-withdraw'
 import { requestChanges, approveBranch } from './branch-review'
 import { markAsMerged } from './branch-merge'
 import { defineEndpoint } from './route-builder'
-import { canPerformWorkflowAction, getBranchProtection } from '../authorization'
+import { canPerformWorkflowAction, getBranchProtection, isAdmin } from '../authorization'
 import { syncSubmitPr } from './github-sync'
 import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from '../utils/error'
 import { isNonFastForwardRejection } from '../utils/git'
@@ -130,6 +130,21 @@ const submitBranchForMergeHandler = async (
     }
   }
 
+  // The worker pushes nothing for such a branch, so this would commit and report a failure later.
+  if (branchContext.branch.rewrittenOnGitHub !== undefined) {
+    return {
+      ok: false,
+      status: 409,
+      error:
+        `"${shortNameOf(ctx.services.config, branchContext.branch.name)}" was changed on GitHub in ` +
+        "a way CanopyCMS can't combine with the work here, so it can't be submitted. Nothing is " +
+        'lost. ' +
+        (isAdmin(req.user.groups)
+          ? 'See the "Branches" tab in "System health".'
+          : 'Ask an admin for help.'),
+    }
+  }
+
   // Commit and push changes
   const submitter = submissionEditorFromUser(req.user)
   const { authPlugin } = ctx
@@ -170,29 +185,22 @@ const submitBranchForMergeHandler = async (
       redactCredentials(message),
     )
 
-    // A non-fast-forward rejection means this branch and the deployment's
-    // local repository have diverged. Retrying the identical push can never
-    // succeed (see isNonFastForwardRejection), so surface 409 instead of the
-    // generic 500 below. Everything else (network, auth) keeps the 500 path.
-    //
-    // This push targets the deployment's OWN local origin (remote.git), not
-    // GitHub, so the message deliberately states only the observable fact and
-    // names no cause: a foreign deployment cannot reach this repo, and the
-    // realistic explanations are all internal (the worker's rebase loop
-    // reconciling the branch, or a commit reaching remote.git that this
-    // workspace never had). It also never advises renaming the branch --
-    // a branch that reaches this point has usually been submitted before, so
-    // it may well have an open PR that a rename would orphan.
+    // This push targets the deployment's OWN remote.git, so a non-fast-forward
+    // rejection means it holds a commit this clone lacks, which reached it from
+    // GitHub (worker/github-commits.ts). The commit made above stays: the tree is
+    // then clean, which is what the worker's merge needs, and the next submit
+    // pushes the result. A branch that reaches this point has usually been
+    // submitted before, so the message never advises renaming it: that would
+    // orphan its open PR.
     if (isNonFastForwardRejection(message)) {
       return {
         ok: false,
         status: 409,
         error:
-          `Could not submit "${shortName}": it has diverged from the copy in ` +
-          `this deployment's repository and needs to be reconciled before it can be submitted. ` +
-          `The background worker reconciles branches when the base branch moves, so this often ` +
-          `clears on its own within a few minutes -- try again shortly, and ask an administrator ` +
-          `to check the worker if it persists.`,
+          `Could not submit "${shortName}": it has commits from GitHub that aren't in the editor ` +
+          `yet. Your saved changes are safe. CanopyCMS brings those commits in at its next sync, ` +
+          `usually within a few minutes, so submit again then. If this keeps happening, ` +
+          `${isAdmin(req.user.groups) ? 'check' : 'ask an admin to check'} "System health".`,
       }
     }
 
@@ -257,6 +265,11 @@ const submitBranchForMergeHandler = async (
       // warning through review and archive.
       rebaseFailure: undefined,
       review: undefined,
+      // Read by the card as soon as the status says review, and the worker's next read is minutes
+      // away, so what held the last submit must not show as holding this one.
+      pullRequestHold: undefined,
+      submitUnfinished: prResult.submitNotQueued,
+      submitNotQueued: prResult.submitNotQueued,
     },
   })
 

@@ -53,6 +53,8 @@ export interface WorkerContext {
   readonly schemaHoldMaxMs: number
   /** Per-task timeout in ms; also simple-git's inactivity block timeout. */
   readonly taskTimeoutMs: number
+  /** How long the sync loop rests between cycles, in ms. */
+  readonly gitSyncIntervalMs: number
   /** Max tasks to process per `processTaskQueue` cycle. */
   readonly maxTasksPerCycle: number
   /** Default max retries for a failed task that does not carry its own. */

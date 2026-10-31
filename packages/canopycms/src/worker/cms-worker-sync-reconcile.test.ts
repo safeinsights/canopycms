@@ -32,8 +32,9 @@ import { simpleGit, type SimpleGit } from 'simple-git'
 
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
 import { BRANCH_META_DIR, BRANCH_META_FILE } from '../branch-metadata-file'
-import { enqueueTask } from '../task-queue/cms-task-queue'
+import { enqueueTask, listTasks } from '../task-queue/cms-task-queue'
 import { mockConsole, openBareRepo, useLocalGitHubGateway } from '../test-utils'
+import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import { branchProvisioningLockName, tryAcquireProvisioningLock } from '../utils/provisioning-lock'
 import type { WorkerStatusReport } from '../types'
 import { CmsWorker } from './cms-worker'
@@ -689,6 +690,108 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
     expect(sync?.baseRefresh).toMatchObject({
       outcome: 'skipped-dirty',
       dirtyFiles: ['README.md'],
+    })
+  })
+
+  describe('a commit GitHub dropped after remote.git took it in', () => {
+    const NAME = 'feature-removed'
+    const branchPath = () => path.join(workspacePath, 'content-branches', NAME)
+    const readBranch = async () => (await BranchMetadataFileManager.loadOnly(branchPath()))?.branch
+    const pushesQueued = async () =>
+      (await listTasks(path.join(workspacePath, '.tasks'), 'pending')).filter(
+        (t) => t.action === 'push-branch',
+      )
+
+    /** A published branch at `kept`, in step everywhere, with its clone. */
+    const publish = async () => {
+      await forcePushRewrite(tmpDir, githubPath, NAME)
+      const kept = await seedBranch(remoteGitPath, githubPath, NAME)
+      await simpleGit().clone(remoteGitPath, branchPath(), ['--branch', NAME, '--single-branch'])
+      const clone = simpleGit({ baseDir: branchPath() })
+      await clone.addConfig('user.name', 'Test Bot')
+      await clone.addConfig('user.email', 'test@canopycms.test')
+      await fs.appendFile(path.join(branchPath(), '.git/info/exclude'), '\n.canopy-meta/\n')
+      await getBranchMetadataFileManager(branchPath(), path.dirname(branchPath())).save({
+        branch: {
+          name: NAME,
+          status: 'editing',
+          pushedToGitHubAt: '2026-10-01T00:00:00.000Z',
+          lastGitHubTip: kept,
+        },
+      })
+      return { kept, clone }
+    }
+
+    /** One sync that leaves the clone behind, as a held content write does. */
+    const syncWithCloneBusy = async () => {
+      const release = await tryAcquireContentWriteLock(branchPath(), () => {})
+      try {
+        await makeWorker().syncGit()
+      } finally {
+        await release()
+      }
+    }
+
+    it('stays removed, though remote.git and not the clone took it in', async () => {
+      const { kept, clone } = await publish()
+      const removed = await commitOnto(tmpDir, githubPath, NAME, { 'leak.txt': 'secret\n' }, 'leak')
+
+      await syncWithCloneBusy()
+
+      await expect(bareRevParse(remoteGitPath, `refs/heads/${NAME}`)).resolves.toBe(removed)
+      expect((await clone.revparse(['HEAD'])).trim()).toBe(kept)
+      expect((await readBranch())?.lastGitHubTip).toBe(removed)
+
+      await openBareRepo(githubPath).raw(['update-ref', 'refs/heads/kept', kept])
+      await forcePushRewrite(tmpDir, githubPath, NAME, 'kept')
+
+      await makeWorker().syncGit()
+
+      expect((await clone.revparse(['HEAD'])).trim()).toBe(kept)
+      await expect(fs.stat(path.join(branchPath(), 'leak.txt'))).rejects.toThrow()
+      await expect(bareRevParse(remoteGitPath, `refs/heads/${NAME}`)).resolves.toBe(removed)
+      expect((await readBranch())?.rewrittenOnGitHub).toBe(removed)
+      expect(await pushesQueued()).toEqual([])
+      await expect(bareRevParse(githubPath, `refs/heads/${NAME}`)).resolves.not.toBe(removed)
+    })
+
+    it('still follows a branch that only moved on', async () => {
+      const { clone } = await publish()
+      const fix = await commitOnto(tmpDir, githubPath, NAME, { 'fix.txt': 'fix\n' }, 'fix')
+
+      await syncWithCloneBusy()
+      const next = await commitOnto(tmpDir, githubPath, NAME, { 'more.txt': 'more\n' }, 'more')
+      await makeWorker().syncGit()
+
+      expect(fix).not.toBe(next)
+      expect((await clone.revparse(['HEAD'])).trim()).toBe(next)
+      expect((await readBranch())?.rewrittenOnGitHub).toBeUndefined()
+    })
+
+    it('advances the base whatever its workspace holds, as nothing reads a record there', async () => {
+      const basePath = path.join(workspacePath, 'content-branches', 'main')
+      await simpleGit().clone(remoteGitPath, basePath, ['--branch', 'main'])
+      await getBranchMetadataFileManager(basePath, path.dirname(basePath)).save({
+        branch: { name: 'main' },
+      })
+      await fs.writeFile(path.join(basePath, BRANCH_META_DIR, BRANCH_META_FILE), 'not json')
+      const next = await commitOnto(tmpDir, githubPath, 'main', { 'base.txt': 'moved\n' })
+
+      await makeWorker().syncGit()
+
+      await expect(bareRevParse(remoteGitPath, 'refs/heads/main')).resolves.toBe(next)
+    })
+
+    it('leaves remote.git behind GitHub when the record cannot be written', async () => {
+      const { kept } = await publish()
+      const removed = await commitOnto(tmpDir, githubPath, NAME, { 'x.txt': 'x\n' }, 'x')
+      const metaFile = path.join(branchPath(), BRANCH_META_DIR, BRANCH_META_FILE)
+      await fs.writeFile(metaFile, 'not json')
+
+      await makeWorker().syncGit()
+
+      await expect(bareRevParse(remoteGitPath, `refs/heads/${NAME}`)).resolves.toBe(kept)
+      expect(removed).not.toBe(kept)
     })
   })
 

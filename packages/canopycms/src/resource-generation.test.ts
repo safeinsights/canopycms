@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'vitest'
 import fs from 'fs/promises'
 import path from 'path'
 import os from 'os'
+import { mockConsole } from './test-utils'
 import {
   resourceGenerationPath,
   bumpResourceGeneration,
@@ -45,15 +46,20 @@ describe('resource-generation', () => {
     it('rethrows when mustSucceed is true and the write fails', async () => {
       // Make .canopy-meta a FILE so mkdir(recursive) inside atomicWriteFile fails.
       await fs.writeFile(path.join(tmpDir, '.canopy-meta'), 'not a directory')
+      const consoleSpy = mockConsole()
       await expect(
         bumpResourceGeneration(tmpDir, 'widgets', { mustSucceed: true }),
       ).rejects.toThrow()
+      consoleSpy.restore()
     })
 
     it('swallows the failure and returns null by default', async () => {
       await fs.writeFile(path.join(tmpDir, '.canopy-meta'), 'not a directory')
+      const consoleSpy = mockConsole()
       const token = await bumpResourceGeneration(tmpDir, 'widgets')
       expect(token).toBeNull()
+      expect(consoleSpy).toHaveWarned(/failed to bump widgets generation/)
+      consoleSpy.restore()
     })
   })
 

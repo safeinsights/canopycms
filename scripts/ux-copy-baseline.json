@@ -7,9 +7,6 @@
     "packages/canopycms/src/editor/admin/SystemHealthPanel.tsx": {
       "ellipsis": 3
     },
-    "packages/canopycms/src/editor/BranchManager.tsx": {
-      "title-case": 1
-    },
     "packages/canopycms/src/editor/Editor.tsx": {
       "title-case": 2
     },

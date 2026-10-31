@@ -29,24 +29,31 @@ export async function renderPrCommentsBody(options: {
   branch: string
   editorUrl?: string
   body: string
+  /** Leaves the comment summary as it is, for a caller without the editor URL its links need. */
+  reviewBlockOnly?: boolean
   warn: (message: string) => void
 }): Promise<string | undefined> {
   const original = options.body
   let next = original
-  try {
-    const threads = await new CommentStore(options.branchRoot).listThreadsStrict()
-    next =
-      mergeCommentsBlock(next, buildCommentsBlock(threads, options.branch, options.editorUrl)) ??
-      next
-  } catch (err) {
-    if (!(err instanceof SyntaxError || err instanceof CommentsFileMalformedError)) throw err
-    options.warn(
-      `Could not read the editor comments of ${options.branch}; the PR keeps its summary: ${getErrorMessage(err)}`,
-    )
+  if (!options.reviewBlockOnly) {
+    try {
+      const threads = await new CommentStore(options.branchRoot).listThreadsStrict()
+      next =
+        mergeCommentsBlock(next, buildCommentsBlock(threads, options.branch, options.editorUrl)) ??
+        next
+    } catch (err) {
+      if (!(err instanceof SyntaxError || err instanceof CommentsFileMalformedError)) throw err
+      options.warn(
+        `Could not read the editor comments of ${options.branch}; the PR keeps its summary: ${getErrorMessage(err)}`,
+      )
+    }
   }
   try {
     const file = await readBranchMetadataFile(options.branchRoot)
-    if (file) next = mergeReviewBlock(next, buildReviewBlock(file.branch.review)) ?? next
+    if (file) {
+      const block = buildReviewBlock(file.branch.review, file.branch.keptOverGitHub)
+      next = mergeReviewBlock(next, block) ?? next
+    }
   } catch (err) {
     if (!(err instanceof BranchMetadataCorruptError)) throw err
     options.warn(
@@ -91,7 +98,10 @@ export async function refreshCommentsBlock(options: {
   }
   try {
     const file = await readBranchMetadataFile(options.branchRoot)
-    if (file) section = mergeReviewBlock(section, buildReviewBlock(file.branch.review)) ?? section
+    if (file) {
+      const block = buildReviewBlock(file.branch.review, file.branch.keptOverGitHub)
+      section = mergeReviewBlock(section, block) ?? section
+    }
   } catch (err) {
     options.warn(
       `Could not re-read the review state of ${options.branch}; the PR gets it from submit time: ${getErrorMessage(err)}`,

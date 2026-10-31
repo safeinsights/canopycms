@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from 'react'
 
 import {
   ActionIcon,
+  Anchor,
   Badge,
   Button,
   Group,
@@ -19,7 +20,7 @@ import {
 } from '@mantine/core'
 import { IconDots, IconExternalLink } from '@tabler/icons-react'
 import type { OperatingMode } from '../operating-mode'
-import type { ConflictStatus, PullRequestState, SyncStatus } from '../types'
+import type { BranchHold, ConflictStatus, PullRequestState, SyncStatus } from '../types'
 import type { CommentThread } from '../comment-store'
 import type { UserSearchResult } from '../auth/types'
 import { BranchComments } from './comments/BranchComments'
@@ -32,10 +33,24 @@ import { parseCreatedBranchName } from '../paths/validation'
 import { DestructiveMenuItem } from './components/DestructiveMenuItem'
 import { ReasonedMenuItem } from './components/ReasonedMenuItem'
 import { RelativeTime } from './components/RelativeTime'
-import { branchStatusPresentation } from './branch-status'
+import {
+  HOLD_BADGE,
+  SYNC_FAILED_IN_REVIEW_NOTE,
+  branchHoldMessage,
+  endSentence,
+  syncFailedFallback,
+  branchStatusPresentation,
+  type HoldViewer,
+} from './branch-status'
+import { TooltipDetail } from './components/TooltipDetail'
 import { branchAddress, displayBranchName } from './branch-names'
 import type { CreateRefusal } from './hooks/create-branch-request'
-import { CLOSED_PULL_REQUEST_REASON, EDITOR_ACTIONS } from './copy'
+import {
+  CLOSED_PULL_REQUEST_REASON,
+  EDITOR_ACTIONS,
+  rewrittenSubmitReason,
+  UNFINISHED_SUBMIT_APPROVE_REASON,
+} from './copy'
 import { isReviewerOfOthersReview } from '../authorization/review-role'
 import { SYSTEM_USER_ID } from '../system-users'
 
@@ -67,17 +82,21 @@ export interface BranchSummary {
   conflictStatus?: ConflictStatus
   /** ContentIds of entries where --theirs was applied during rebase; cleared on clean rebase */
   conflictFiles?: string[]
+  /** What is stuck and needs a person (api/branch.ts). */
+  hold?: BranchHold
   commentCount?: number
   isProtected?: boolean
   readOnly?: boolean
   /**
-   * Server-computed compound submit rule (base-branch OR non-'editing'
-   * status) -- see `useBranchManager.tsx`'s `BranchSummary.submitBlocked` and
-   * `BranchWriteProtection.submitBlockedIncludingStatus` for the full
+   * Server-computed compound submit rule (base-branch, non-'editing'
+   * status, or rewritten on GitHub) -- see `useBranchManager.tsx`'s
+   * `BranchSummary.submitBlocked` and `BranchWriteProtection.submitBlockedIncludingStatus` for the full
    * rationale. `getBranchPermissions`'s `canSubmit` consumes this directly
    * instead of re-deriving `status === 'editing' && !isProtected`.
    */
   submitBlocked?: boolean
+  /** Server-computed: the API refuses Approve, as the last submit didn't finish. */
+  approveBlocked?: boolean
 }
 
 export interface UserContext {
@@ -136,8 +155,8 @@ export const getBranchPermissions = (
 
   // Submit: can perform workflow actions AND the server says submit isn't
   // blocked. `submitBlocked` is the server's own compound answer -- status
-  // past 'editing' OR the protected base branch -- computed once in
-  // `getBranchWriteProtection` (protected-branch.ts) and threaded through
+  // past 'editing', the protected base branch, or a rewrite on GitHub --
+  // computed once in `toBranchListItem` (api/branch.ts) and threaded through
   // unchanged.
   //
   // `?? true`, not a bare `!branch.submitBlocked`: the field is optional (like
@@ -170,10 +189,12 @@ export const getBranchPermissions = (
   // Approve and Request changes: a Reviewer or Admin other than the creator, who for an author
   // would only do what Withdraw does. Neither applies to the protected base branch, whose way
   // out of review is Withdraw. A closed PR refuses both (Request changes converts the PR to
-  // a draft); Approve also needs the branch submitted, Request changes accepts approved too.
+  // a draft); Approve also needs the branch submitted and its last submit finished, Request changes
+  // accepts approved too.
   const reviewsOthers = (userIsAdmin || userIsReviewer) && !userIsCreator && !branch.isProtected
   const prLive = branch.pullRequestState !== 'closed'
-  const canApprove = reviewsOthers && branch.status === 'submitted' && prLive
+  const canApprove =
+    reviewsOthers && branch.status === 'submitted' && prLive && !branch.approveBlocked
   const canRequestChanges =
     reviewsOthers && (branch.status === 'submitted' || branch.status === 'approved') && prLive
 
@@ -263,6 +284,7 @@ const workflowAction = (
   perms: ReturnType<typeof getBranchPermissions>,
   onSubmit: ((name: string) => void) | undefined,
   onWithdraw: ((name: string) => void) | undefined,
+  userIsAdmin: boolean,
 ): BranchWorkflowAction | undefined => {
   if (!perms.hasWorkflowAccess) return undefined
   if (b.status === 'submitted' || b.status === 'approved') {
@@ -279,7 +301,11 @@ const workflowAction = (
       color: 'brand',
       testId: `submit-branch-button-${b.name}`,
       run: () => onSubmit?.(b.name),
-      blockedReason: perms.canSubmit ? undefined : "This branch can't be submitted right now.",
+      blockedReason: perms.canSubmit
+        ? undefined
+        : b.hold?.kind === 'rewritten'
+          ? rewrittenSubmitReason(userIsAdmin)
+          : "This branch can't be submitted right now.",
     }
   }
   return undefined
@@ -314,6 +340,10 @@ interface BranchCardProps {
   onGetOwnerMetadata?: (userId: string) => Promise<UserSearchResult | null>
 }
 
+/** Lets the card's details shrink beside its actions, which a long unbroken name would push out. */
+const CARD_DETAILS = { minWidth: 0, flex: 1 }
+const WRAP_ANYWHERE = { overflowWrap: 'anywhere' } as const
+
 /**
  * One branch: its state, and one primary action, with the rest in a "…" menu. The current branch
  * shows its workflow action; to a reviewer of someone else's submission it shows Approve, with
@@ -337,10 +367,10 @@ const BranchCard: React.FC<BranchCardProps> = ({
 }) => {
   const statusBadge = branchStatusPresentation(b.status, b.isProtected)
   const perms = getBranchPermissions(b, user)
-  const action = workflowAction(b, perms, onSubmit, onWithdraw)
+  const userIsAdmin = isAdmin(user?.groups)
+  const action = workflowAction(b, perms, onSubmit, onWithdraw, userIsAdmin)
   const workflow =
     action && workflowBlockedReason ? { ...action, blockedReason: workflowBlockedReason } : action
-  const userIsAdmin = isAdmin(user?.groups)
 
   // The open branch holds back its review actions as it does its workflow action; the reason is
   // given only for the open branch.
@@ -356,7 +386,11 @@ const BranchCard: React.FC<BranchCardProps> = ({
           color: 'brand',
           testId: `approve-branch-button-${b.name}`,
           run: () => onApprove?.(b.name),
-          blockedReason: perms.canApprove ? undefined : CLOSED_PULL_REQUEST_REASON,
+          blockedReason: perms.canApprove
+            ? undefined
+            : b.pullRequestState === 'closed'
+              ? CLOSED_PULL_REQUEST_REASON
+              : UNFINISHED_SUBMIT_APPROVE_REASON,
         }
       : undefined,
   )
@@ -381,9 +415,11 @@ const BranchCard: React.FC<BranchCardProps> = ({
   // alone once approved. Reviewing another one, Review opens it and the actions wait in the menu.
   const primary = !isCurrent ? undefined : reviewing ? (approve ?? requestChanges) : workflow
   const secondary = isCurrent && reviewing && approve ? requestChanges : undefined
-  // Two visible actions, or the long "Withdraw from review", would crowd the title at the drawer's
-  // width, so they take a row below it. Open and Review stay beside the title.
-  const actionRow = !!secondary || primary?.label === EDITOR_ACTIONS.withdrawFromReview
+  // Two visible actions, the long "Withdraw from review", or any action beside a hold's line would
+  // crowd the details at the drawer's width, so they take a row below. Open and Review stay beside
+  // the title.
+  const actionRow =
+    !!secondary || primary?.label === EDITOR_ACTIONS.withdrawFromReview || (!!primary && !!b.hold)
   const menuActions = [approve, requestChanges, workflow].filter(
     (a): a is BranchWorkflowAction => !!a && a !== primary && a !== secondary,
   )
@@ -393,6 +429,11 @@ const BranchCard: React.FC<BranchCardProps> = ({
   const menuLabel = `More actions for ${displayBranchName(b)}`
   const [menuOpen, setMenuOpen] = useState(false)
 
+  const inReview = b.status === 'submitted' || b.status === 'approved'
+  const holdViewer: HoldViewer = {
+    role: reviewing ? 'review' : perms.canWithdraw ? 'withdraw' : 'none',
+    isAdmin: userIsAdmin,
+  }
   return (
     <Paper
       withBorder
@@ -403,9 +444,11 @@ const BranchCard: React.FC<BranchCardProps> = ({
       data-testid={`branch-list-item-${b.name}`}
     >
       <Group justify="space-between" align="flex-start" wrap="nowrap">
-        <Stack gap={4}>
+        <Stack gap={4} style={CARD_DETAILS}>
           <Group gap="xs">
-            <Text fw={600}>{displayBranchName(b)}</Text>
+            <Text fw={600} style={WRAP_ANYWHERE}>
+              {displayBranchName(b)}
+            </Text>
             {isCurrent && (
               <Badge color="brand" variant="filled" data-testid={`branch-current-badge-${b.name}`}>
                 Current
@@ -420,6 +463,11 @@ const BranchCard: React.FC<BranchCardProps> = ({
                 data-protected={b.isProtected || undefined}
               >
                 {statusBadge.label}
+              </Badge>
+            )}
+            {b.hold && (
+              <Badge color={HOLD_BADGE.color} variant="light" data-testid={`held-badge-${b.name}`}>
+                {HOLD_BADGE.label}
               </Badge>
             )}
             {b.status === 'archived' && b.mergedAt && (
@@ -448,16 +496,9 @@ const BranchCard: React.FC<BranchCardProps> = ({
               </Badge>
             )}
             {b.syncStatus === 'sync-failed' && (
-              <Tooltip
-                label="GitHub sync failed — an admin can retry it from System health."
-                disabled={Boolean(b.syncFailureReason)}
-                multiline
-                maw={320}
-              >
-                <Badge color="red" variant="light" data-testid={`sync-failed-badge-${b.name}`}>
-                  Sync failed
-                </Badge>
-              </Tooltip>
+              <Badge color="red" variant="light" data-testid={`sync-failed-badge-${b.name}`}>
+                Sync failed
+              </Badge>
             )}
             {b.syncStatus === 'pending-sync' && (
               <Tooltip label="Changes are on their way to GitHub.">
@@ -467,25 +508,47 @@ const BranchCard: React.FC<BranchCardProps> = ({
               </Tooltip>
             )}
             {b.conflictStatus === 'conflicts-detected' && (
-              <Tooltip label="This branch's version was kept for conflicting entries during a rebase — review the flagged entries.">
+              <TooltipDetail detail="This branch's version was kept for conflicting entries. Review the flagged entries.">
                 <Badge color="orange" variant="light" data-testid={`conflicts-badge-${b.name}`}>
                   Conflicts
                   {b.conflictFiles?.length ? ` (${b.conflictFiles.length})` : ''}
                 </Badge>
-              </Tooltip>
+              </TooltipDetail>
             )}
           </Group>
-          {b.syncStatus === 'sync-failed' && b.syncFailureReason && (
-            <Text
-              size="xs"
-              c="var(--canopy-danger-text)"
-              maw={480}
-              data-testid={`sync-failed-reason-${b.name}`}
-            >
-              {b.syncFailureReason}
-              {b.status === 'submitted' && ' Withdraw it from review to make changes.'}
+          {b.hold && (
+            <Text size="xs" maw={480} style={WRAP_ANYWHERE} data-testid={`branch-hold-${b.name}`}>
+              {branchHoldMessage(b.hold, holdViewer)}
+              {b.hold.kind === 'retargeted' && b.pullRequestUrl && (
+                <>
+                  {' '}
+                  <Anchor href={b.pullRequestUrl} target="_blank" rel="noreferrer" inherit>
+                    View pull request
+                  </Anchor>
+                </>
+              )}
             </Text>
           )}
+          {/* One cause, one line: a rewrite is what fails the sync, and a hold already says what to do. */}
+          {b.syncStatus === 'sync-failed' &&
+            (b.hold ? b.hold.kind !== 'rewritten' && !!b.syncFailureReason?.trim() : true) && (
+              <Text
+                size="xs"
+                c="var(--canopy-danger-text)"
+                maw={480}
+                style={WRAP_ANYWHERE}
+                data-testid={`sync-failed-reason-${b.name}`}
+              >
+                {endSentence(
+                  b.syncFailureReason?.trim() || syncFailedFallback(userIsAdmin, b.status),
+                )}
+                {!b.hold && inReview && b.pullRequestNumber && ` ${SYNC_FAILED_IN_REVIEW_NOTE}`}
+                {!b.hold &&
+                  inReview &&
+                  holdViewer.role === 'withdraw' &&
+                  ' Withdraw the branch from review to make changes.'}
+              </Text>
+            )}
           <Group gap="xs" align="center">
             {b.updatedAt && (
               <RelativeTime iso={b.updatedAt} prefix="Updated " size="xs" c="dimmed" />
@@ -588,7 +651,9 @@ const BranchCard: React.FC<BranchCardProps> = ({
                       blockedReason={
                         b.status === 'submitted' || b.status === 'approved'
                           ? 'This branch is in review. Withdraw it from review before deleting it.'
-                          : undefined
+                          : b.hold?.kind === 'unpublished-at-merge' && !userIsAdmin
+                            ? 'This branch may hold changes that never reached GitHub. Ask an admin to check it before deleting it.'
+                            : undefined
                       }
                       onClick={() => onDelete?.(b.name)}
                     >

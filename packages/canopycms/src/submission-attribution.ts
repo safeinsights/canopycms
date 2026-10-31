@@ -338,7 +338,10 @@ function reviewTime(at: unknown): string | undefined {
  * mention, reference an issue, carry HTML or spell a marker; the id is never written, and a
  * name that is only the id counts as none.
  */
-export function buildReviewBlock(review: BranchReview | undefined): string {
+export function buildReviewBlock(
+  review: BranchReview | undefined,
+  keptOverGitHub: readonly string[] = [],
+): string {
   const verdict =
     review?.state === 'approved'
       ? 'Approved'
@@ -352,7 +355,28 @@ export function buildReviewBlock(review: BranchReview | undefined): string {
     const when = reviewTime(review.at)
     status = `${verdict} in CanopyCMS by ${name ? codeSpan(name) : 'a reviewer'}${when ? ` on ${when}` : ''}.`
   }
-  return `${PR_REVIEW_START}\n${status}\n${REVIEW_NOT_A_GITHUB_REVIEW}\n${PR_REVIEW_END}`
+  const kept = keptOverGitHubNote(keptOverGitHub)
+  return `${PR_REVIEW_START}\n${status}\n${REVIEW_NOT_A_GITHUB_REVIEW}\n${kept}${PR_REVIEW_END}`
+}
+
+const MAX_LISTED_KEPT_PATHS = 20
+const MAX_KEPT_PATH_LENGTH = 120
+
+/** The paths as code spans, one per line and bounded: a path comes from a commit on GitHub. */
+function keptOverGitHubNote(paths: readonly string[]): string {
+  if (paths.length === 0) return ''
+  const listed = paths
+    .slice(0, MAX_LISTED_KEPT_PATHS)
+    .flatMap((p) => {
+      const clean = cleanPath(p)
+      return clean ? [`- ${codeSpan(truncate(clean, MAX_KEPT_PATH_LENGTH))}`] : []
+    })
+    .join('\n')
+  const more = paths.length - MAX_LISTED_KEPT_PATHS
+  return (
+    `\nA commit on GitHub changed these files too. The editor's version was kept, and that ` +
+    `change is no longer in them:\n${listed}\n${more > 0 ? `...and ${more} more\n` : ''}`
+  )
 }
 
 const MAX_LISTED_THREADS = 50

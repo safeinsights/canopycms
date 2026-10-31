@@ -104,6 +104,12 @@ export interface GitHubPushRequest {
   /** The commit GitHub must still be at for the push to replace it (`--force-with-lease`). */
   lease?: string
   /**
+   * The last commit the caller saw on GitHub's branch. A reset on GitHub leaves a tip the push
+   * would fast-forward, restoring what it removed, so a push is refused while GitHub's branch
+   * doesn't contain this commit.
+   */
+  seen?: string
+  /**
    * At most {@link MAX_PUSH_PREREQUISITES} commits the caller would build a bundle of the branch
    * on, so an answer of `need-objects` can say which of them the gateway can use.
    */
@@ -127,13 +133,14 @@ export type GitHubPushAnswer =
 
 /**
  * A push to GitHub failed: `rejected` on the first attempt, `rejected-after-stale-lease` on the
- * plain retry after GitHub refused a stale lease. The message is the failure's own: git's output,
- * for a refusal, which the task runner classifies. A {@link RefusedPushError} from the first
- * attempt is thrown as itself.
+ * plain retry after GitHub refused a stale lease, `seen-commit-gone` before any attempt, when
+ * GitHub's branch no longer holds {@link GitHubPushRequest.seen}. The message is the failure's
+ * own: git's output, for a refusal, which the task runner classifies. A {@link RefusedPushError}
+ * from the first attempt is thrown as itself.
  */
 export class GitHubPushError extends Error {
   constructor(
-    readonly kind: 'rejected' | 'rejected-after-stale-lease',
+    readonly kind: 'rejected' | 'rejected-after-stale-lease' | 'seen-commit-gone',
     message: string,
   ) {
     super(message)
@@ -158,6 +165,10 @@ export type GitHubPullRequest = Pick<
    * request a person opened from a branch in the namespace has its body answered.
    */
   body: string | null
+  /** GitHub's own word on what stands between the pull request and a merge; `behind` needs the base. */
+  mergeable_state?: string
+  /** The branch the pull request merges into on GitHub, which a person can change. */
+  baseRef?: string
 }
 
 export type GitHubCreateOrUpdatePullRequest = Omit<
@@ -885,6 +896,7 @@ class LocalGitHubGateway implements GitHubGateway {
   ): Promise<GitHubPushAnswer> {
     assertObjectId(request.sha, 'a commit ID')
     if (request.lease !== undefined) assertObjectId(request.lease, 'a commit ID')
+    if (request.seen !== undefined) assertObjectId(request.seen, 'a commit ID')
     if (request.prerequisites.length > MAX_PUSH_PREREQUISITES) {
       throw new Error(`A push names at most ${MAX_PUSH_PREREQUISITES} prerequisites`)
     }
@@ -901,6 +913,9 @@ class LocalGitHubGateway implements GitHubGateway {
     const session = (received: ReceivedBundle | null) =>
       this.afterGitHubFetch(
         async () => {
+          // A reused fetch can predate a reset, whose heads would still show the commit `seen`
+          // names. Nothing moved at GitHub, so this ends the reuse and leaves other fetches good.
+          if (request.seen !== undefined) this.githubFetch = null
           const snapshot = await this.joinGitHubFetchForPush(credential, request.branch, signal)
           await credential()
           return snapshot
@@ -975,9 +990,22 @@ class LocalGitHubGateway implements GitHubGateway {
       repo = await mirror.quarantine(received, request, heads, signal)
     }
 
-    const attempt = (lease?: string) =>
+    const tip = heads.get(branch)
+    if (
+      request.seen !== undefined &&
+      tip !== undefined &&
+      !(await mirror.historyHolds(tip, request.seen))
+    ) {
+      throw new GitHubPushError(
+        'seen-commit-gone',
+        `GitHub's ${branch} no longer contains ${request.seen}, the last commit seen there`,
+      )
+    }
+
+    const attempt = (lease?: string, pin?: string) =>
       mirror.pushToGitHub(credential, branch, sha, {
         lease,
+        pin,
         signal,
         repo,
         policy: this.policy,
@@ -985,7 +1013,8 @@ class LocalGitHubGateway implements GitHubGateway {
         onPushing: () => this.invalidateGitHubFetch(),
       })
     try {
-      return { kind: 'pushed', ...(await attempt(request.lease)), pastStaleLease: false }
+      const pin = request.seen === undefined || request.lease !== undefined ? undefined : tip
+      return { kind: 'pushed', ...(await attempt(request.lease, pin)), pastStaleLease: false }
     } catch (err) {
       if (err instanceof RefusedPushError || err instanceof GitHubTransientError) throw err
       const message = getErrorMessage(err)
@@ -1092,6 +1121,8 @@ class LocalGitHubGateway implements GitHubGateway {
         state: data.state,
         node_id: data.node_id,
         body: ours ? (data.body ?? '') : null,
+        mergeable_state: data.mergeable_state,
+        baseRef: data.base.ref,
       }
     })
   }

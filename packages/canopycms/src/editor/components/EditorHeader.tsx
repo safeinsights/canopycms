@@ -1,5 +1,6 @@
 import React, { useRef, type ReactNode, type Ref } from 'react'
 import {
+  Badge,
   Box,
   Button,
   Group,
@@ -13,15 +14,17 @@ import {
 } from '@mantine/core'
 import { useMediaQuery, useMergedRef } from '@mantine/hooks'
 import { IconChevronDown, IconLock } from '@tabler/icons-react'
-import type { BranchStatus, PullRequestState } from '../../types'
+import type { BranchHold, BranchStatus, PullRequestState } from '../../types'
 import type { SaveAllProgress } from '../hooks/save-all'
 import { isAdmin, isLockedOutOfBranch, isReviewer } from '../../authorization/helpers'
 import { branchBarStatus, describeBranchLock, type BranchBarStatus } from '../branch-lock'
-import { EDITOR_ACTIONS } from '../copy'
+import { HOLD_BADGE, branchHoldMessage } from '../branch-status'
+import { EDITOR_ACTIONS, UNFINISHED_SUBMIT_APPROVE_REASON, rewrittenSubmitReason } from '../copy'
 import { reviewRoleOf, type ReviewRole } from '../../authorization/review-role'
 import { SYSTEM_USER_ID } from '../../system-users'
 import { TopBar } from '../shell/TopBar'
 import { BranchPill } from './BranchPill'
+import { TooltipDetail } from './TooltipDetail'
 import { ReasonedMenuItem } from './ReasonedMenuItem'
 import { UnsavedMark } from './UnsavedMark'
 import { DraftStorageWarning, HIDDEN_STYLE, SaveAllButton } from './SaveAllButton'
@@ -83,6 +86,10 @@ export interface EditorHeaderProps {
   branchServerProtected?: boolean
   /** Whether the current branch is read-only (protected base branch in prod); disables Save all. */
   branchReadOnly?: boolean
+  /** What holds the branch (api/branch.ts). */
+  branchHold?: BranchHold
+  /** The server refuses Approve on this branch. */
+  branchApproveBlocked?: boolean
   /** Server-computed: content writes are rejected on this branch; see `branchLockState`. */
   branchWriteBlocked?: boolean
   /** No branch details yet: the fail-closed lock defaults are guesses the status doesn't name. */
@@ -126,6 +133,8 @@ export function EditorHeader({
   branchIsProtected = false,
   branchServerProtected,
   branchReadOnly = false,
+  branchHold,
+  branchApproveBlocked = false,
   branchWriteBlocked = false,
   branchLoading = false,
   branchPending = false,
@@ -152,6 +161,8 @@ export function EditorHeader({
     branchIsProtected,
     reviewRole,
     savingAll: !!saveAllProgress,
+    rewritten: branchHold?.kind === 'rewritten',
+    approveBlocked: branchApproveBlocked,
   })
   const lock = {
     branchStatus,
@@ -161,9 +172,17 @@ export function EditorHeader({
     branchMissing,
     reviewing: workflow?.kind === 'review',
     pullRequestClosed: reviewRole === 'reviewing-closed',
+    approveBlocked: branchApproveBlocked,
   }
   const branchLockReason = describeBranchLock(lock)
   const status = branchBarStatus({ ...lock, isProtected: branchServerProtected })
+  const holdMessage =
+    branchName && branchHold && status.value !== 'loading'
+      ? branchHoldMessage(branchHold, {
+          role: workflow?.kind === 'review' ? 'review' : workflow?.permitted ? 'withdraw' : 'none',
+          isAdmin: isAdmin(userContext?.groups ?? []),
+        })
+      : undefined
 
   const theme = useMantineTheme()
   // Mantine's own below-`md` query, the one `visibleFrom="md"` hides under.
@@ -216,6 +235,7 @@ export function EditorHeader({
           <BranchStatusLabel
             status={branchName ? status : { value: 'none', readOnly: false }}
             reason={branchLockReason}
+            holdMessage={holdMessage}
           />
           {modifiedCount > 0 && (
             <Tooltip
@@ -326,29 +346,49 @@ function unsavedTooltip(
   return `${edits} They can be saved once the branch is editable again.`
 }
 
-/** The branch's state beside the pill, heard in words with its reason, but not while it loads. */
-function BranchStatusLabel({ status, reason }: { status: BranchBarStatus; reason?: string }) {
+/**
+ * The branch's state beside the pill, heard in words with its reason, but not while it loads. A
+ * hold follows it whatever the lock, since a lock doesn't say that the branch is stuck.
+ */
+function BranchStatusLabel({
+  status,
+  reason,
+  holdMessage,
+}: {
+  status: BranchBarStatus
+  reason?: string
+  holdMessage?: string
+}) {
   const spoken =
     status.label && status.value !== 'loading'
       ? [status.label.replace(' · ', ', '), reason].filter(Boolean).join('. ')
       : ''
   return (
     // Always mounted, so a lock that arrives is announced.
-    <Box role="status" style={status.label ? { flexShrink: 0 } : HIDDEN_STYLE}>
-      {status.label && (
-        <Group
-          gap={4}
-          wrap="nowrap"
-          aria-hidden="true"
-          data-testid="branch-status"
-          data-status={status.value}
-        >
-          {status.readOnly && <IconLock size={14} />}
-          <Text span size="sm">
-            {status.label}
-          </Text>
-        </Group>
-      )}
+    <Box role="status" style={status.label || holdMessage ? { flexShrink: 0 } : HIDDEN_STYLE}>
+      <Group gap="xs" wrap="nowrap">
+        {status.label && (
+          <Group
+            gap={4}
+            wrap="nowrap"
+            aria-hidden="true"
+            data-testid="branch-status"
+            data-status={status.value}
+          >
+            {status.readOnly && <IconLock size={14} />}
+            <Text span size="sm">
+              {status.label}
+            </Text>
+          </Group>
+        )}
+        {holdMessage && (
+          <TooltipDetail detail={holdMessage}>
+            <Badge color={HOLD_BADGE.color} variant="light" data-testid="branch-hold-status">
+              {HOLD_BADGE.label}
+            </Badge>
+          </TooltipDetail>
+        )}
+      </Group>
       <VisuallyHidden>{spoken}</VisuallyHidden>
     </Box>
   )
@@ -411,6 +451,8 @@ interface WorkflowAction {
   permitted: boolean
   /** Why it can't; empty when it can, or when only a load, a save or a missing branch holds it. */
   reason: string
+  /** Kind 'review': why Approve alone can't act, with Request changes still open. */
+  approveReason?: string
 }
 
 type WorkflowActionInput = Pick<
@@ -420,6 +462,10 @@ type WorkflowActionInput = Pick<
   branchIsProtected: boolean
   reviewRole: ReviewRole
   savingAll: boolean
+  /** The worker pushes nothing for the branch, so a submit could only fail later. */
+  rewritten: boolean
+  /** The pull request may not hold what would be approved. */
+  approveBlocked: boolean
 }
 
 /**
@@ -436,6 +482,8 @@ function workflowAction({
   branchIsProtected,
   reviewRole,
   savingAll,
+  rewritten,
+  approveBlocked,
 }: WorkflowActionInput): WorkflowAction | null {
   const isSubmitted = branchStatus === 'submitted'
   const isEditing = branchStatus === 'editing'
@@ -459,6 +507,7 @@ function workflowAction({
       blocked: !branchName || busy || savingAll,
       permitted: true,
       reason: savingAll ? 'Wait for Save all to finish.' : busy ? BUSY_REASON : '',
+      approveReason: approveBlocked ? UNFINISHED_SUBMIT_APPROVE_REASON : undefined,
     }
   }
 
@@ -489,22 +538,24 @@ function workflowAction({
   return {
     kind: isWithdrawable ? 'withdraw' : 'submit',
     // `busy` alone can't hold it: an entry load clears that shared flag mid-run.
-    blocked: !branchName || busy || savingAll || !canPerformAction,
+    blocked: !branchName || busy || savingAll || !canPerformAction || (rewritten && isEditing),
     permitted: canPerformAction,
     reason: savingAll
       ? 'Wait for Save all to finish.'
-      : // No branch data (`branchStatus === undefined`) must not be
-        // interpolated raw into this label. Guarded explicitly here rather
-        // than left to the early return above, which hides the action
-        // today only as a side effect of `branchIsProtected`'s `?? true`
-        // default -- not a guarantee this arm stays unreachable.
-        branchStatus === undefined
-        ? 'Branch details could not be loaded. Use "Refresh branch" to try again.'
-        : !statusHasAction
-          ? `This branch is ${branchStatus}, so it can't be submitted for review or withdrawn from review.`
-          : !userHasPermission
-            ? 'You do not have permission to submit this branch for review or withdraw it from review. Ask an admin for access.'
-            : '',
+      : rewritten && isEditing
+        ? rewrittenSubmitReason(isAdmin(userContext?.groups ?? []))
+        : // No branch data (`branchStatus === undefined`) must not be
+          // interpolated raw into this label. Guarded explicitly here rather
+          // than left to the early return above, which hides the action
+          // today only as a side effect of `branchIsProtected`'s `?? true`
+          // default -- not a guarantee this arm stays unreachable.
+          branchStatus === undefined
+          ? 'Branch details could not be loaded. Use "Refresh branch" to try again.'
+          : !statusHasAction
+            ? `This branch is ${branchStatus}, so it can't be submitted for review or withdrawn from review.`
+            : !userHasPermission
+              ? 'You do not have permission to submit this branch for review or withdraw it from review. Ask an admin for access.'
+              : '',
   }
 }
 
@@ -538,7 +589,8 @@ function WorkflowButton({
 
 /**
  * Approve (leading) and Request changes. Below `md`, Approve is a split button whose caret holds
- * Request changes; with nothing to approve, Request changes stands alone.
+ * Request changes, the other way round while Approve is blocked, so the lead is what can act; with
+ * nothing to approve, Request changes stands alone.
  */
 function ReviewButtons({
   action,
@@ -557,9 +609,10 @@ function ReviewButtons({
   const approveEl = useRef<HTMLButtonElement>(null)
   const requestChangesEl = useRef<HTMLButtonElement>(null)
   const approveRef = useMergedRef(approveEl, action.offersApprove ? controlRef : undefined)
+  const requestChangesLeads = !action.offersApprove || (narrow && !!action.approveReason)
   const requestChangesRef = useMergedRef(
     requestChangesEl,
-    action.offersApprove ? (narrow ? undefined : secondaryRef) : controlRef,
+    requestChangesLeads ? controlRef : narrow ? undefined : secondaryRef,
   )
   // Each returns focus to its own button while that is mounted, else to the control left.
   const approveReturn = () => (approveEl.current?.isConnected ? approveEl.current : returnFocusTo())
@@ -568,7 +621,7 @@ function ReviewButtons({
   const approve = (
     <ReviewButton
       buttonRef={approveRef}
-      action={action}
+      action={approveAction(action)}
       color="brand"
       testId="approve-button"
       label={EDITOR_ACTIONS.approve}
@@ -599,20 +652,25 @@ function ReviewButtons({
       style={{ flexShrink: 0 }}
       renderRoot={(props) => <div {...props} role="group" aria-label="Review controls" />}
     >
-      {approve}
+      {requestChangesLeads ? requestChanges : approve}
       <WorkflowCaret
         {...rest}
         action={action}
         onApprove={onApprove}
         onRequestChanges={onRequestChanges}
         returnFocusTo={returnFocusTo}
-        includeApprove={false}
-        color="brand"
+        includeApprove={requestChangesLeads}
+        includeRequestChanges={!requestChangesLeads}
+        color={requestChangesLeads ? 'orange' : 'brand'}
         controlRef={secondaryRef}
       />
     </Button.Group>
   )
 }
+
+/** The review action as Approve reads it, which has a block of its own. */
+const approveAction = (action: WorkflowAction): WorkflowAction =>
+  action.approveReason ? { ...action, blocked: true, reason: action.approveReason } : action
 
 /** One review button, blocked as a whole with the action's reason. */
 function ReviewButton({
@@ -687,7 +745,7 @@ function SubmitOrWithdrawButton({
 
 /**
  * The workflow action's caret below `md`, on Save all or the way forward or, for a review, beside
- * Approve. `includeApprove` is false there, where Approve is already a button.
+ * the action that leads, which `includeApprove` or `includeRequestChanges` leaves out.
  */
 function WorkflowCaret({
   action,
@@ -698,10 +756,12 @@ function WorkflowCaret({
   controlRef,
   returnFocusTo,
   includeApprove = true,
+  includeRequestChanges = true,
   color,
 }: Omit<WorkflowControlProps, 'controlRef'> & {
   controlRef?: Ref<HTMLButtonElement>
   includeApprove?: boolean
+  includeRequestChanges?: boolean
   /** Matches the button it sits beside. */
   color?: string
 }) {
@@ -709,8 +769,8 @@ function WorkflowCaret({
   const caretRef = useMergedRef(caret, controlRef)
   const menuFocus = useMenuItemFocusReturn(caret)
   const withdraw = action.kind === 'withdraw'
-  // Beside Approve it holds only Request changes, and a dialog it opens returns to the caret.
-  const reviewCaret = action.kind === 'review' && !includeApprove
+  // Beside the lead it holds one action, and a dialog it opens returns to the caret.
+  const reviewCaret = action.kind === 'review' && !(includeApprove && includeRequestChanges)
   const caretLabel = reviewCaret ? 'More review actions' : 'Branch actions'
   const returnToCaret = reviewCaret
     ? () => (caret.current?.isConnected ? caret.current : returnFocusTo())
@@ -741,19 +801,21 @@ function WorkflowCaret({
             {action.offersApprove && includeApprove && (
               <ReasonedMenuItem
                 data-testid="approve-menu-item"
-                blockedReason={blockedReason}
+                blockedReason={action.approveReason ?? blockedReason}
                 onClick={() => onApprove(returnToCaret)}
               >
                 {EDITOR_ACTIONS.approve}
               </ReasonedMenuItem>
             )}
-            <ReasonedMenuItem
-              data-testid="request-changes-menu-item"
-              blockedReason={blockedReason}
-              onClick={() => onRequestChanges(returnToCaret)}
-            >
-              {EDITOR_ACTIONS.requestChanges}
-            </ReasonedMenuItem>
+            {includeRequestChanges && (
+              <ReasonedMenuItem
+                data-testid="request-changes-menu-item"
+                blockedReason={blockedReason}
+                onClick={() => onRequestChanges(returnToCaret)}
+              >
+                {EDITOR_ACTIONS.requestChanges}
+              </ReasonedMenuItem>
+            )}
           </>
         ) : (
           <ReasonedMenuItem

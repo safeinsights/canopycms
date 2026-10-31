@@ -101,6 +101,25 @@ export const InReview: Story = {
   },
 }
 
+/** Stuck in review: the lock stays, "Needs action" beside it, its way forward on hover or focus. */
+export const InReviewNeedsAction: Story = {
+  args: {
+    ...InReview.args,
+    branchHold: { kind: 'conflicts' },
+    userContext: { userId: 'bob' },
+    branchCreatedBy: 'bob',
+  },
+}
+
+/** Rewritten on GitHub: still editable, "Needs action" in the bar, and Submit blocked with why. */
+export const RewrittenOnGitHub: Story = {
+  args: {
+    branchHold: { kind: 'rewritten' },
+    userContext: { userId: 'bob' },
+    branchCreatedBy: 'bob',
+  },
+}
+
 /** The protected base branch in prod: "Protected · read-only", no Submit, and New branch…. */
 export const ReadOnly: Story = {
   args: {
@@ -174,6 +193,12 @@ export const EntryReadOnlyInReview: Story = {
 export const Narrow: Story = {
   parameters: phone,
   args: { branchStatus: 'submitted', branchWriteBlocked: true, hasUnsavedChanges: false },
+}
+
+/** Stuck in review at phone width: the status and "Needs action" stay together. */
+export const NarrowNeedsAction: Story = {
+  parameters: phone,
+  args: InReviewNeedsAction.args,
 }
 
 /** Below `md` an editable branch's Save all and Submit share one split button. */
@@ -358,6 +383,15 @@ const reviewing = {
 /** A reviewer of someone else's submission: Approve and Request changes take the place of Withdraw. */
 export const ReviewerOnSubmitted: Story = { args: reviewing }
 
+/** A reviewer while the last submit is unfinished: Approve is blocked with why, Request changes stays. */
+export const ReviewerOnUnfinishedSubmit: Story = {
+  args: {
+    ...reviewing,
+    branchHold: { kind: 'submit-unfinished', opened: true },
+    branchApproveBlocked: true,
+  },
+}
+
 /** Approved, for its reviewer: only Request changes is left. */
 export const ReviewerOnApproved: Story = {
   args: { ...reviewing, branchStatus: 'approved' },
@@ -376,6 +410,12 @@ export const CreatorAdminInReview: Story = {
     branchCreatedBy: 'ada',
     branchAccess: { allowedUsers: ['ada'] },
   },
+}
+
+/** Below `md`, Request changes leads while Approve is blocked, which waits under the caret. */
+export const NarrowReviewerOnUnfinishedSubmit: Story = {
+  parameters: phone,
+  args: ReviewerOnUnfinishedSubmit.args,
 }
 
 /** A reviewer below `md`: Approve stays, with Request changes under its caret. */

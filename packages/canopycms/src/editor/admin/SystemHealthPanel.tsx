@@ -10,10 +10,10 @@
  * re-check that itself, same as GroupManager and PermissionManager.
  */
 
+import { useRef, type RefObject } from 'react'
 import {
   Alert,
   Badge,
-  Box,
   Button,
   Code,
   Group,
@@ -29,9 +29,7 @@ import {
   Text,
   ThemeIcon,
   Tooltip,
-  VisuallyHidden,
 } from '@mantine/core'
-import { useId, type ReactNode } from 'react'
 import { IconAlertCircle, IconAlertTriangle } from '@tabler/icons-react'
 import { openConfirm } from '../utils/confirm-modal'
 import { focusReturnProps } from '../utils/focus-return'
@@ -51,11 +49,19 @@ import type { BranchHealthEntry, DuplicateIdScan } from '../../branch-health'
 import type {
   BaseRefreshReport,
   BaseSchemaHold,
+  BranchHold,
   UnpublishableBranch,
   UnpublishableBranchesReport,
 } from '../../types'
 import { escapeForLog } from '../../utils/escape-text'
-import { branchStatusPresentation } from '../branch-status'
+import { TooltipDetail } from '../components/TooltipDetail'
+import { DISMISS_UNPUBLISHED_ATTRIBUTE, UnpublishedAtMergeAlert } from './UnpublishedAtMergeAlert'
+import {
+  HOLD_BADGE,
+  branchHoldMessage,
+  branchStatusPresentation,
+  endSentence,
+} from '../branch-status'
 
 // ============================================================================
 // Small pure helpers
@@ -172,6 +178,15 @@ const BASE_REFRESH_LABELS: Record<BaseRefreshReport['outcome'], string> = {
 }
 
 /**
+ * A failed sync's detail, with the advice to retry only when a retry can help. The worker refuses
+ * every push while a rewrite stands, an archived branch has nothing left to finish, and a submit
+ * that was never queued has no task.
+ */
+function syncFailedDetail(reason = 'GitHub sync failed.', retryable: boolean): string {
+  return retryable ? `${endSentence(reason)}\nRetry it from the "Tasks" tab.` : reason
+}
+
+/**
  * The worker holding the base branch for an editor deploy, or the cycle it stopped waiting.
  * The rule and its bound live in worker/schema-gate.ts.
  */
@@ -228,7 +243,8 @@ function DivergedBranchesAlert({ names }: { names: readonly string[] }) {
           This deployment&apos;s copy of each branch below holds editor work that conflicts with the
           branch on GitHub, usually because the GitHub branch was rebased or force-pushed, or
           because another CanopyCMS deployment sharing this repository uses the same branch name.
-          Neither copy has been changed, and publishing the branch fails until they agree.
+          Neither copy has been changed, and publishing the branch fails until they agree. A branch
+          that only gained commits on GitHub clears on its own at the next sync.
         </Text>
         <Text size="sm">
           A developer decides which version to keep. To keep GitHub&apos;s, first push it to a new
@@ -504,6 +520,7 @@ export interface SystemHealthPanelProps {
 
 export function SystemHealthPanel({ opened, onClose, returnFocusTo }: SystemHealthPanelProps) {
   const health = useSystemHealth({ isOpen: opened })
+  const overviewTabRef = useRef<HTMLButtonElement>(null)
 
   return (
     <Modal
@@ -515,12 +532,14 @@ export function SystemHealthPanel({ opened, onClose, returnFocusTo }: SystemHeal
     >
       <Tabs defaultValue="overview">
         <Tabs.List>
-          <Tabs.Tab value="overview">Overview</Tabs.Tab>
+          <Tabs.Tab ref={overviewTabRef} value="overview">
+            Overview
+          </Tabs.Tab>
           <Tabs.Tab value="tasks">Tasks</Tabs.Tab>
           <Tabs.Tab value="branches">Branches</Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="overview" pt="md">
-          <OverviewTab health={health} />
+          <OverviewTab health={health} overviewTabRef={overviewTabRef} />
         </Tabs.Panel>
         <Tabs.Panel value="tasks" pt="md">
           <TasksTab health={health} />
@@ -533,8 +552,37 @@ export function SystemHealthPanel({ opened, onClose, returnFocusTo }: SystemHeal
   )
 }
 
-function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
+function OverviewTab({
+  health,
+  overviewTabRef,
+}: {
+  health: UseSystemHealthReturn
+  overviewTabRef: RefObject<HTMLButtonElement | null>
+}) {
   const { status, statusLoading, isRecentFatalError, error, refresh } = health
+  const unpublished = (health.branchHealth?.entries ?? []).flatMap((entry) =>
+    entry.kind === 'healthy' && entry.branch?.unpublishedAtMerge
+      ? [
+          {
+            dirName: entry.dirName,
+            name: entry.branch.name,
+            pullRequestUrl: entry.branch.pullRequestUrl,
+          },
+        ]
+      : [],
+  )
+
+  // The row goes with the dismissal, so focus moves to the next one, else to the tab.
+  const overviewRef = useRef<HTMLDivElement>(null)
+  const handleDismissUnpublished = async (dirName: string) => {
+    await health.dismissUnpublished(dirName)
+    setTimeout(() => {
+      const overview = overviewRef.current
+      if (!overview || overview.contains(document.activeElement)) return
+      const next = overview.querySelector<HTMLElement>(`[${DISMISS_UNPUBLISHED_ATTRIBUTE}]`)
+      ;(next ?? overviewTabRef.current)?.focus()
+    })
+  }
 
   if (!status && statusLoading) {
     return (
@@ -575,7 +623,7 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
     workerVersion !== build.canopycmsVersion
 
   return (
-    <Stack gap="md">
+    <Stack ref={overviewRef} gap="md">
       {error && (
         <Alert color="red" icon={<IconAlertCircle size={16} />} variant="light">
           {error}
@@ -650,6 +698,10 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
       />
 
       {status.workerStatus?.baseHold && <BaseHoldAlert hold={status.workerStatus.baseHold} />}
+
+      {unpublished.length > 0 && (
+        <UnpublishedAtMergeAlert branches={unpublished} onDismiss={handleDismissUnpublished} />
+      )}
 
       {status.statusReadError && (
         <Text size="xs" c="orange">
@@ -1166,52 +1218,6 @@ const firstFailed = (iso: string): string => {
   return Number.isNaN(date.getTime()) ? iso : `${formatRelativeTime(iso)}, ${date.toLocaleString()}`
 }
 
-/**
- * A detail that only a Tooltip would show: hidden text for assistive tech, plus a Tooltip that
- * opens on hover, focus and touch. The trigger is a focusable span, not a button: it does nothing
- * when pressed, so it must not be announced as one. A trigger with no text of its own, such as an
- * icon, takes its name from `name`.
- */
-function TooltipDetail({
-  detail,
-  name,
-  maw = 320,
-  preLine = false,
-  children,
-}: {
-  detail: string
-  name?: string
-  maw?: number
-  preLine?: boolean
-  children: ReactNode
-}) {
-  const detailId = useId()
-  return (
-    <>
-      <Tooltip
-        // A sighted user sees only the icon, so the tooltip names it too.
-        label={name ? `${name}: ${detail}` : detail}
-        multiline
-        maw={maw}
-        style={preLine ? { whiteSpace: 'pre-line' } : undefined}
-        events={{ hover: true, focus: true, touch: true }}
-      >
-        <Box
-          component="span"
-          tabIndex={0}
-          role={name ? 'img' : undefined}
-          aria-label={name}
-          aria-describedby={detailId}
-          className="mantine-focus-auto"
-        >
-          {children}
-        </Box>
-      </Tooltip>
-      <VisuallyHidden id={detailId}>{detail}</VisuallyHidden>
-    </>
-  )
-}
-
 function BranchHealthRow({
   entry,
   baseWarning,
@@ -1237,13 +1243,25 @@ function BranchHealthRow({
 }) {
   if (entry.kind === 'healthy' && entry.branch) {
     const b = entry.branch
-    // Mirrors the rebase loop's skip logic (worker/rebase.ts): the worker
-    // rebases every branch except 'submitted'/'approved' (under an active PR)
-    // and 'archived' (already merged). An exclusion list, not `status ===
-    // 'editing'`, so a status added later still shows its rebase failures by
-    // default instead of silently hiding them.
-    const showRebaseFailure =
-      !['submitted', 'approved', 'archived'].includes(b.status) && !!b.rebaseFailure
+    // The worker looks at every branch but 'archived' (already merged): one in review is not
+    // rebased, but commits from GitHub are still brought into it. An exclusion, not a list of
+    // statuses, so a status added later still shows its failures by default.
+    const showRebaseFailure = b.status !== 'archived' && !!b.rebaseFailure
+    const inReview = b.status === 'submitted' || b.status === 'approved'
+    const hold: BranchHold | undefined =
+      b.rewrittenOnGitHub !== undefined && b.status !== 'archived'
+        ? { kind: 'rewritten' }
+        : !inReview
+          ? b.unpublishedAtMerge
+            ? { kind: 'unpublished-at-merge' }
+            : undefined
+          : b.submitUnfinished
+            ? {
+                kind: 'submit-unfinished',
+                opened: b.pullRequestNumber !== undefined,
+                notQueued: b.submitNotQueued,
+              }
+            : b.pullRequestHold
     const canMarkMerged =
       (b.status === 'submitted' || b.status === 'approved') && !!b.pullRequestNumber
 
@@ -1288,11 +1306,13 @@ function BranchHealthRow({
         <Table.Td>
           {b.syncStatus === 'sync-failed' ? (
             <TooltipDetail
-              detail={
-                b.syncFailureReason
-                  ? `${b.syncFailureReason} — retry from the "Tasks" tab`
-                  : 'GitHub sync failed — retry from the "Tasks" tab'
-              }
+              preLine
+              detail={syncFailedDetail(
+                b.syncFailureReason,
+                hold?.kind !== 'rewritten' &&
+                  b.status !== 'archived' &&
+                  !(b.submitUnfinished && b.submitNotQueued),
+              )}
             >
               <Badge color="red" variant="light">
                 Sync failed
@@ -1305,11 +1325,28 @@ function BranchHealthRow({
           ) : null}
         </Table.Td>
         <Table.Td>
-          <Group gap={6} wrap="nowrap">
+          <Group gap={6}>
             {!!b.conflictFiles?.length && (
               <Badge color="orange" variant="light">
                 {b.conflictFiles.length} conflict{b.conflictFiles.length === 1 ? '' : 's'}
               </Badge>
+            )}
+            {hold && (
+              <TooltipDetail
+                detail={branchHoldMessage(hold, {
+                  role: 'none',
+                  isAdmin: true,
+                  inSystemHealth: true,
+                })}
+              >
+                <Badge
+                  color={HOLD_BADGE.color}
+                  variant="light"
+                  data-testid={`held-pr-${entry.dirName}`}
+                >
+                  {HOLD_BADGE.label}
+                </Badge>
+              </TooltipDetail>
             )}
             {showRebaseFailure && b.rebaseFailure && (
               <TooltipDetail

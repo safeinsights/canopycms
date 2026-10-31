@@ -66,6 +66,22 @@ describe('renderPrCommentsBody', () => {
     expect(body).not.toContain('Not yet reviewed')
   })
 
+  it('leaves the comment summary alone when asked for the review block only', async () => {
+    await seedBranch('approved', approved)
+    await addComment()
+
+    const body = await renderPrCommentsBody({
+      branchRoot,
+      branch: 'feature/x',
+      body: submittedBody,
+      reviewBlockOnly: true,
+      warn: vi.fn(),
+    })
+
+    expect(body).toContain('Approved in CanopyCMS')
+    expect(body).not.toContain('**1 unresolved editor comment thread**')
+  })
+
   it('renders a request for changes as stored, on a branch back in editing', async () => {
     await seedBranch('editing', changesRequested)
 
