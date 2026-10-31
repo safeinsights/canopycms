@@ -1273,6 +1273,25 @@ describe('bringing commits made on GitHub into a branch clone', () => {
     expect(await queued(s, 'push-branch')).toEqual([])
   })
 
+  it('leaves a branch whose push failed where it is, as a rebase would read as a rewrite', async () => {
+    const pushed = await s.head()
+    await writeMeta(s, { lastGitHubTip: pushed })
+    await s.commit({ 'editor.txt': 'v2\n' }, 'resubmitted')
+    await s.clone.raw(['push', 'origin', `${BRANCH}:${BRANCH}`])
+    await writeMeta(s, { lastGitHubTip: pushed, syncStatus: 'sync-failed' })
+    const before = await s.head()
+    await s.advanceBase({ 'base2.txt': 'moved\n' })
+
+    await cycle(s)
+    await cycle(s)
+
+    const meta = await readMeta(s)
+    expect(await s.head()).toBe(before)
+    expect(meta?.historyRewrittenFrom).toBeUndefined()
+    expect(meta?.rewrittenOnGitHub).toBeUndefined()
+    expect(await queued(s, 'push-branch')).toEqual([])
+  })
+
   it('stays level with remote.git when reconcile left it behind this tip', async () => {
     const before = await s.head()
     await s.moveGitHubOnly({ 'fix.txt': 'fix\n' })

@@ -244,6 +244,19 @@ describe('pushes', () => {
       expect(await tip(`refs/heads/${branch}`)).toBe(kept)
     })
 
+    it('refuses straight after a fetch that predates the reset', async () => {
+      const { kept, seen } = await published()
+      const github = gateway({})
+      await github.fetch({ have: [] })
+      await git('--git-dir', githubPath, 'update-ref', `refs/heads/${branch}`, kept)
+      await commitAndPush(remoteGitPath, `refs/heads/${branch}`, 'editor.txt')
+
+      const caught = await pushVia(github, branch, undefined, seen).catch((err: unknown) => err)
+
+      expect((caught as GitHubPushError).kind).toBe('seen-commit-gone')
+      expect(await tip(`refs/heads/${branch}`)).toBe(kept)
+    })
+
     it('pushes while GitHub still holds it', async () => {
       const { seen } = await published()
       const next = await commitAndPush(remoteGitPath, `refs/heads/${branch}`, 'editor.txt')

@@ -1225,6 +1225,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 // The API's own 404: the branch is already gone, by an earlier unanswered delete or
                 // another user's.
                 if (!result.ok && result.status === 404 && !isNonApiResponse(result)) {
+                  notifications.hide(deleteRefusedId(branchNameToDelete))
                   notifications.show({ message: 'Branch deleted', color: 'green' })
                   leaveDeletedBranch(branchNameToDelete, listedBefore, await reloadBranches())
                   return
@@ -1270,6 +1271,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                   (b) => sanitizeBranchName(b.name) === sanitizeBranchName(branchNameToDelete),
                 )
                 if (fresh && !listed) {
+                  notifications.hide(deleteRefusedId(branchNameToDelete))
                   notifications.show({ message: 'Branch deleted', color: 'green' })
                   leaveDeletedBranch(branchNameToDelete, listedBefore, fresh)
                 } else {

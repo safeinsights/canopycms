@@ -215,18 +215,19 @@ export async function bringInGitHubCommits(
 
   // A merge or a submit that reached remote.git with no GitHub push queued, as after a crash
   // between the two. A rebase now would strand the push, which leases on a commit GitHub never
-  // held, so it waits for the push. A push that failed for good stays as it is, unless a cleared
-  // rewrite was all that stopped it: its failure is on the branch, and a new attempt would fail the
-  // same way every cycle.
+  // held, and read as a rewrite on GitHub once it failed, so the branch waits for the push. A push
+  // that failed for good isn't queued again, unless a cleared rewrite was all that stopped it: its
+  // failure is on the branch, and a new attempt would fail the same way every cycle.
   if (
     gitHubTip !== undefined &&
     published !== null &&
     published !== tip &&
-    (branch.syncStatus !== 'sync-failed' || rewriteResolved) &&
     (!gatewayPolicy || publishesBranch(gatewayPolicy, branchRef)) &&
     (await contains(git, published, tip))
   ) {
-    await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
+    if (branch.syncStatus !== 'sync-failed' || rewriteResolved) {
+      await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
+    }
     return { kind: 'wait' }
   }
   return { kind: 'in-step' }
@@ -260,8 +261,8 @@ async function rewrittenFrom(
   published: string | null,
 ): Promise<string | null> {
   const { lastGitHubTip, historyRewrittenFrom } = metaFile.branch
-  // A branch with no record yet: a `remote.git` head the clone lags, diverged from GitHub, can only
-  // be a commit reconcile took in before a force-push, as this worker makes no such commit there.
+  // A branch with no record yet: a `remote.git` head the clone lags, diverged from GitHub, is a
+  // commit reconcile took in before a force-push, barring a crash mid-merge on that first cycle.
   const unrecorded =
     lastGitHubTip === undefined &&
     published !== null &&
@@ -497,8 +498,9 @@ export async function mergeIntoBranch(
 }
 
 /**
- * Whether this clone holds `sha`. Git's own message is the only proof of absence: a killed `git`
- * answers nothing at all, which simple-git resolves empty, and that throws.
+ * Whether this clone holds `sha`, on git's word for it. A killed `git` answers nothing at all,
+ * which simple-git resolves empty, and that throws. Git says the same of a commit in a pack it
+ * can't read, so a caller that acts on "no" reads the history too, as `rewrittenFrom` does.
  */
 async function holdsCommit(git: SimpleGit, sha: string): Promise<boolean> {
   let found: string

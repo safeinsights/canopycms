@@ -1820,7 +1820,9 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
           await metadata().save({ branch: { status: 'archived' } })
         })
 
-        expect((await read())?.pullRequestNumber).toBe(12)
+        const after = await read()
+        expect(after?.pullRequestNumber).toBe(12)
+        expect(after?.pullRequestUrl).toBeUndefined()
       })
 
       it('opens nothing for a branch that merged before this submit was recorded', async () => {
@@ -2037,6 +2039,23 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     expect(task?.retryAfter).toBeDefined()
     const meta = await BranchMetadataFileManager.loadOnly(branchPath)
     expect(meta?.branch.syncStatus).not.toBe('sync-failed')
+  })
+
+  it('pushes nothing while branch.json cannot be read to say a push is safe', async () => {
+    await seedBranchInRemoteGit('canopycms/prod/feature-unread', 'hello')
+    const branchPath = path.join(contentBranchesPath, 'canopycms-prod-feature-unread')
+    await fs.mkdir(path.join(branchPath, '.canopy-meta'), { recursive: true })
+    await fs.writeFile(path.join(branchPath, '.canopy-meta', 'branch.json'), 'not json')
+    const worker = makePushWorker()
+    ;(worker as unknown as { running: boolean }).running = true
+
+    await enqueueTask(taskDir, {
+      action: 'push-branch',
+      payload: { branch: 'canopycms/prod/feature-unread' },
+    })
+    await worker.processTaskQueue()
+
+    await expect(fixtureHasBranch('canopycms/prod/feature-unread')).resolves.toBe(false)
   })
 
   it('puts off a push while GitHub no longer holds the last commit seen there', async () => {

@@ -674,14 +674,7 @@ export async function updateBranchMetadata(
     // and owes no pull request step, so it would read as syncing or failed until its next submit.
     // An archived one has no next submit, and would read as syncing or failed for good.
     if (result.superseded === true) {
-      await meta.saveIf(
-        {
-          branch: {
-            syncStatus: 'synced',
-            syncFailureReason: undefined,
-            submitUnfinished: undefined,
-          },
-        },
+      await meta.update(
         (existing) =>
           existing?.branch.name === branch &&
           (existing.branch.status === 'editing'
@@ -689,7 +682,16 @@ export async function updateBranchMetadata(
               existing.branch.submitUnfinished === true
             : existing.branch.status === 'archived' &&
               (existing.branch.syncStatus === 'pending-sync' ||
-                existing.branch.syncStatus === 'sync-failed')),
+                existing.branch.syncStatus === 'sync-failed'))
+            ? {
+                branch: {
+                  syncStatus: 'synced',
+                  syncFailureReason: undefined,
+                  submitUnfinished: undefined,
+                },
+              }
+            : null,
+        { keepUpdatedAt: true },
       )
       return
     }
@@ -721,11 +723,9 @@ export async function updateBranchMetadata(
           updates.pullRequestNumber = result.prNumber
           // As soon as the PR exists the field reads 'open', rather than staying
           // absent until the next poll cycle observes it. Exception: the git-sync
-          // loop may have archived this branch (PR merged/closed) while the task
-          // was in flight, and a late completion must not downgrade that terminal
-          // state back to 'open'.
+          // loop may have closed this PR while the task was in flight, and a late
+          // completion must not downgrade that terminal state back to 'open'.
           const terminal =
-            existing.branch.status === 'archived' ||
             existing.branch.pullRequestState === 'merged' ||
             existing.branch.pullRequestState === 'closed'
           if (!terminal) {
@@ -795,29 +795,32 @@ async function updateBranchMetadataOnFailure(
     if (!unlocked) {
       let found = false
       let revoked = false
-      const saved = await meta.update((existing) => {
-        if (existing?.branch.name !== branch) return null
-        found = true
-        // An older submit running late has no step left to finish, and what it failed at says
-        // nothing about the latest one.
-        if (isOlderSubmit(task, existing.branch.submittedAt)) return null
-        // Nothing to submit means this submit left nothing out.
-        if (options.unlock || task.action !== SUBMIT_ACTION) return { branch: failed }
-        // Merged while this ran: nothing is left to finish it, as buildMergedBranchUpdate records.
-        if (existing.branch.status === 'archived') {
-          return { branch: { ...failed, unpublishedAtMerge: true } }
-        }
-        // An approval can land while a submit is pending. It covers a pull request that won't
-        // get what was approved, as for commits from GitHub (github-commits.ts).
-        revoked = existing.branch.status === 'approved'
-        return {
-          branch: {
-            ...failed,
-            submitUnfinished: true,
-            ...(revoked ? { status: 'submitted', review: undefined } : {}),
-          },
-        }
-      })
+      const saved = await meta.update(
+        (existing) => {
+          if (existing?.branch.name !== branch) return null
+          found = true
+          // An older submit running late has no step left to finish, and what it failed at says
+          // nothing about the latest one.
+          if (isOlderSubmit(task, existing.branch.submittedAt)) return null
+          // Nothing to submit means this submit left nothing out.
+          if (options.unlock || task.action !== SUBMIT_ACTION) return { branch: failed }
+          // Merged while this ran: nothing is left to finish it, as buildMergedBranchUpdate records.
+          if (existing.branch.status === 'archived') {
+            return { branch: { ...failed, unpublishedAtMerge: true } }
+          }
+          // An approval can land while a submit is pending. It covers a pull request that won't
+          // get what was approved, as for commits from GitHub (github-commits.ts).
+          revoked = existing.branch.status === 'approved'
+          return {
+            branch: {
+              ...failed,
+              submitUnfinished: true,
+              ...(revoked ? { status: 'submitted', review: undefined } : {}),
+            },
+          }
+        },
+        { keepUpdatedAt: true },
+      )
       if (!found) noMetadataToRecord(branch, `${task.action} failure`)
       if (revoked && saved !== null) await enqueueReviewBlockSync(ctx, branch, saved)
     }
@@ -881,7 +884,8 @@ export async function pushBranchToGitHub(
   // that commit: it moves GitHub off the commit we rewrote away, and
   // refuses in every other case (including a commit someone else pushed).
   const branchPath = ctx.branchWorkspacePath(branch)
-  const metaFile = await BranchMetadataFileManager.loadOnly(branchPath).catch(() => null)
+  // An unreadable branch.json throws: without it nothing could say a push is safe.
+  const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
   const marker = metaFile?.branch.historyRewrittenFrom
   const lastSeen = metaFile?.branch.lastGitHubTip
   // github-commits.ts recorded it: this push would restore what someone removed from GitHub.
@@ -922,7 +926,12 @@ export async function pushBranchToGitHub(
     if (err instanceof RefusedPushError) throw new PermanentTaskError(err.message)
     if (!(err instanceof GitHubPushError)) throw err
     // The next sync sees why, and records the rewrite if that's what it was.
-    if (err.kind === 'seen-commit-gone') throw new GitHubMovedTaskError(err.message)
+    if (err.kind === 'seen-commit-gone') {
+      workerLogWarn(`Not pushing ${branch}: ${err.message}`)
+      throw new GitHubMovedTaskError(
+        'A commit this branch had on GitHub is no longer there, so nothing was pushed. Nothing is lost.',
+      )
+    }
     throwIfWorkflowRefusal(branch, err.message)
     // A refused lease was already retried plain, and that retry rejected too: only a
     // non-fast-forward then means the branch has genuinely diverged.

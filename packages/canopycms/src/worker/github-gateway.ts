@@ -913,6 +913,8 @@ class LocalGitHubGateway implements GitHubGateway {
     const session = (received: ReceivedBundle | null) =>
       this.afterGitHubFetch(
         async () => {
+          // A reused fetch can predate a reset, whose heads would still show the commit `seen` names.
+          if (request.seen !== undefined) this.invalidateGitHubFetch()
           const snapshot = await this.joinGitHubFetchForPush(credential, request.branch, signal)
           await credential()
           return snapshot
@@ -995,8 +997,7 @@ class LocalGitHubGateway implements GitHubGateway {
     ) {
       throw new GitHubPushError(
         'seen-commit-gone',
-        `GitHub's ${branch} no longer contains ${request.seen}, the last commit this deployment ` +
-          `saw there, so nothing was pushed. The next sync looks at what moved it.`,
+        `GitHub's ${branch} no longer contains ${request.seen}, the last commit seen there`,
       )
     }
 
