@@ -28,7 +28,7 @@ import {
   RETIRED_SCHEMA_CACHE_PATH,
   TRACKED_CANOPY_STATE_FIX,
 } from './canopy-state'
-import { enqueueGitHubPush, readPublishedSha } from './history-rewrite'
+import { enqueueGitHubPush, readPublishedSha, recordSeenOnGitHub } from './history-rewrite'
 import { workerLog, workerLogWarn } from './log'
 import { assertNoIncomingSubmodules, fetchFromRemoteGit } from './shared-repo-git'
 import type { WorkerContext } from './worker-context'
@@ -40,9 +40,9 @@ import type { WorkerContext } from './worker-context'
  * clone's next rebase or commit diverges from `remote.git` and every submit after that is refused.
  *
  * Runs once per cycle for every branch this deployment has published, in every status but
- * archived, under the provisioning and content-write locks the caller holds, ahead of the rebase. It never forces
- * anything: a clone behind GitHub fast-forwards, and a clone with commits GitHub lacks gets a real
- * merge (branch-merge.ts), which keeps every commit on both sides.
+ * archived, under the provisioning and content-write locks the caller holds, ahead of the rebase.
+ * It never forces anything: a clone behind GitHub fast-forwards, and a clone with commits GitHub
+ * lacks gets a real merge (branch-merge.ts), which keeps every commit on both sides.
  *
  * Two commits are compared. `remote.git`'s head is what the clone must contain for its next push,
  * and it stays behind GitHub only while a head is diverged; GitHub's tip, from this cycle's fetch,
@@ -74,6 +74,11 @@ export type GitHubCommitsOutcome =
   | { kind: 'in-step' }
   /** Looked at again next cycle. Nothing else in this cycle may move the branch. */
   | { kind: 'wait' }
+  /**
+   * `remote.git` holds commits GitHub lacks, whose push failed for good. A rebase would replace
+   * commits GitHub never received, so the base comes in by a merge, which keeps them.
+   */
+  | { kind: 'unpushed' }
   /** A merge landed. A rebase now would replace a merge GitHub has not received. */
   | { kind: 'merged' }
   /** Left as it is until a person acts. `reason` says what to do. */
@@ -93,19 +98,27 @@ export interface GitHubCommitsArgs {
   lockLost: () => boolean
 }
 
-const COMMIT_ID = /^[0-9a-f]{40}([0-9a-f]{24})?$/
+export const COMMIT_ID = /^[0-9a-f]{40}([0-9a-f]{24})?$/
 const MAX_LISTED_PATH_LENGTH = 200
 
 /** Why a push was refused while a rewrite stands (task-runner.ts); editors read it as a failed sync. */
 export const REWRITTEN_PUSH_REFUSAL =
   "This branch was changed on GitHub in a way CanopyCMS can't combine with the work here, so nothing was pushed. Nothing is lost."
 
+/** Why a push was refused before any sync had seen the rewrite (task-runner.ts). */
+export const SEEN_COMMIT_GONE_PUSH_REFUSAL =
+  'A commit this branch had on GitHub is no longer there, so nothing was pushed. Nothing is lost.'
+
 /**
  * What clears a rewrite: the flag, and the refusal's text, which would go on saying the work can't
  * be combined. The failed sync it left goes too, unless {@link awaitsSubmitRetry}.
  */
 export function rewriteCleared(branch: BranchMetadata): Partial<BranchMetadata> {
-  if (!branch.syncFailureReason?.includes(REWRITTEN_PUSH_REFUSAL)) {
+  const reason = branch.syncFailureReason
+  if (
+    !reason?.includes(REWRITTEN_PUSH_REFUSAL) &&
+    !reason?.includes(SEEN_COMMIT_GONE_PUSH_REFUSAL)
+  ) {
     return { rewrittenOnGitHub: undefined }
   }
   return awaitsSubmitRetry(branch)
@@ -158,8 +171,8 @@ export async function bringInGitHubCommits(
   let rewriteResolved = false
   if (args.gitHub !== undefined && gitHubTip !== undefined) {
     // Unreadable means the tip's objects did not reach this clone, which says nothing about GitHub.
-    if (!(await hasCommit(git, tip))) return { kind: 'wait' }
-    const lastSeen = await rewrittenFrom(args, tip, head)
+    if (!(await holdsCommit(git, tip))) return { kind: 'wait' }
+    const lastSeen = await rewrittenFrom(args, tip, head, published)
     if (lastSeen !== null) {
       return (await pushedSinceFetch(args, args.gitHub.fetchedAt))
         ? { kind: 'wait' }
@@ -172,7 +185,8 @@ export async function bringInGitHubCommits(
   }
 
   // A crash after a merge reached remote.git leaves the clone behind it, like any fast-forward
-  // reconcile made. Taken first, so a merge below builds on remote.git's head whenever it can.
+  // reconcile made, and the check above has ruled out a head GitHub dropped. Taken first, so a merge
+  // below builds on remote.git's head whenever it can.
   if (published !== null && published !== head) {
     if ((await commitsApart(git, head, published)).onlyA === 0) {
       const stopped = await fastForward(ctx, args, head, published)
@@ -184,6 +198,11 @@ export async function bringInGitHubCommits(
   if (tip !== head) {
     const { onlyA, onlyB } = await commitsApart(git, head, tip)
     if (onlyB > 0 && onlyA === 0) {
+      // Reconcile didn't take this tip in. The clone stays level with `remote.git`, or the next
+      // force-push would find a commit in the clone that neither the record nor `remote.git` names.
+      if (gitHubTip !== undefined && published !== null && published !== tip) {
+        return { kind: 'wait' }
+      }
       const stopped = await fastForward(ctx, args, head, tip)
       if (stopped) return stopped
       head = tip
@@ -210,17 +229,17 @@ export async function bringInGitHubCommits(
 
   // A merge or a submit that reached remote.git with no GitHub push queued, as after a crash
   // between the two. A rebase now would strand the push, which leases on a commit GitHub never
-  // held, so it waits for the push. A push that failed for good stays as it is, unless a cleared
-  // rewrite was all that stopped it: its failure is on the branch, and a new attempt would fail the
-  // same way every cycle.
+  // held, and read as a rewrite on GitHub once it failed. So the branch waits for the push, or takes
+  // the base by a merge when the push failed for good, which isn't queued again unless a cleared
+  // rewrite was all that stopped it: a new attempt would fail the same way every cycle.
   if (
     gitHubTip !== undefined &&
     published !== null &&
     published !== tip &&
-    (branch.syncStatus !== 'sync-failed' || rewriteResolved) &&
     (!gatewayPolicy || publishesBranch(gatewayPolicy, branchRef)) &&
     (await contains(git, published, tip))
   ) {
+    if (branch.syncStatus === 'sync-failed' && !rewriteResolved) return { kind: 'unpushed' }
     await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
     return { kind: 'wait' }
   }
@@ -240,23 +259,48 @@ async function pushedSinceFetch(
 }
 
 /**
- * The commit a rewrite on GitHub removed, or null. Any commit GitHub is known to hold counts: the
- * last tip seen, and the commit a pending rewrite of the worker's own replaced, since GitHub stays
- * there until that push lands. A tip that contains the clone loses nothing the clone holds.
+ * The commit a rewrite on GitHub removed, or null. A commit removed on GitHub stays removed: its
+ * clone and `remote.git` may still hold it, and nothing here may put it back. Any commit GitHub is
+ * known to hold counts: the last tip seen, and the commit a pending rewrite of the worker's own
+ * replaced, since GitHub stays there until that push lands. A tip holding everything the clone and
+ * `remote.git` hold has nothing to restore, whatever the record says. A commit in neither was
+ * never taken in, so `remote.git`'s head has to be part of that test: the clone can lag it for a
+ * cycle, and the fast-forward below would then bring back what GitHub dropped.
  */
 async function rewrittenFrom(
   { git, metaFile }: GitHubCommitsArgs,
   tip: string,
   head: string,
+  published: string | null,
 ): Promise<string | null> {
   const { lastGitHubTip, historyRewrittenFrom } = metaFile.branch
+  // A branch with no record yet: a `remote.git` head the clone lags, diverged from GitHub, is a
+  // commit reconcile took in before a force-push, barring a crash mid-merge on that first cycle.
+  const unrecorded =
+    lastGitHubTip === undefined &&
+    published !== null &&
+    published !== head &&
+    (await contains(git, published, head)) &&
+    !(await contains(git, published, tip))
+      ? published
+      : undefined
   // The marker first: what is named here must be a commit GitHub really held, and a rewrite's
   // stamp may not have reached it yet.
-  const known = [historyRewrittenFrom, lastGitHubTip].filter(
+  const known = [historyRewrittenFrom, lastGitHubTip ?? unrecorded].filter(
     (sha): sha is string => sha !== undefined && COMMIT_ID.test(sha),
   )
-  if (known.length === 0 || (await contains(git, tip, head))) return null
+  if (known.length === 0) return null
+  if (
+    (await contains(git, tip, head)) &&
+    (published === null || (await contains(git, tip, published)))
+  ) {
+    return null
+  }
   for (const sha of known) if (await contains(git, tip, sha)) return null
+  // Git says a commit is missing when a pack it lives in can't be read, so only a full read of the
+  // tip's history makes "not contained" an answer.
+  const walked = await git.raw(['rev-list', '--count', '--end-of-options', tip])
+  if (walked.trim() === '') throw new Error(`No answer reading the history of ${tip}`)
   return known[0]
 }
 
@@ -368,15 +412,25 @@ async function fastForward(
   if (lockLost()) return { kind: 'wait' }
   if (await changesWhatWasReviewed(ctx, args, from, to)) await returnToReview(ctx, args)
   try {
-    await git.raw(['merge', '--ff-only', '--end-of-options', to])
+    await moveClone(git, branchPath, to)
   } catch (err) {
     if (!/would be overwritten/.test(getErrorMessage(err))) throw err
     workerLog(`  ${branchDir}: local changes overlap commits from GitHub, which wait for a submit`)
     return { kind: 'wait' }
   }
-  await invalidateBranchContentCaches(branchPath)
   workerLog(`  ${branchDir}: brought in commits from GitHub (now at ${to.slice(0, 7)})`)
   return null
+}
+
+/**
+ * Fast-forward the clone to `to`. The caches' markers move after it, as for any bulk mutation, and
+ * before it too: nothing repairs a marker lost after the move, as the next cycle sees a clone in
+ * step, and the earlier bump leaves only a read racing the move able to stamp the old tree.
+ */
+async function moveClone(git: SimpleGit, branchPath: string, to: string): Promise<void> {
+  await invalidateBranchContentCaches(branchPath)
+  await git.raw(['merge', '--ff-only', '--end-of-options', to])
+  await invalidateBranchContentCaches(branchPath)
 }
 
 /**
@@ -437,6 +491,9 @@ export async function mergeIntoBranch(
   // Recorded before the merge is visible anywhere: the next cycle only fast-forwards to it, and
   // the conflicts cannot be read back from the merge.
   if (conflicted.length > 0) await recordKeptVersions(ctx, args, conflicted, fromGitHub)
+  // Before `remote.git` holds it, as reconcile does: a crash past this point leaves GitHub's commit
+  // in `remote.git`, and a removal then has to read as one (`rewrittenFrom`).
+  if (fromGitHub) await recordSeenOnGitHub(ctx, branchRef, other)
   if (published !== null) {
     if (!(await publishPlainToLocalRemote(ctx, branchPath, branchRef, sha))) {
       return { kind: 'blocked', reason: unpublishable }
@@ -446,8 +503,7 @@ export async function mergeIntoBranch(
   if (conflicted.length > 0 && fromGitHub) {
     await enqueueReviewBlockSync(ctx, branchRef, args.metaFile)
   }
-  await git.raw(['merge', '--ff-only', '--end-of-options', sha])
-  await invalidateBranchContentCaches(branchPath)
+  await moveClone(git, branchPath, sha)
   if (fromGitHub) await recordGitHubTip(ctx, args, other)
   workerLog(
     conflicted.length > 0
@@ -457,21 +513,31 @@ export async function mergeIntoBranch(
   return { kind: 'merged' }
 }
 
-async function hasCommit(git: SimpleGit, sha: string): Promise<boolean> {
-  // `--quiet` exits 1 with no output for a missing object, which simple-git resolves.
-  const found = await git
-    .raw(['rev-parse', '--verify', '--quiet', '--end-of-options', `${sha}^{commit}`])
-    .catch(() => '')
-  return found.trim() !== ''
+/**
+ * Whether this clone holds `sha`, on git's word for it. A killed `git` answers nothing at all,
+ * which simple-git resolves empty, and that throws. Git says the same of a commit in a pack it
+ * can't read, so a caller that acts on "no" reads the history too, as `rewrittenFrom` does.
+ */
+async function holdsCommit(git: SimpleGit, sha: string): Promise<boolean> {
+  let found: string
+  try {
+    found = await git.raw(['rev-parse', '--verify', '--end-of-options', `${sha}^{commit}`])
+  } catch (err) {
+    if (/Needed a single revision/.test(getErrorMessage(err))) return false
+    throw err
+  }
+  if (found.trim() === '') throw new Error(`No answer looking for ${sha}`)
+  return true
 }
 
-/** Whether `commit` contains `ancestor`. A commit this clone does not hold counts as no. */
+/**
+ * Whether `commit` contains `ancestor`. A commit this clone does not hold counts as no. Any other
+ * failure throws, since it says nothing about either commit, and the caller's catch retries next
+ * cycle: read as no, it would report a rewrite that never happened.
+ */
 async function contains(git: SimpleGit, commit: string, ancestor: string): Promise<boolean> {
-  try {
-    return (await commitsApart(git, ancestor, commit)).onlyA === 0
-  } catch {
-    return false
-  }
+  if (!(await holdsCommit(git, commit)) || !(await holdsCommit(git, ancestor))) return false
+  return (await commitsApart(git, ancestor, commit)).onlyA === 0
 }
 
 /**
@@ -543,7 +609,7 @@ async function recordKeptVersions(
  * sync from here would strip the comment summary's links. Best-effort: a failure leaves the block
  * until the branch's next sync.
  */
-async function enqueueReviewBlockSync(
+export async function enqueueReviewBlockSync(
   ctx: Pick<GitHubCommitsContext, 'taskDir'>,
   branchRef: string,
   { branch }: BranchMetadataFile,
@@ -576,10 +642,12 @@ async function recordGitHubTip(
   if (gitHub?.tips.get(branchRef) !== tip) return
   if (lastGitHubTip === tip && rewrittenOnGitHub === undefined) return
   await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update(
-    (current) =>
-      current?.branch.name === branchRef
-        ? { branch: { lastGitHubTip: tip, ...rewriteCleared(current.branch) } }
-        : null,
+    (current) => {
+      if (current?.branch.name !== branchRef) return null
+      // A stamp newer than this cycle's fetch is a push that landed since, which GitHub holds.
+      const seen = current.branch.lastGitHubTip === lastGitHubTip ? { lastGitHubTip: tip } : {}
+      return { branch: { ...seen, ...rewriteCleared(current.branch) } }
+    },
     { keepUpdatedAt: true },
   )
 }

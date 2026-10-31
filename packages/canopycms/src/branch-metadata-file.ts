@@ -110,6 +110,7 @@ const branchMetadataShape = {
   keptOverGitHub: z.array(z.string()).optional(),
   rewrittenOnGitHub: z.string().optional(),
   submitUnfinished: z.boolean().optional(),
+  submitNotQueued: z.boolean().optional(),
   unpublishedAtMerge: z.boolean().optional(),
   syncFailureReason: z.string().optional(),
   editors: z.array(z.string()).optional(),

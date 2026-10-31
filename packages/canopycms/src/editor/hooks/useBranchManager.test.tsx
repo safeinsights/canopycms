@@ -997,6 +997,44 @@ describe('useBranchManager', () => {
     })
   })
 
+  it('reloads the list when a delete is refused, which is what says why', async () => {
+    mockClient.branches.delete.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      error: 'Ask an admin to check it before deleting it.',
+    })
+    const { notifications } = await import('@mantine/notifications')
+    mockClient.branches.list.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { branches: mockBranches, defaultBranch: 'main', users: [] },
+    })
+    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+    await waitFor(() => expect(result.current.branches.length).toBeGreaterThan(0))
+    mockClient.branches.list.mockClear()
+
+    await act(async () => {
+      await result.current.handleDelete(mockBranches[1].name)
+    })
+
+    expect(mockClient.branches.list).toHaveBeenCalled()
+    expect(notifications.show).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: expect.stringContaining(mockBranches[1].name),
+        message: 'Ask an admin to check it before deleting it.',
+        color: 'yellow',
+      }),
+    )
+
+    vi.mocked(notifications.hide).mockClear()
+    mockClient.branches.delete.mockResolvedValueOnce({ ok: true, status: 200 })
+    await act(async () => {
+      await result.current.handleDelete(mockBranches[1].name)
+    })
+
+    expect(notifications.hide).toHaveBeenCalledWith(expect.stringContaining(mockBranches[1].name))
+  })
+
   describe('confirmation dialog copy', () => {
     it("hands the card the server's answer on Approve", async () => {
       const blocked = mockBranches.map((b) =>

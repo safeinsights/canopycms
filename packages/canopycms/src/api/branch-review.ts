@@ -188,6 +188,7 @@ const approveBranchHandler = async (
   // unfinished submit: what's approved may not be what the pull request holds.
   let found: string | undefined
   let unfinished = false
+  let notQueued = false
   const updated = await meta.saveIf(
     {
       branch: {
@@ -199,6 +200,7 @@ const approveBranchHandler = async (
     (existing) => {
       found = existing?.branch.status
       unfinished = existing?.branch.submitUnfinished === true
+      notQueued = existing?.branch.submitNotQueued === true
       return found === 'submitted' && !unfinished
     },
   )
@@ -208,9 +210,11 @@ const approveBranchHandler = async (
       status: 409,
       error:
         "This branch's last submit didn't finish, so it can't be approved until it does. " +
-        (isAdmin(req.user.groups)
-          ? 'Retry the submit from the "Tasks" tab in "System health".'
-          : 'Ask an admin to retry the submit.'),
+        (notQueued
+          ? 'Use "Request changes" to send it back to its editor.'
+          : isAdmin(req.user.groups)
+            ? 'Retry the submit from the "Tasks" tab in "System health".'
+            : 'Ask an admin to retry the submit.'),
     }
   }
   if (!updated) return approveConflict(found)

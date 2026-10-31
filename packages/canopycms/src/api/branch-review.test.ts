@@ -17,17 +17,28 @@ const mockMetadataSave = vi.fn().mockResolvedValue({
 })
 
 // The status on disk, which a concurrent request can change after the guard read the branch.
-const disk: { status: string | undefined; submitUnfinished?: boolean } = { status: 'submitted' }
+const disk: { status: string | undefined; submitUnfinished?: boolean; submitNotQueued?: boolean } =
+  {
+    status: 'submitted',
+  }
 
 // `saveIf` decides against the disk status, as the real one does inside its lock.
 const mockSaveIf = vi.fn(
   async (
     update: unknown,
     onlyIf: (
-      existing: { branch: { status?: string; submitUnfinished?: boolean } } | null,
+      existing: {
+        branch: { status?: string; submitUnfinished?: boolean; submitNotQueued?: boolean }
+      } | null,
     ) => boolean,
   ) =>
-    onlyIf({ branch: { status: disk.status, submitUnfinished: disk.submitUnfinished } })
+    onlyIf({
+      branch: {
+        status: disk.status,
+        submitUnfinished: disk.submitUnfinished,
+        submitNotQueued: disk.submitNotQueued,
+      },
+    })
       ? mockMetadataSave(update)
       : null,
 )
@@ -51,6 +62,7 @@ vi.mock('../branch-metadata', () => ({
 beforeEach(() => {
   disk.status = 'submitted'
   disk.submitUnfinished = undefined
+  disk.submitNotQueued = undefined
   mockSyncPrComments.mockReset()
   mockSyncPrComments.mockResolvedValue(undefined)
 })
@@ -566,6 +578,19 @@ describe('branch review api - approveBranch', () => {
 
       expect(res.status).toBe(409)
       expect(res.error).toContain('the "Tasks" tab in "System health"')
+    })
+
+    it('offers no retry of a submit that was never queued', async () => {
+      disk.submitUnfinished = true
+      disk.submitNotQueued = true
+
+      const res = await approveBranchHandler(makeCtx(), admin, {
+        branch: 'feature/x' as BranchName,
+      })
+
+      expect(res.status).toBe(409)
+      expect(res.error).toContain('Use "Request changes"')
+      expect(res.error).not.toContain('Tasks')
     })
 
     it('says a branch that has left review has left, whatever it still owes', async () => {

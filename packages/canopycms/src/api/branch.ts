@@ -59,6 +59,7 @@ export interface BranchListItem extends Omit<
   | 'rewrittenOnGitHub'
   | 'submitUnfinished'
   | 'unpublishedAtMerge'
+  | 'submitNotQueued'
   | 'rebaseFailure'
   | 'pullRequestHold'
 > {
@@ -293,6 +294,7 @@ export const toBranchListItem = (
     lastGitHubTip: _tip,
     rewrittenOnGitHub: _rewritten,
     submitUnfinished: _unfinished,
+    submitNotQueued,
     unpublishedAtMerge: _unpublished,
     rebaseFailure: _failure,
     pullRequestHold,
@@ -307,7 +309,11 @@ export const toBranchListItem = (
         ? { kind: 'unpublished-at-merge' }
         : undefined
       : branch.submitUnfinished
-        ? { kind: 'submit-unfinished', opened: branch.pullRequestNumber !== undefined }
+        ? {
+            kind: 'submit-unfinished',
+            opened: branch.pullRequestNumber !== undefined,
+            notQueued: submitNotQueued,
+          }
         : pullRequestHold
   return {
     ...listed,

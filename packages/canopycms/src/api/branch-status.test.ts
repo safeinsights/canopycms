@@ -40,6 +40,17 @@ vi.mock('../authorization', async (importOriginal) => {
   }
 })
 
+// What the sync reports for a submit, where a test needs an outcome the real one can't reach here.
+const submitOutcome = vi.hoisted(() => ({ next: null as Record<string, unknown> | null }))
+vi.mock('./github-sync', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./github-sync')>()
+  return {
+    ...original,
+    syncSubmitPr: async (...args: Parameters<typeof original.syncSubmitPr>) =>
+      submitOutcome.next ?? original.syncSubmitPr(...args),
+  }
+})
+
 import { WORKFLOW_ROUTES } from './branch-status'
 import { ContentWriteLockBusyError } from '../utils/content-write-lock'
 import { NothingToSubmitError } from '../services'
@@ -705,6 +716,32 @@ describe('branch status api', () => {
         }),
       })
       consoleSpy.restore()
+    })
+
+    it('records a submit no task will run as unfinished, naming why, and a later one clears it', async () => {
+      mockMetadataUpdate.mockClear()
+      submitOutcome.next = {
+        syncStatus: 'sync-failed',
+        syncFailureReason: 'not queued',
+        submitNotQueued: true,
+      }
+      await submitBranchForMerge(makeCtx(true), { user }, params, undefined)
+      submitOutcome.next = null
+
+      expect(mockMetadataUpdate.mock.calls[0]?.[0].branch).toMatchObject({
+        status: 'submitted',
+        syncStatus: 'sync-failed',
+        syncFailureReason: 'not queued',
+        submitUnfinished: true,
+        submitNotQueued: true,
+      })
+
+      mockMetadataUpdate.mockClear()
+      await submitBranchForMerge(makeCtx(true), { user }, params, undefined)
+
+      const saved = mockMetadataUpdate.mock.calls[0]?.[0].branch
+      expect(saved).toHaveProperty('submitUnfinished', undefined)
+      expect(saved).toHaveProperty('submitNotQueued', undefined)
     })
 
     it('stamps submittedAt and clears a stale failure reason on a successful submit', async () => {

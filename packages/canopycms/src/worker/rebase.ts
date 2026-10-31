@@ -254,6 +254,18 @@ async function recordRebaseFailure(
 /** Safety limit against a rebase that never converges. */
 const MAX_REBASE_ROUNDS = 50
 
+/**
+ * Abort a rebase. It moves the tree back under any snapshot a read resolved mid-replay, which the
+ * caches' markers must invalidate like any other working-tree move, however the abort ended.
+ */
+async function abortRebase(git: SimpleGit, branchPath: string): Promise<void> {
+  try {
+    await git.rebase(['--abort'])
+  } finally {
+    await invalidateBranchContentCaches(branchPath)
+  }
+}
+
 /** What {@link runRebaseRounds} observed. */
 interface RebaseRoundsResult {
   /** Whether `git rebase` reached a finished state. */
@@ -1187,7 +1199,7 @@ async function rebaseOneBranch(
           `  ${branchDir}: found an interrupted rebase (this worker's own abandoned work) -- aborting it to recover the branch`,
         )
         try {
-          await branchGit.rebase(['--abort'])
+          await abortRebase(branchGit, branchPath)
         } catch (abortErr: unknown) {
           // Leave it for the next cycle rather than pressing on: every step
           // below assumes a clean tree.
@@ -1238,12 +1250,14 @@ async function rebaseOneBranch(
           : null
 
       // Before the dirty return: a fast-forward passes saves that touch other files.
+      let unpushed = false
       if (commitArgs !== null) {
         const outcome = await bringInGitHubCommits(ctx, commitArgs)
         if (outcome.kind === 'blocked') {
           return recordBlocked(ctx, branchDir, branchPath, branchRef, outcome.reason)
         }
-        if (outcome.kind !== 'in-step') {
+        if (outcome.kind === 'unpushed') unpushed = true
+        else if (outcome.kind !== 'in-step') {
           return editorDirt.length > 0 ? { kind: 'skippedDirty' } : { kind: 'none' }
         }
       }
@@ -1350,7 +1364,7 @@ async function rebaseOneBranch(
       const cannotReplay =
         (await countAboveBase(['--merges', '--end-of-options', aboveBase])) !== '0' ||
         (await countAboveBase(['--end-of-options', aboveBase, '--', CANOPY_META_DIR])) !== '0'
-      if (commitArgs !== null && cannotReplay) {
+      if (commitArgs !== null && (cannotReplay || unpushed)) {
         const outcome = await mergeIntoBranch(ctx, commitArgs, {
           head: (await branchGit.revparse(['HEAD'])).trim(),
           other: fetchedBaseTip,
@@ -1412,7 +1426,7 @@ async function rebaseOneBranch(
           `  Skipping ${branchDir}: a lock it held was compromised mid-rebase (retrying next cycle)`,
         )
         // No-op when no rebase is in progress; failure is expected there.
-        await branchGit.rebase(['--abort']).catch(() => {})
+        await abortRebase(branchGit, branchPath).catch(() => {})
         return { kind: 'skippedLocked' }
       }
       if (lockCompromised()) {
@@ -1430,7 +1444,7 @@ async function rebaseOneBranch(
             ? `  Rebase of ${branchDir} aborted due to unexpected error: ${failureReason}`
             : `  Rebase of ${branchDir} did not complete within ${MAX_REBASE_ROUNDS} rounds, aborting`,
         )
-        await branchGit.rebase(['--abort']).catch(() => {})
+        await abortRebase(branchGit, branchPath).catch(() => {})
         const rebaseFailureMessage =
           failureReason ?? `did not complete within ${MAX_REBASE_ROUNDS} rounds`
         // [REDACT] failed[] folds into worker-status.json's lastGitSync.failed,
@@ -1507,7 +1521,7 @@ async function rebaseOneBranch(
           workerLogWarn(
             `  ${branchDir}: rebase still in progress on exit -- aborting so the clone is not left wedged`,
           )
-          await branchGit.rebase(['--abort'])
+          await abortRebase(branchGit, branchPath)
         }
       } catch (abortErr: unknown) {
         // Best effort: the next cycle's recovery check retries this.

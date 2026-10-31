@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { atomicWriteFile } from './utils/atomic-write'
 import { getErrorMessage, isNodeError } from './utils/error'
 import { createDebugLogger } from './utils/debug'
+import { canopyLogWarn } from './utils/logger'
 
 /**
  * Cross-process generation marker for an on-disk resource cached under a
@@ -71,9 +72,10 @@ export async function bumpResourceGeneration(
     await atomicWriteFile(resourceGenerationPath(root, resource), token)
     return token
   } catch (err) {
-    log.warn('generation', `Failed to bump ${resource} generation for ${root}`, {
-      error: getErrorMessage(err),
-    })
+    canopyLogWarn(
+      `CanopyCMS: failed to bump ${resource} generation for ${root}:`,
+      getErrorMessage(err),
+    )
     if (options?.mustSucceed) throw err
     return null
   }

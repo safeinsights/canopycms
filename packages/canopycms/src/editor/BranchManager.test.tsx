@@ -553,6 +553,14 @@ describe('BranchManager', () => {
     )
   })
 
+  it('offers no retry on an archived row, which has nothing left to finish', async () => {
+    const branches: BranchSummary[] = [
+      { ...baseBranches[0], status: 'archived', syncStatus: 'sync-failed' },
+    ]
+    renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
+    expect(screen.getByTestId('sync-failed-reason-main').textContent).toBe('GitHub sync failed.')
+  })
+
   it('shows the recorded failure reason on the row instead of the generic line', async () => {
     const reason = 'Push rejected for branch "main": it has moved on GitHub.'
     const branches: BranchSummary[] = [

@@ -10,10 +10,10 @@ import os from 'node:os'
 import path from 'node:path'
 import { simpleGit } from 'simple-git'
 
-import { REWRITTEN_PUSH_REFUSAL } from './github-commits'
+import { REWRITTEN_PUSH_REFUSAL, SEEN_COMMIT_GONE_PUSH_REFUSAL } from './github-commits'
 import type { GitHubGateway } from './github-gateway'
 import { CmsWorker, PermanentTaskError, isPermanentTaskFailure } from './cms-worker'
-import { enqueueTask, dequeueTask, getTask } from '../task-queue/cms-task-queue'
+import { enqueueTask, dequeueTask, getTask, listTasks } from '../task-queue/cms-task-queue'
 import { WORKER_STATUS_FILE } from '../task-queue/worker-status'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
 import {
@@ -1446,7 +1446,7 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
   // -------------------------------------------------------------------------
 
   /** Write branch metadata carrying a pending history rewrite. */
-  const writeRewriteMarker = async (branchName: string, marker: string) => {
+  const writeRewriteMarker = async (branchName: string, marker: string, rewrittenTip?: string) => {
     const branchPath = path.join(contentBranchesPath, sanitizeBranchName(branchName))
     await fs.mkdir(branchPath, { recursive: true })
     const meta = BranchMetadataFileManager.get(branchPath, contentBranchesPath)
@@ -1457,6 +1457,7 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
         access: {},
         createdBy: 'test',
         historyRewrittenFrom: marker,
+        ...(rewrittenTip ? { lastGitHubTip: rewrittenTip } : {}),
       },
     })
   }
@@ -1478,7 +1479,8 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     const published = await shaOf(githubFixture, 'refs/heads/canopycms/prod/feature-rebased')
     await seedBranchInRemoteGit('canopycms/prod/feature-rebased', 'rewritten by the rebase loop')
     const rewrittenTip = await shaOf(remoteGitPath, 'refs/heads/canopycms/prod/feature-rebased')
-    await writeRewriteMarker('canopycms/prod/feature-rebased', published)
+    // Stamped as markHistoryRewritten stamps it: GitHub doesn't hold this until the push lands.
+    await writeRewriteMarker('canopycms/prod/feature-rebased', published, rewrittenTip)
 
     const worker = makePushWorker()
     await (worker as unknown as PushBranchInternals).pushBranchToGitHub(
@@ -1660,15 +1662,22 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     const branch = 'canopycms/prod/feature-retried'
     const dir = () => path.join(contentBranchesPath, 'canopycms-prod-feature-retried')
     const submittedAt = '2026-10-01T00:00:00.000Z'
+    let seededAt: string | undefined
 
-    const retrySubmit = async (live: Record<string, unknown>, requeuedFrom?: string) => {
+    const retrySubmit = async (
+      live: Record<string, unknown>,
+      requeuedFrom?: string,
+      gateway?: (seam: GitHubGateway) => void,
+    ) => {
       await seedBranchInRemoteGit(branch, 'hello')
       await fs.mkdir(dir(), { recursive: true })
-      await getBranchMetadataFileManager(dir(), contentBranchesPath).save({
+      const seeded = await getBranchMetadataFileManager(dir(), contentBranchesPath).save({
         branch: { name: branch, pullRequestNumber: 12, ...live },
       })
+      seededAt = seeded.branch.updatedAt
       const worker = makePushWorker()
       ;(worker as unknown as { running: boolean }).running = true
+      gateway?.((worker as unknown as { github(): GitHubGateway }).github())
       const id = await enqueueTask(taskDir, {
         action: 'push-and-create-or-update-pr',
         payload: {
@@ -1744,28 +1753,128 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
       expect(after?.submitUnfinished).toBeUndefined()
     })
 
-    it('records no unfinished submit for an older submit running late', async () => {
-      await seedBranchInRemoteGit(branch, 'hello')
-      await fs.mkdir(dir(), { recursive: true })
-      await getBranchMetadataFileManager(dir(), contentBranchesPath).save({
-        branch: {
-          name: branch,
-          status: 'submitted',
-          submittedAt: '2026-10-02T00:00:00.000Z',
-          rewrittenOnGitHub: 'a'.repeat(40),
-        },
-      })
-      const worker = makePushWorker()
-      ;(worker as unknown as { running: boolean }).running = true
-      await enqueueTask(taskDir, {
-        action: 'push-and-create-or-update-pr',
-        payload: { branch, title: 't', body: '', baseBranch: 'main', submittedAt },
-      })
-      await worker.processTaskQueue()
+    describe('a first run, as a task released by a drain or recovered after a crash is', () => {
+      const newer = '2026-10-02T00:00:00.000Z'
+      const metadata = () => getBranchMetadataFileManager(dir(), contentBranchesPath)
+      const read = async () => (await BranchMetadataFileManager.loadOnly(dir()))?.branch
 
-      const after = (await BranchMetadataFileManager.loadOnly(dir()))?.branch
-      expect(after?.syncStatus).toBe('sync-failed')
-      expect(after?.submitUnfinished).toBeUndefined()
+      /** One first run. `during` stands in for its push, as whatever lands while it runs. */
+      const firstRun = async (live: Record<string, unknown>, during?: () => Promise<void>) => {
+        await seedBranchInRemoteGit(branch, 'hello')
+        await fs.mkdir(dir(), { recursive: true })
+        await metadata().save({ branch: { name: branch, pullRequestNumber: 12, ...live } })
+        const worker = makePushWorker()
+        ;(worker as unknown as { running: boolean }).running = true
+        const seam = worker as unknown as {
+          github(): GitHubGateway
+          pushBranchToGitHub(): Promise<void>
+        }
+        vi.spyOn(seam.github(), 'createOrUpdatePullRequest').mockResolvedValue({
+          number: 99,
+          url: 'https://github.test/pull/99',
+          created: true,
+        } as never)
+        if (during) vi.spyOn(seam, 'pushBranchToGitHub').mockImplementation(during)
+        const id = await enqueueTask(taskDir, {
+          action: 'push-and-create-or-update-pr',
+          payload: { branch, title: 't', body: '', baseBranch: 'main', submittedAt },
+        })
+        await worker.processTaskQueue()
+        return getTask(taskDir, id)
+      }
+
+      it('does nothing for a branch submitted again since', async () => {
+        const task = await firstRun({
+          status: 'submitted',
+          submittedAt: newer,
+          syncStatus: 'pending-sync',
+        })
+
+        expect(task?.status).toBe('completed')
+        await expect(shaOf(githubFixture, `refs/heads/${branch}`)).rejects.toThrow()
+        expect((await read())?.syncStatus).toBe('pending-sync')
+      })
+
+      it('does nothing for a branch withdrawn since', async () => {
+        await firstRun({ status: 'editing', submittedAt, syncStatus: 'pending-sync' })
+
+        await expect(shaOf(githubFixture, `refs/heads/${branch}`)).rejects.toThrow()
+        expect((await read())?.syncStatus).toBe('synced')
+      })
+
+      it('opens nothing for a branch that merged, keeping the merged number', async () => {
+        await firstRun({
+          status: 'archived',
+          submittedAt,
+          syncStatus: 'pending-sync',
+          unpublishedAtMerge: true,
+        })
+
+        await expect(shaOf(githubFixture, `refs/heads/${branch}`)).rejects.toThrow()
+        const after = await read()
+        expect(after?.pullRequestNumber).toBe(12)
+        expect(after?.syncStatus).toBe('synced')
+        expect(after?.unpublishedAtMerge).toBe(true)
+      })
+
+      it("records no pull request opened as its branch merged, keeping the merged one's", async () => {
+        await firstRun({ status: 'submitted', submittedAt }, async () => {
+          await metadata().save({ branch: { status: 'archived' } })
+        })
+
+        const after = await read()
+        expect(after?.pullRequestNumber).toBe(12)
+        expect(after?.pullRequestUrl).toBeUndefined()
+      })
+
+      it('opens nothing for a branch that merged before this submit was recorded', async () => {
+        await firstRun({ status: 'archived', submittedAt: '2026-09-01T00:00:00.000Z' })
+
+        await expect(shaOf(githubFixture, `refs/heads/${branch}`)).rejects.toThrow()
+      })
+
+      it('runs when the API has yet to record the submit that queued it', async () => {
+        await firstRun({ status: 'editing', submittedAt: '2026-09-01T00:00:00.000Z' })
+
+        await expect(shaOf(githubFixture, `refs/heads/${branch}`)).resolves.toBeTruthy()
+      })
+
+      const submittedAgain = async () => {
+        await metadata().save({
+          branch: { status: 'submitted', submittedAt: newer, syncStatus: 'pending-sync' },
+        })
+      }
+
+      it("leaves a newer submit's state when it succeeds as that lands", async () => {
+        await firstRun({ status: 'submitted', submittedAt }, submittedAgain)
+
+        const after = await read()
+        expect(after?.syncStatus).toBe('pending-sync')
+        expect(after?.pullRequestNumber).toBe(99)
+      })
+
+      it("leaves a newer submit's state when it fails as that lands", async () => {
+        const task = await firstRun({ status: 'submitted', submittedAt }, async () => {
+          await submittedAgain()
+          throw new PermanentTaskError('refused')
+        })
+
+        expect(task?.status).toBe('failed')
+        const after = await read()
+        expect(after?.syncStatus).toBe('pending-sync')
+        expect(after?.submitUnfinished).toBeUndefined()
+      })
+
+      it('flags a submit that failed after its branch merged', async () => {
+        await firstRun({ status: 'submitted', submittedAt }, async () => {
+          await metadata().save({ branch: { status: 'archived' } })
+          throw new PermanentTaskError('refused')
+        })
+
+        const after = await read()
+        expect(after?.unpublishedAtMerge).toBe(true)
+        expect(after?.submitUnfinished).toBeUndefined()
+      })
     })
 
     it('stops an archived branch from reading as syncing, keeping its flag', async () => {
@@ -1781,28 +1890,48 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
       expect(after?.unpublishedAtMerge).toBe(true)
     })
 
-    it('flags a submit that failed after its branch merged', async () => {
-      await seedBranchInRemoteGit(branch, 'hello')
-      await fs.mkdir(dir(), { recursive: true })
-      await getBranchMetadataFileManager(dir(), contentBranchesPath).save({
-        branch: {
-          name: branch,
-          status: 'archived',
-          submittedAt,
-          rewrittenOnGitHub: 'a'.repeat(40),
-        },
+    it('clears a failed sync on an archived branch, which a retry has nothing left to finish', async () => {
+      await retrySubmit({
+        status: 'archived',
+        submittedAt,
+        syncStatus: 'sync-failed',
+        syncFailureReason: 'x',
+        unpublishedAtMerge: true,
       })
-      const worker = makePushWorker()
-      ;(worker as unknown as { running: boolean }).running = true
-      await enqueueTask(taskDir, {
-        action: 'push-and-create-or-update-pr',
-        payload: { branch, title: 't', body: '', baseBranch: 'main', submittedAt },
-      })
-      await worker.processTaskQueue()
 
       const after = (await BranchMetadataFileManager.loadOnly(dir()))?.branch
+      expect(after?.syncStatus).toBe('synced')
+      expect(after?.syncFailureReason).toBeUndefined()
       expect(after?.unpublishedAtMerge).toBe(true)
-      expect(after?.submitUnfinished).toBeUndefined()
+      expect(after?.updatedAt).toBe(seededAt)
+    })
+
+    it('sends an approved branch back to review when its submit fails, clearing the verdict', async () => {
+      await retrySubmit(
+        {
+          status: 'approved',
+          submittedAt,
+          review: { state: 'approved', by: { userId: 'r' }, at: submittedAt },
+          rewrittenOnGitHub: 'a'.repeat(40),
+        },
+        undefined,
+        // The same pass of the queue runs the sync, which stops at a pull request no longer open.
+        (github) => {
+          vi.spyOn(github, 'getPullRequest').mockResolvedValue({ state: 'closed' } as never)
+        },
+      )
+
+      const after = (await BranchMetadataFileManager.loadOnly(dir()))?.branch
+      expect(after?.status).toBe('submitted')
+      expect(after?.review).toBeUndefined()
+      expect(after?.submitUnfinished).toBe(true)
+      const ran = [
+        ...(await listTasks(taskDir, 'completed')),
+        ...(await listTasks(taskDir, 'failed')),
+      ]
+      expect(
+        ran.filter((t) => t.action === 'sync-pr-comments').map((t) => t.payload.reviewBlockOnly),
+      ).toEqual([true])
     })
 
     it('records a submit that failed as unfinished', async () => {
@@ -1811,6 +1940,7 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
       const meta = await BranchMetadataFileManager.loadOnly(dir())
       expect(meta?.branch.syncStatus).toBe('sync-failed')
       expect(meta?.branch.submitUnfinished).toBe(true)
+      expect(meta?.branch.updatedAt).toBe(seededAt)
     })
 
     it('records no unfinished submit for a plain push that failed', async () => {
@@ -1830,10 +1960,11 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     })
 
     describe('a plain push that lands', () => {
+      let seededAt: string | undefined
       const push = async (live: Record<string, unknown>) => {
         await seedBranchInRemoteGit(branch, 'hello')
         await fs.mkdir(dir(), { recursive: true })
-        await getBranchMetadataFileManager(dir(), contentBranchesPath).save({
+        const seeded = await getBranchMetadataFileManager(dir(), contentBranchesPath).save({
           branch: {
             name: branch,
             status: 'submitted',
@@ -1842,6 +1973,7 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
             ...live,
           },
         })
+        seededAt = seeded.branch.updatedAt
         const worker = makePushWorker()
         ;(worker as unknown as { running: boolean }).running = true
         await enqueueTask(taskDir, { action: 'push-branch', payload: { branch } })
@@ -1856,10 +1988,13 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
         expect(after?.syncStatus).toBe('sync-failed')
         expect(after?.syncFailureReason).toBe('x')
         expect(after?.submitUnfinished).toBe(true)
+        expect(after?.updatedAt).toBe(seededAt)
       })
 
-      it('clears a failed push, which it finishes', async () => {
-        expect((await push({}))?.syncStatus).toBe('synced')
+      it('clears a failed push, which it finishes, as bookkeeping rather than an edit', async () => {
+        const after = await push({})
+        expect(after?.syncStatus).toBe('synced')
+        expect(after?.updatedAt).toBe(seededAt)
       })
 
       it('clears a branch back in editing, which owes no pull request step', async () => {
@@ -1885,7 +2020,120 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     await expect(shaOf(githubFixture, `refs/heads/${branch}`)).rejects.toThrow()
   })
 
-  it('fails a push-branch task immediately (not after maxRetries) on a real rejection, and records the reason on branch metadata', async () => {
+  it('puts a push GitHub moved past off to the next sync, recording no failure', async () => {
+    await seedBranchInRemoteGit('canopycms/prod/feature-moved', 'this deployment')
+    await seedBranchInGitHubFixture('canopycms/prod/feature-moved', 'a person on GitHub')
+    const branchPath = path.join(contentBranchesPath, 'canopycms-prod-feature-moved')
+    await fs.mkdir(branchPath, { recursive: true })
+    await getBranchMetadataFileManager(branchPath, contentBranchesPath).save({
+      branch: { name: 'canopycms/prod/feature-moved' },
+    })
+    const worker = makePushWorker()
+    ;(worker as unknown as { running: boolean }).running = true
+
+    const id = await enqueueTask(taskDir, {
+      action: 'push-branch',
+      payload: { branch: 'canopycms/prod/feature-moved' },
+    })
+    await worker.processTaskQueue()
+
+    const task = await getTask(taskDir, id)
+    expect(task?.status).toBe('pending')
+    expect(task?.retryCount).toBe(1)
+    expect(task?.retryAfter).toBeDefined()
+    const meta = await BranchMetadataFileManager.loadOnly(branchPath)
+    expect(meta?.branch.syncStatus).not.toBe('sync-failed')
+  })
+
+  it('pushes nothing while branch.json cannot be read to say a push is safe', async () => {
+    await seedBranchInRemoteGit('canopycms/prod/feature-unread', 'hello')
+    const branchPath = path.join(contentBranchesPath, 'canopycms-prod-feature-unread')
+    await fs.mkdir(path.join(branchPath, '.canopy-meta'), { recursive: true })
+    await fs.writeFile(path.join(branchPath, '.canopy-meta', 'branch.json'), 'not json')
+    const worker = makePushWorker()
+    ;(worker as unknown as { running: boolean }).running = true
+
+    const id = await enqueueTask(taskDir, {
+      action: 'push-branch',
+      payload: { branch: 'canopycms/prod/feature-unread' },
+    })
+    await worker.processTaskQueue()
+
+    await expect(fixtureHasBranch('canopycms/prod/feature-unread')).resolves.toBe(false)
+    // The Tasks tab shows this, which has no use for where the workspace lives.
+    const { error } = (await getTask(taskDir, id)) ?? {}
+    expect(error).toBeTruthy()
+    expect(error).not.toContain(branchPath)
+  })
+
+  it('pushes past a record that is not a commit ID, which says nothing of GitHub', async () => {
+    const name = 'canopycms/prod/feature-garbled'
+    await seedBranchInRemoteGit(name, 'hello')
+    const branchPath = path.join(contentBranchesPath, 'canopycms-prod-feature-garbled')
+    await fs.mkdir(branchPath, { recursive: true })
+    await getBranchMetadataFileManager(branchPath, contentBranchesPath).save({
+      branch: { name, lastGitHubTip: 'not a commit' },
+    })
+    const worker = makePushWorker()
+    ;(worker as unknown as { running: boolean }).running = true
+
+    await enqueueTask(taskDir, { action: 'push-branch', payload: { branch: name } })
+    await worker.processTaskQueue()
+
+    await expect(fixtureHasBranch(name)).resolves.toBe(true)
+  })
+
+  it('puts off a push while GitHub no longer holds the last commit seen there', async () => {
+    const name = 'canopycms/prod/feature-reset'
+    await seedBranchInGitHubFixture(name, 'kept')
+    const kept = await shaOf(githubFixture, `refs/heads/${name}`)
+    const remote = simpleGit({ baseDir: remoteGitPath, config: ['safe.bareRepository=all'] })
+    await remote.raw(['fetch', githubFixture, `refs/heads/${name}:refs/heads/${name}`])
+    const scratch = path.join(tmpDir, 'scratch-reset')
+    await simpleGit().clone(remoteGitPath, scratch, ['--branch', name])
+    const work = simpleGit({ baseDir: scratch })
+    await work.addConfig('user.name', 'Test Bot')
+    await work.addConfig('user.email', 'test@canopycms.test')
+    await fs.writeFile(path.join(scratch, 'leak.txt'), 'secret\n')
+    await work.add(['.'])
+    await work.commit('leak')
+    const removed = (await work.revparse(['HEAD'])).trim()
+    await work.raw(['push', 'origin', `${name}:${name}`])
+    const branchPath = path.join(contentBranchesPath, 'canopycms-prod-feature-reset')
+    await fs.mkdir(branchPath, { recursive: true })
+    await getBranchMetadataFileManager(branchPath, contentBranchesPath).save({
+      branch: { name, lastGitHubTip: removed },
+    })
+    const worker = makePushWorker()
+    ;(worker as unknown as { running: boolean }).running = true
+    // A rewrite armed once this task is under way, which leaves it no lease: the check must stand.
+    const realLoad = BranchMetadataFileManager.loadOnly.bind(BranchMetadataFileManager)
+    let reads = 0
+    const load = vi
+      .spyOn(BranchMetadataFileManager, 'loadOnly')
+      .mockImplementation(async (root) => {
+        if (root === branchPath && ++reads === 2) {
+          await getBranchMetadataFileManager(branchPath, contentBranchesPath).save({
+            branch: { historyRewrittenFrom: removed },
+          })
+        }
+        return realLoad(root)
+      })
+
+    const id = await enqueueTask(taskDir, { action: 'push-branch', payload: { branch: name } })
+    await worker.processTaskQueue()
+    load.mockRestore()
+
+    await expect(shaOf(githubFixture, `refs/heads/${name}`)).resolves.toBe(kept)
+    const task = await getTask(taskDir, id)
+    expect(task?.status).toBe('pending')
+    // Until the next sync, not an ordinary retry's backoff, which would only meet the same refusal.
+    expect(Date.parse(task?.retryAfter ?? '') - Date.now()).toBeGreaterThan(60_000)
+    // What an editor reads if the retries run out: no commit ID, and no promise of a sync.
+    expect(task?.error).toBe(SEEN_COMMIT_GONE_PUSH_REFUSAL)
+  })
+
+  it('fails a push-branch task once its retries are spent, and records the reason on branch metadata', async () => {
     await seedBranchInRemoteGit('canopycms/prod/feature-collision', 'this deployment')
     await seedBranchInGitHubFixture('canopycms/prod/feature-collision', 'another deployment')
     await fs.mkdir(path.join(contentBranchesPath, 'canopycms-prod-feature-collision'), {
@@ -1903,15 +2151,15 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
       action: 'push-branch',
       payload: { branch: 'canopycms/prod/feature-collision' },
     })
+    const pendingFile = path.join(taskDir, 'pending', `${id}.json`)
+    const pending = JSON.parse(await fs.readFile(pendingFile, 'utf-8'))
+    await fs.writeFile(pendingFile, JSON.stringify({ ...pending, retryCount: pending.maxRetries }))
 
     await worker.processTaskQueue()
 
-    // Fails fast: lands in failed/ with retryCount 0 (the retry budget was
-    // never touched), not pending/ with retries burned toward maxRetries.
     const failed = JSON.parse(
       await fs.readFile(path.join(taskDir, 'failed', `${id}.json`), 'utf-8'),
     )
-    expect(failed.retryCount).toBe(0)
     expect(failed.error).toContain('canopycms/prod/feature-collision')
     expect(
       await fs

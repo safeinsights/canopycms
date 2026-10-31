@@ -84,6 +84,30 @@ describe('a submit that never finished', () => {
     )
   })
 
+  describe('with no task behind it', () => {
+    const notQueued = { ...hold, notQueued: true }
+
+    it('offers nobody a retry, there being no task to retry', () => {
+      for (const role of ['withdraw', 'review', 'none'] as const) {
+        for (const isAdmin of [false, true]) {
+          expect(branchHoldMessage(notQueued, { role, isAdmin })).not.toMatch(/retry|Tasks/i)
+        }
+      }
+    })
+
+    it('gives each role the way forward it has', () => {
+      expect(branchHoldMessage(notQueued, { role: 'withdraw', isAdmin: false })).toContain(
+        'Use "Withdraw from review", then submit the branch again.',
+      )
+      expect(branchHoldMessage(notQueued, { role: 'review', isAdmin: false })).toContain(
+        'Use "Request changes" to send it back to its editor.',
+      )
+      expect(branchHoldMessage(notQueued, { role: 'none', isAdmin: true })).toContain(
+        'Its editor needs to withdraw it from review and submit it again.',
+      )
+    })
+  })
+
   it('sends an admin to the task, naming the panel only outside it', () => {
     expect(branchHoldMessage(hold, { role: 'none', isAdmin: true })).toContain(
       'Retry the submit from the "Tasks" tab in "System health".',
@@ -129,6 +153,10 @@ describe('syncFailedFallback', () => {
   it('sends only an admin to System health', () => {
     expect(syncFailedFallback(true)).toContain('the "Tasks" tab in "System health"')
     expect(syncFailedFallback(false)).toBe('GitHub sync failed. Ask an admin to retry it.')
+  })
+
+  it('offers no retry on an archived branch, which has nothing left to finish', () => {
+    expect(syncFailedFallback(true, 'archived')).toBe('GitHub sync failed.')
   })
 })
 

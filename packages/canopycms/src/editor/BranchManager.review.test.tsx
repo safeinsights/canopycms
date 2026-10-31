@@ -266,21 +266,13 @@ describe('BranchCard review actions', () => {
       expect(onApprove).not.toHaveBeenCalled()
       await userEvent.hover(approve)
       expect((await screen.findByRole('tooltip')).textContent).toContain(
-        "can't be approved yet. Ask an admin to retry the submit",
+        'can\'t be approved yet. Use "Request changes"',
       )
 
       const requestChanges = screen.getByTestId(`request-changes-branch-button-${NAME}`)
       expect(requestChanges.getAttribute('aria-disabled')).toBeNull()
       await userEvent.click(requestChanges)
       expect(onRequestChanges).toHaveBeenCalledWith(NAME)
-    })
-
-    it('tells an admin where the retry is', async () => {
-      renderCard(unfinished, { userId: 'adam', groups: [RESERVED_GROUPS.ADMINS] }, true)
-
-      await userEvent.hover(screen.getByTestId(`approve-branch-button-${NAME}`))
-      expect(await screen.findByRole('tooltip')).toBeTruthy()
-      expect(screen.getByRole('tooltip').textContent).toContain('"Tasks" tab in "System health"')
     })
 
     it('keeps the closed pull request as the reason when the PR is closed too', async () => {

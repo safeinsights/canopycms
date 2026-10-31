@@ -268,7 +268,8 @@ const submitBranchForMergeHandler = async (
       // Read by the card as soon as the status says review, and the worker's next read is minutes
       // away, so what held the last submit must not show as holding this one.
       pullRequestHold: undefined,
-      submitUnfinished: undefined,
+      submitUnfinished: prResult.submitNotQueued,
+      submitNotQueued: prResult.submitNotQueued,
     },
   })
 

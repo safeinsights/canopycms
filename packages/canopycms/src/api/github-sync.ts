@@ -27,7 +27,13 @@ export interface GitHubSyncResult {
   nothingToSubmit?: boolean
   /** The direct path, whose submit pushes to GitHub itself: the branch is there whatever the PR call did. */
   pushedToGitHub?: boolean
+  /** No task runs this submit, so only submitting again finishes it. */
+  submitNotQueued?: boolean
 }
+
+/** A submit's commits reached this deployment's repository, and nothing will take them further. */
+const SUBMIT_NOT_QUEUED_REASON =
+  "This submit couldn't be queued, so nothing reached GitHub. Nothing is lost."
 
 /** What the PR body records about a submit. */
 export interface SubmissionRecord {
@@ -200,7 +206,7 @@ export async function syncSubmitPr(
   // recorded the number, the next submit would otherwise re-enqueue
   // 'push-and-create-pr' and 422 on GitHub's duplicate-PR check, wedging the
   // branch in 'sync-failed' with no way to recover.
-  return enqueueGitHubTask(ctx, context, {
+  const queued = await enqueueGitHubTask(ctx, context, {
     action: 'push-and-create-or-update-pr',
     payload: {
       branch: context.branch.name,
@@ -218,6 +224,9 @@ export async function syncSubmitPr(
       submittedAt: submission.submittedAt,
     },
   })
+  return queued.syncStatus === 'sync-failed'
+    ? { ...queued, syncFailureReason: SUBMIT_NOT_QUEUED_REASON, submitNotQueued: true }
+    : queued
 }
 
 /**

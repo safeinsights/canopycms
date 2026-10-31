@@ -856,6 +856,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
 
   const reviewFailureId = (kind: ReviewKind, branch: string) => `canopy-${kind}-failed-${branch}`
   const submitRefusedId = (branch: string) => `canopy-submit-refused-${branch}`
+  const deleteRefusedId = (branch: string) => `canopy-delete-refused-${branch}`
 
   /**
    * Why an Approve or Request changes failed. Retry only on an API 5xx, 408, 429 or unsent request;
@@ -1224,12 +1225,14 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 // The API's own 404: the branch is already gone, by an earlier unanswered delete or
                 // another user's.
                 if (!result.ok && result.status === 404 && !isNonApiResponse(result)) {
+                  notifications.hide(deleteRefusedId(branchNameToDelete))
                   notifications.show({ message: 'Branch deleted', color: 'green' })
                   leaveDeletedBranch(branchNameToDelete, listedBefore, await reloadBranches())
                   return
                 }
                 if (!result.ok) throw actionError(result, 'Failed to delete branch')
                 const cleanupWarning = result.data?.cleanupWarning
+                notifications.hide(deleteRefusedId(branchNameToDelete))
                 notifications.show(
                   cleanupWarning
                     ? {
@@ -1241,6 +1244,20 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 )
                 leaveDeletedBranch(branchNameToDelete, listedBefore, await reloadBranches())
               } catch (err) {
+                if (err instanceof RefusedError && err.status === 409) {
+                  // Nothing is lost, and the list says what changed.
+                  const id = deleteRefusedId(branchNameToDelete)
+                  notifications.hide(id)
+                  notifications.show({
+                    id,
+                    message: err.message,
+                    color: 'yellow',
+                    autoClose: false,
+                    withCloseButton: true,
+                  })
+                  await reloadBranches()
+                  return
+                }
                 if (!isUnanswered(err)) {
                   await reportActionFailure(err, 'Failed to delete branch', 'Delete branch')
                   return
@@ -1254,6 +1271,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                   (b) => sanitizeBranchName(b.name) === sanitizeBranchName(branchNameToDelete),
                 )
                 if (fresh && !listed) {
+                  notifications.hide(deleteRefusedId(branchNameToDelete))
                   notifications.show({ message: 'Branch deleted', color: 'green' })
                   leaveDeletedBranch(branchNameToDelete, listedBefore, fresh)
                 } else {
