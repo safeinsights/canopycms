@@ -29,7 +29,7 @@ import {
   splitByUpstreamTracking,
   untrackInIndex,
 } from './canopy-state'
-import { hasPendingHistoryRewrite } from './history-rewrite'
+import { hasPendingHistoryRewrite, recordSeenOnGitHub } from './history-rewrite'
 import { runRebaseCycle, type RebaseContext } from './rebase'
 import { describeMove, type GitHubGatewayHealth } from './github-gateway'
 import { fetchGitHubIntoRemoteGit, pushToGitHub } from './github-transfer'
@@ -452,6 +452,7 @@ async function reconcileTrackedBranches(
           }
         }
         try {
+          await recordSeenOnGitHub(ctx, name, trackedSha)
           await git.raw(['update-ref', '--no-deref', localRef, trackedSha, localSha])
           fastForwarded.push(name)
         } catch (err) {

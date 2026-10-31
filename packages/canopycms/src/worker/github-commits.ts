@@ -158,8 +158,8 @@ export async function bringInGitHubCommits(
   let rewriteResolved = false
   if (args.gitHub !== undefined && gitHubTip !== undefined) {
     // Unreadable means the tip's objects did not reach this clone, which says nothing about GitHub.
-    if (!(await hasCommit(git, tip))) return { kind: 'wait' }
-    const lastSeen = await rewrittenFrom(args, tip, head)
+    if (!(await holdsCommit(git, tip))) return { kind: 'wait' }
+    const lastSeen = await rewrittenFrom(args, tip, head, published)
     if (lastSeen !== null) {
       return (await pushedSinceFetch(args, args.gitHub.fetchedAt))
         ? { kind: 'wait' }
@@ -240,14 +240,19 @@ async function pushedSinceFetch(
 }
 
 /**
- * The commit a rewrite on GitHub removed, or null. Any commit GitHub is known to hold counts: the
- * last tip seen, and the commit a pending rewrite of the worker's own replaced, since GitHub stays
- * there until that push lands. A tip that contains the clone loses nothing the clone holds.
+ * The commit a rewrite on GitHub removed, or null. A commit removed on GitHub stays removed: its
+ * clone and `remote.git` may still hold it, and nothing here may put it back. Any commit GitHub is
+ * known to hold counts: the last tip seen, and the commit a pending rewrite of the worker's own
+ * replaced, since GitHub stays there until that push lands. A tip holding everything the clone and
+ * `remote.git` hold has nothing to restore, whatever the record says. A commit in neither was
+ * never taken in, so `remote.git`'s head has to be part of that test: the clone can lag it for a
+ * cycle, and the fast-forward below would then bring back what GitHub dropped.
  */
 async function rewrittenFrom(
   { git, metaFile }: GitHubCommitsArgs,
   tip: string,
   head: string,
+  published: string | null,
 ): Promise<string | null> {
   const { lastGitHubTip, historyRewrittenFrom } = metaFile.branch
   // The marker first: what is named here must be a commit GitHub really held, and a rewrite's
@@ -255,7 +260,13 @@ async function rewrittenFrom(
   const known = [historyRewrittenFrom, lastGitHubTip].filter(
     (sha): sha is string => sha !== undefined && COMMIT_ID.test(sha),
   )
-  if (known.length === 0 || (await contains(git, tip, head))) return null
+  if (known.length === 0) return null
+  if (
+    (await contains(git, tip, head)) &&
+    (published === null || (await contains(git, tip, published)))
+  ) {
+    return null
+  }
   for (const sha of known) if (await contains(git, tip, sha)) return null
   return known[0]
 }
@@ -368,15 +379,25 @@ async function fastForward(
   if (lockLost()) return { kind: 'wait' }
   if (await changesWhatWasReviewed(ctx, args, from, to)) await returnToReview(ctx, args)
   try {
-    await git.raw(['merge', '--ff-only', '--end-of-options', to])
+    await moveClone(git, branchPath, to)
   } catch (err) {
     if (!/would be overwritten/.test(getErrorMessage(err))) throw err
     workerLog(`  ${branchDir}: local changes overlap commits from GitHub, which wait for a submit`)
     return { kind: 'wait' }
   }
-  await invalidateBranchContentCaches(branchPath)
   workerLog(`  ${branchDir}: brought in commits from GitHub (now at ${to.slice(0, 7)})`)
   return null
+}
+
+/**
+ * Fast-forward the clone to `to`. The caches' markers move after it, as for any bulk mutation, and
+ * before it too: nothing repairs a marker lost after the move, as the next cycle sees a clone in
+ * step, and the earlier bump leaves only a read racing the move able to stamp the old tree.
+ */
+async function moveClone(git: SimpleGit, branchPath: string, to: string): Promise<void> {
+  await invalidateBranchContentCaches(branchPath)
+  await git.raw(['merge', '--ff-only', '--end-of-options', to])
+  await invalidateBranchContentCaches(branchPath)
 }
 
 /**
@@ -446,8 +467,7 @@ export async function mergeIntoBranch(
   if (conflicted.length > 0 && fromGitHub) {
     await enqueueReviewBlockSync(ctx, branchRef, args.metaFile)
   }
-  await git.raw(['merge', '--ff-only', '--end-of-options', sha])
-  await invalidateBranchContentCaches(branchPath)
+  await moveClone(git, branchPath, sha)
   if (fromGitHub) await recordGitHubTip(ctx, args, other)
   workerLog(
     conflicted.length > 0
@@ -457,21 +477,26 @@ export async function mergeIntoBranch(
   return { kind: 'merged' }
 }
 
-async function hasCommit(git: SimpleGit, sha: string): Promise<boolean> {
-  // `--quiet` exits 1 with no output for a missing object, which simple-git resolves.
-  const found = await git
-    .raw(['rev-parse', '--verify', '--quiet', '--end-of-options', `${sha}^{commit}`])
-    .catch(() => '')
+/** A missing commit exits silently, which simple-git resolves empty. Anything else throws. */
+async function holdsCommit(git: SimpleGit, sha: string): Promise<boolean> {
+  const found = await git.raw([
+    'rev-parse',
+    '--verify',
+    '--quiet',
+    '--end-of-options',
+    `${sha}^{commit}`,
+  ])
   return found.trim() !== ''
 }
 
-/** Whether `commit` contains `ancestor`. A commit this clone does not hold counts as no. */
+/**
+ * Whether `commit` contains `ancestor`. A commit this clone does not hold counts as no. Any other
+ * failure throws, since it says nothing about either commit, and the caller's catch retries next
+ * cycle: read as no, it would report a rewrite that never happened.
+ */
 async function contains(git: SimpleGit, commit: string, ancestor: string): Promise<boolean> {
-  try {
-    return (await commitsApart(git, ancestor, commit)).onlyA === 0
-  } catch {
-    return false
-  }
+  if (!(await holdsCommit(git, commit)) || !(await holdsCommit(git, ancestor))) return false
+  return (await commitsApart(git, ancestor, commit)).onlyA === 0
 }
 
 /**
@@ -543,7 +568,7 @@ async function recordKeptVersions(
  * sync from here would strip the comment summary's links. Best-effort: a failure leaves the block
  * until the branch's next sync.
  */
-async function enqueueReviewBlockSync(
+export async function enqueueReviewBlockSync(
   ctx: Pick<GitHubCommitsContext, 'taskDir'>,
   branchRef: string,
   { branch }: BranchMetadataFile,
@@ -576,10 +601,12 @@ async function recordGitHubTip(
   if (gitHub?.tips.get(branchRef) !== tip) return
   if (lastGitHubTip === tip && rewrittenOnGitHub === undefined) return
   await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update(
-    (current) =>
-      current?.branch.name === branchRef
-        ? { branch: { lastGitHubTip: tip, ...rewriteCleared(current.branch) } }
-        : null,
+    (current) => {
+      if (current?.branch.name !== branchRef) return null
+      // A stamp newer than this cycle's fetch is a push that landed since, which GitHub holds.
+      const seen = current.branch.lastGitHubTip === lastGitHubTip ? { lastGitHubTip: tip } : {}
+      return { branch: { ...seen, ...rewriteCleared(current.branch) } }
+    },
     { keepUpdatedAt: true },
   )
 }

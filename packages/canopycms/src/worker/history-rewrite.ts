@@ -313,3 +313,24 @@ export async function hasPendingHistoryRewrite(
     return false
   }
 }
+
+/**
+ * Records that GitHub's `branchName` holds `sha`, in `lastGitHubTip`. It runs before `remote.git`
+ * takes the commit, so `remote.git` never holds a GitHub commit the record doesn't name: a clone
+ * can lag `remote.git` for as long as it stays busy, and once GitHub drops that commit it could not
+ * be told from the branch's own work (github-commits.ts). A branch name with no workspace has no
+ * record, and a directory whose branch.json names another ref is that ref's.
+ */
+export async function recordSeenOnGitHub(
+  ctx: Pick<HistoryRewriteContext, 'contentBranchesPath'>,
+  branchName: string,
+  sha: string,
+): Promise<void> {
+  const branchPath = path.join(ctx.contentBranchesPath, sanitizeBranchName(branchName))
+  const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
+  if (metaFile?.branch.name !== branchName) return
+  await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update(
+    (current) => (current?.branch.name === branchName ? { branch: { lastGitHubTip: sha } } : null),
+    { keepUpdatedAt: true },
+  )
+}

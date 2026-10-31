@@ -43,8 +43,11 @@ export type PullRequestHold = { kind: 'conflicts' } | { kind: 'retargeted'; base
 export type BranchHold =
   | PullRequestHold
   | { kind: 'rewritten' }
-  /** `opened`: a pull request's number is on record, from an earlier submit. */
-  | { kind: 'submit-unfinished'; opened: boolean }
+  /**
+   * `opened`: a pull request's number is on record, from an earlier submit. `notQueued`: no task
+   * ran it, so there's nothing to retry.
+   */
+  | { kind: 'submit-unfinished'; opened: boolean; notQueued?: boolean }
   /** Admins see what to do in System health. */
   | { kind: 'unpublished-at-merge' }
 
@@ -120,8 +123,9 @@ export interface BranchMetadata {
    */
   historyRewrittenFrom?: string
   /**
-   * The newest commit this deployment knows GitHub's branch holds, or will once a queued push of
-   * a rewrite lands: the last one it pushed, took in or published. A tip that no longer contains
+   * The newest commit this deployment has seen on GitHub's branch, or knows it will hold once a
+   * queued push of a rewrite lands: the last one it pushed, took in or published, and any
+   * `remote.git` took from GitHub, whether or not the clone followed. A tip that no longer contains
    * it was rewritten on GitHub, so it is not merged, which could restore what someone removed
    * (worker/github-commits.ts).
    */
@@ -142,6 +146,8 @@ export interface BranchMetadata {
    * submit runs it, so nothing else clears the failed sync while the branch is in review.
    */
   submitUnfinished?: boolean
+  /** The last submit's task couldn't be queued, so only a new submit runs it. Set by each submit. */
+  submitNotQueued?: boolean
   /**
    * The pull request merged before a submit finished, so commits from that submit may not be in
    * the merge. Archiving leaves no retry or new submit, so this stays for an admin until dismissed
