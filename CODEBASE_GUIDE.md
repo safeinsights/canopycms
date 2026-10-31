@@ -659,7 +659,8 @@ Group manager, in `editor/group-manager/`:
 
 Admin UI, in `editor/admin/`, gated only by `Editor.tsx`:
 
-- `SystemHealthPanel.tsx` — Overview, Tasks and Branches tabs over the admin endpoints
+- `SystemHealthPanel.tsx` — Overview, Tasks, Branches tabs over admin endpoints
+- `UnpublishedAtMergeAlert.tsx` — branches merged unfinished
 - `useSystemHealth.tsx` — loads on open, polls every 30 s, exposes the actions
 
 Conflict notices (`FormRenderer`'s `conflictNotice`, `EntryNavCollection.conflictNotice`) are

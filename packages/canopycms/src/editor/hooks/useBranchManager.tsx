@@ -45,7 +45,7 @@ import {
 const BRANCHES_LOAD_FAILED_TOAST_ID = 'canopy-branches-load-failed'
 const BRANCH_OUTCOME_UNKNOWN_TOAST_ID = 'canopy-branch-outcome-unknown'
 
-/** The API's 409: the branch is no longer in the state the action needs, so a retry cannot pass. */
+/** The API's 409: the branch isn't in the state the action needs, so a retry cannot pass. */
 class StaleStatusError extends Error {
   override readonly name = 'StaleStatusError'
 }
@@ -860,7 +860,8 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   /**
    * Why an Approve or Request changes failed. Retry only on an API 5xx, 408, 429 or unsent request;
    * a timeout or gateway 5xx may have landed, so it reloads and says what to check. Other 4xx: a
-   * plain message and a reload. A 409 means the branch left review (see `showLeftReview`).
+   * plain message and a reload. A 409 means the branch left review, or for Approve that its last
+   * submit didn't finish (see `showLeftReview`, which shows the server's reason either way).
    */
   const reportReviewFailure = async (
     err: unknown,

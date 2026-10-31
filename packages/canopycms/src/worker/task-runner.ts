@@ -774,7 +774,7 @@ async function updateBranchMetadataOnFailure(
       const saved = await meta.update((existing) => {
         if (existing?.branch.name !== branch) return null
         // Only the branch's latest submit: an older one running late has no step left to finish.
-        // Nothing to submit means nothing is missing.
+        // Nothing to submit means this submit left nothing out.
         const unfinished =
           !options.unlock &&
           task.action === SUBMIT_ACTION &&

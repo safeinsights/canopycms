@@ -88,7 +88,7 @@ function UnpublishedRow({
             variant="subtle"
             color="gray"
             disabled={dismissing}
-            aria-label={`Keep the warning for ${name}`}
+            aria-label={`Cancel dismissing the warning for ${name}`}
             data-testid={`cancel-dismiss-unpublished-${dirName}`}
             onClick={() => setAsking(false)}
           >
