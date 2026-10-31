@@ -971,6 +971,20 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
       )
     })
 
+    it('flags nothing on an archived branch: nothing to submit means nothing is missing', async () => {
+      await seedMeta({
+        status: 'archived',
+        pullRequestNumber: 12,
+        submittedAt: SUBMIT,
+      })
+
+      await runSubmitTask(await noCommitsBetweenError('main', 'canopycms/prod/feature-x'))
+
+      const meta = await readBranchMeta('canopycms/prod/feature-x')
+      expect(meta.branch.unpublishedAtMerge).toBeUndefined()
+      expect(meta.branch.submitUnfinished).toBeUndefined()
+    })
+
     it('leaves the status alone when the branch already has a PR', async () => {
       await seedMeta({ status: 'submitted', pullRequestNumber: 12, submittedAt: SUBMIT })
 
@@ -1752,6 +1766,19 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
       const after = (await BranchMetadataFileManager.loadOnly(dir()))?.branch
       expect(after?.syncStatus).toBe('sync-failed')
       expect(after?.submitUnfinished).toBeUndefined()
+    })
+
+    it('stops an archived branch from reading as syncing, keeping its flag', async () => {
+      await retrySubmit({
+        status: 'archived',
+        submittedAt,
+        syncStatus: 'pending-sync',
+        unpublishedAtMerge: true,
+      })
+
+      const after = (await BranchMetadataFileManager.loadOnly(dir()))?.branch
+      expect(after?.syncStatus).toBe('synced')
+      expect(after?.unpublishedAtMerge).toBe(true)
     })
 
     it('flags a submit that failed after its branch merged', async () => {

@@ -14,6 +14,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useSWRConfig } from 'swr'
 import { notifications } from '@mantine/notifications'
 import { useApiClient } from '../context'
 import type {
@@ -24,6 +25,7 @@ import type {
 } from '../../api/admin'
 import type { BranchHealthData } from '../../api/admin-branch-health'
 import type { DuplicateIdScan } from '../../branch-health'
+import { BRANCHES_KEY } from '../hooks/useBranchesData'
 
 const POLL_INTERVAL_MS = 30_000
 
@@ -94,6 +96,7 @@ export interface UseSystemHealthReturn {
 
 export function useSystemHealth(options: UseSystemHealthOptions): UseSystemHealthReturn {
   const apiClient = useApiClient()
+  const { mutate } = useSWRConfig()
   const [status, setStatus] = useState<AdminStatusData | null>(null)
   const [statusLoading, setStatusLoading] = useState(false)
   const [isRecentFatalError, setIsRecentFatalError] = useState(false)
@@ -303,12 +306,14 @@ export function useSystemHealth(options: UseSystemHealthOptions): UseSystemHealt
         }
         if (!result.ok) notifications.show({ message: result.error, color: 'yellow' })
         await refresh()
+        // The branch's own "Needs action" comes from the list.
+        await mutate(BRANCHES_KEY)
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to dismiss the warning'
         notifications.show({ message, color: 'red' })
       }
     },
-    [apiClient, refresh],
+    [apiClient, mutate, refresh],
   )
 
   const repairDuplicateIds = useCallback(

@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react'
 
-import { UnpublishedAtMergeAlert } from './UnpublishedAtMergeAlert'
+import { DISMISS_UNPUBLISHED_ATTRIBUTE, UnpublishedAtMergeAlert } from './UnpublishedAtMergeAlert'
 
 const meta: Meta<typeof UnpublishedAtMergeAlert> = {
   title: 'Editor/SystemHealth/UnpublishedAtMergeAlert',
@@ -36,4 +36,12 @@ export const SeveralBranches: Story = {
 export const Narrow: Story = {
   ...SeveralBranches,
   decorators: [(Story) => <div style={{ width: 358 }}>{Story()}</div>],
+}
+
+/** Asking, at phone width: the question and both of its buttons stay inside the alert. */
+export const NarrowAsking: Story = {
+  ...Narrow,
+  play: async ({ canvasElement }) => {
+    canvasElement.querySelector<HTMLElement>(`[${DISMISS_UNPUBLISHED_ATTRIBUTE}]`)?.click()
+  },
 }

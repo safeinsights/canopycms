@@ -616,9 +616,9 @@ describe('SystemHealthPanel', () => {
 
       await userEvent.click(await screen.findByTestId('dismiss-unpublished-feature-a'))
       const confirm = await screen.findByTestId('confirm-dismiss-unpublished-feature-a')
-      expect(screen.getByTestId('unpublished-branch-feature-a').textContent).toContain(
-        "It won't come back.",
-      )
+      const question = screen.getByTestId('unpublished-branch-feature-a')
+      expect(question.textContent).toContain("It won't come back")
+      expect(document.getElementById(confirm.getAttribute('aria-describedby') ?? '')).not.toBeNull()
       expect(document.activeElement).toBe(confirm)
       expect(mockClient.admin.dismissUnpublished).not.toHaveBeenCalled()
 
@@ -654,6 +654,19 @@ describe('SystemHealthPanel', () => {
 
       await waitFor(() =>
         expect(document.activeElement).toBe(screen.getByTestId('dismiss-unpublished-feature-b')),
+      )
+    })
+
+    it('moves focus to the tab once the last row has gone', async () => {
+      listing([merged('feature-a', 'feature/a')])
+      renderPanel()
+
+      await userEvent.click(await screen.findByTestId('dismiss-unpublished-feature-a'))
+      listing([])
+      await userEvent.click(await screen.findByTestId('confirm-dismiss-unpublished-feature-a'))
+
+      await waitFor(() =>
+        expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Overview' })),
       )
     })
 

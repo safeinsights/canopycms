@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { Alert, Anchor, Button, Code, Group, Stack, Text } from '@mantine/core'
 import { IconAlertTriangle } from '@tabler/icons-react'
 import { EDITOR_ACTIONS } from '../copy'
@@ -30,6 +30,7 @@ function UnpublishedRow({
   const dismissRef = useRef<HTMLButtonElement>(null)
   const confirmRef = useRef<HTMLButtonElement>(null)
   const asked = useRef(false)
+  const questionId = useId()
 
   // The button pressed is replaced each way, so focus follows to its counterpart.
   useEffect(() => {
@@ -53,20 +54,30 @@ function UnpublishedRow({
       <Group gap="xs" style={{ minWidth: 0, flex: '1 1 200px' }}>
         <Code style={{ overflowWrap: 'anywhere', minWidth: 0 }}>{name}</Code>
         {pullRequestUrl && (
-          <Anchor href={pullRequestUrl} target="_blank" rel="noopener noreferrer" size="xs">
+          <Anchor
+            href={pullRequestUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            size="xs"
+            c="var(--mantine-color-text)"
+            underline="always"
+          >
             View pull request
           </Anchor>
         )}
       </Group>
       {asking ? (
-        <Group gap={4} wrap="wrap" style={{ flexShrink: 0 }}>
-          <Text size="xs">Dismiss this warning? It won&apos;t come back.</Text>
+        <Group gap={4} style={{ maxWidth: '100%' }}>
+          <Text id={questionId} size="xs">
+            Dismiss this warning? It won&apos;t come back, and the branch can then be deleted.
+          </Text>
           <Button
             ref={confirmRef}
             size="compact-xs"
             variant="default"
             loading={dismissing}
             aria-label={`Dismiss the warning for ${name}`}
+            aria-describedby={questionId}
             data-testid={`confirm-dismiss-unpublished-${dirName}`}
             onClick={() => void dismiss()}
           >
@@ -76,6 +87,8 @@ function UnpublishedRow({
             size="compact-xs"
             variant="subtle"
             color="gray"
+            disabled={dismissing}
+            aria-label={`Keep the warning for ${name}`}
             data-testid={`cancel-dismiss-unpublished-${dirName}`}
             onClick={() => setAsking(false)}
           >
@@ -118,6 +131,8 @@ export function UnpublishedAtMergeAlert({
       color="orange"
       icon={<IconAlertTriangle size={16} />}
       title={`${count} merged with an unfinished submit`}
+      // The default clips focus rings at the edge, and scrolls sideways on Tab.
+      styles={{ message: { overflow: 'visible' } }}
       data-testid="unpublished-at-merge-alert"
     >
       <Stack gap={4}>
@@ -126,9 +141,9 @@ export function UnpublishedAtMergeAlert({
           in the merge. They&apos;re still on this deployment&apos;s copy of the branch.
         </Text>
         <Text size="sm">
-          Open the branch from &quot;{EDITOR_ACTIONS.switchBranch}…&quot;, where it&apos;s
-          read-only, and compare it with the pull request. Make anything that&apos;s missing on a
-          new branch, then use &quot;Dismiss&quot;.
+          Close System health and open the branch from &quot;{EDITOR_ACTIONS.switchBranch}…&quot;,
+          where it&apos;s read-only, then compare it with the pull request. Make anything
+          that&apos;s missing on a new branch, then use &quot;Dismiss&quot;.
         </Text>
         <Stack gap={4} mt={4}>
           {branches.map((branch) => (

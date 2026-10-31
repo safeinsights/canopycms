@@ -7,6 +7,7 @@ import type { BranchHealthData, BranchHealthResponse } from '../../api/admin-bra
 import type { BranchHealthEntry, DuplicateIdScan } from '../../branch-health'
 import { unsafeAsContentId, unsafeAsPhysicalPath } from '../../paths/test-utils'
 import { setupMockApiClient, createApiClientWrapper } from '../hooks/__test__/test-utils'
+import { useBranchesData } from '../hooks/useBranchesData'
 
 // Mock the API client module
 vi.mock('../../api', async () => {
@@ -212,6 +213,25 @@ describe('useSystemHealth', () => {
       color: 'yellow',
     })
     expect(mockClient.admin.branchHealth).toHaveBeenCalled()
+  })
+
+  it('reloads the branch list after a dismissal, for the hold it carried', async () => {
+    const { result } = renderHook(
+      () => {
+        useBranchesData(mockClient)
+        return useSystemHealth({ isOpen: true })
+      },
+      { wrapper },
+    )
+    await waitFor(() => expect(result.current.statusLoading).toBe(false))
+    await waitFor(() => expect(mockClient.branches.list).toHaveBeenCalled())
+    mockClient.branches.list.mockClear()
+
+    await act(async () => {
+      await result.current.dismissUnpublished('foo')
+    })
+
+    expect(mockClient.branches.list).toHaveBeenCalled()
   })
 
   it('polls every 30s while open and stops polling after close', async () => {

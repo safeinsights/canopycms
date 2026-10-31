@@ -663,6 +663,7 @@ export async function updateBranchMetadata(
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
     // A superseded submit synced nothing. A branch taken back to editing waits on no other task
     // and owes no pull request step, so it would read as syncing or failed until its next submit.
+    // An archived one has no next submit, and would read as syncing for good.
     if (result.superseded === true) {
       await meta.saveIf(
         {
@@ -674,9 +675,11 @@ export async function updateBranchMetadata(
         },
         (existing) =>
           existing?.branch.name === branch &&
-          existing.branch.status === 'editing' &&
-          (existing.branch.syncStatus === 'pending-sync' ||
-            existing.branch.submitUnfinished === true),
+          (existing.branch.status === 'editing'
+            ? existing.branch.syncStatus === 'pending-sync' ||
+              existing.branch.submitUnfinished === true
+            : existing.branch.status === 'archived' &&
+              existing.branch.syncStatus === 'pending-sync'),
       )
       return
     }
@@ -771,8 +774,11 @@ async function updateBranchMetadataOnFailure(
       const saved = await meta.update((existing) => {
         if (existing?.branch.name !== branch) return null
         // Only the branch's latest submit: an older one running late has no step left to finish.
+        // Nothing to submit means nothing is missing.
         const unfinished =
-          task.action === SUBMIT_ACTION && existing.branch.submittedAt === submittedAt
+          !options.unlock &&
+          task.action === SUBMIT_ACTION &&
+          existing.branch.submittedAt === submittedAt
         if (!unfinished) return { branch: failed }
         // Merged while this ran: nothing is left to finish it, as buildMergedBranchUpdate records.
         return existing.branch.status === 'archived'
