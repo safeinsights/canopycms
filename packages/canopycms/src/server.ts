@@ -3,7 +3,19 @@
 // versions and module-resolution modes and adopters would otherwise get no hover text. Follow the
 // pattern for new top-level public re-exports (see DEVELOPING.md).
 
-export * from './content-reader'
+/**
+ * The lower-level reader under `CanopyContext.read`: reads one entry from a branch as a user
+ * the caller passes explicitly, checking that user's read access first except in a static
+ * deployment or a build. See README.md, "Advanced: Using createContentReader Directly".
+ */
+export {
+  createContentReader,
+  type ContentReader,
+  type ContentReaderOptions,
+  type ContentReadMeta,
+  type ContentReadResult,
+  type ReadContentInput,
+} from './content-reader'
 export * from './services'
 export * from './build-mode'
 export * from './context'
