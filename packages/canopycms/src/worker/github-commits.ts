@@ -2,6 +2,7 @@ import type { SimpleGit } from 'simple-git'
 
 import {
   BranchMetadataFileManager,
+  awaitsSubmitRetry,
   getBranchMetadataFileManager,
   type BranchMetadataFile,
 } from '../branch-metadata'
@@ -98,10 +99,6 @@ const MAX_LISTED_PATH_LENGTH = 200
 /** Why a push was refused while a rewrite stands (task-runner.ts); editors read it as a failed sync. */
 export const REWRITTEN_PUSH_REFUSAL =
   "This branch was changed on GitHub in a way CanopyCMS can't combine with the work here, so nothing was pushed. Nothing is lost."
-
-/** A failed submit whose pull request step hasn't run; no other task's success clears its failure. */
-export const awaitsSubmitRetry = ({ submitUnfinished, status }: BranchMetadata): boolean =>
-  submitUnfinished === true && (status === 'submitted' || status === 'approved')
 
 /**
  * What clears a rewrite: the flag, and the refusal's text, which would go on saying the work can't

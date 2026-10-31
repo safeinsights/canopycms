@@ -141,6 +141,12 @@ export interface BranchMetadata {
    */
   submitUnfinished?: boolean
   /**
+   * The pull request merged while a submit was unfinished, so commits from that submit may not be
+   * in the merge. Archiving leaves no retry or new submit, so this stays for an admin until
+   * dismissed in System health.
+   */
+  unpublishedAtMerge?: boolean
+  /**
    * What GitHub reports keeps this branch's open pull request from being updated from its base,
    * as of the worker's last read while the branch was in review. Read only while it still is.
    */

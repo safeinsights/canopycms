@@ -36,6 +36,12 @@ export const rewrittenSubmitReason = (isAdmin: boolean): string =>
     ? 'This branch can\'t be submitted until the changes made to it on GitHub are sorted out. See the "Branches" tab in "System health".'
     : "This branch can't be submitted until an admin sorts out the changes made to it on GitHub."
 
+/** Why Approve can't act: what's approved may not be what the pull request holds. */
+export const unfinishedSubmitApproveReason = (isAdmin: boolean): string =>
+  isAdmin
+    ? 'The last submit didn\'t finish, so this branch can\'t be approved yet. Retry the submit from the "Tasks" tab in "System health".'
+    : "The last submit didn't finish, so this branch can't be approved yet. Ask an admin to retry the submit."
+
 /** Why Approve and Request changes can't act: the pull request they act on is gone. */
 export const CLOSED_PULL_REQUEST_REASON =
   'The pull request was closed on GitHub. Use "Withdraw from review", then submit it again to open a new one.'

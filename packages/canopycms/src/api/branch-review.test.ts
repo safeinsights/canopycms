@@ -17,12 +17,19 @@ const mockMetadataSave = vi.fn().mockResolvedValue({
 })
 
 // The status on disk, which a concurrent request can change after the guard read the branch.
-const disk: { status: string | undefined } = { status: 'submitted' }
+const disk: { status: string | undefined; submitUnfinished?: boolean } = { status: 'submitted' }
 
 // `saveIf` decides against the disk status, as the real one does inside its lock.
 const mockSaveIf = vi.fn(
-  async (update: unknown, onlyIf: (existing: { branch: { status?: string } } | null) => boolean) =>
-    onlyIf({ branch: { status: disk.status } }) ? mockMetadataSave(update) : null,
+  async (
+    update: unknown,
+    onlyIf: (
+      existing: { branch: { status?: string; submitUnfinished?: boolean } } | null,
+    ) => boolean,
+  ) =>
+    onlyIf({ branch: { status: disk.status, submitUnfinished: disk.submitUnfinished } })
+      ? mockMetadataSave(update)
+      : null,
 )
 
 const { mockSyncPrComments } = vi.hoisted(() => ({
@@ -43,6 +50,7 @@ vi.mock('../branch-metadata', () => ({
 
 beforeEach(() => {
   disk.status = 'submitted'
+  disk.submitUnfinished = undefined
   mockSyncPrComments.mockReset()
   mockSyncPrComments.mockResolvedValue(undefined)
 })
@@ -528,6 +536,49 @@ describe('branch review api - approveBranch', () => {
     )
     expect(res.status).toBe(409)
     expect(res.error).toBe(error)
+  })
+
+  describe('while a submit is unfinished', () => {
+    const reviewer = {
+      user: { type: 'authenticated' as const, userId: 'r', groups: [RESERVED_GROUPS.REVIEWERS] },
+    }
+
+    it('refuses as a conflict, naming the reason and the way forward', async () => {
+      disk.submitUnfinished = true
+      mockMetadataSave.mockClear()
+
+      const res = await approveBranchHandler(makeCtx(), reviewer, {
+        branch: 'feature/x' as BranchName,
+      })
+
+      expect(res.status).toBe(409)
+      expect(res.error).toContain("last submit didn't finish")
+      expect(res.error).toContain('Ask an admin to retry the submit.')
+      expect(mockMetadataSave).not.toHaveBeenCalled()
+    })
+
+    it('tells an admin where the retry is', async () => {
+      disk.submitUnfinished = true
+
+      const res = await approveBranchHandler(makeCtx(), admin, {
+        branch: 'feature/x' as BranchName,
+      })
+
+      expect(res.status).toBe(409)
+      expect(res.error).toContain('the "Tasks" tab in "System health"')
+    })
+
+    it('says a branch that has left review has left, whatever it still owes', async () => {
+      disk.status = 'editing'
+      disk.submitUnfinished = true
+
+      const res = await approveBranchHandler(makeCtx(), admin, {
+        branch: 'feature/x' as BranchName,
+      })
+
+      expect(res.status).toBe(409)
+      expect(res.error).not.toContain("didn't finish")
+    })
   })
 
   it('approves branch when allowed (admin)', async () => {

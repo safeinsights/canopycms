@@ -352,8 +352,12 @@ export interface BranchMetadataUpdate {
   branch?: Partial<Omit<BranchMetadata, 'createdAt' | 'updatedAt'>>
 }
 
+/** A failed submit whose pull request step hasn't run; no other task's success clears its failure. */
+export const awaitsSubmitRetry = ({ submitUnfinished, status }: BranchMetadata): boolean =>
+  submitUnfinished === true && (status === 'submitted' || status === 'approved')
+
 /**
- * The metadata update for archiving a branch whose PR merged. Shared by the
+ * The metadata update for archiving `branch`, whose PR merged. Shared by the
  * worker's merge-poll (CmsWorker.pollMergeState) and the manual markAsMerged
  * API (api/branch-merge.ts), so both produce identical metadata.
  *
@@ -362,6 +366,7 @@ export interface BranchMetadataUpdate {
  * its recorded PR number and URL survive untouched.
  */
 export function buildMergedBranchUpdate(
+  branch: BranchMetadata,
   now: Date = new Date(),
 ): NonNullable<BranchMetadataUpdate['branch']> {
   return {
@@ -371,6 +376,8 @@ export function buildMergedBranchUpdate(
     // The merge settled every conflict the record named.
     conflictStatus: 'clean',
     conflictFiles: [],
+    submitUnfinished: undefined,
+    ...(awaitsSubmitRetry(branch) ? { unpublishedAtMerge: true } : {}),
   }
 }
 

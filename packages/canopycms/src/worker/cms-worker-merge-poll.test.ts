@@ -115,6 +115,42 @@ describe('CmsWorker.pollMergeState()', () => {
   const readBranchMeta = (branchPath: string) =>
     BranchMetadataFileManager.loadOnly(branchPath).then((f) => f?.branch)
 
+  it('flags commits an unfinished submit may have left out of the merge', async () => {
+    const { internals, octokit } = makePollWorker()
+    const branchPath = await setupBranchMeta('feature-unfinished', {
+      status: 'submitted',
+      pullRequestNumber: 42,
+      syncStatus: 'sync-failed',
+      submitUnfinished: true,
+    })
+    octokit.pulls.get.mockResolvedValue(pullRequest({ merged: true, state: 'closed' }))
+
+    const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
+    await internals.pollMergeState('feature-unfinished', branchPath, metaFile)
+
+    const meta = await readBranchMeta(branchPath)
+    expect(meta?.status).toBe('archived')
+    expect(meta?.unpublishedAtMerge).toBe(true)
+    expect(meta?.submitUnfinished).toBeUndefined()
+  })
+
+  it('reads an unfinished submit fresh, not from the cycle that polled', async () => {
+    const { internals, octokit } = makePollWorker()
+    const branchPath = await setupBranchMeta('feature-late', {
+      status: 'submitted',
+      pullRequestNumber: 42,
+    })
+    const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
+    await getBranchMetadataFileManager(branchPath, contentBranchesPath).save({
+      branch: { submitUnfinished: true },
+    })
+    octokit.pulls.get.mockResolvedValue(pullRequest({ merged: true, state: 'closed' }))
+
+    await internals.pollMergeState('feature-late', branchPath, metaFile)
+
+    expect((await readBranchMeta(branchPath))?.unpublishedAtMerge).toBe(true)
+  })
+
   it('archives the branch when the PR is merged, using GitHub merged_at and preserving PR number/url', async () => {
     const { internals, octokit } = makePollWorker()
     const branchPath = await setupBranchMeta('feature-merged', {
@@ -320,7 +356,7 @@ describe('CmsWorker.pollMergeState()', () => {
     octokit.pulls.get.mockResolvedValue(pullRequest({ merged: true, state: 'closed' }))
 
     const saveSpy = vi
-      .spyOn(BranchMetadataFileManager.prototype, 'saveIf')
+      .spyOn(BranchMetadataFileManager.prototype, 'update')
       .mockRejectedValueOnce(new Error('simulated EFS write failure'))
 
     const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)

@@ -7,7 +7,7 @@ import { UnsavedMark } from './UnsavedMark'
 import { CanopyCMSProvider } from '../theme'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../../paths/test-utils'
 import type { EditorEntry } from '../Editor'
-import type { BranchStatus } from '../../types'
+import type { BranchHold, BranchStatus } from '../../types'
 import { RESERVED_GROUPS } from '../../authorization/helpers'
 
 const Wrapper = ({ children }: { children: React.ReactNode }) => (
@@ -1879,6 +1879,55 @@ describe('EditorHeader - review actions', () => {
     expect(screen.getByTestId('request-changes-button').textContent).toBe('Request changes')
     expect(screen.queryByTestId('withdraw-button')).toBeNull()
     expect(screen.queryByTestId('submit-button')).toBeNull()
+  })
+
+  describe('while a submit is unfinished', () => {
+    const unfinished: BranchHold = { kind: 'submit-unfinished', opened: true }
+
+    it('blocks Approve with its reason, and leaves Request changes open', async () => {
+      const onApprove = vi.fn()
+      const onRequestChanges = vi.fn()
+      renderHeader({
+        ...inReview,
+        userContext: reviewer,
+        branchHold: unfinished,
+        onApprove,
+        onRequestChanges,
+      })
+      const approve = screen.getByTestId('approve-button')
+
+      expect(approve.getAttribute('aria-disabled')).toBe('true')
+      await userEvent.click(approve)
+      expect(onApprove).not.toHaveBeenCalled()
+      act(() => approve.focus())
+      expect((await screen.findByRole('tooltip')).textContent).toContain(
+        'Ask an admin to retry the submit.',
+      )
+
+      const requestChanges = screen.getByTestId('request-changes-button')
+      expect(requestChanges.getAttribute('aria-disabled')).toBeNull()
+      await userEvent.click(requestChanges)
+      expect(onRequestChanges).toHaveBeenCalledTimes(1)
+    })
+
+    it('tells an admin where the retry is', async () => {
+      renderHeader({
+        ...inReview,
+        userContext: { userId: 'adam', groups: [RESERVED_GROUPS.ADMINS] },
+        branchHold: unfinished,
+      })
+
+      act(() => screen.getByTestId('approve-button').focus())
+      expect((await screen.findByRole('tooltip')).textContent).toContain(
+        '"Tasks" tab in "System health"',
+      )
+    })
+
+    it('leaves Approve open for any other hold', () => {
+      renderHeader({ ...inReview, userContext: reviewer, branchHold: { kind: 'conflicts' } })
+
+      expect(screen.getByTestId('approve-button').getAttribute('aria-disabled')).toBeNull()
+    })
   })
 
   it('offers an admin who did not make the branch the same', () => {

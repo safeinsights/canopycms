@@ -88,6 +88,8 @@ export interface UseSystemHealthReturn {
   purgeDir: (dirName: string) => Promise<void>
   repairDir: (dirName: string) => Promise<void>
   markMerged: (branchName: string) => Promise<void>
+  /** Stops listing a branch merged with an unfinished submit. */
+  dismissUnpublished: (dirName: string) => Promise<void>
 }
 
 export function useSystemHealth(options: UseSystemHealthOptions): UseSystemHealthReturn {
@@ -292,6 +294,21 @@ export function useSystemHealth(options: UseSystemHealthOptions): UseSystemHealt
     [apiClient, refresh],
   )
 
+  const dismissUnpublished = useCallback(
+    async (dirName: string) => {
+      try {
+        const result = await apiClient.admin.dismissUnpublished({ dirName })
+        if (!result.ok) throw new Error(result.error || 'Failed to dismiss the warning')
+        notifications.show({ message: 'Warning dismissed', color: 'green' })
+        await refresh()
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to dismiss the warning'
+        notifications.show({ message, color: 'red' })
+      }
+    },
+    [apiClient, refresh],
+  )
+
   const repairDuplicateIds = useCallback(
     async (dirName: string) => {
       try {
@@ -351,5 +368,6 @@ export function useSystemHealth(options: UseSystemHealthOptions): UseSystemHealt
     purgeDir,
     repairDir,
     markMerged,
+    dismissUnpublished,
   }
 }

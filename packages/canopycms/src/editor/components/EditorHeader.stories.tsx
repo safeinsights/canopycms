@@ -383,6 +383,11 @@ const reviewing = {
 /** A reviewer of someone else's submission: Approve and Request changes take the place of Withdraw. */
 export const ReviewerOnSubmitted: Story = { args: reviewing }
 
+/** A reviewer while the last submit is unfinished: Approve is blocked with why, Request changes stays. */
+export const ReviewerOnUnfinishedSubmit: Story = {
+  args: { ...reviewing, branchHold: { kind: 'submit-unfinished', opened: true } },
+}
+
 /** Approved, for its reviewer: only Request changes is left. */
 export const ReviewerOnApproved: Story = {
   args: { ...reviewing, branchStatus: 'approved' },

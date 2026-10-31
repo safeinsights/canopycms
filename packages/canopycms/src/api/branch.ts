@@ -58,6 +58,7 @@ export interface BranchListItem extends Omit<
   | 'lastGitHubTip'
   | 'rewrittenOnGitHub'
   | 'submitUnfinished'
+  | 'unpublishedAtMerge'
   | 'rebaseFailure'
   | 'pullRequestHold'
 > {
@@ -290,6 +291,7 @@ export const toBranchListItem = (
     lastGitHubTip: _tip,
     rewrittenOnGitHub: _rewritten,
     submitUnfinished: _unfinished,
+    unpublishedAtMerge: _unpublished,
     rebaseFailure: _failure,
     pullRequestHold,
     ...listed

@@ -13,7 +13,7 @@ import {
   recordBranchEditor,
   type BranchMetadataFile,
 } from './branch-metadata'
-import type { BranchReview } from './types'
+import type { BranchMetadata, BranchReview } from './types'
 import { ANONYMOUS_USER } from './user'
 import { mockConsole } from './test-utils'
 
@@ -591,9 +591,18 @@ describe('BranchMetadataFileManager', () => {
   })
 
   describe('buildMergedBranchUpdate', () => {
+    const merging: BranchMetadata = {
+      name: 'feature/x',
+      status: 'submitted',
+      access: {},
+      createdBy: 'u1',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    }
+
     it('produces archived/merged metadata with an ISO mergedAt, leaving the name alone', () => {
       const now = new Date('2026-01-01T12:00:00.000Z')
-      const update = buildMergedBranchUpdate(now)
+      const update = buildMergedBranchUpdate(merging, now)
 
       expect(update).toEqual({
         status: 'archived',
@@ -601,12 +610,33 @@ describe('BranchMetadataFileManager', () => {
         mergedAt: '2026-01-01T12:00:00.000Z',
         conflictStatus: 'clean',
         conflictFiles: [],
+        submitUnfinished: undefined,
       })
+    })
+
+    it.each(['submitted', 'approved'] as const)(
+      'records an unfinished submit on a branch %s, as nothing is left to finish it',
+      (status) => {
+        const update = buildMergedBranchUpdate({ ...merging, status, submitUnfinished: true })
+
+        expect(update.unpublishedAtMerge).toBe(true)
+        expect(update.submitUnfinished).toBeUndefined()
+      },
+    )
+
+    it('records none for a branch that owes no pull request step', () => {
+      const update = buildMergedBranchUpdate({
+        ...merging,
+        status: 'editing',
+        submitUnfinished: true,
+      })
+
+      expect(update.unpublishedAtMerge).toBeUndefined()
     })
 
     it('defaults `now` to the current time when omitted', () => {
       const before = Date.now()
-      const update = buildMergedBranchUpdate()
+      const update = buildMergedBranchUpdate(merging)
       const after = Date.now()
 
       expect(update.mergedAt).toEqual(expect.any(String))

@@ -19,7 +19,7 @@ import type { SaveAllProgress } from '../hooks/save-all'
 import { isAdmin, isLockedOutOfBranch, isReviewer } from '../../authorization/helpers'
 import { branchBarStatus, describeBranchLock, type BranchBarStatus } from '../branch-lock'
 import { HOLD_BADGE, branchHoldMessage } from '../branch-status'
-import { EDITOR_ACTIONS, rewrittenSubmitReason } from '../copy'
+import { EDITOR_ACTIONS, rewrittenSubmitReason, unfinishedSubmitApproveReason } from '../copy'
 import { reviewRoleOf, type ReviewRole } from '../../authorization/review-role'
 import { SYSTEM_USER_ID } from '../../system-users'
 import { TopBar } from '../shell/TopBar'
@@ -159,6 +159,7 @@ export function EditorHeader({
     reviewRole,
     savingAll: !!saveAllProgress,
     rewritten: branchHold?.kind === 'rewritten',
+    submitUnfinished: branchHold?.kind === 'submit-unfinished',
   })
   const lock = {
     branchStatus,
@@ -446,6 +447,8 @@ interface WorkflowAction {
   permitted: boolean
   /** Why it can't; empty when it can, or when only a load, a save or a missing branch holds it. */
   reason: string
+  /** Kind 'review': why Approve alone can't act, with Request changes still open. */
+  approveReason?: string
 }
 
 type WorkflowActionInput = Pick<
@@ -457,6 +460,8 @@ type WorkflowActionInput = Pick<
   savingAll: boolean
   /** The worker pushes nothing for the branch, so a submit could only fail later. */
   rewritten: boolean
+  /** The pull request may not hold what would be approved. */
+  submitUnfinished: boolean
 }
 
 /**
@@ -474,6 +479,7 @@ function workflowAction({
   reviewRole,
   savingAll,
   rewritten,
+  submitUnfinished,
 }: WorkflowActionInput): WorkflowAction | null {
   const isSubmitted = branchStatus === 'submitted'
   const isEditing = branchStatus === 'editing'
@@ -497,6 +503,9 @@ function workflowAction({
       blocked: !branchName || busy || savingAll,
       permitted: true,
       reason: savingAll ? 'Wait for Save all to finish.' : busy ? BUSY_REASON : '',
+      approveReason: submitUnfinished
+        ? unfinishedSubmitApproveReason(isAdmin(userContext?.groups ?? []))
+        : undefined,
     }
   }
 
@@ -608,7 +617,7 @@ function ReviewButtons({
   const approve = (
     <ReviewButton
       buttonRef={approveRef}
-      action={action}
+      action={approveAction(action)}
       color="brand"
       testId="approve-button"
       label={EDITOR_ACTIONS.approve}
@@ -653,6 +662,10 @@ function ReviewButtons({
     </Button.Group>
   )
 }
+
+/** The review action as Approve reads it, which has a block of its own. */
+const approveAction = (action: WorkflowAction): WorkflowAction =>
+  action.approveReason ? { ...action, blocked: true, reason: action.approveReason } : action
 
 /** One review button, blocked as a whole with the action's reason. */
 function ReviewButton({
@@ -781,7 +794,7 @@ function WorkflowCaret({
             {action.offersApprove && includeApprove && (
               <ReasonedMenuItem
                 data-testid="approve-menu-item"
-                blockedReason={blockedReason}
+                blockedReason={action.approveReason ?? blockedReason}
                 onClick={() => onApprove(returnToCaret)}
               >
                 {EDITOR_ACTIONS.approve}

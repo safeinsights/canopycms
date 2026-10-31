@@ -12,6 +12,7 @@ import { isNoCommitsBetweenError, isRefAlreadyGoneError } from '../github-servic
 import {
   BranchMetadataCorruptError,
   BranchMetadataFileManager,
+  awaitsSubmitRetry,
   getBranchMetadataFileManager,
 } from '../branch-metadata'
 import { sanitizeBranchName, RESERVED_SETTINGS_BRANCH_PREFIX } from '../paths/branch-name'
@@ -29,7 +30,7 @@ import { pushToGitHub } from './github-transfer'
 import { clearHistoryRewrittenMarker, readPublishedSha } from './history-rewrite'
 import { writeWorkerStatus } from '../task-queue/worker-status'
 import { SYNC_PR_COMMENTS_ACTION, refreshCommentsBlock, renderPrCommentsBody } from '../pr-comments'
-import { REWRITTEN_PUSH_REFUSAL, awaitsSubmitRetry } from './github-commits'
+import { REWRITTEN_PUSH_REFUSAL } from './github-commits'
 import { workerLog, workerLogError, workerLogWarn } from './log'
 import { assertSharedRepoConfig } from './shared-repo-git'
 import type { WorkerContext } from './worker-context'

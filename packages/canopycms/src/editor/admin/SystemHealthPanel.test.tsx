@@ -563,6 +563,68 @@ describe('SystemHealthPanel', () => {
     })
   })
 
+  describe('Overview tab: branches merged with an unfinished submit', () => {
+    const merged = (dirName: string, name: string): BranchHealthEntry => ({
+      dirName,
+      kind: 'healthy',
+      branch: {
+        name,
+        status: 'archived',
+        access: {},
+        createdBy: 'user-1',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-02T00:00:00.000Z',
+        unpublishedAtMerge: true,
+      },
+    })
+    const listing = (entries: BranchHealthEntry[]) =>
+      mockClient.admin.branchHealth.mockResolvedValue(
+        mockSuccess({ entries, generatedAt: '2026-01-01T00:00:00.000Z' }),
+      )
+
+    it('names each branch and says what may be missing', async () => {
+      listing([merged('feature-a', 'feature/a'), merged('feature-b', 'feature/b')])
+      renderPanel()
+
+      const alert = await screen.findByTestId('unpublished-at-merge-alert')
+      expect(alert.textContent).toContain('2 branches merged with an unfinished submit')
+      expect(alert.textContent).toContain('may not be in the merge')
+      expect(alert.textContent).toContain('feature/a')
+      expect(alert.textContent).toContain('feature/b')
+    })
+
+    it('shows a name from GitHub as exactly what it is', async () => {
+      listing([merged('evil', 'evil\u202Ename')])
+      renderPanel()
+
+      const alert = await screen.findByTestId('unpublished-at-merge-alert')
+      expect(alert.textContent).toContain('evil\\u{202e}name')
+    })
+
+    it('stays silent for a branch with nothing to report', async () => {
+      const clean = merged('clean', 'clean')
+      listing([{ ...clean, branch: { ...clean.branch!, unpublishedAtMerge: undefined } }])
+      renderPanel()
+
+      await waitFor(() => expect(mockClient.admin.branchHealth).toHaveBeenCalled())
+      expect(screen.queryByTestId('unpublished-at-merge-alert')).toBeNull()
+    })
+
+    it('dismisses by directory, after asking', async () => {
+      listing([merged('feature-a', 'feature/a')])
+      renderPanel()
+
+      await userEvent.click(await screen.findByTestId('dismiss-unpublished-feature-a'))
+
+      const { modals } = await import('@mantine/modals')
+      const options = vi.mocked(modals.openConfirmModal).mock.calls.at(-1)?.[0]
+      expect(options?.labels).toEqual({ confirm: 'Dismiss', cancel: 'Cancel' })
+      await waitFor(() =>
+        expect(mockClient.admin.dismissUnpublished).toHaveBeenCalledWith({ dirName: 'feature-a' }),
+      )
+    })
+  })
+
   describe('Overview tab: base branch held for an editor deploy', () => {
     const hold: BaseSchemaHold = {
       since: '2026-01-01T00:20:00.000Z',

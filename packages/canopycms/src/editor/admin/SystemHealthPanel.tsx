@@ -221,6 +221,56 @@ function BaseHoldAlert({ hold }: { hold: BaseSchemaHold }) {
 }
 
 /**
+ * Branches merged while a submit was unfinished, listed until an admin dismisses them or purges
+ * the directory: archiving leaves no retry or new submit to finish it. Names are shown escaped, as
+ * in {@link DivergedBranchesAlert}.
+ */
+function UnpublishedAtMergeAlert({
+  branches,
+  onDismiss,
+}: {
+  branches: readonly { dirName: string; name: string }[]
+  onDismiss: (dirName: string, name: string) => void
+}) {
+  return (
+    <Alert
+      color="orange"
+      icon={<IconAlertTriangle size={16} />}
+      title={`${plural(branches.length, 'branch')} merged with an unfinished submit`}
+      data-testid="unpublished-at-merge-alert"
+    >
+      <Stack gap={4}>
+        <Text size="sm">
+          Each branch below was merged on GitHub while its last submit was unfinished, so commits
+          from that submit may not be in the merge. They&apos;re still on this deployment&apos;s
+          copy of the branch.
+        </Text>
+        <Text size="sm">
+          Open the branch in the editor, where it&apos;s read-only, and compare it with what merged.
+          Make anything that&apos;s missing on a new branch, then dismiss this.
+        </Text>
+        <Stack gap={4} mt={4}>
+          {branches.map(({ dirName, name }) => (
+            <Group key={dirName} gap="xs" wrap="nowrap" justify="space-between">
+              <Code style={{ overflowWrap: 'anywhere' }}>{escapeForLog(name)}</Code>
+              <Button
+                size="compact-xs"
+                variant="default"
+                aria-label={`Dismiss the warning for ${escapeForLog(name)}`}
+                data-testid={`dismiss-unpublished-${dirName}`}
+                onClick={() => onDismiss(dirName, name)}
+              >
+                Dismiss
+              </Button>
+            </Group>
+          ))}
+        </Stack>
+      </Stack>
+    </Alert>
+  )
+}
+
+/**
  * Branches the worker left diverged from GitHub because this deployment's copy holds editor work
  * (worker/git-sync.ts's `reconcileTrackedBranches`). A copy holding none is moved to GitHub's tip
  * and never listed. Names come from GitHub and are attacker-chosen, so each is shown escaped.
@@ -546,6 +596,25 @@ export function SystemHealthPanel({ opened, onClose, returnFocusTo }: SystemHeal
 
 function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
   const { status, statusLoading, isRecentFatalError, error, refresh } = health
+  const unpublished = (health.branchHealth?.entries ?? []).flatMap((entry) =>
+    entry.kind === 'healthy' && entry.branch?.unpublishedAtMerge
+      ? [{ dirName: entry.dirName, name: entry.branch.name }]
+      : [],
+  )
+
+  const handleDismissUnpublished = (dirName: string, name: string) => {
+    openConfirm({
+      title: 'Dismiss this warning',
+      children: (
+        <Text size="sm">
+          <Code>{escapeForLog(name)}</Code> stops being listed here. Nothing on the branch changes.
+        </Text>
+      ),
+      labels: { confirm: 'Dismiss', cancel: 'Cancel' },
+      confirmProps: { color: 'brand' },
+      onConfirm: () => health.dismissUnpublished(dirName),
+    })
+  }
 
   if (!status && statusLoading) {
     return (
@@ -661,6 +730,10 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
       />
 
       {status.workerStatus?.baseHold && <BaseHoldAlert hold={status.workerStatus.baseHold} />}
+
+      {unpublished.length > 0 && (
+        <UnpublishedAtMergeAlert branches={unpublished} onDismiss={handleDismissUnpublished} />
+      )}
 
       {status.statusReadError && (
         <Text size="xs" c="orange">

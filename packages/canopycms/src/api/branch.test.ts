@@ -1940,6 +1940,9 @@ describe('toBranchListItem', () => {
       opened: false,
     })
     expect(item).not.toHaveProperty('submitUnfinished')
+    expect(listed({ status: 'archived', unpublishedAtMerge: true })).not.toHaveProperty(
+      'unpublishedAtMerge',
+    )
     expect(listed({ status: 'editing', submitUnfinished: true }).hold).toBeUndefined()
     expect(
       listed({ status: 'submitted', submitUnfinished: true, rewrittenOnGitHub: 'a'.repeat(40) })

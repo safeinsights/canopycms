@@ -185,6 +185,11 @@ describe('useSystemHealth', () => {
     // it's the same endpoint editors' Submit/Withdraw actions use, widened by
     // PR-A4 to also accept the 'approved' status.
     expect(mockClient.workflow.markMerged).toHaveBeenCalledWith({ branch: 'foo' })
+
+    await act(async () => {
+      await result.current.dismissUnpublished('foo')
+    })
+    expect(mockClient.admin.dismissUnpublished).toHaveBeenCalledWith({ dirName: 'foo' })
   })
 
   it('polls every 30s while open and stops polling after close', async () => {

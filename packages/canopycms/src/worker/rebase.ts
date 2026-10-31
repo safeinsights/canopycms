@@ -158,11 +158,15 @@ export async function pollMergeState(
       const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
       // GitHub's actual merge time when available; buildMergedBranchUpdate
       // falls back to "now" when merged_at is absent.
-      const saved = await meta.saveIf(
-        {
-          branch: buildMergedBranchUpdate(data.merged_at ? new Date(data.merged_at) : undefined),
-        },
-        sameBranch,
+      const saved = await meta.update((current) =>
+        current !== null && sameBranch(current)
+          ? {
+              branch: buildMergedBranchUpdate(
+                current.branch,
+                data.merged_at ? new Date(data.merged_at) : undefined,
+              ),
+            }
+          : null,
       )
       if (saved) workerLog(`  PR #${prNumber} for ${branchDir} is merged -> archived`)
       return null
