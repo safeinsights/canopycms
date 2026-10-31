@@ -23,7 +23,11 @@ import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import type { BranchMetadata } from '../types'
 import type { BranchPolicyDescription } from './branch-policy'
 import { CmsWorker } from './cms-worker'
-import { REWRITTEN_PUSH_REFUSAL, type GitHubSnapshot } from './github-commits'
+import {
+  REWRITTEN_PUSH_REFUSAL,
+  SEEN_COMMIT_GONE_PUSH_REFUSAL,
+  type GitHubSnapshot,
+} from './github-commits'
 import type { RebaseSummary } from './rebase'
 
 const BASE = 'main'
@@ -1005,6 +1009,21 @@ describe('bringing commits made on GitHub into a branch clone', () => {
         expect(meta?.rewrittenOnGitHub).toBeUndefined()
       })
     }
+
+    it('clears the text a push refused before any sync saw the rewrite', async () => {
+      await writeMeta(s, {
+        syncStatus: 'sync-failed',
+        syncFailureReason: SEEN_COMMIT_GONE_PUSH_REFUSAL,
+        rewrittenOnGitHub: flag,
+        lastGitHubTip: await s.head(),
+      })
+
+      await cycle(s)
+
+      const meta = await readMeta(s)
+      expect(meta?.rewrittenOnGitHub).toBeUndefined()
+      expect(meta?.syncFailureReason).toBeUndefined()
+    })
 
     describe("the failed sync a rewrite's refused push left", () => {
       const refused = {

@@ -2053,13 +2053,34 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     const worker = makePushWorker()
     ;(worker as unknown as { running: boolean }).running = true
 
-    await enqueueTask(taskDir, {
+    const id = await enqueueTask(taskDir, {
       action: 'push-branch',
       payload: { branch: 'canopycms/prod/feature-unread' },
     })
     await worker.processTaskQueue()
 
     await expect(fixtureHasBranch('canopycms/prod/feature-unread')).resolves.toBe(false)
+    // The Tasks tab shows this, which has no use for where the workspace lives.
+    const { error } = (await getTask(taskDir, id)) ?? {}
+    expect(error).toBeTruthy()
+    expect(error).not.toContain(branchPath)
+  })
+
+  it('pushes past a record that is not a commit ID, which says nothing of GitHub', async () => {
+    const name = 'canopycms/prod/feature-garbled'
+    await seedBranchInRemoteGit(name, 'hello')
+    const branchPath = path.join(contentBranchesPath, 'canopycms-prod-feature-garbled')
+    await fs.mkdir(branchPath, { recursive: true })
+    await getBranchMetadataFileManager(branchPath, contentBranchesPath).save({
+      branch: { name, lastGitHubTip: 'not a commit' },
+    })
+    const worker = makePushWorker()
+    ;(worker as unknown as { running: boolean }).running = true
+
+    await enqueueTask(taskDir, { action: 'push-branch', payload: { branch: name } })
+    await worker.processTaskQueue()
+
+    await expect(fixtureHasBranch(name)).resolves.toBe(true)
   })
 
   it('puts off a push while GitHub no longer holds the last commit seen there', async () => {

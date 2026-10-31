@@ -274,6 +274,18 @@ describe('pushes', () => {
       expect(await tip(`refs/heads/${branch}`)).toBe(kept)
     })
 
+    it('forces nothing: a push that would not fast-forward the tip is still rejected', async () => {
+      const { kept, seen } = await published()
+      await git('--git-dir', remoteGitPath, 'update-ref', `refs/heads/${branch}`, kept)
+      await commitAndPush(remoteGitPath, `refs/heads/${branch}`, 'other.txt')
+
+      await expect(pushVia(gateway({}), branch, undefined, seen)).rejects.toBeInstanceOf(
+        GitHubPushError,
+      )
+
+      expect(await tip(`refs/heads/${branch}`)).toBe(seen)
+    })
+
     it('pushes while GitHub still holds it', async () => {
       const { seen } = await published()
       const next = await commitAndPush(remoteGitPath, `refs/heads/${branch}`, 'editor.txt')
