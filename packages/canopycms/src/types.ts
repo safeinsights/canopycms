@@ -43,7 +43,7 @@ export type PullRequestHold = { kind: 'conflicts' } | { kind: 'retargeted'; base
 export type BranchHold =
   | PullRequestHold
   | { kind: 'rewritten' }
-  /** `opened`: a pull request exists, from an earlier submit. */
+  /** `opened`: a pull request's number is on record, from an earlier submit. */
   | { kind: 'submit-unfinished'; opened: boolean }
 
 export interface BranchMetadata {

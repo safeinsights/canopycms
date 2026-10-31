@@ -883,9 +883,10 @@ async function recordPullRequestHold(
  * is work still on its way, and only for the base GitHub measured against: a pull request someone
  * retargeted would gain another branch's commits under its approval. A branch with a failed sync
  * is left for its next submit or a retry of the task, as a push here would clear that failure with
- * the PR still stale. A conflict leaves the branch as it is; withdrawing it brings the rebase loop's rule into play,
- * where an editor can see the result. A failure goes in the cycle's summary only: the step before
- * this one clears `rebaseFailure` each cycle, so recording it would reset its age every time.
+ * the PR still stale. A conflict leaves the branch as it is; withdrawing it brings the rebase
+ * loop's rule into play, where an editor can see the result. A failure goes in the cycle's summary
+ * only: the step before this one clears `rebaseFailure` each cycle, so recording it would reset its
+ * age every time.
  * Never throws.
  */
 async function updateBranchInReviewFromBase(

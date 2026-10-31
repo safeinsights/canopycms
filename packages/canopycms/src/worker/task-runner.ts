@@ -660,8 +660,8 @@ export async function updateBranchMetadata(
 
   try {
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
-    // A superseded submit synced nothing. A branch taken back to editing waits on no other task,
-    // and would read as syncing until its next submit.
+    // A superseded submit synced nothing. A branch taken back to editing waits on no other task
+    // and owes no pull request step, so it would read as syncing or failed until its next submit.
     if (result.superseded === true) {
       await meta.saveIf(
         {
@@ -769,7 +769,7 @@ async function updateBranchMetadataOnFailure(
     if (!unlocked) {
       const saved = await meta.update((existing) => {
         if (existing?.branch.name !== branch) return null
-        // Only the submit the branch is in: an older one running late has no step left to finish.
+        // Only the branch's latest submit: an older one running late has no step left to finish.
         const unfinished =
           task.action === SUBMIT_ACTION && existing.branch.submittedAt === submittedAt
         return { branch: unfinished ? { ...failed, submitUnfinished: true } : failed }

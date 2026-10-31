@@ -599,16 +599,17 @@ Field components, in `editor/fields/`:
 
 Components, in `editor/components/`:
 
+- `TooltipDetail.tsx` — tooltip detail keyboards can reach
 - `EditorHeader.tsx` — branch bar: `BranchPill`, status, "N unsaved", `SaveAllButton.tsx`, Submit/Withdraw (split narrow); toast: `SaveAllResult`
 - `EntryHeader.tsx` — above the panes: `EntryBreadcrumb`, `EntrySaveButton.tsx`
-- `UnsavedMark.tsx` — the unsaved dot
-- `EditorRail.tsx` — the rail's buttons and Settings menu
+- `UnsavedMark.tsx` — unsaved dot
+- `EditorRail.tsx` — rail buttons, Settings menu
 - `EntryCreateModal.tsx` / `RenameEntryModal.tsx` / `ConfirmDeleteModal.tsx` — entry lifecycle dialogs
 - `BranchesDrawer.tsx` / `EntryChangesDrawer.tsx` — Branches, changes drawers
 - `StagedChangesDrawer.tsx` — unsaved-changes drawer
-- `UserBadge.tsx` — user avatar and name
-- `BranchAccessList.tsx` — a branch card's access list
-- `ReasonedMenuItem.tsx` — a blocked menu item and why
+- `UserBadge.tsx` — avatar and name
+- `BranchAccessList.tsx` — a card's access list
+- `ReasonedMenuItem.tsx` — blocked menu item, with why
 - `UndoToastMessage.tsx` — the undo toast for Remove or Clear
 - `RetryToastMessage.tsx` — a failed load's toast body with Retry
 - `PreviewLinkToast.tsx` — preview-link toast

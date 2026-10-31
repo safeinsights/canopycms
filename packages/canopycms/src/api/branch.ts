@@ -283,7 +283,7 @@ export const toBranchListItem = (
   const protection = getBranchWriteProtection(config, branch.name, branch.baseBranch, branch.status)
   // `review` names the reviewer, whom the editor has no use for. `keptOverGitHub` and
   // `rebaseFailure` can name files, which a viewer's path rules can hide; System Health reads
-  // failures from the admin endpoint. The other two are the worker's.
+  // failures from the admin endpoint. The others are the worker's.
   const {
     review: _review,
     keptOverGitHub: _kept,
