@@ -7,7 +7,7 @@
 <!-- migration
 area: Branches
 action: None
-row: Approve blocked on an unfinished submit; merged branches flagged to admins
+row: Approve blocked and merges flagged on an unfinished submit
 -->
 
 **What changed.** Approve is disabled while a branch's last submit is unfinished, with the reason beside it, and the API refuses it with a 409, because what's approved may not be what the pull request holds. Request changes stays open.
