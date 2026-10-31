@@ -452,7 +452,7 @@ async function reconcileTrackedBranches(
           }
         }
         try {
-          await recordSeenOnGitHub(ctx, name, trackedSha)
+          if (name !== ctx.baseBranch) await recordSeenOnGitHub(ctx, name, trackedSha)
           await git.raw(['update-ref', '--no-deref', localRef, trackedSha, localSha])
           fastForwarded.push(name)
         } catch (err) {

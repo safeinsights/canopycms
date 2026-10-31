@@ -1661,7 +1661,11 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     const dir = () => path.join(contentBranchesPath, 'canopycms-prod-feature-retried')
     const submittedAt = '2026-10-01T00:00:00.000Z'
 
-    const retrySubmit = async (live: Record<string, unknown>, requeuedFrom?: string) => {
+    const retrySubmit = async (
+      live: Record<string, unknown>,
+      requeuedFrom?: string,
+      gateway?: (seam: GitHubGateway) => void,
+    ) => {
       await seedBranchInRemoteGit(branch, 'hello')
       await fs.mkdir(dir(), { recursive: true })
       await getBranchMetadataFileManager(dir(), contentBranchesPath).save({
@@ -1669,6 +1673,7 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
       })
       const worker = makePushWorker()
       ;(worker as unknown as { running: boolean }).running = true
+      gateway?.((worker as unknown as { github(): GitHubGateway }).github())
       const id = await enqueueTask(taskDir, {
         action: 'push-and-create-or-update-pr',
         payload: {
@@ -1808,6 +1813,14 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
         expect(after?.unpublishedAtMerge).toBe(true)
       })
 
+      it("records no pull request opened as its branch merged, keeping the merged one's", async () => {
+        await firstRun({ status: 'submitted', submittedAt }, async () => {
+          await metadata().save({ branch: { status: 'archived' } })
+        })
+
+        expect((await read())?.pullRequestNumber).toBe(12)
+      })
+
       it('opens nothing for a branch that merged before this submit was recorded', async () => {
         await firstRun({ status: 'archived', submittedAt: '2026-09-01T00:00:00.000Z' })
 
@@ -1887,18 +1900,24 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     })
 
     it('sends an approved branch back to review when its submit fails, clearing the verdict', async () => {
-      await retrySubmit({
-        status: 'approved',
-        submittedAt,
-        review: { state: 'approved', by: { userId: 'r' }, at: submittedAt },
-        rewrittenOnGitHub: 'a'.repeat(40),
-      })
+      await retrySubmit(
+        {
+          status: 'approved',
+          submittedAt,
+          review: { state: 'approved', by: { userId: 'r' }, at: submittedAt },
+          rewrittenOnGitHub: 'a'.repeat(40),
+        },
+        undefined,
+        // The same pass of the queue runs the sync, which stops at a pull request no longer open.
+        (github) => {
+          vi.spyOn(github, 'getPullRequest').mockResolvedValue({ state: 'closed' } as never)
+        },
+      )
 
       const after = (await BranchMetadataFileManager.loadOnly(dir()))?.branch
       expect(after?.status).toBe('submitted')
       expect(after?.review).toBeUndefined()
       expect(after?.submitUnfinished).toBe(true)
-      // The same pass of the queue picks it up, whatever the fixture's GitHub answers.
       const ran = [
         ...(await listTasks(taskDir, 'completed')),
         ...(await listTasks(taskDir, 'failed')),
@@ -1964,8 +1983,10 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
         expect(after?.updatedAt).toBe(seededAt)
       })
 
-      it('clears a failed push, which it finishes', async () => {
-        expect((await push({}))?.syncStatus).toBe('synced')
+      it('clears a failed push, which it finishes, as bookkeeping rather than an edit', async () => {
+        const after = await push({})
+        expect(after?.syncStatus).toBe('synced')
+        expect(after?.updatedAt).toBe(seededAt)
       })
 
       it('clears a branch back in editing, which owes no pull request step', async () => {
@@ -2014,6 +2035,37 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     expect(task?.retryAfter).toBeDefined()
     const meta = await BranchMetadataFileManager.loadOnly(branchPath)
     expect(meta?.branch.syncStatus).not.toBe('sync-failed')
+  })
+
+  it('puts off a push while GitHub no longer holds the last commit seen there', async () => {
+    const name = 'canopycms/prod/feature-reset'
+    await seedBranchInGitHubFixture(name, 'kept')
+    const kept = await shaOf(githubFixture, `refs/heads/${name}`)
+    const remote = simpleGit({ baseDir: remoteGitPath, config: ['safe.bareRepository=all'] })
+    await remote.raw(['fetch', githubFixture, `refs/heads/${name}:refs/heads/${name}`])
+    const scratch = path.join(tmpDir, 'scratch-reset')
+    await simpleGit().clone(remoteGitPath, scratch, ['--branch', name])
+    const work = simpleGit({ baseDir: scratch })
+    await work.addConfig('user.name', 'Test Bot')
+    await work.addConfig('user.email', 'test@canopycms.test')
+    await fs.writeFile(path.join(scratch, 'leak.txt'), 'secret\n')
+    await work.add(['.'])
+    await work.commit('leak')
+    const removed = (await work.revparse(['HEAD'])).trim()
+    await work.raw(['push', 'origin', `${name}:${name}`])
+    const branchPath = path.join(contentBranchesPath, 'canopycms-prod-feature-reset')
+    await fs.mkdir(branchPath, { recursive: true })
+    await getBranchMetadataFileManager(branchPath, contentBranchesPath).save({
+      branch: { name, lastGitHubTip: removed },
+    })
+    const worker = makePushWorker()
+    ;(worker as unknown as { running: boolean }).running = true
+
+    const id = await enqueueTask(taskDir, { action: 'push-branch', payload: { branch: name } })
+    await worker.processTaskQueue()
+
+    await expect(shaOf(githubFixture, `refs/heads/${name}`)).resolves.toBe(kept)
+    expect((await getTask(taskDir, id))?.status).toBe('pending')
   })
 
   it('fails a push-branch task once its retries are spent, and records the reason on branch metadata', async () => {

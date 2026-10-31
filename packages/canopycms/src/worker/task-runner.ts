@@ -30,7 +30,7 @@ import { pushToGitHub } from './github-transfer'
 import { clearHistoryRewrittenMarker, readPublishedSha } from './history-rewrite'
 import { writeWorkerStatus } from '../task-queue/worker-status'
 import { SYNC_PR_COMMENTS_ACTION, refreshCommentsBlock, renderPrCommentsBody } from '../pr-comments'
-import { REWRITTEN_PUSH_REFUSAL, enqueueReviewBlockSync } from './github-commits'
+import { COMMIT_ID, REWRITTEN_PUSH_REFUSAL, enqueueReviewBlockSync } from './github-commits'
 import { workerLog, workerLogError, workerLogWarn } from './log'
 import { assertSharedRepoConfig } from './shared-repo-git'
 import type { WorkerContext } from './worker-context'
@@ -694,39 +694,48 @@ export async function updateBranchMetadata(
       return
     }
     let found = false
-    await meta.update((existing) => {
-      if (existing?.branch.name !== branch) return null
-      found = true
-      const updates: Record<string, unknown> =
-        isOlderSubmit(task, existing.branch.submittedAt) ||
-        (task.action !== SUBMIT_ACTION && awaitsSubmitRetry(existing.branch))
-          ? {}
-          : {
-              syncStatus: 'synced',
-              // save()'s merge only overwrites keys present in this update, so a prior
-              // syncFailureReason would survive this successful sync forever unless
-              // cleared explicitly (same pattern as rebaseFailure elsewhere).
-              syncFailureReason: undefined,
-              submitUnfinished: undefined,
-            }
-      if (result.prUrl) updates.pullRequestUrl = result.prUrl
-      if (result.prNumber) {
-        updates.pullRequestNumber = result.prNumber
-        // As soon as the PR exists the field reads 'open', rather than staying
-        // absent until the next poll cycle observes it. Exception: the git-sync
-        // loop may have archived this branch (PR merged/closed) while the task
-        // was in flight, and a late completion must not downgrade that terminal
-        // state back to 'open'.
-        const terminal =
-          existing.branch.status === 'archived' ||
-          existing.branch.pullRequestState === 'merged' ||
-          existing.branch.pullRequestState === 'closed'
-        if (!terminal) {
-          updates.pullRequestState = 'open'
+    // Only a submit is an edit an editor made. Anything else is bookkeeping.
+    await meta.update(
+      (existing) => {
+        if (existing?.branch.name !== branch) return null
+        found = true
+        const updates: Record<string, unknown> =
+          isOlderSubmit(task, existing.branch.submittedAt) ||
+          (task.action !== SUBMIT_ACTION && awaitsSubmitRetry(existing.branch))
+            ? {}
+            : {
+                syncStatus: 'synced',
+                // save()'s merge only overwrites keys present in this update, so a prior
+                // syncFailureReason would survive this successful sync forever unless
+                // cleared explicitly (same pattern as rebaseFailure elsewhere).
+                syncFailureReason: undefined,
+                submitUnfinished: undefined,
+              }
+        // A pull request opened as the branch merged is not this branch's, whose record is the merge.
+        const archived = existing.branch.status === 'archived'
+        if (archived && result.prNumber) {
+          workerLogWarn(`Not recording pull request #${result.prNumber} on merged ${branch}`)
         }
-      }
-      return Object.keys(updates).length > 0 ? { branch: updates } : null
-    })
+        if (result.prUrl && !archived) updates.pullRequestUrl = result.prUrl
+        if (result.prNumber && !archived) {
+          updates.pullRequestNumber = result.prNumber
+          // As soon as the PR exists the field reads 'open', rather than staying
+          // absent until the next poll cycle observes it. Exception: the git-sync
+          // loop may have archived this branch (PR merged/closed) while the task
+          // was in flight, and a late completion must not downgrade that terminal
+          // state back to 'open'.
+          const terminal =
+            existing.branch.status === 'archived' ||
+            existing.branch.pullRequestState === 'merged' ||
+            existing.branch.pullRequestState === 'closed'
+          if (!terminal) {
+            updates.pullRequestState = 'open'
+          }
+        }
+        return Object.keys(updates).length > 0 ? { branch: updates } : null
+      },
+      { keepUpdatedAt: task.action !== SUBMIT_ACTION },
+    )
     if (!found) noMetadataToRecord(branch, `${task.action} outcome`)
   } catch (err) {
     workerLogError(
@@ -874,6 +883,7 @@ export async function pushBranchToGitHub(
   const branchPath = ctx.branchWorkspacePath(branch)
   const metaFile = await BranchMetadataFileManager.loadOnly(branchPath).catch(() => null)
   const marker = metaFile?.branch.historyRewrittenFrom
+  const lastSeen = metaFile?.branch.lastGitHubTip
   // github-commits.ts recorded it: this push would restore what someone removed from GitHub.
   if (metaFile?.branch.rewrittenOnGitHub !== undefined) {
     workerLogWarn(
@@ -898,6 +908,10 @@ export async function pushBranchToGitHub(
       {
         branch,
         lease: marker,
+        // A pending rewrite's stamp names the commit this push is taking to GitHub.
+        ...(marker === undefined && lastSeen !== undefined && COMMIT_ID.test(lastSeen)
+          ? { seen: lastSeen }
+          : {}),
         prerequisiteBranches: [branch, ctx.baseBranch],
       },
       readSha,
@@ -907,6 +921,8 @@ export async function pushBranchToGitHub(
     // A retry can never make the branch not protected.
     if (err instanceof RefusedPushError) throw new PermanentTaskError(err.message)
     if (!(err instanceof GitHubPushError)) throw err
+    // The next sync sees why, and records the rewrite if that's what it was.
+    if (err.kind === 'seen-commit-gone') throw new GitHubMovedTaskError(err.message)
     throwIfWorkflowRefusal(branch, err.message)
     // A refused lease was already retried plain, and that retry rejected too: only a
     // non-fast-forward then means the branch has genuinely diverged.

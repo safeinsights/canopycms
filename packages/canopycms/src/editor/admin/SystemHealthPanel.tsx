@@ -1309,7 +1309,9 @@ function BranchHealthRow({
               preLine
               detail={syncFailedDetail(
                 b.syncFailureReason,
-                hold?.kind !== 'rewritten' && b.status !== 'archived' && !b.submitNotQueued,
+                hold?.kind !== 'rewritten' &&
+                  b.status !== 'archived' &&
+                  !(b.submitUnfinished && b.submitNotQueued),
               )}
             >
               <Badge color="red" variant="light">

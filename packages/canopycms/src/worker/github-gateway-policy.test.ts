@@ -31,6 +31,7 @@ import {
   createLocalGitHubGateway,
   type GitHubGateway,
   type LocalGitHubGatewayOptions,
+  GitHubPushError,
 } from './github-gateway'
 import { GitHubTransientError, RefusedPushError } from './github-mirror'
 import { pushToGitHub } from './github-transfer'
@@ -114,10 +115,10 @@ function gateway(
 }
 
 /** Push remote.git's `branch` as the worker does, optionally under a lease. */
-function pushVia(github: GitHubGateway, branch: string, lease?: string) {
+function pushVia(github: GitHubGateway, branch: string, lease?: string, seen?: string) {
   return pushToGitHub(
     { github: () => github, remoteGitPath, taskTimeoutMs: 30_000 },
-    { branch, lease, prerequisiteBranches: [branch, 'main'] },
+    { branch, lease, ...(seen ? { seen } : {}), prerequisiteBranches: [branch, 'main'] },
     async () => git('--git-dir', remoteGitPath, 'rev-parse', `refs/heads/${branch}`),
   )
 }
@@ -216,6 +217,62 @@ describe('pushes', () => {
     await pushVia(gateway({ protectedBranches: ['*-prod'] }), 'canopycms-settings-prod')
 
     expect(await tip('refs/heads/canopycms-settings-prod')).toBe(sha)
+  })
+
+  describe('a commit last seen on GitHub', () => {
+    const branch = 'canopycms/prod/feature'
+    /** A branch on GitHub at `kept` then `seen`, as a reset on GitHub would find it. */
+    const published = async () => {
+      const kept = await onMain(branch)
+      await git('--git-dir', remoteGitPath, 'push', '-q', githubPath, `${branch}:${branch}`)
+      const seen = await commitAndPush(remoteGitPath, `refs/heads/${branch}`, 'leak.txt')
+      await git('--git-dir', remoteGitPath, 'push', '-q', githubPath, `${branch}:${branch}`)
+      return { kept, seen }
+    }
+
+    it('refuses a push a reset on GitHub would let fast-forward, leaving GitHub as it is', async () => {
+      const { kept, seen } = await published()
+      await git('--git-dir', githubPath, 'update-ref', `refs/heads/${branch}`, kept)
+      await commitAndPush(remoteGitPath, `refs/heads/${branch}`, 'editor.txt')
+
+      const caught = await pushVia(gateway({}), branch, undefined, seen).catch(
+        (err: unknown) => err,
+      )
+
+      expect(caught).toBeInstanceOf(GitHubPushError)
+      expect((caught as GitHubPushError).kind).toBe('seen-commit-gone')
+      expect(await tip(`refs/heads/${branch}`)).toBe(kept)
+    })
+
+    it('pushes while GitHub still holds it', async () => {
+      const { seen } = await published()
+      const next = await commitAndPush(remoteGitPath, `refs/heads/${branch}`, 'editor.txt')
+
+      await pushVia(gateway({}), branch, undefined, seen)
+
+      expect(await tip(`refs/heads/${branch}`)).toBe(next)
+    })
+
+    it('refuses for a commit GitHub never had, which its branch cannot hold', async () => {
+      const { kept } = await published()
+      const next = await commitAndPush(remoteGitPath, `refs/heads/${branch}`, 'editor.txt')
+
+      const caught = await pushVia(gateway({}), branch, undefined, 'e'.repeat(40)).catch(
+        (err: unknown) => err,
+      )
+
+      expect((caught as GitHubPushError).kind).toBe('seen-commit-gone')
+      expect(next).not.toBe(kept)
+    })
+
+    it('leaves a branch deleted on GitHub to the push that recreates it', async () => {
+      const { seen } = await published()
+      await git('--git-dir', githubPath, 'update-ref', '-d', `refs/heads/${branch}`)
+
+      await pushVia(gateway({}), branch, undefined, seen)
+
+      expect(await tip(`refs/heads/${branch}`)).toBe(seen)
+    })
   })
 
   it('pushes a settings branch plainly, and refuses it under a lease', async () => {

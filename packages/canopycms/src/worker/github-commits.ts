@@ -93,7 +93,7 @@ export interface GitHubCommitsArgs {
   lockLost: () => boolean
 }
 
-const COMMIT_ID = /^[0-9a-f]{40}([0-9a-f]{24})?$/
+export const COMMIT_ID = /^[0-9a-f]{40}([0-9a-f]{24})?$/
 const MAX_LISTED_PATH_LENGTH = 200
 
 /** Why a push was refused while a rewrite stands (task-runner.ts); editors read it as a failed sync. */
@@ -184,6 +184,11 @@ export async function bringInGitHubCommits(
   if (tip !== head) {
     const { onlyA, onlyB } = await commitsApart(git, head, tip)
     if (onlyB > 0 && onlyA === 0) {
+      // Reconcile didn't take this tip in. The clone stays level with `remote.git`, or the next
+      // force-push would find a commit in the clone that neither the record nor `remote.git` names.
+      if (gitHubTip !== undefined && published !== null && published !== tip) {
+        return { kind: 'wait' }
+      }
       const stopped = await fastForward(ctx, args, head, tip)
       if (stopped) return stopped
       head = tip
@@ -255,9 +260,19 @@ async function rewrittenFrom(
   published: string | null,
 ): Promise<string | null> {
   const { lastGitHubTip, historyRewrittenFrom } = metaFile.branch
+  // A branch with no record yet: a `remote.git` head the clone lags, diverged from GitHub, can only
+  // be a commit reconcile took in before a force-push, as this worker makes no such commit there.
+  const unrecorded =
+    lastGitHubTip === undefined &&
+    published !== null &&
+    published !== head &&
+    (await contains(git, published, head)) &&
+    !(await contains(git, published, tip))
+      ? published
+      : undefined
   // The marker first: what is named here must be a commit GitHub really held, and a rewrite's
   // stamp may not have reached it yet.
-  const known = [historyRewrittenFrom, lastGitHubTip].filter(
+  const known = [historyRewrittenFrom, lastGitHubTip ?? unrecorded].filter(
     (sha): sha is string => sha !== undefined && COMMIT_ID.test(sha),
   )
   if (known.length === 0) return null
@@ -268,6 +283,10 @@ async function rewrittenFrom(
     return null
   }
   for (const sha of known) if (await contains(git, tip, sha)) return null
+  // Git says a commit is missing when a pack it lives in can't be read, so only a full read of the
+  // tip's history makes "not contained" an answer.
+  const walked = await git.raw(['rev-list', '--count', '--end-of-options', tip])
+  if (walked.trim() === '') throw new Error(`No answer reading the history of ${tip}`)
   return known[0]
 }
 
@@ -477,16 +496,20 @@ export async function mergeIntoBranch(
   return { kind: 'merged' }
 }
 
-/** A missing commit exits silently, which simple-git resolves empty. Anything else throws. */
+/**
+ * Whether this clone holds `sha`. Git's own message is the only proof of absence: a killed `git`
+ * answers nothing at all, which simple-git resolves empty, and that throws.
+ */
 async function holdsCommit(git: SimpleGit, sha: string): Promise<boolean> {
-  const found = await git.raw([
-    'rev-parse',
-    '--verify',
-    '--quiet',
-    '--end-of-options',
-    `${sha}^{commit}`,
-  ])
-  return found.trim() !== ''
+  let found: string
+  try {
+    found = await git.raw(['rev-parse', '--verify', '--end-of-options', `${sha}^{commit}`])
+  } catch (err) {
+    if (/Needed a single revision/.test(getErrorMessage(err))) return false
+    throw err
+  }
+  if (found.trim() === '') throw new Error(`No answer looking for ${sha}`)
+  return true
 }
 
 /**

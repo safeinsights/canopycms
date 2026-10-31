@@ -1696,6 +1696,38 @@ describe('SystemHealthPanel', () => {
       expect((await screen.findByRole('tooltip')).textContent).toMatch(/moved on GitHub/)
     })
 
+    it('tells an admin no task stands behind a submit that was never queued', async () => {
+      mockClient.admin.branchHealth.mockResolvedValueOnce(
+        mockSuccess({
+          entries: [
+            {
+              dirName: 'feature-d',
+              kind: 'healthy',
+              branch: {
+                name: 'feature-d',
+                status: 'submitted' as const,
+                access: {},
+                createdBy: 'user-1',
+                createdAt: '2026-01-01T00:00:00.000Z',
+                updatedAt: '2026-01-02T00:00:00.000Z',
+                syncStatus: 'sync-failed' as const,
+                submitUnfinished: true,
+                submitNotQueued: true,
+              },
+            },
+          ],
+          generatedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      )
+
+      renderPanel()
+      await userEvent.click(screen.getByText('Branches'))
+      await waitFor(() => expect(screen.getByText('feature-d')).toBeTruthy())
+
+      expect(document.body.textContent).toContain('Its editor needs to withdraw it from review')
+      expect(document.body.textContent).not.toContain('Retry the submit')
+    })
+
     it.each([
       ['an archived branch, which has nothing left to finish', { status: 'archived' as const }],
       [

@@ -940,6 +940,12 @@ export class MirrorSession {
     return usable
   }
 
+  /** Whether `tip`'s history holds `commit`. One the mirror doesn't hold, GitHub's heads don't. */
+  async historyHolds(tip: string, commit: string): Promise<boolean> {
+    if ((await this.objectTypes([commit])).get(commit) !== 'commit') return false
+    return this.allReachable([commit], [tip])
+  }
+
   /**
    * Whether every one of `commits` is reachable from one of `tips`, in ONE walk: rev-list fed the
    * commits and a `^<tip>` per tip lists what the tips do not reach, so empty output means all

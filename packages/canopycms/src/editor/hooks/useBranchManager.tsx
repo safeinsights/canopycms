@@ -856,6 +856,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
 
   const reviewFailureId = (kind: ReviewKind, branch: string) => `canopy-${kind}-failed-${branch}`
   const submitRefusedId = (branch: string) => `canopy-submit-refused-${branch}`
+  const deleteRefusedId = (branch: string) => `canopy-delete-refused-${branch}`
 
   /**
    * Why an Approve or Request changes failed. Retry only on an API 5xx, 408, 429 or unsent request;
@@ -1230,6 +1231,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 }
                 if (!result.ok) throw actionError(result, 'Failed to delete branch')
                 const cleanupWarning = result.data?.cleanupWarning
+                notifications.hide(deleteRefusedId(branchNameToDelete))
                 notifications.show(
                   cleanupWarning
                     ? {
@@ -1242,8 +1244,11 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 leaveDeletedBranch(branchNameToDelete, listedBefore, await reloadBranches())
               } catch (err) {
                 if (err instanceof RefusedError && err.status === 409) {
-                  // The branch moved on: nothing is lost, and the list says why.
+                  // Nothing is lost, and the list says what changed.
+                  const id = deleteRefusedId(branchNameToDelete)
+                  notifications.hide(id)
                   notifications.show({
+                    id,
                     message: err.message,
                     color: 'yellow',
                     autoClose: false,

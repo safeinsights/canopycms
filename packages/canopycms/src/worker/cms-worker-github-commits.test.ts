@@ -1214,6 +1214,53 @@ describe('bringing commits made on GitHub into a branch clone', () => {
     expect(await queued(s, 'push-branch')).toEqual([])
   })
 
+  it('leaves a branch as it is when a git call dies with no answer', async () => {
+    await s.commit({ 'editor.txt': 'v2\n' }, 'resubmitted')
+    await s.clone.raw(['push', 'origin', `${BRANCH}:${BRANCH}`])
+    await s.moveGitHubOnly({ 'fix.txt': 'fix\n' })
+    const lastSeen = 'e'.repeat(40)
+    await writeMeta(s, { lastGitHubTip: lastSeen })
+    // simple-git resolves empty on a killed git, so this is one with nothing on stderr.
+    const proto = Object.getPrototypeOf(s.clone) as { raw(args: string[]): Promise<string> }
+    const raw = proto.raw
+    const killed = vi.spyOn(proto, 'raw').mockImplementation(function (
+      this: SimpleGit,
+      args: string[],
+    ) {
+      if (args[0] === 'rev-parse' && args.at(-1)?.startsWith(lastSeen)) return Promise.resolve('')
+      return raw.call(this, args)
+    })
+
+    const summary = await cycle(s)
+    killed.mockRestore()
+
+    expect(summary.failed.map((f) => f.branch)).toEqual([BRANCH])
+    expect((await readMeta(s))?.rewrittenOnGitHub).toBeUndefined()
+  })
+
+  it('takes the first force-push it sees on an unrecorded branch for what it is', async () => {
+    const kept = await s.head()
+    const removed = await s.commitOnGitHub({ 'leak.txt': 'secret\n' })
+    await writeMeta(s)
+    await s.forcePushOnGitHub({ 'rewritten.txt': 'rewritten\n' })
+
+    await cycle(s)
+
+    expect(await s.head()).toBe(kept)
+    expect((await readMeta(s))?.rewrittenOnGitHub).toBe(removed)
+    expect(await queued(s, 'push-branch')).toEqual([])
+  })
+
+  it('stays level with remote.git when reconcile left it behind this tip', async () => {
+    const before = await s.head()
+    await s.moveGitHubOnly({ 'fix.txt': 'fix\n' })
+
+    const summary = await cycle(s)
+
+    expect(summary.failed).toEqual([])
+    expect(await s.head()).toBe(before)
+  })
+
   it('moves the schema marker off a tree a rebase abandoned', async () => {
     const read = async () => {
       const result = await readResourceGeneration(s.branchPath, SCHEMA_GENERATION_RESOURCE)

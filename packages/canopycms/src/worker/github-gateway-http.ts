@@ -968,6 +968,7 @@ class GitHubGatewayClient implements GitHubGateway {
       branch: request.branch,
       sha: request.sha,
       ...(request.lease === undefined ? {} : { lease: request.lease }),
+      ...(request.seen === undefined ? {} : { seen: request.seen }),
       prerequisites: [...request.prerequisites],
       bundle: bundle !== undefined,
     })

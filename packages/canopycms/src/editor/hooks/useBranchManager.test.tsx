@@ -1020,10 +1020,18 @@ describe('useBranchManager', () => {
     expect(mockClient.branches.list).toHaveBeenCalled()
     expect(notifications.show).toHaveBeenCalledWith(
       expect.objectContaining({
+        id: expect.stringContaining(mockBranches[1].name),
         message: 'Ask an admin to check it before deleting it.',
         color: 'yellow',
       }),
     )
+
+    mockClient.branches.delete.mockResolvedValueOnce({ ok: true, status: 200 })
+    await act(async () => {
+      await result.current.handleDelete(mockBranches[1].name)
+    })
+
+    expect(notifications.hide).toHaveBeenCalledWith(expect.stringContaining(mockBranches[1].name))
   })
 
   describe('confirmation dialog copy', () => {
