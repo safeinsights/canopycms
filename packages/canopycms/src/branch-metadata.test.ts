@@ -624,6 +624,28 @@ describe('BranchMetadataFileManager', () => {
       },
     )
 
+    it('records a submit still on its way, which is superseded once the branch is archived', () => {
+      const update = buildMergedBranchUpdate({ ...merging, syncStatus: 'pending-sync' })
+
+      expect(update.unpublishedAtMerge).toBe(true)
+    })
+
+    it('records none for a branch in review whose sync has finished', () => {
+      const update = buildMergedBranchUpdate({ ...merging, syncStatus: 'synced' })
+
+      expect(update.unpublishedAtMerge).toBeUndefined()
+    })
+
+    it('records none for a branch out of review with a sync on its way', () => {
+      const update = buildMergedBranchUpdate({
+        ...merging,
+        status: 'editing',
+        syncStatus: 'pending-sync',
+      })
+
+      expect(update.unpublishedAtMerge).toBeUndefined()
+    })
+
     it('records none for a branch that owes no pull request step', () => {
       const update = buildMergedBranchUpdate({
         ...merging,

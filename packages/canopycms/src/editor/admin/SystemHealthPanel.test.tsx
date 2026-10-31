@@ -610,18 +610,71 @@ describe('SystemHealthPanel', () => {
       expect(screen.queryByTestId('unpublished-at-merge-alert')).toBeNull()
     })
 
-    it('dismisses by directory, after asking', async () => {
+    it('asks in the row, not in a second modal, and dismisses by directory', async () => {
       listing([merged('feature-a', 'feature/a')])
       renderPanel()
 
       await userEvent.click(await screen.findByTestId('dismiss-unpublished-feature-a'))
+      const confirm = await screen.findByTestId('confirm-dismiss-unpublished-feature-a')
+      expect(screen.getByTestId('unpublished-branch-feature-a').textContent).toContain(
+        "It won't come back.",
+      )
+      expect(document.activeElement).toBe(confirm)
+      expect(mockClient.admin.dismissUnpublished).not.toHaveBeenCalled()
 
-      const { modals } = await import('@mantine/modals')
-      const options = vi.mocked(modals.openConfirmModal).mock.calls.at(-1)?.[0]
-      expect(options?.labels).toEqual({ confirm: 'Dismiss', cancel: 'Cancel' })
+      await userEvent.click(confirm)
+
       await waitFor(() =>
         expect(mockClient.admin.dismissUnpublished).toHaveBeenCalledWith({ dirName: 'feature-a' }),
       )
+      const { modals } = await import('@mantine/modals')
+      expect(vi.mocked(modals.openConfirmModal)).not.toHaveBeenCalled()
+    })
+
+    it('returns focus to Dismiss on Cancel', async () => {
+      listing([merged('feature-a', 'feature/a')])
+      renderPanel()
+
+      await userEvent.click(await screen.findByTestId('dismiss-unpublished-feature-a'))
+      await userEvent.click(await screen.findByTestId('cancel-dismiss-unpublished-feature-a'))
+
+      await waitFor(() =>
+        expect(document.activeElement).toBe(screen.getByTestId('dismiss-unpublished-feature-a')),
+      )
+      expect(mockClient.admin.dismissUnpublished).not.toHaveBeenCalled()
+    })
+
+    it('moves focus to the next row once a row has gone', async () => {
+      listing([merged('feature-a', 'feature/a'), merged('feature-b', 'feature/b')])
+      renderPanel()
+
+      await userEvent.click(await screen.findByTestId('dismiss-unpublished-feature-a'))
+      listing([merged('feature-b', 'feature/b')])
+      await userEvent.click(await screen.findByTestId('confirm-dismiss-unpublished-feature-a'))
+
+      await waitFor(() =>
+        expect(document.activeElement).toBe(screen.getByTestId('dismiss-unpublished-feature-b')),
+      )
+    })
+
+    it('links to the pull request where there is one', async () => {
+      const entry = merged('feature-a', 'feature/a')
+      listing([
+        { ...entry, branch: { ...entry.branch!, pullRequestUrl: 'https://github.com/o/r/pull/1' } },
+      ])
+      renderPanel()
+
+      const link = await screen.findByRole('link', { name: 'View pull request' })
+      expect(link.getAttribute('href')).toBe('https://github.com/o/r/pull/1')
+    })
+
+    it('marks the branch on the "Branches" tab too', async () => {
+      listing([merged('feature-a', 'feature/a')])
+      renderPanel()
+
+      await userEvent.click(screen.getByText('Branches'))
+
+      expect((await screen.findByTestId('held-pr-feature-a')).textContent).toBe('Needs action')
     })
   })
 

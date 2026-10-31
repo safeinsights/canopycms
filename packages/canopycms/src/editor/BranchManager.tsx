@@ -95,6 +95,8 @@ export interface BranchSummary {
    * instead of re-deriving `status === 'editing' && !isProtected`.
    */
   submitBlocked?: boolean
+  /** Server-computed: the API refuses Approve, as the last submit didn't finish. */
+  approveBlocked?: boolean
 }
 
 export interface UserContext {
@@ -191,8 +193,8 @@ export const getBranchPermissions = (
   // accepts approved too.
   const reviewsOthers = (userIsAdmin || userIsReviewer) && !userIsCreator && !branch.isProtected
   const prLive = branch.pullRequestState !== 'closed'
-  const submitFinished = branch.hold?.kind !== 'submit-unfinished'
-  const canApprove = reviewsOthers && branch.status === 'submitted' && prLive && submitFinished
+  const canApprove =
+    reviewsOthers && branch.status === 'submitted' && prLive && !branch.approveBlocked
   const canRequestChanges =
     reviewsOthers && (branch.status === 'submitted' || branch.status === 'approved') && prLive
 
@@ -647,7 +649,9 @@ const BranchCard: React.FC<BranchCardProps> = ({
                       blockedReason={
                         b.status === 'submitted' || b.status === 'approved'
                           ? 'This branch is in review. Withdraw it from review before deleting it.'
-                          : undefined
+                          : b.hold?.kind === 'unpublished-at-merge' && !userIsAdmin
+                            ? 'This branch may hold changes that never reached GitHub. Ask an admin to check it before deleting it.'
+                            : undefined
                       }
                       onClick={() => onDelete?.(b.name)}
                     >

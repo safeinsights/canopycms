@@ -88,6 +88,8 @@ export interface EditorHeaderProps {
   branchReadOnly?: boolean
   /** What holds the branch (api/branch.ts). */
   branchHold?: BranchHold
+  /** The server refuses Approve on this branch. */
+  branchApproveBlocked?: boolean
   /** Server-computed: content writes are rejected on this branch; see `branchLockState`. */
   branchWriteBlocked?: boolean
   /** No branch details yet: the fail-closed lock defaults are guesses the status doesn't name. */
@@ -132,6 +134,7 @@ export function EditorHeader({
   branchServerProtected,
   branchReadOnly = false,
   branchHold,
+  branchApproveBlocked = false,
   branchWriteBlocked = false,
   branchLoading = false,
   branchPending = false,
@@ -159,7 +162,7 @@ export function EditorHeader({
     reviewRole,
     savingAll: !!saveAllProgress,
     rewritten: branchHold?.kind === 'rewritten',
-    submitUnfinished: branchHold?.kind === 'submit-unfinished',
+    approveBlocked: branchApproveBlocked,
   })
   const lock = {
     branchStatus,
@@ -169,6 +172,7 @@ export function EditorHeader({
     branchMissing,
     reviewing: workflow?.kind === 'review',
     pullRequestClosed: reviewRole === 'reviewing-closed',
+    approveBlocked: branchApproveBlocked,
   }
   const branchLockReason = describeBranchLock(lock)
   const status = branchBarStatus({ ...lock, isProtected: branchServerProtected })
@@ -461,7 +465,7 @@ type WorkflowActionInput = Pick<
   /** The worker pushes nothing for the branch, so a submit could only fail later. */
   rewritten: boolean
   /** The pull request may not hold what would be approved. */
-  submitUnfinished: boolean
+  approveBlocked: boolean
 }
 
 /**
@@ -479,7 +483,7 @@ function workflowAction({
   reviewRole,
   savingAll,
   rewritten,
-  submitUnfinished,
+  approveBlocked,
 }: WorkflowActionInput): WorkflowAction | null {
   const isSubmitted = branchStatus === 'submitted'
   const isEditing = branchStatus === 'editing'
@@ -503,7 +507,7 @@ function workflowAction({
       blocked: !branchName || busy || savingAll,
       permitted: true,
       reason: savingAll ? 'Wait for Save all to finish.' : busy ? BUSY_REASON : '',
-      approveReason: submitUnfinished
+      approveReason: approveBlocked
         ? unfinishedSubmitApproveReason(isAdmin(userContext?.groups ?? []))
         : undefined,
     }
@@ -587,7 +591,8 @@ function WorkflowButton({
 
 /**
  * Approve (leading) and Request changes. Below `md`, Approve is a split button whose caret holds
- * Request changes; with nothing to approve, Request changes stands alone.
+ * Request changes, the other way round while Approve is blocked, so the lead is what can act; with
+ * nothing to approve, Request changes stands alone.
  */
 function ReviewButtons({
   action,
@@ -606,9 +611,10 @@ function ReviewButtons({
   const approveEl = useRef<HTMLButtonElement>(null)
   const requestChangesEl = useRef<HTMLButtonElement>(null)
   const approveRef = useMergedRef(approveEl, action.offersApprove ? controlRef : undefined)
+  const requestChangesLeads = !action.offersApprove || (narrow && !!action.approveReason)
   const requestChangesRef = useMergedRef(
     requestChangesEl,
-    action.offersApprove ? (narrow ? undefined : secondaryRef) : controlRef,
+    requestChangesLeads ? controlRef : narrow ? undefined : secondaryRef,
   )
   // Each returns focus to its own button while that is mounted, else to the control left.
   const approveReturn = () => (approveEl.current?.isConnected ? approveEl.current : returnFocusTo())
@@ -648,15 +654,16 @@ function ReviewButtons({
       style={{ flexShrink: 0 }}
       renderRoot={(props) => <div {...props} role="group" aria-label="Review controls" />}
     >
-      {approve}
+      {requestChangesLeads ? requestChanges : approve}
       <WorkflowCaret
         {...rest}
         action={action}
         onApprove={onApprove}
         onRequestChanges={onRequestChanges}
         returnFocusTo={returnFocusTo}
-        includeApprove={false}
-        color="brand"
+        includeApprove={requestChangesLeads}
+        includeRequestChanges={!requestChangesLeads}
+        color={requestChangesLeads ? 'orange' : 'brand'}
         controlRef={secondaryRef}
       />
     </Button.Group>
@@ -740,7 +747,7 @@ function SubmitOrWithdrawButton({
 
 /**
  * The workflow action's caret below `md`, on Save all or the way forward or, for a review, beside
- * Approve. `includeApprove` is false there, where Approve is already a button.
+ * the action that leads, which `includeApprove` or `includeRequestChanges` leaves out.
  */
 function WorkflowCaret({
   action,
@@ -751,10 +758,12 @@ function WorkflowCaret({
   controlRef,
   returnFocusTo,
   includeApprove = true,
+  includeRequestChanges = true,
   color,
 }: Omit<WorkflowControlProps, 'controlRef'> & {
   controlRef?: Ref<HTMLButtonElement>
   includeApprove?: boolean
+  includeRequestChanges?: boolean
   /** Matches the button it sits beside. */
   color?: string
 }) {
@@ -762,8 +771,8 @@ function WorkflowCaret({
   const caretRef = useMergedRef(caret, controlRef)
   const menuFocus = useMenuItemFocusReturn(caret)
   const withdraw = action.kind === 'withdraw'
-  // Beside Approve it holds only Request changes, and a dialog it opens returns to the caret.
-  const reviewCaret = action.kind === 'review' && !includeApprove
+  // Beside the lead it holds one action, and a dialog it opens returns to the caret.
+  const reviewCaret = action.kind === 'review' && !(includeApprove && includeRequestChanges)
   const caretLabel = reviewCaret ? 'More review actions' : 'Branch actions'
   const returnToCaret = reviewCaret
     ? () => (caret.current?.isConnected ? caret.current : returnFocusTo())
@@ -800,13 +809,15 @@ function WorkflowCaret({
                 {EDITOR_ACTIONS.approve}
               </ReasonedMenuItem>
             )}
-            <ReasonedMenuItem
-              data-testid="request-changes-menu-item"
-              blockedReason={blockedReason}
-              onClick={() => onRequestChanges(returnToCaret)}
-            >
-              {EDITOR_ACTIONS.requestChanges}
-            </ReasonedMenuItem>
+            {includeRequestChanges && (
+              <ReasonedMenuItem
+                data-testid="request-changes-menu-item"
+                blockedReason={blockedReason}
+                onClick={() => onRequestChanges(returnToCaret)}
+              >
+                {EDITOR_ACTIONS.requestChanges}
+              </ReasonedMenuItem>
+            )}
           </>
         ) : (
           <ReasonedMenuItem

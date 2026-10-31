@@ -1754,6 +1754,30 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
       expect(after?.submitUnfinished).toBeUndefined()
     })
 
+    it('flags a submit that failed after its branch merged', async () => {
+      await seedBranchInRemoteGit(branch, 'hello')
+      await fs.mkdir(dir(), { recursive: true })
+      await getBranchMetadataFileManager(dir(), contentBranchesPath).save({
+        branch: {
+          name: branch,
+          status: 'archived',
+          submittedAt,
+          rewrittenOnGitHub: 'a'.repeat(40),
+        },
+      })
+      const worker = makePushWorker()
+      ;(worker as unknown as { running: boolean }).running = true
+      await enqueueTask(taskDir, {
+        action: 'push-and-create-or-update-pr',
+        payload: { branch, title: 't', body: '', baseBranch: 'main', submittedAt },
+      })
+      await worker.processTaskQueue()
+
+      const after = (await BranchMetadataFileManager.loadOnly(dir()))?.branch
+      expect(after?.unpublishedAtMerge).toBe(true)
+      expect(after?.submitUnfinished).toBeUndefined()
+    })
+
     it('records a submit that failed as unfinished', async () => {
       await retrySubmit({ status: 'submitted', submittedAt, rewrittenOnGitHub: 'a'.repeat(40) })
 

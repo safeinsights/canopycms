@@ -284,6 +284,7 @@ const showRequestChangesConfirmation = (
 const showDeleteConfirmation = (
   branchName: string,
   pr: BranchPullRequest,
+  mayHoldUnpublished: boolean,
   onConfirm: () => Promise<void>,
   onDismiss: () => void,
 ) => {
@@ -295,6 +296,9 @@ const showDeleteConfirmation = (
       ? `Delete its branch on GitHub too, which closes pull request #${pr.pullRequestNumber} if it is still open`
       : undefined,
     'Discard any unsaved or unmerged changes',
+    mayHoldUnpublished
+      ? 'Remove the only copy of any changes that never reached GitHub, and the warning about them'
+      : undefined,
   ].filter((b): b is string => b !== undefined)
   openConfirm({
     title: 'Delete branch',
@@ -429,6 +433,8 @@ interface BranchSummary {
    * re-derive the status/protection halves client-side.
    */
   submitBlocked: boolean
+  /** Server-computed: the API refuses Approve, as the last submit didn't finish. */
+  approveBlocked?: boolean
 }
 
 export interface UseBranchManagerOptions {
@@ -653,6 +659,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         conflictStatus: b.conflictStatus,
         conflictFiles: b.conflictFiles,
         hold: b.hold,
+        approveBlocked: b.approveBlocked,
         commentCount: unresolvedCount,
         // Fail CLOSED (`?? true`): these flags are optional on the wire (see
         // BranchListItem's doc comment in api/branch.ts) so a version-skewed
@@ -1205,6 +1212,8 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
           showDeleteConfirmation(
             shownName(branchNameToDelete),
             pullRequestOf(branchNameToDelete),
+            listedBefore.find((b) => b.name === branchNameToDelete)?.hold?.kind ===
+              'unpublished-at-merge',
             async () => {
               options.setBusy(true)
               try {

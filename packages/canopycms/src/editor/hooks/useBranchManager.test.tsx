@@ -998,6 +998,30 @@ describe('useBranchManager', () => {
   })
 
   describe('confirmation dialog copy', () => {
+    it("hands the card the server's answer on Approve", async () => {
+      const blocked = mockBranches.map((b) =>
+        b.name === 'feature' ? { ...b, approveBlocked: true } : b,
+      )
+      const { result } = await loaded(blocked as BranchMetadata[])
+
+      const card = result.current.branchSummaries.find((b) => b.name === 'feature')
+      expect(card?.approveBlocked).toBe(true)
+    })
+
+    it('warns of what deleting a flagged branch removes', async () => {
+      const flagged = mockBranches.map((b) =>
+        b.name === 'feature' ? { ...b, hold: { kind: 'unpublished-at-merge' as const } } : b,
+      )
+      mockClient.branches.delete.mockResolvedValueOnce({ ok: true, status: 200 })
+      const { result } = await loaded(flagged as BranchMetadata[])
+
+      await act(async () => {
+        await result.current.handleDelete('feature')
+      })
+
+      expect((await lastDialog()).body).toContain('never reached GitHub')
+    })
+
     const lastDialog = async () => {
       const { modals } = await import('@mantine/modals')
       const options = vi.mocked(modals.openConfirmModal).mock.calls.at(-1)?.[0]
@@ -1191,6 +1215,7 @@ describe('useBranchManager', () => {
       })
 
       const { options, body } = await lastDialog()
+      expect(body).not.toContain('never reached GitHub')
       expect(options.title).toBe('Delete branch')
       expect(options.labels).toEqual({ confirm: 'Delete branch', cancel: 'Cancel' })
       expect(body).toContain('Delete “feature”?')

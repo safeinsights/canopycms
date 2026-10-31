@@ -311,12 +311,13 @@ describe('admin branch-health api', () => {
       expect(after?.branch.updatedAt).toBe(before?.branch.updatedAt)
     })
 
-    it('refuses a branch with nothing to dismiss', async () => {
+    it('answers a conflict for a warning already dismissed', async () => {
       await createHealthyBranch('clean')
 
       const result = await dismissHandler(ctx, req, { dirName: 'clean' })
 
       expect(result.status).toBe(409)
+      expect(result.error).toContain('already dismissed')
     })
 
     it('creates no directory for a name that has none', async () => {

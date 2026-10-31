@@ -10,6 +10,7 @@
  * re-check that itself, same as GroupManager and PermissionManager.
  */
 
+import { useRef } from 'react'
 import {
   Alert,
   Badge,
@@ -54,6 +55,7 @@ import type {
 } from '../../types'
 import { escapeForLog } from '../../utils/escape-text'
 import { TooltipDetail } from '../components/TooltipDetail'
+import { DISMISS_UNPUBLISHED_ATTRIBUTE, UnpublishedAtMergeAlert } from './UnpublishedAtMergeAlert'
 import {
   HOLD_BADGE,
   branchHoldMessage,
@@ -216,56 +218,6 @@ function BaseHoldAlert({ hold }: { hold: BaseSchemaHold }) {
         Held since {hold.since} · {hold.files.join(', ')}
         {hold.fileCount > hold.files.length && ` and ${hold.fileCount - hold.files.length} more`}
       </Text>
-    </Alert>
-  )
-}
-
-/**
- * Branches merged while a submit was unfinished, listed until an admin dismisses them or purges
- * the directory: archiving leaves no retry or new submit to finish it. Names are shown escaped, as
- * in {@link DivergedBranchesAlert}.
- */
-function UnpublishedAtMergeAlert({
-  branches,
-  onDismiss,
-}: {
-  branches: readonly { dirName: string; name: string }[]
-  onDismiss: (dirName: string, name: string) => void
-}) {
-  return (
-    <Alert
-      color="orange"
-      icon={<IconAlertTriangle size={16} />}
-      title={`${plural(branches.length, 'branch')} merged with an unfinished submit`}
-      data-testid="unpublished-at-merge-alert"
-    >
-      <Stack gap={4}>
-        <Text size="sm">
-          Each branch below was merged on GitHub while its last submit was unfinished, so commits
-          from that submit may not be in the merge. They&apos;re still on this deployment&apos;s
-          copy of the branch.
-        </Text>
-        <Text size="sm">
-          Open the branch in the editor, where it&apos;s read-only, and compare it with what merged.
-          Make anything that&apos;s missing on a new branch, then dismiss this.
-        </Text>
-        <Stack gap={4} mt={4}>
-          {branches.map(({ dirName, name }) => (
-            <Group key={dirName} gap="xs" wrap="nowrap" justify="space-between">
-              <Code style={{ overflowWrap: 'anywhere' }}>{escapeForLog(name)}</Code>
-              <Button
-                size="compact-xs"
-                variant="default"
-                aria-label={`Dismiss the warning for ${escapeForLog(name)}`}
-                data-testid={`dismiss-unpublished-${dirName}`}
-                onClick={() => onDismiss(dirName, name)}
-              >
-                Dismiss
-              </Button>
-            </Group>
-          ))}
-        </Stack>
-      </Stack>
     </Alert>
   )
 }
@@ -598,21 +550,25 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
   const { status, statusLoading, isRecentFatalError, error, refresh } = health
   const unpublished = (health.branchHealth?.entries ?? []).flatMap((entry) =>
     entry.kind === 'healthy' && entry.branch?.unpublishedAtMerge
-      ? [{ dirName: entry.dirName, name: entry.branch.name }]
+      ? [
+          {
+            dirName: entry.dirName,
+            name: entry.branch.name,
+            pullRequestUrl: entry.branch.pullRequestUrl,
+          },
+        ]
       : [],
   )
 
-  const handleDismissUnpublished = (dirName: string, name: string) => {
-    openConfirm({
-      title: 'Dismiss this warning',
-      children: (
-        <Text size="sm">
-          <Code>{escapeForLog(name)}</Code> stops being listed here. Nothing on the branch changes.
-        </Text>
-      ),
-      labels: { confirm: 'Dismiss', cancel: 'Cancel' },
-      confirmProps: { color: 'brand' },
-      onConfirm: () => health.dismissUnpublished(dirName),
+  // The row goes with the dismissal, so focus moves to the next one, else to the tab's top.
+  const overviewRef = useRef<HTMLDivElement>(null)
+  const handleDismissUnpublished = async (dirName: string) => {
+    await health.dismissUnpublished(dirName)
+    setTimeout(() => {
+      const overview = overviewRef.current
+      if (!overview || overview.contains(document.activeElement)) return
+      const next = overview.querySelector<HTMLElement>(`[${DISMISS_UNPUBLISHED_ATTRIBUTE}]`)
+      ;(next ?? overview).focus()
     })
   }
 
@@ -655,7 +611,7 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
     workerVersion !== build.canopycmsVersion
 
   return (
-    <Stack gap="md">
+    <Stack ref={overviewRef} tabIndex={-1} gap="md">
       {error && (
         <Alert color="red" icon={<IconAlertCircle size={16} />} variant="light">
           {error}
@@ -1284,7 +1240,9 @@ function BranchHealthRow({
       b.rewrittenOnGitHub !== undefined && b.status !== 'archived'
         ? { kind: 'rewritten' }
         : !inReview
-          ? undefined
+          ? b.unpublishedAtMerge
+            ? { kind: 'unpublished-at-merge' }
+            : undefined
           : b.submitUnfinished
             ? { kind: 'submit-unfinished', opened: b.pullRequestNumber !== undefined }
             : b.pullRequestHold

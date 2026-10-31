@@ -192,6 +192,28 @@ describe('useSystemHealth', () => {
     expect(mockClient.admin.dismissUnpublished).toHaveBeenCalledWith({ dirName: 'foo' })
   })
 
+  it('takes an already-dismissed warning as a conflict, and refreshes the list', async () => {
+    const { notifications } = await import('@mantine/notifications')
+    const { result } = renderHook(() => useSystemHealth({ isOpen: true }), { wrapper })
+    await waitFor(() => expect(result.current.statusLoading).toBe(false))
+    mockClient.admin.branchHealth.mockClear()
+    mockClient.admin.dismissUnpublished.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      error: 'This warning was already dismissed.',
+    })
+
+    await act(async () => {
+      await result.current.dismissUnpublished('foo')
+    })
+
+    expect(notifications.show).toHaveBeenCalledWith({
+      message: 'This warning was already dismissed.',
+      color: 'yellow',
+    })
+    expect(mockClient.admin.branchHealth).toHaveBeenCalled()
+  })
+
   it('polls every 30s while open and stops polling after close', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const { result, rerender } = renderHook(({ isOpen }) => useSystemHealth({ isOpen }), {

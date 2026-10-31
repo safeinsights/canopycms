@@ -87,11 +87,21 @@ export function branchHoldMessage(hold: BranchHold, viewer: HoldViewer): string 
         : viewer.isAdmin
           ? 'Retry the submit from the "Tasks" tab in "System health"'
           : 'Ask an admin to retry the submit'
-      const withdraw =
+      const instead =
         viewer.role === 'withdraw'
           ? ', or use "Withdraw from review", then submit the branch again'
-          : ''
-      return `${stuck} ${retry}${withdraw}.`
+          : viewer.role === 'review'
+            ? ', or use "Request changes" to send it back to its editor'
+            : ''
+      return `${stuck} ${retry}${instead}.`
+    }
+    case 'unpublished-at-merge': {
+      const stuck =
+        'This pull request merged before the last submit finished, so some changes may not be in the merge.'
+      if (viewer.inSystemHealth) return `${stuck} The "Overview" tab says what to do.`
+      return viewer.isAdmin
+        ? `${stuck} See the "Overview" tab in "System health".`
+        : `${stuck} Ask an admin to check it.`
     }
   }
 }

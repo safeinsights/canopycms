@@ -250,7 +250,10 @@ describe('BranchCard review actions', () => {
   })
 
   describe('while a submit is unfinished', () => {
-    const unfinished = branch({ hold: { kind: 'submit-unfinished', opened: true } })
+    const unfinished = branch({
+      hold: { kind: 'submit-unfinished', opened: true },
+      approveBlocked: true,
+    })
 
     it('blocks Approve with the reason, and leaves Request changes open', async () => {
       const onApprove = vi.fn()
@@ -262,7 +265,7 @@ describe('BranchCard review actions', () => {
       await userEvent.click(approve)
       expect(onApprove).not.toHaveBeenCalled()
       await userEvent.hover(approve)
-      expect(await screen.findByText(/Ask an admin to retry the submit\./)).toBeTruthy()
+      expect(await screen.findByText(/Ask an admin to retry the submit, or use/)).toBeTruthy()
 
       const requestChanges = screen.getByTestId(`request-changes-branch-button-${NAME}`)
       expect(requestChanges.getAttribute('aria-disabled')).toBeNull()
@@ -281,6 +284,7 @@ describe('BranchCard review actions', () => {
     it('keeps the closed pull request as the reason when the PR is closed too', async () => {
       const closedToo = branch({
         hold: { kind: 'submit-unfinished', opened: true },
+        approveBlocked: true,
         pullRequestState: 'closed',
       })
       renderCard(closedToo, reviewer, false)

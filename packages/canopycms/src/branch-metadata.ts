@@ -356,6 +356,12 @@ export interface BranchMetadataUpdate {
 export const awaitsSubmitRetry = ({ submitUnfinished, status }: BranchMetadata): boolean =>
   submitUnfinished === true && (status === 'submitted' || status === 'approved')
 
+/** Only a submit writes `pending-sync` to branch.json, so that too is a submit not yet finished. */
+const owesSubmit = (branch: BranchMetadata): boolean =>
+  awaitsSubmitRetry(branch) ||
+  (branch.syncStatus === 'pending-sync' &&
+    (branch.status === 'submitted' || branch.status === 'approved'))
+
 /**
  * The metadata update for archiving `branch`, whose PR merged. Shared by the
  * worker's merge-poll (CmsWorker.pollMergeState) and the manual markAsMerged
@@ -377,7 +383,7 @@ export function buildMergedBranchUpdate(
     conflictStatus: 'clean',
     conflictFiles: [],
     submitUnfinished: undefined,
-    ...(awaitsSubmitRetry(branch) ? { unpublishedAtMerge: true } : {}),
+    ...(owesSubmit(branch) ? { unpublishedAtMerge: true } : {}),
   }
 }
 

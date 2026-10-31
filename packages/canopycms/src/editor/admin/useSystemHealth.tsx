@@ -88,7 +88,7 @@ export interface UseSystemHealthReturn {
   purgeDir: (dirName: string) => Promise<void>
   repairDir: (dirName: string) => Promise<void>
   markMerged: (branchName: string) => Promise<void>
-  /** Stops listing a branch merged with an unfinished submit. */
+  /** Stops listing a branch merged with an unfinished submit, a warning that doesn't come back. */
   dismissUnpublished: (dirName: string) => Promise<void>
 }
 
@@ -298,8 +298,10 @@ export function useSystemHealth(options: UseSystemHealthOptions): UseSystemHealt
     async (dirName: string) => {
       try {
         const result = await apiClient.admin.dismissUnpublished({ dirName })
-        if (!result.ok) throw new Error(result.error || 'Failed to dismiss the warning')
-        notifications.show({ message: 'Warning dismissed', color: 'green' })
+        if (!result.ok && result.status !== 409) {
+          throw new Error(result.error || 'Failed to dismiss the warning')
+        }
+        if (!result.ok) notifications.show({ message: result.error, color: 'yellow' })
         await refresh()
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to dismiss the warning'

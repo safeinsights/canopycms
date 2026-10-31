@@ -1882,18 +1882,16 @@ describe('EditorHeader - review actions', () => {
   })
 
   describe('while a submit is unfinished', () => {
-    const unfinished: BranchHold = { kind: 'submit-unfinished', opened: true }
+    const blocked = {
+      ...inReview,
+      branchHold: { kind: 'submit-unfinished', opened: true } as BranchHold,
+      branchApproveBlocked: true,
+    }
 
     it('blocks Approve with its reason, and leaves Request changes open', async () => {
       const onApprove = vi.fn()
       const onRequestChanges = vi.fn()
-      renderHeader({
-        ...inReview,
-        userContext: reviewer,
-        branchHold: unfinished,
-        onApprove,
-        onRequestChanges,
-      })
+      renderHeader({ ...blocked, userContext: reviewer, onApprove, onRequestChanges })
       const approve = screen.getByTestId('approve-button')
 
       expect(approve.getAttribute('aria-disabled')).toBe('true')
@@ -1901,7 +1899,7 @@ describe('EditorHeader - review actions', () => {
       expect(onApprove).not.toHaveBeenCalled()
       act(() => approve.focus())
       expect((await screen.findByRole('tooltip')).textContent).toContain(
-        'Ask an admin to retry the submit.',
+        'Ask an admin to retry the submit, or use "Request changes"',
       )
 
       const requestChanges = screen.getByTestId('request-changes-button')
@@ -1912,15 +1910,36 @@ describe('EditorHeader - review actions', () => {
 
     it('tells an admin where the retry is', async () => {
       renderHeader({
-        ...inReview,
+        ...blocked,
         userContext: { userId: 'adam', groups: [RESERVED_GROUPS.ADMINS] },
-        branchHold: unfinished,
       })
 
       act(() => screen.getByTestId('approve-button').focus())
       expect((await screen.findByRole('tooltip')).textContent).toContain(
         '"Tasks" tab in "System health"',
       )
+    })
+
+    it('takes Approve out of the reason a locked control gives', async () => {
+      renderHeader({ ...blocked, userContext: reviewer })
+
+      const status = barStatus().closest('[role="status"]')
+      expect(status?.textContent).toContain('Request changes to send it back')
+      expect(status?.textContent).not.toContain('Approve it')
+    })
+
+    it('leads with Request changes below `md`, with Approve and its reason under the caret', async () => {
+      stubNarrowWindow()
+      renderHeader({ ...blocked, userContext: reviewer })
+
+      expect(screen.queryByTestId('approve-button')).toBeNull()
+      expect(screen.getByTestId('request-changes-button').getAttribute('aria-disabled')).toBeNull()
+
+      await userEvent.click(screen.getByTestId('branch-actions-button'))
+      const approve = await screen.findByTestId('approve-menu-item')
+      expect(approve.getAttribute('aria-disabled')).toBe('true')
+      expect(approve.textContent).toContain('Ask an admin to retry the submit')
+      expect(screen.queryByTestId('request-changes-menu-item')).toBeNull()
     })
 
     it('leaves Approve open for any other hold', () => {

@@ -773,7 +773,11 @@ async function updateBranchMetadataOnFailure(
         // Only the branch's latest submit: an older one running late has no step left to finish.
         const unfinished =
           task.action === SUBMIT_ACTION && existing.branch.submittedAt === submittedAt
-        return { branch: unfinished ? { ...failed, submitUnfinished: true } : failed }
+        if (!unfinished) return { branch: failed }
+        // Merged while this ran: nothing is left to finish it, as buildMergedBranchUpdate records.
+        return existing.branch.status === 'archived'
+          ? { branch: { ...failed, unpublishedAtMerge: true } }
+          : { branch: { ...failed, submitUnfinished: true } }
       })
       if (saved === null) noMetadataToRecord(branch, `${task.action} failure`)
     }

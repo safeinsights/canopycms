@@ -64,6 +64,8 @@ export interface BranchListItem extends Omit<
 > {
   /** What is stuck and needs a person, for the branch card. Names no file. */
   hold?: BranchHold
+  /** The last submit didn't finish, which the server refuses Approve for. */
+  approveBlocked?: boolean
   /**
    * What pull request links carry for this branch, which `?branch=` and the `/:branch` segment
    * accept beside `name` (branch-param.ts's `shortNameOf`): `name` less the namespace for a branch
@@ -301,13 +303,16 @@ export const toBranchListItem = (
   const hold: BranchHold | undefined = rewritten
     ? { kind: 'rewritten' }
     : !inReview
-      ? undefined
+      ? branch.unpublishedAtMerge
+        ? { kind: 'unpublished-at-merge' }
+        : undefined
       : branch.submitUnfinished
         ? { kind: 'submit-unfinished', opened: branch.pullRequestNumber !== undefined }
         : pullRequestHold
   return {
     ...listed,
     hold,
+    approveBlocked: (inReview && branch.submitUnfinished) || undefined,
     shortName: shortNameOf(config, branch.name),
     ...accessForViewer(branch.access ?? {}, viewer),
     isProtected: protection.isProtected,
@@ -852,6 +857,17 @@ export const deleteBranchHandler = async (
       ok: false,
       status: 400,
       error: 'Cannot delete branch with open pull request',
+    }
+  }
+
+  // It may hold the only copy of commits the merge left out, and deleting it would drop the alert
+  // that says so.
+  if (branchContext.branch.unpublishedAtMerge && !isAdmin(req.user.groups)) {
+    return {
+      ok: false,
+      status: 409,
+      error:
+        'This branch may hold changes that never reached GitHub. Ask an admin to check it before deleting it.',
     }
   }
 

@@ -1327,7 +1327,7 @@ describe('canDeleteBranch', () => {
 describe('deleteBranch api', () => {
   const makeBranchContext = (
     createdBy: string,
-    status: 'editing' | 'submitted' | 'approved' = 'editing',
+    status: 'editing' | 'submitted' | 'approved' | 'archived' = 'editing',
   ) => createMockBranchContext({ branchName: 'feature/x', createdBy, status })
 
   const deleteCtx = baseCtx
@@ -1392,6 +1392,40 @@ describe('deleteBranch api', () => {
     expect(res.ok).toBe(false)
     expect(res.status).toBe(400)
     expect(res.error).toBe('Cannot delete branch with open pull request')
+  })
+
+  describe('a branch that may hold commits the merge left out', () => {
+    const flagged = () => {
+      const context = makeBranchContext('u1', 'archived')
+      return {
+        ...deleteCtx,
+        getBranchContext: vi.fn().mockResolvedValue({
+          ...context,
+          branch: { ...context.branch, unpublishedAtMerge: true },
+        }),
+      }
+    }
+
+    it('refuses its creator: nobody else would learn what went', async () => {
+      const res = await deleteBranch(
+        flagged(),
+        { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+        { branch: unsafeAsBranchName('feature/x') },
+      )
+
+      expect(res.status).toBe(409)
+      expect(res.error).toContain('Ask an admin to check it')
+    })
+
+    it('leaves the decision to an admin', async () => {
+      const res = await deleteBranch(
+        flagged(),
+        { user: { type: 'authenticated', userId: 'a1', groups: [RESERVED_GROUPS.ADMINS] } },
+        { branch: unsafeAsBranchName('feature/x') },
+      )
+
+      expect(res.ok).toBe(true)
+    })
   })
 
   // No over-blocking: an ordinary editing branch (the common case) must
@@ -1940,9 +1974,16 @@ describe('toBranchListItem', () => {
       opened: false,
     })
     expect(item).not.toHaveProperty('submitUnfinished')
-    expect(listed({ status: 'archived', unpublishedAtMerge: true })).not.toHaveProperty(
-      'unpublishedAtMerge',
-    )
+    const merged = listed({ status: 'archived', unpublishedAtMerge: true })
+    expect(merged).not.toHaveProperty('unpublishedAtMerge')
+    expect(merged.hold).toEqual({ kind: 'unpublished-at-merge' })
+    expect(item.approveBlocked).toBe(true)
+    // Beside a rewrite, which is the hold shown: the server's refusal stands either way.
+    expect(
+      listed({ status: 'submitted', submitUnfinished: true, rewrittenOnGitHub: 'a'.repeat(40) })
+        .approveBlocked,
+    ).toBe(true)
+    expect(listed({ status: 'editing', submitUnfinished: true }).approveBlocked).toBeUndefined()
     expect(listed({ status: 'editing', submitUnfinished: true }).hold).toBeUndefined()
     expect(
       listed({ status: 'submitted', submitUnfinished: true, rewrittenOnGitHub: 'a'.repeat(40) })

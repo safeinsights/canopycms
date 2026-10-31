@@ -2253,6 +2253,7 @@ const EditorContent: React.FC<EditorProps> = ({
                   branchMissing,
                   reviewing: branchReviewing,
                   pullRequestClosed: branchPullRequestClosed,
+                  approveBlocked: currentBranch?.approveBlocked,
                 })
           }
           dirtyPaths={dirtyPaths}
@@ -2324,6 +2325,7 @@ const EditorContent: React.FC<EditorProps> = ({
               branchServerProtected={currentBranch?.isProtected}
               branchReadOnly={currentBranch?.readOnly}
               branchHold={currentBranch?.hold}
+              branchApproveBlocked={currentBranch?.approveBlocked}
               branchWriteBlocked={branchContentLocked}
               branchLoading={branchLoading}
               branchPending={branchPending}
@@ -2430,6 +2432,7 @@ const EditorContent: React.FC<EditorProps> = ({
                 branchMissing={branchMissing}
                 branchReviewing={branchReviewing}
                 branchPullRequestClosed={branchPullRequestClosed}
+                branchApproveBlocked={currentBranch?.approveBlocked}
                 onCollectionOpen={(path) => revealInContentPanel({ kind: 'collection', path })}
                 onEntryReveal={() =>
                   currentEntry && revealInContentPanel({ kind: 'entry', path: currentEntry.path })

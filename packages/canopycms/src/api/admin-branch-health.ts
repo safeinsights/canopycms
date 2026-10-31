@@ -782,7 +782,7 @@ const dismissUnpublishedHandler = async (
     { keepUpdatedAt: true },
   )
   if (saved === null) {
-    return { ok: false, status: 409, error: 'This branch has no warning to dismiss.' }
+    return { ok: false, status: 409, error: 'This warning was already dismissed.' }
   }
   return { ok: true, status: 200, data: { dismissed: true } }
 }
