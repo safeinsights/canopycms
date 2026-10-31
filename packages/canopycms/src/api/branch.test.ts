@@ -1933,8 +1933,12 @@ describe('toBranchListItem', () => {
   })
 
   it('says a failed submit never finished, only while the branch is in review', () => {
-    const item = listed({ status: 'submitted', submitUnfinished: true })
-    expect(item.hold).toEqual({ kind: 'submit-unfinished' })
+    const item = listed({ status: 'submitted', submitUnfinished: true, pullRequestNumber: 7 })
+    expect(item.hold).toEqual({ kind: 'submit-unfinished', opened: true })
+    expect(listed({ status: 'approved', submitUnfinished: true }).hold).toEqual({
+      kind: 'submit-unfinished',
+      opened: false,
+    })
     expect(item).not.toHaveProperty('submitUnfinished')
     expect(listed({ status: 'editing', submitUnfinished: true }).hold).toBeUndefined()
     expect(

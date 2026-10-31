@@ -40,7 +40,11 @@ export interface BranchReview {
 export type PullRequestHold = { kind: 'conflicts' } | { kind: 'retargeted'; base: string }
 
 /** What the editor tells a branch's viewers is stuck, and needs a person. */
-export type BranchHold = PullRequestHold | { kind: 'rewritten' } | { kind: 'submit-unfinished' }
+export type BranchHold =
+  | PullRequestHold
+  | { kind: 'rewritten' }
+  /** `opened`: a pull request exists, from an earlier submit. */
+  | { kind: 'submit-unfinished'; opened: boolean }
 
 export interface BranchMetadata {
   name: string

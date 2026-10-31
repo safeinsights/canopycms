@@ -517,24 +517,23 @@ const BranchCard: React.FC<BranchCardProps> = ({
             </Text>
           )}
           {/* One cause, one line: a rewrite is what fails the sync, and a hold already says what to do. */}
-          {b.syncStatus === 'sync-failed' && b.hold?.kind !== 'rewritten' && (
-            <Text
-              size="xs"
-              c="var(--canopy-danger-text)"
-              maw={480}
-              style={WRAP_ANYWHERE}
-              data-testid={`sync-failed-reason-${b.name}`}
-            >
-              {endSentence(
-                b.syncFailureReason ?? syncFailedFallback({ isAdmin: userIsAdmin, held: !!b.hold }),
-              )}
-              {!b.hold && inReview && b.pullRequestNumber && ` ${SYNC_FAILED_IN_REVIEW_NOTE}`}
-              {!b.hold &&
-                inReview &&
-                holdViewer.role === 'withdraw' &&
-                ' Withdraw the branch from review to make changes.'}
-            </Text>
-          )}
+          {b.syncStatus === 'sync-failed' &&
+            (b.hold ? b.hold.kind !== 'rewritten' && !!b.syncFailureReason?.trim() : true) && (
+              <Text
+                size="xs"
+                c="var(--canopy-danger-text)"
+                maw={480}
+                style={WRAP_ANYWHERE}
+                data-testid={`sync-failed-reason-${b.name}`}
+              >
+                {endSentence(b.syncFailureReason?.trim() || syncFailedFallback(userIsAdmin))}
+                {!b.hold && inReview && b.pullRequestNumber && ` ${SYNC_FAILED_IN_REVIEW_NOTE}`}
+                {!b.hold &&
+                  inReview &&
+                  holdViewer.role === 'withdraw' &&
+                  ' Withdraw the branch from review to make changes.'}
+              </Text>
+            )}
           <Group gap="xs" align="center">
             {b.updatedAt && (
               <RelativeTime iso={b.updatedAt} prefix="Updated " size="xs" c="dimmed" />

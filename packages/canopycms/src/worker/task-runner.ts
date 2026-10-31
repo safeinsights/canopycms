@@ -664,11 +664,18 @@ export async function updateBranchMetadata(
     // and would read as syncing until its next submit.
     if (result.superseded === true) {
       await meta.saveIf(
-        { branch: { syncStatus: 'synced' } },
+        {
+          branch: {
+            syncStatus: 'synced',
+            syncFailureReason: undefined,
+            submitUnfinished: undefined,
+          },
+        },
         (existing) =>
           existing?.branch.name === branch &&
           existing.branch.status === 'editing' &&
-          existing.branch.syncStatus === 'pending-sync',
+          (existing.branch.syncStatus === 'pending-sync' ||
+            existing.branch.submitUnfinished === true),
       )
       return
     }
@@ -740,11 +747,7 @@ async function updateBranchMetadataOnFailure(
 
   try {
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
-    const failed = {
-      syncStatus: 'sync-failed',
-      syncFailureReason: error,
-      ...(task.action === SUBMIT_ACTION ? { submitUnfinished: true } : {}),
-    } as const
+    const failed = { syncStatus: 'sync-failed', syncFailureReason: error } as const
     const submittedAt = task.payload.submittedAt
     const unlocked =
       options.unlock &&
@@ -764,10 +767,13 @@ async function updateBranchMetadataOnFailure(
           existing.branch.submittedAt === submittedAt,
       )) !== null
     if (!unlocked) {
-      const saved = await meta.saveIf(
-        { branch: failed },
-        (existing) => existing?.branch.name === branch,
-      )
+      const saved = await meta.update((existing) => {
+        if (existing?.branch.name !== branch) return null
+        // Only the submit the branch is in: an older one running late has no step left to finish.
+        const unfinished =
+          task.action === SUBMIT_ACTION && existing.branch.submittedAt === submittedAt
+        return { branch: unfinished ? { ...failed, submitUnfinished: true } : failed }
+      })
       if (saved === null) noMetadataToRecord(branch, `${task.action} failure`)
     }
   } catch (err) {

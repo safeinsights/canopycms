@@ -1368,7 +1368,8 @@ describe('SystemHealthPanel', () => {
 
       const trigger = screen.getByTestId('held-pr-unfinished').closest('[aria-describedby]')
       const detail = document.getElementById(trigger?.getAttribute('aria-describedby') ?? '')
-      expect(detail?.textContent).toContain('Retry it from the "Tasks" tab.')
+      expect(detail?.textContent).toContain('Retry the submit from the "Tasks" tab.')
+      expect(detail?.textContent).toContain("its pull request wasn't opened")
     })
 
     it('marks no rewrite on an archived branch, which nothing can act on', async () => {

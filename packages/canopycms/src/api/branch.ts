@@ -301,7 +301,7 @@ export const toBranchListItem = (
     : !inReview
       ? undefined
       : branch.submitUnfinished
-        ? { kind: 'submit-unfinished' }
+        ? { kind: 'submit-unfinished', opened: branch.pullRequestNumber !== undefined }
         : pullRequestHold
   return {
     ...listed,

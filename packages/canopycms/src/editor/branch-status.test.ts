@@ -54,50 +54,56 @@ describe('branchHoldMessage', () => {
 })
 
 describe('a submit that never finished', () => {
-  const hold = { kind: 'submit-unfinished' } as const
+  const hold = { kind: 'submit-unfinished', opened: true } as const
 
   it('says what the pull request may be missing, for anyone', () => {
     const line = branchHoldMessage(hold, { role: 'none', isAdmin: false })
     expect(line).toContain('may not have its latest changes')
-    expect(line).toContain('Ask an admin to retry it.')
+    expect(line).toContain('Ask an admin to retry the submit.')
     expect(line).not.toContain('Withdraw')
+  })
+
+  it('says no pull request was opened when none was', () => {
+    const line = branchHoldMessage(
+      { kind: 'submit-unfinished', opened: false },
+      { role: 'none', isAdmin: false },
+    )
+    expect(line).toContain("its pull request wasn't opened")
+    expect(line).not.toContain('latest changes')
   })
 
   it('offers its editor the way out that needs no admin, and no failed task', () => {
     expect(branchHoldMessage(hold, { role: 'withdraw', isAdmin: false })).toContain(
-      'Ask an admin to retry it, or use "Withdraw from review", then submit it again.',
+      'Ask an admin to retry the submit, or use "Withdraw from review", then submit the branch again.',
     )
   })
 
   it('sends an admin to the task, naming the panel only outside it', () => {
     expect(branchHoldMessage(hold, { role: 'none', isAdmin: true })).toContain(
-      'Retry it from the "Tasks" tab in "System health".',
+      'Retry the submit from the "Tasks" tab in "System health".',
     )
     expect(branchHoldMessage(hold, { role: 'none', isAdmin: true, inSystemHealth: true })).toMatch(
-      /Retry it from the "Tasks" tab\.$/,
+      /Retry the submit from the "Tasks" tab\.$/,
     )
   })
 })
 
 describe('endSentence', () => {
-  it('ends a reason only where it has no ending', () => {
-    expect(endSentence('It has moved on GitHub')).toBe('It has moved on GitHub.')
-    expect(endSentence('It has moved.')).toBe('It has moved.')
+  it.each([
+    ['It has moved on GitHub', 'It has moved on GitHub.'],
+    ['It has moved.', 'It has moved.'],
+    ['Push failed for "x".\n', 'Push failed for "x".'],
+    ['It timed out (after 5s.)', 'It timed out (after 5s.)'],
+    ['remote:', 'remote:'],
+  ])('ends %j once', (text, ended) => {
+    expect(endSentence(text)).toBe(ended)
   })
 })
 
 describe('syncFailedFallback', () => {
   it('sends only an admin to System health', () => {
-    expect(syncFailedFallback({ isAdmin: true, held: false })).toContain(
-      'the "Tasks" tab in "System health"',
-    )
-    const editor = syncFailedFallback({ isAdmin: false, held: false })
-    expect(editor).toBe('GitHub sync failed. Ask an admin to retry it.')
-  })
-
-  it('leaves the way forward to a hold beside it', () => {
-    expect(syncFailedFallback({ isAdmin: true, held: true })).toBe('GitHub sync failed.')
-    expect(syncFailedFallback({ isAdmin: false, held: true })).toBe('GitHub sync failed.')
+    expect(syncFailedFallback(true)).toContain('the "Tasks" tab in "System health"')
+    expect(syncFailedFallback(false)).toBe('GitHub sync failed. Ask an admin to retry it.')
   })
 })
 

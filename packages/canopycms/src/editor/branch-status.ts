@@ -79,29 +79,35 @@ export function branchHoldMessage(hold: BranchHold, viewer: HoldViewer): string 
         : `${stuck} Ask an admin for help.`
     }
     case 'submit-unfinished': {
+      const stuck = hold.opened
+        ? "The last submit of this branch didn't finish, so its pull request may not have its latest changes."
+        : "The last submit of this branch didn't finish, so its pull request wasn't opened."
       const retry = viewer.inSystemHealth
-        ? 'Retry it from the "Tasks" tab'
+        ? 'Retry the submit from the "Tasks" tab'
         : viewer.isAdmin
-          ? 'Retry it from the "Tasks" tab in "System health"'
-          : 'Ask an admin to retry it'
+          ? 'Retry the submit from the "Tasks" tab in "System health"'
+          : 'Ask an admin to retry the submit'
       const withdraw =
-        viewer.role === 'withdraw' ? ', or use "Withdraw from review", then submit it again' : ''
-      return `The last submit of this branch didn't finish, so its pull request may not have its latest changes. ${retry}${withdraw}.`
+        viewer.role === 'withdraw'
+          ? ', or use "Withdraw from review", then submit the branch again'
+          : ''
+      return `${stuck} ${retry}${withdraw}.`
     }
   }
 }
 
 /** Ends `text` as a sentence, for a recorded reason that another sentence follows. */
-export const endSentence = (text: string): string => (/[.!?]$/.test(text) ? text : `${text}.`)
+export function endSentence(text: string): string {
+  const trimmed = text.trimEnd()
+  return /[.!?:][)"']*$/.test(trimmed) ? trimmed : `${trimmed}.`
+}
 
 /** Why a branch in review with a failed sync stays behind its base, after the failure itself. */
 export const SYNC_FAILED_IN_REVIEW_NOTE =
   "Until it syncs, CanopyCMS won't update this pull request from its base."
 
-/** The failed-sync line when the worker recorded no reason. A hold beside it gives the way forward. */
-export function syncFailedFallback(viewer: { isAdmin: boolean; held: boolean }): string {
-  if (viewer.held) return 'GitHub sync failed.'
-  return viewer.isAdmin
+/** The failed-sync line when the worker recorded no reason. */
+export const syncFailedFallback = (isAdmin: boolean): string =>
+  isAdmin
     ? 'GitHub sync failed. Retry it from the "Tasks" tab in "System health".'
     : 'GitHub sync failed. Ask an admin to retry it.'
-}

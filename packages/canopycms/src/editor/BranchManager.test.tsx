@@ -549,7 +549,7 @@ describe('BranchManager', () => {
     expect(badge.textContent).toBe('Sync failed')
     expect(badge.style.getPropertyValue('--badge-bg')).toBe('var(--mantine-color-red-light)')
     expect(screen.getByTestId('sync-failed-reason-main').textContent).toBe(
-      syncFailedFallback({ isAdmin: false, held: false }),
+      syncFailedFallback(false),
     )
   })
 
@@ -607,9 +607,15 @@ describe('BranchManager', () => {
       expect(screen.getByTestId('sync-failed-badge-main')).toBeTruthy()
     })
 
-    it('leaves a sync failure with no reason to the fact, beside a hold', () => {
+    it('adds no line for a failed sync with no reason beside a hold, as the badge says so', () => {
       held({ kind: 'conflicts' }, { syncStatus: 'sync-failed', pullRequestNumber: 1 })
-      expect(screen.getByTestId('sync-failed-reason-main').textContent).toBe('GitHub sync failed.')
+      expect(screen.queryByTestId('sync-failed-reason-main')).toBeNull()
+      expect(screen.getByTestId('sync-failed-badge-main')).toBeTruthy()
+    })
+
+    it('treats a blank reason as no reason', () => {
+      held({ kind: 'conflicts' }, { syncStatus: 'sync-failed', syncFailureReason: ' ' })
+      expect(screen.queryByTestId('sync-failed-reason-main')).toBeNull()
     })
 
     it('keeps a long unbroken name inside the card', () => {
@@ -659,7 +665,7 @@ describe('BranchManager', () => {
     renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
 
     expect(screen.getByTestId('sync-failed-reason-main').textContent).toBe(
-      `${syncFailedFallback({ isAdmin: false, held: false })} ${SYNC_FAILED_IN_REVIEW_NOTE} Withdraw the branch from review to make changes.`,
+      `${syncFailedFallback(false)} ${SYNC_FAILED_IN_REVIEW_NOTE} Withdraw the branch from review to make changes.`,
     )
   })
 
@@ -670,7 +676,7 @@ describe('BranchManager', () => {
     renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
 
     expect(screen.getByTestId('sync-failed-reason-main').textContent).toBe(
-      `${syncFailedFallback({ isAdmin: false, held: false })} Withdraw the branch from review to make changes.`,
+      `${syncFailedFallback(false)} Withdraw the branch from review to make changes.`,
     )
   })
 

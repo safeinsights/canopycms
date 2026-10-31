@@ -1213,7 +1213,7 @@ function BranchHealthRow({
         : !inReview
           ? undefined
           : b.submitUnfinished
-            ? { kind: 'submit-unfinished' }
+            ? { kind: 'submit-unfinished', opened: b.pullRequestNumber !== undefined }
             : b.pullRequestHold
     const canMarkMerged =
       (b.status === 'submitted' || b.status === 'approved') && !!b.pullRequestNumber

@@ -429,6 +429,16 @@ describe('branch status api', () => {
     // No raw git output (branch/ref internals, hint text) leaks to the client.
     expect(res.error).not.toContain('rejected')
     expect(res.error).not.toContain('/tmp/canopy-test')
+    expect(res.error).toContain('ask an admin to check "System health"')
+
+    const asAdmin = await submitBranchForMerge(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      { branch: 'feature/x' as BranchName },
+      undefined,
+    )
+    expect(asAdmin.error).toContain('check "System health"')
+    expect(asAdmin.error).not.toContain('ask an admin')
     consoleSpy.restore()
   })
 

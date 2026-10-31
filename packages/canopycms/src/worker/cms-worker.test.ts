@@ -1712,6 +1712,48 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
       await expect(shaOf(githubFixture, `refs/heads/${branch}`)).rejects.toThrow()
     })
 
+    it('leaves nothing owed once a retry finds the branch withdrawn', async () => {
+      await retrySubmit(
+        {
+          status: 'editing',
+          submittedAt,
+          syncStatus: 'sync-failed',
+          syncFailureReason: 'x',
+          submitUnfinished: true,
+        },
+        'failed-task',
+      )
+
+      const after = (await BranchMetadataFileManager.loadOnly(dir()))?.branch
+      expect(after?.syncStatus).toBe('synced')
+      expect(after?.syncFailureReason).toBeUndefined()
+      expect(after?.submitUnfinished).toBeUndefined()
+    })
+
+    it('records no unfinished submit for an older submit running late', async () => {
+      await seedBranchInRemoteGit(branch, 'hello')
+      await fs.mkdir(dir(), { recursive: true })
+      await getBranchMetadataFileManager(dir(), contentBranchesPath).save({
+        branch: {
+          name: branch,
+          status: 'submitted',
+          submittedAt: '2026-10-02T00:00:00.000Z',
+          rewrittenOnGitHub: 'a'.repeat(40),
+        },
+      })
+      const worker = makePushWorker()
+      ;(worker as unknown as { running: boolean }).running = true
+      await enqueueTask(taskDir, {
+        action: 'push-and-create-or-update-pr',
+        payload: { branch, title: 't', body: '', baseBranch: 'main', submittedAt },
+      })
+      await worker.processTaskQueue()
+
+      const after = (await BranchMetadataFileManager.loadOnly(dir()))?.branch
+      expect(after?.syncStatus).toBe('sync-failed')
+      expect(after?.submitUnfinished).toBeUndefined()
+    })
+
     it('records a submit that failed as unfinished', async () => {
       await retrySubmit({ status: 'submitted', submittedAt, rewrittenOnGitHub: 'a'.repeat(40) })
 
