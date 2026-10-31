@@ -30,7 +30,7 @@ import type { ReadContentInput, ContentReadMeta } from './content-reader'
 import type { BranchContext } from './types'
 import type { FlatSchemaItem } from './config'
 import { isDeployedStatic, isBuildMode, readsFromCheckout, STATIC_DEPLOY_USER } from './build-mode'
-import { createContentReader } from './content-reader'
+import { createContentReaderInternal } from './content-reader'
 import { ContentStoreError } from './content-store'
 import {
   createLogicalPath,
@@ -334,7 +334,7 @@ export function createCanopyContext(options: CanopyContextOptions) {
 
     // The reader resolves every branch through resolveBranch; a null reads as
     // NOT_FOUND. Reads from the checkout bypass the resolver inside the reader.
-    const baseReader = createContentReader({
+    const baseReader = createContentReaderInternal({
       services,
       defaultBranch: activeBranch,
       getBranchContext: (branchName) => resolveBranch(otherBranch(branchName)),
@@ -346,7 +346,7 @@ export function createCanopyContext(options: CanopyContextOptions) {
     // function rather than an optional second parameter on the
     // `CanopyContext['read']`-typed closure, so the two call sites stay visible
     // and nobody widens the public API by accident.
-    const readWithOptions = async <T = unknown>(
+    const toReadInput = (
       input: {
         entryPath: string
         slug?: string
@@ -354,7 +354,7 @@ export function createCanopyContext(options: CanopyContextOptions) {
         resolveReferences?: boolean
       },
       extra?: Pick<ReadContentInput, 'urlAddressableOnly'>,
-    ) => {
+    ): ReadContentInput => {
       const entryPath = createLogicalPath(input.entryPath)
       let slug: Slug | undefined
       if (input.slug) {
@@ -375,10 +375,10 @@ export function createCanopyContext(options: CanopyContextOptions) {
         resolveReferences: input.resolveReferences ?? true,
         ...extra,
       }
-      return baseReader.read<T>(readInput)
+      return readInput
     }
 
-    const read: CanopyContext['read'] = (input) => readWithOptions(input)
+    const read: CanopyContext['read'] = async (input) => baseReader.read(toReadInput(input))
 
     const readByUrlPath: CanopyContext['readByUrlPath'] = async <T = unknown>(
       urlPath: string,
@@ -390,45 +390,49 @@ export function createCanopyContext(options: CanopyContextOptions) {
 
       const { branch, resolveReferences } = options ?? {}
 
-      for (const candidate of candidates) {
-        // Skip a candidate whose slug isn't valid (/favicon.ico, Next internals
-        // the [...slug] route catches). None can match an entry, so treat it as
-        // a miss rather than let read() throw "Invalid slug".
-        if (!parseSlug(candidate.slug).ok) continue
-        try {
-          return await readWithOptions<T>(
-            {
-              entryPath: candidate.entryPath,
-              slug: candidate.slug,
-              branch,
-              resolveReferences,
-            },
-            // A read BY PUBLISHED URL accepts only what listEntries publishes.
-            // See ReadContentInput.urlAddressableOnly for the two rules, and
-            // why they live in the reader (which holds the branch-correct
-            // schema) rather than the candidate builder (pure and schema-free).
-            { urlAddressableOnly: true },
-          )
-        } catch (err) {
-          // Swallow a candidate path's "not found", and FORBIDDEN so a denied
-          // or anonymous read renders as the adopter's 404 rather than an
-          // unhandled 500. Real errors (validation, corruption, anything not a
-          // ContentStoreError) rethrow.
-          if (err instanceof ContentStoreError && isPageSwallowable(err)) {
-            if (err.code === 'FORBIDDEN') {
-              log.debug('readByUrlPath', 'Read denied, treating as not-found: ' + err.message, {
-                urlPath,
-                entryPath: candidate.entryPath,
-                slug: candidate.slug,
-              })
-            }
-            continue
-          }
-          throw err
+      // Swallow a candidate path's "not found", and FORBIDDEN so a denied or
+      // anonymous read renders as the adopter's 404 rather than an unhandled
+      // 500. Real errors (validation, corruption, anything not a
+      // ContentStoreError) rethrow.
+      const isMiss = (err: unknown, input?: ReadContentInput): boolean => {
+        if (!(err instanceof ContentStoreError && isPageSwallowable(err))) return false
+        if (err.code === 'FORBIDDEN') {
+          log.debug('readByUrlPath', 'Read denied, treating as not-found: ' + err.message, {
+            urlPath,
+            entryPath: input?.entryPath,
+            slug: input?.slug,
+          })
         }
+        return true
       }
 
-      return null
+      // Converting every candidate up front throws nothing a candidate-by-candidate
+      // loop would not: a valid slug holds no `..`, so the index candidate's path
+      // fails createLogicalPath only when the entry candidate's does.
+      let inputs: ReadContentInput[]
+      try {
+        inputs = candidates
+          // Skip a candidate whose slug isn't valid (/favicon.ico, Next internals
+          // the [...slug] route catches). None can match an entry, so treat it as
+          // a miss rather than let read() throw "Invalid slug".
+          .filter((candidate) => parseSlug(candidate.slug).ok)
+          .map((candidate) =>
+            toReadInput(
+              { entryPath: candidate.entryPath, slug: candidate.slug, branch, resolveReferences },
+              // A read BY PUBLISHED URL accepts only what listEntries publishes.
+              // See ReadContentInput.urlAddressableOnly for the two rules, and
+              // why they live in the reader (which holds the branch-correct
+              // schema) rather than the candidate builder (pure and schema-free).
+              { urlAddressableOnly: true },
+            ),
+          )
+      } catch (err) {
+        if (isMiss(err)) return null
+        throw err
+      }
+
+      // One branch and schema resolve for every candidate.
+      return baseReader.readFirst<T>(inputs, isMiss)
     }
 
     /**

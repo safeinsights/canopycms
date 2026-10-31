@@ -86,4 +86,47 @@ describe('BranchSchemaCache process-boundary smoke test', () => {
       await fs.rm(tempDir, { recursive: true, force: true })
     }
   })
+
+  it('serves a snapshot a separate process rewrote under the same token', async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'schema-cache-proc-'))
+    try {
+      const branchRoot = path.join(tempDir, 'branch-workspace')
+      const contentRoot = path.join(branchRoot, 'content')
+      await fs.mkdir(contentRoot, { recursive: true })
+      await fs.writeFile(
+        path.join(contentRoot, '.collection.json'),
+        JSON.stringify({
+          label: 'Root',
+          entries: [{ name: 'page', format: 'md', schema: 'pageSchema' }],
+          order: [],
+        }),
+        'utf-8',
+      )
+      const entrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
+        pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
+      }
+
+      const cache = new BranchSchemaCache('prod')
+      expect((await cache.getSchema(branchRoot, entrySchemaRegistry)).schema.label).toBe('Root')
+
+      // Child process: rewrite the cache file by temp file + rename, keeping every field but
+      // the schema, as a host correcting a stale-scan snapshot under an unchanged token would.
+      const cachePath = path.join(branchRoot, '.canopy-meta', 'schema-cache.json')
+      const script = `
+        const fs = require('node:fs');
+        const cachePath = ${JSON.stringify(cachePath)};
+        const snapshot = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
+        snapshot.schema = { ...snapshot.schema, label: 'Rewritten by child process' };
+        const tmpPath = cachePath + '.tmp.' + process.pid;
+        fs.writeFileSync(tmpPath, JSON.stringify(snapshot), 'utf-8');
+        fs.renameSync(tmpPath, cachePath);
+      `
+      await execFileAsync('node', ['-e', script], { timeout: 15_000 })
+
+      const result = await cache.getSchema(branchRoot, entrySchemaRegistry)
+      expect(result.schema.label).toBe('Rewritten by child process')
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true })
+    }
+  })
 })

@@ -77,7 +77,7 @@
     },
     "CODEBASE_GUIDE.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 839,
+      "maxSectionWords": 834,
       "words": 4485
     },
     "DEVELOPING.md": {
@@ -92,8 +92,8 @@
     },
     "docs/concurrency.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 1466,
-      "words": 5927
+      "maxSectionWords": 1459,
+      "words": 5985
     },
     "docs/deploying-to-aws.md": {
       "historyMarkers": 0,

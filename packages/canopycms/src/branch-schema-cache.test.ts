@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
-import { BranchSchemaCache } from './branch-schema-cache'
+import { BranchSchemaCache, type ResolvedBranchSchema } from './branch-schema-cache'
 import type { FieldConfig } from './config'
 import type { OperatingMode } from './operating-mode'
 import type {
@@ -832,6 +832,214 @@ describe('BranchSchemaCache', () => {
         schema: deployed.widgetSchemaD,
       })
       expect(result.schema.entries?.[1].unavailable).toBeUndefined()
+    })
+  })
+
+  describe('per-process memo', () => {
+    /** Another host's write of the cache file: temp file then rename, as resolveFreshAndPersist does. */
+    const writeForeignSnapshot = async (label: string, generation: string | null) => {
+      const snapshot: import('./branch-schema-cache').BranchSchemaCacheEntry = {
+        version: 4,
+        schema: { label, entries: [] },
+        flatSchema: [],
+        cachedAt: new Date().toISOString(),
+        generation,
+        registryFingerprint: registryFingerprint(entrySchemaRegistry),
+        issues: [],
+      }
+      await fs.mkdir(path.dirname(cachePath), { recursive: true })
+      const tmpPath = `${cachePath}.foreign-${Math.random()}`
+      await fs.writeFile(tmpPath, JSON.stringify(snapshot))
+      await fs.rename(tmpPath, cachePath)
+    }
+
+    /** Spies fs.readFile, splitting the cache file's reads (through a handle) from marker reads. */
+    const spyReads = () => {
+      const spy = vi.spyOn(fs, 'readFile')
+      return {
+        cacheParses: () => spy.mock.calls.filter(([file]) => typeof file === 'object').length,
+        markerReads: () =>
+          spy.mock.calls.filter(
+            ([file]) => typeof file === 'string' && file.endsWith('schema.generation'),
+          ).length,
+        restore: () => spy.mockRestore(),
+      }
+    }
+
+    it('parses an unchanged cache file once and reads only the marker after that', async () => {
+      await new BranchSchemaCache('prod').getSchema(branchRoot, entrySchemaRegistry)
+
+      // A second instance stands in for another process, which must parse what the first wrote.
+      const other = new CountingBranchSchemaCache('prod')
+      const reads = spyReads()
+      try {
+        for (let i = 0; i < 5; i++) {
+          expect((await other.getSchema(branchRoot, entrySchemaRegistry)).schema.label).toBe('Root')
+        }
+        expect(reads.cacheParses()).toBe(1)
+        expect(reads.markerReads()).toBe(5)
+        expect(other.resolveCount).toBe(0)
+      } finally {
+        reads.restore()
+      }
+    })
+
+    it('never parses the file it just wrote itself', async () => {
+      const registry = new CountingBranchSchemaCache('prod')
+      await registry.getSchema(branchRoot, entrySchemaRegistry)
+
+      const reads = spyReads()
+      try {
+        await registry.getSchema(branchRoot, entrySchemaRegistry)
+        expect(reads.cacheParses()).toBe(0)
+        expect(registry.resolveCount).toBe(1)
+      } finally {
+        reads.restore()
+      }
+    })
+
+    it('re-reads the file after another host bumps the marker and writes a new snapshot', async () => {
+      const registry = new CountingBranchSchemaCache('prod')
+      await registry.getSchema(branchRoot, entrySchemaRegistry)
+
+      await writeForeignSnapshot('Written by another host', 'foreign-token-456')
+      await fs.writeFile(resourceGenerationPath(branchRoot, 'schema'), 'foreign-token-456')
+
+      const result = await registry.getSchema(branchRoot, entrySchemaRegistry)
+      expect(result.schema.label).toBe('Written by another host')
+      expect(registry.resolveCount).toBe(1)
+    })
+
+    // The eager re-resolve on a mutating host can rewrite the file under the token it already
+    // carries, correcting a snapshot built from a stale scan; the marker alone cannot show that.
+    it('serves a rewrite that keeps the same token', async () => {
+      const registry = new CountingBranchSchemaCache('prod')
+      await registry.getSchema(branchRoot, entrySchemaRegistry)
+      await writeForeignSnapshot('Stale scan', null)
+      expect((await registry.getSchema(branchRoot, entrySchemaRegistry)).schema.label).toBe(
+        'Stale scan',
+      )
+
+      await writeForeignSnapshot('Corrected by the eager re-resolve', null)
+
+      const result = await registry.getSchema(branchRoot, entrySchemaRegistry)
+      expect(result.schema.label).toBe('Corrected by the eager re-resolve')
+      expect(registry.resolveCount).toBe(1)
+    })
+
+    // A host renaming its own snapshot in between this writer's rename and its memo seed must
+    // win, as it would for a re-read; seeding from a stat of the final path would lose it.
+    it('serves a snapshot another host renames in just after this writer', async () => {
+      const registry = new CountingBranchSchemaCache('prod')
+      const realRename = fs.rename.bind(fs)
+      const rename = vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+        await realRename(from, to)
+        if (to === cachePath) {
+          rename.mockRestore()
+          await writeForeignSnapshot('Renamed in by another host', null)
+        }
+      })
+      try {
+        await registry.getSchema(branchRoot, entrySchemaRegistry)
+      } finally {
+        rename.mockRestore()
+      }
+
+      const result = await registry.getSchema(branchRoot, entrySchemaRegistry)
+      expect(result.schema.label).toBe('Renamed in by another host')
+      expect(registry.resolveCount).toBe(1)
+    })
+
+    it('serves the writing process what every other process parses', async () => {
+      const unbounded = {
+        pageSchema: [
+          { name: 'count', type: 'number', label: 'Count', max: Number.POSITIVE_INFINITY },
+        ] as unknown as FieldConfig[],
+      }
+      const maxOf = (result: ResolvedBranchSchema) =>
+        (result.schema.entries?.[0].schema[0] as { max?: unknown }).max
+
+      const writer = new BranchSchemaCache('prod')
+      await writer.getSchema(branchRoot, unbounded)
+      const fromWriter = await writer.getSchema(branchRoot, unbounded)
+      const fromOther = await new BranchSchemaCache('prod').getSchema(branchRoot, unbounded)
+
+      expect(maxOf(fromOther)).toBeNull()
+      expect(maxOf(fromWriter)).toBeNull()
+      expect(fromWriter.schema.entries?.[0].schema).not.toBe(unbounded.pageSchema)
+    })
+
+    it('still walks mtimes in dev once the entry is memoized', async () => {
+      await new BranchSchemaCache('dev').getSchema(branchRoot, entrySchemaRegistry)
+      const other = new BranchSchemaCache('dev')
+      await other.getSchema(branchRoot, entrySchemaRegistry)
+      await other.getSchema(branchRoot, entrySchemaRegistry)
+
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      await writeCollectionMeta('Hand edited')
+      const now = Date.now()
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 5_000)
+      try {
+        const result = await other.getSchema(branchRoot, entrySchemaRegistry)
+        expect(result.schema.label).toBe('Hand edited')
+      } finally {
+        clock.mockRestore()
+      }
+    })
+
+    it('writes the cache file compact', async () => {
+      await new BranchSchemaCache('prod').getSchema(branchRoot, entrySchemaRegistry)
+      expect(await fs.readFile(cachePath, 'utf-8')).not.toContain('\n')
+    })
+  })
+
+  describe('build mode', () => {
+    beforeEach(() => {
+      vi.stubEnv('CANOPY_BUILD_MODE', 'true')
+    })
+
+    afterEach(() => {
+      vi.unstubAllEnvs()
+    })
+
+    it('resolves the checkout once per content root and registry', async () => {
+      const registry = new CountingBranchSchemaCache()
+
+      const results = await Promise.all(
+        Array.from({ length: 5 }, () => registry.getSchema(branchRoot, entrySchemaRegistry)),
+      )
+      await registry.getSchema(branchRoot, entrySchemaRegistry)
+      expect(results.every((result) => result.schema.label === 'Root')).toBe(true)
+      expect(registry.resolveCount).toBe(1)
+
+      const otherRegistry = {
+        pageSchema: [{ name: 'heading', type: 'string', label: 'Heading' }] as FieldConfig[],
+      }
+      await registry.getSchema(branchRoot, otherRegistry)
+      expect(registry.resolveCount).toBe(2)
+    })
+
+    it('does not keep a failed resolve, so every read fails', async () => {
+      class FailingBranchSchemaCache extends CountingBranchSchemaCache {
+        protected async resolveFresh(): Promise<SchemaResolutionResult> {
+          this.resolveCount++
+          throw new Error('unknown entry schema')
+        }
+      }
+      const registry = new FailingBranchSchemaCache()
+
+      await expect(registry.getSchema(branchRoot, entrySchemaRegistry)).rejects.toThrow(
+        'unknown entry schema',
+      )
+      await expect(registry.getSchema(branchRoot, entrySchemaRegistry)).rejects.toThrow(
+        'unknown entry schema',
+      )
+      expect(registry.resolveCount).toBe(2)
+    })
+
+    it('writes no cache file', async () => {
+      await new BranchSchemaCache().getSchema(branchRoot, entrySchemaRegistry)
+      await expect(fs.access(cachePath)).rejects.toThrow()
     })
   })
 

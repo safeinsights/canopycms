@@ -510,6 +510,22 @@ describe('readByUrlPath', () => {
     expect(result!.data.title).toBe('Guides Index')
   })
 
+  it('resolves the branch schema once for both candidates', async () => {
+    const guidesDir = path.join(root, 'content/docs/guides')
+    await fs.mkdir(guidesDir, { recursive: true })
+    await fs.writeFile(
+      path.join(guidesDir, 'index.md'),
+      matter.stringify('Welcome to guides', { title: 'Guides Index' }),
+    )
+
+    const ctx = await createContext()
+    const getSchema = vi.spyOn(ctx.services.branchSchemaCache, 'getSchema')
+    const result = await ctx.readByUrlPath<{ title: string }>('/docs/guides')
+
+    expect(result!.data.title).toBe('Guides Index')
+    expect(getSchema).toHaveBeenCalledTimes(1)
+  })
+
   // -------------------------------------------------------------------------
   // An index entry does not answer at its literal `.../index` URL
   // -------------------------------------------------------------------------
