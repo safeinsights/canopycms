@@ -49,7 +49,7 @@ import {
   CLOSED_PULL_REQUEST_REASON,
   EDITOR_ACTIONS,
   rewrittenSubmitReason,
-  unfinishedSubmitApproveReason,
+  UNFINISHED_SUBMIT_APPROVE_REASON,
 } from './copy'
 import { isReviewerOfOthersReview } from '../authorization/review-role'
 import { SYSTEM_USER_ID } from '../system-users'
@@ -390,7 +390,7 @@ const BranchCard: React.FC<BranchCardProps> = ({
             ? undefined
             : b.pullRequestState === 'closed'
               ? CLOSED_PULL_REQUEST_REASON
-              : unfinishedSubmitApproveReason(userIsAdmin),
+              : UNFINISHED_SUBMIT_APPROVE_REASON,
         }
       : undefined,
   )
@@ -539,7 +539,9 @@ const BranchCard: React.FC<BranchCardProps> = ({
                 style={WRAP_ANYWHERE}
                 data-testid={`sync-failed-reason-${b.name}`}
               >
-                {endSentence(b.syncFailureReason?.trim() || syncFailedFallback(userIsAdmin))}
+                {endSentence(
+                  b.syncFailureReason?.trim() || syncFailedFallback(userIsAdmin, b.status),
+                )}
                 {!b.hold && inReview && b.pullRequestNumber && ` ${SYNC_FAILED_IN_REVIEW_NOTE}`}
                 {!b.hold &&
                   inReview &&

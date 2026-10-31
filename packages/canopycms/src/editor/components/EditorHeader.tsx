@@ -19,7 +19,7 @@ import type { SaveAllProgress } from '../hooks/save-all'
 import { isAdmin, isLockedOutOfBranch, isReviewer } from '../../authorization/helpers'
 import { branchBarStatus, describeBranchLock, type BranchBarStatus } from '../branch-lock'
 import { HOLD_BADGE, branchHoldMessage } from '../branch-status'
-import { EDITOR_ACTIONS, rewrittenSubmitReason, unfinishedSubmitApproveReason } from '../copy'
+import { EDITOR_ACTIONS, UNFINISHED_SUBMIT_APPROVE_REASON, rewrittenSubmitReason } from '../copy'
 import { reviewRoleOf, type ReviewRole } from '../../authorization/review-role'
 import { SYSTEM_USER_ID } from '../../system-users'
 import { TopBar } from '../shell/TopBar'
@@ -507,9 +507,7 @@ function workflowAction({
       blocked: !branchName || busy || savingAll,
       permitted: true,
       reason: savingAll ? 'Wait for Save all to finish.' : busy ? BUSY_REASON : '',
-      approveReason: approveBlocked
-        ? unfinishedSubmitApproveReason(isAdmin(userContext?.groups ?? []))
-        : undefined,
+      approveReason: approveBlocked ? UNFINISHED_SUBMIT_APPROVE_REASON : undefined,
     }
   }
 

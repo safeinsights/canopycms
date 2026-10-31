@@ -82,6 +82,13 @@ export function branchHoldMessage(hold: BranchHold, viewer: HoldViewer): string 
       const stuck = hold.opened
         ? "The last submit of this branch didn't finish, so its pull request may not have its latest changes."
         : "The last submit of this branch didn't finish, so its pull request wasn't opened."
+      if (hold.notQueued) {
+        if (viewer.role === 'review')
+          return `${stuck} Use "Request changes" to send it back to its editor.`
+        return viewer.role === 'withdraw'
+          ? `${stuck} Use "Withdraw from review", then submit the branch again.`
+          : `${stuck} Its editor needs to withdraw it from review and submit it again.`
+      }
       const retry = viewer.inSystemHealth
         ? 'Retry the submit from the "Tasks" tab'
         : viewer.isAdmin
@@ -116,8 +123,10 @@ export function endSentence(text: string): string {
 export const SYNC_FAILED_IN_REVIEW_NOTE =
   "Until it syncs, CanopyCMS won't update this pull request from its base."
 
-/** The failed-sync line when the worker recorded no reason. */
-export const syncFailedFallback = (isAdmin: boolean): string =>
-  isAdmin
+/** The failed-sync line when the worker recorded no reason. An archived branch has nothing to retry. */
+export const syncFailedFallback = (isAdmin: boolean, status?: string): string => {
+  if (status === 'archived') return 'GitHub sync failed.'
+  return isAdmin
     ? 'GitHub sync failed. Retry it from the "Tasks" tab in "System health".'
     : 'GitHub sync failed. Ask an admin to retry it.'
+}

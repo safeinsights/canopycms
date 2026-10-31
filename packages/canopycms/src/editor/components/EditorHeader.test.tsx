@@ -1899,25 +1899,13 @@ describe('EditorHeader - review actions', () => {
       expect(onApprove).not.toHaveBeenCalled()
       act(() => approve.focus())
       expect((await screen.findByRole('tooltip')).textContent).toContain(
-        'Ask an admin to retry the submit, or use "Request changes"',
+        'Use "Request changes" to send it back to its editor.',
       )
 
       const requestChanges = screen.getByTestId('request-changes-button')
       expect(requestChanges.getAttribute('aria-disabled')).toBeNull()
       await userEvent.click(requestChanges)
       expect(onRequestChanges).toHaveBeenCalledTimes(1)
-    })
-
-    it('tells an admin where the retry is', async () => {
-      renderHeader({
-        ...blocked,
-        userContext: { userId: 'adam', groups: [RESERVED_GROUPS.ADMINS] },
-      })
-
-      act(() => screen.getByTestId('approve-button').focus())
-      expect((await screen.findByRole('tooltip')).textContent).toContain(
-        '"Tasks" tab in "System health"',
-      )
     })
 
     it('takes Approve out of the reason a locked control gives', async () => {
@@ -1938,7 +1926,7 @@ describe('EditorHeader - review actions', () => {
       await userEvent.click(screen.getByTestId('branch-actions-button'))
       const approve = await screen.findByTestId('approve-menu-item')
       expect(approve.getAttribute('aria-disabled')).toBe('true')
-      expect(approve.textContent).toContain('Ask an admin to retry the submit')
+      expect(approve.textContent).toContain('Use "Request changes"')
       expect(screen.queryByTestId('request-changes-menu-item')).toBeNull()
     })
 

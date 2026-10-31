@@ -30,7 +30,7 @@ import { pushToGitHub } from './github-transfer'
 import { clearHistoryRewrittenMarker, readPublishedSha } from './history-rewrite'
 import { writeWorkerStatus } from '../task-queue/worker-status'
 import { SYNC_PR_COMMENTS_ACTION, refreshCommentsBlock, renderPrCommentsBody } from '../pr-comments'
-import { REWRITTEN_PUSH_REFUSAL } from './github-commits'
+import { REWRITTEN_PUSH_REFUSAL, enqueueReviewBlockSync } from './github-commits'
 import { workerLog, workerLogError, workerLogWarn } from './log'
 import { assertSharedRepoConfig } from './shared-repo-git'
 import type { WorkerContext } from './worker-context'
@@ -289,7 +289,7 @@ export async function processTaskQueue(ctx: TaskRunnerContext): Promise<void> {
       const permanent = isPermanentTaskFailure(err)
       const retryCount = task.retryCount ?? 0
       const maxRetries = task.maxRetries ?? ctx.maxRetries
-      const waitsForSync = err instanceof GitHubMovedTaskError && task.action === SUBMIT_ACTION
+      const waitsForSync = err instanceof GitHubMovedTaskError
       if (waitsForSync && retryCount < maxRetries) {
         await retryTask(ctx.taskDir, task.id, persistedMessage, ctx.log, {
           delayMs: ctx.gitSyncIntervalMs,
@@ -590,10 +590,12 @@ export async function executeTask(
 }
 
 /**
- * Whether a retried submit no longer describes the branch: it was withdrawn or sent back meanwhile,
- * so running it would ready the PR someone pulled back, or submitted again, so it would overwrite
- * the newer title and body. Only a retry: a first run can start before the API has recorded the
- * submit it queued.
+ * Whether a submit no longer describes the branch: it merged, so running it would open a pull
+ * request nothing tracks; it was withdrawn or sent back, so running it would ready the PR someone
+ * pulled back; or it was submitted again, so running it would overwrite the newer title and body.
+ * A first run can start before the API has recorded the submit it queued, which reads as a branch
+ * still holding an older one. A drain's release and an orphan's recovery keep `retryCount`, so a
+ * first run can also start long after, and only `submittedAt` tells the two apart.
  */
 async function isSupersededSubmit(
   ctx: TaskRunnerContext,
@@ -601,14 +603,21 @@ async function isSupersededSubmit(
   branch: string,
 ): Promise<boolean> {
   const { submittedAt, requeuedFrom } = task.payload
-  if ((!task.retryCount && requeuedFrom === undefined) || typeof submittedAt !== 'string') {
-    return false
-  }
+  if (typeof submittedAt !== 'string') return false
   const live = await BranchMetadataFileManager.loadOnly(ctx.branchWorkspacePath(branch))
   if (live === null) return false
-  const { status } = live.branch
+  const { status, submittedAt: recorded } = live.branch
+  if (status === 'archived') return true
+  const firstRun = !task.retryCount && requeuedFrom === undefined
+  if (firstRun && (recorded === undefined || recorded < submittedAt)) return false
+  return (status !== 'submitted' && status !== 'approved') || recorded !== submittedAt
+}
+
+/** A submit that isn't the branch's latest, whose outcome says nothing about the latest one. */
+function isOlderSubmit(task: Task, recorded: string | undefined): boolean {
+  const { submittedAt } = task.payload
   return (
-    (status !== 'submitted' && status !== 'approved') || live.branch.submittedAt !== submittedAt
+    task.action === SUBMIT_ACTION && typeof submittedAt === 'string' && recorded !== submittedAt
   )
 }
 
@@ -663,7 +672,7 @@ export async function updateBranchMetadata(
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
     // A superseded submit synced nothing. A branch taken back to editing waits on no other task
     // and owes no pull request step, so it would read as syncing or failed until its next submit.
-    // An archived one has no next submit, and would read as syncing for good.
+    // An archived one has no next submit, and would read as syncing or failed for good.
     if (result.superseded === true) {
       await meta.saveIf(
         {
@@ -679,14 +688,18 @@ export async function updateBranchMetadata(
             ? existing.branch.syncStatus === 'pending-sync' ||
               existing.branch.submitUnfinished === true
             : existing.branch.status === 'archived' &&
-              existing.branch.syncStatus === 'pending-sync'),
+              (existing.branch.syncStatus === 'pending-sync' ||
+                existing.branch.syncStatus === 'sync-failed')),
       )
       return
     }
-    const saved = await meta.update((existing) => {
+    let found = false
+    await meta.update((existing) => {
       if (existing?.branch.name !== branch) return null
+      found = true
       const updates: Record<string, unknown> =
-        task.action !== SUBMIT_ACTION && awaitsSubmitRetry(existing.branch)
+        isOlderSubmit(task, existing.branch.submittedAt) ||
+        (task.action !== SUBMIT_ACTION && awaitsSubmitRetry(existing.branch))
           ? {}
           : {
               syncStatus: 'synced',
@@ -712,9 +725,9 @@ export async function updateBranchMetadata(
           updates.pullRequestState = 'open'
         }
       }
-      return { branch: updates }
+      return Object.keys(updates).length > 0 ? { branch: updates } : null
     })
-    if (saved === null) noMetadataToRecord(branch, `${task.action} outcome`)
+    if (!found) noMetadataToRecord(branch, `${task.action} outcome`)
   } catch (err) {
     workerLogError(
       `Failed to update metadata for ${branch}:`,
@@ -771,21 +784,33 @@ async function updateBranchMetadataOnFailure(
           existing.branch.submittedAt === submittedAt,
       )) !== null
     if (!unlocked) {
+      let found = false
+      let revoked = false
       const saved = await meta.update((existing) => {
         if (existing?.branch.name !== branch) return null
-        // Only the branch's latest submit: an older one running late has no step left to finish.
+        found = true
+        // An older submit running late has no step left to finish, and what it failed at says
+        // nothing about the latest one.
+        if (isOlderSubmit(task, existing.branch.submittedAt)) return null
         // Nothing to submit means this submit left nothing out.
-        const unfinished =
-          !options.unlock &&
-          task.action === SUBMIT_ACTION &&
-          existing.branch.submittedAt === submittedAt
-        if (!unfinished) return { branch: failed }
+        if (options.unlock || task.action !== SUBMIT_ACTION) return { branch: failed }
         // Merged while this ran: nothing is left to finish it, as buildMergedBranchUpdate records.
-        return existing.branch.status === 'archived'
-          ? { branch: { ...failed, unpublishedAtMerge: true } }
-          : { branch: { ...failed, submitUnfinished: true } }
+        if (existing.branch.status === 'archived') {
+          return { branch: { ...failed, unpublishedAtMerge: true } }
+        }
+        // An approval can land while a submit is pending. It covers a pull request that won't
+        // get what was approved, as for commits from GitHub (github-commits.ts).
+        revoked = existing.branch.status === 'approved'
+        return {
+          branch: {
+            ...failed,
+            submitUnfinished: true,
+            ...(revoked ? { status: 'submitted', review: undefined } : {}),
+          },
+        }
       })
-      if (saved === null) noMetadataToRecord(branch, `${task.action} failure`)
+      if (!found) noMetadataToRecord(branch, `${task.action} failure`)
+      if (revoked && saved !== null) await enqueueReviewBlockSync(ctx, branch, saved)
     }
   } catch (err) {
     workerLogError(
@@ -952,7 +977,8 @@ function logPushOutcome(
  * Stamp `pushedToGitHubAt`, branch delete's proof that the GitHub branch is this one, and
  * `lastGitHubTip`, what github-commits.ts tells a rewrite on GitHub by. Recorded when the push
  * lands, whatever the PR call after it does. Best-effort: a branch deleted meanwhile has no
- * metadata to stamp, and a failed stamp only leaves a later delete to skip GitHub.
+ * metadata to stamp, and a failed stamp only leaves a later delete to skip GitHub. Bookkeeping, so
+ * it leaves `updatedAt`, which the card shows as an edit.
  */
 async function recordPushedToGitHub(
   ctx: TaskRunnerContext,
@@ -967,9 +993,12 @@ async function recordPushedToGitHub(
     return
   }
   try {
-    const saved = await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).saveIf(
-      { branch: { pushedToGitHubAt: new Date().toISOString(), lastGitHubTip: sha } },
-      (existing) => existing?.branch.name === branch,
+    const saved = await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update(
+      (existing) =>
+        existing?.branch.name === branch
+          ? { branch: { pushedToGitHubAt: new Date().toISOString(), lastGitHubTip: sha } }
+          : null,
+      { keepUpdatedAt: true },
     )
     if (saved === null) noMetadataToRecord(branch, 'GitHub push')
   } catch (err) {

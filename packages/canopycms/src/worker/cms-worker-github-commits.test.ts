@@ -14,6 +14,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { simpleGit, type SimpleGit } from 'simple-git'
 
 import { BranchMetadataFileManager } from '../branch-metadata'
+import { SCHEMA_GENERATION_RESOURCE } from '../branch-schema-cache'
+import { readResourceGeneration } from '../resource-generation'
 import { listTasks } from '../task-queue/cms-task-queue'
 import { initTestRepo, mockConsole } from '../test-utils'
 import { useLocalGitHubGateway } from '../test-utils/worker-gateway'
@@ -1162,6 +1164,75 @@ describe('bringing commits made on GitHub into a branch clone', () => {
     expect((await readMeta(s))?.rewrittenOnGitHub).toBeUndefined()
   })
 
+  it('leaves a branch as it is when a git call fails, rather than call it a rewrite', async () => {
+    // A last-seen commit whose parent is gone: it reads fine, and `rev-list` over it exits 128.
+    const tree = (await s.clone.revparse(['HEAD^{tree}'])).trim()
+    const parent = (await s.clone.raw(['commit-tree', tree, '-m', 'parent'])).trim()
+    const lastSeen = (await s.clone.raw(['commit-tree', tree, '-p', parent, '-m', 'x'])).trim()
+    await fs.rm(path.join(s.branchPath, '.git/objects', parent.slice(0, 2), parent.slice(2)))
+    await s.commit({ 'editor.txt': 'v2\n' }, 'resubmitted')
+    await s.clone.raw(['push', 'origin', `${BRANCH}:${BRANCH}`])
+    await s.moveGitHubOnly({ 'fix.txt': 'fix\n' })
+    const review = {
+      state: 'approved',
+      by: { userId: 'r' },
+      at: '2026-10-01T00:00:00.000Z',
+    } as const
+    await writeMeta(s, {
+      status: 'approved',
+      pullRequestNumber: 7,
+      lastGitHubTip: lastSeen,
+      review,
+    })
+    const before = await s.head()
+
+    const summary = await cycle(s)
+
+    const meta = await readMeta(s)
+    expect(summary.failed.map((f) => f.branch)).toEqual([BRANCH])
+    expect(meta?.rewrittenOnGitHub).toBeUndefined()
+    expect(meta?.status).toBe('approved')
+    expect(await s.head()).toBe(before)
+    expect(await queued(s, 'push-branch')).toEqual([])
+  })
+
+  it('moves the schema marker off a tree a rebase abandoned', async () => {
+    const read = async () => {
+      const result = await readResourceGeneration(s.branchPath, SCHEMA_GENERATION_RESOURCE)
+      return result.ok ? result.token : undefined
+    }
+    await s.advanceBase({ 'editor.txt': 'base changed\n' })
+    const worker = makeWorker(s)
+    let midRebase: string | null | undefined
+    const seam = worker as unknown as { afterConflictDetectedForTesting: () => Promise<void> }
+    seam.afterConflictDetectedForTesting = async () => {
+      midRebase = await read()
+      throw new Error('stopped mid-rebase')
+    }
+
+    const summary = await cycle(s, worker)
+
+    expect(summary.failed.map((f) => f.branch)).toEqual([BRANCH])
+    expect(await s.file('editor.txt')).toBe('v1\n')
+    expect(await read()).not.toBe(midRebase)
+  })
+
+  it('moves the schema marker before the clone, so no lost write leaves it behind the tree', async () => {
+    const read = async () => {
+      const result = await readResourceGeneration(s.branchPath, SCHEMA_GENERATION_RESOURCE)
+      return result.ok ? result.token : undefined
+    }
+    await s.commitOnGitHub({ 'editor.txt': 'github\n' })
+    await s.save({ 'editor.txt': 'saved\n' })
+    const before = await read()
+    const head = await s.head()
+
+    await cycle(s)
+
+    expect(await s.head()).toBe(head)
+    expect(await read()).not.toBe(before)
+  })
+
   it('fast-forwards past a last-seen commit a rebase of its own replaced', async () => {
     // A tip that contains the clone restores nothing, wherever the record points.
     const fix = await s.commitOnGitHub({ 'fix.txt': 'fix\n' })
@@ -1503,6 +1574,24 @@ describe('bringing commits made on GitHub into a branch clone', () => {
       await cycle(s)
 
       expect(await s.file('editor.txt')).toBe('changed in the merge\n')
+      expect((await readMeta(s))?.status).toBe('submitted')
+    })
+
+    it('goes back to review when a person settled a conflict with the base, whatever side they took', async () => {
+      const seeded = await fs.readFile(path.join(s.branchPath, ENTRY), 'utf-8')
+      await s.clone.raw(['rm', '-q', ENTRY])
+      await s.clone.raw(['commit', '-q', '-m', 'editor deletes the entry'])
+      await s.clone.raw(['push', 'origin', `${BRANCH}:${BRANCH}`])
+      await s.advanceBase({ [ENTRY]: '{"title":"base"}\n' })
+
+      // A person keeps the base's file, which is also what a merge leaves in the tree for a
+      // modify/delete, so only the conflict tells this from a clean merge: the deletion is gone.
+      await s.resolveConflictOnGitHub({ [ENTRY]: '{"title":"base"}\n' })
+      expect(seeded).not.toBe('{"title":"base"}\n')
+
+      await cycle(s)
+
+      expect(await s.file(ENTRY)).toBe('{"title":"base"}\n')
       expect((await readMeta(s))?.status).toBe('submitted')
     })
 

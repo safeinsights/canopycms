@@ -1241,6 +1241,17 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 )
                 leaveDeletedBranch(branchNameToDelete, listedBefore, await reloadBranches())
               } catch (err) {
+                if (err instanceof RefusedError && err.status === 409) {
+                  // The branch moved on: nothing is lost, and the list says why.
+                  notifications.show({
+                    message: err.message,
+                    color: 'yellow',
+                    autoClose: false,
+                    withCloseButton: true,
+                  })
+                  await reloadBranches()
+                  return
+                }
                 if (!isUnanswered(err)) {
                   await reportActionFailure(err, 'Failed to delete branch', 'Delete branch')
                   return

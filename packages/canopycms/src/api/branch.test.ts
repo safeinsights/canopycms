@@ -1966,6 +1966,12 @@ describe('toBranchListItem', () => {
     expect(item.hold).toBeUndefined()
   })
 
+  it('says when no task stands behind an unfinished submit, without the field itself', () => {
+    const item = listed({ status: 'submitted', submitUnfinished: true, submitNotQueued: true })
+    expect(item.hold).toEqual({ kind: 'submit-unfinished', opened: false, notQueued: true })
+    expect(item).not.toHaveProperty('submitNotQueued')
+  })
+
   it('says a failed submit never finished, only while the branch is in review', () => {
     const item = listed({ status: 'submitted', submitUnfinished: true, pullRequestNumber: 7 })
     expect(item.hold).toEqual({ kind: 'submit-unfinished', opened: true })

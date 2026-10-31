@@ -177,10 +177,13 @@ const BASE_REFRESH_LABELS: Record<BaseRefreshReport['outcome'], string> = {
   failed: 'refresh failed',
 }
 
-/** A failed sync's detail. The worker refuses every push while a rewrite stands, so no retry passes. */
-function syncFailedDetail(reason = 'GitHub sync failed.', rewritten: boolean): string {
-  if (rewritten) return reason
-  return `${endSentence(reason)}\nRetry it from the "Tasks" tab.`
+/**
+ * A failed sync's detail, with the advice to retry only when a retry can help. The worker refuses
+ * every push while a rewrite stands, an archived branch has nothing left to finish, and a submit
+ * that was never queued has no task.
+ */
+function syncFailedDetail(reason = 'GitHub sync failed.', retryable: boolean): string {
+  return retryable ? `${endSentence(reason)}\nRetry it from the "Tasks" tab.` : reason
 }
 
 /**
@@ -1253,7 +1256,11 @@ function BranchHealthRow({
             ? { kind: 'unpublished-at-merge' }
             : undefined
           : b.submitUnfinished
-            ? { kind: 'submit-unfinished', opened: b.pullRequestNumber !== undefined }
+            ? {
+                kind: 'submit-unfinished',
+                opened: b.pullRequestNumber !== undefined,
+                notQueued: b.submitNotQueued,
+              }
             : b.pullRequestHold
     const canMarkMerged =
       (b.status === 'submitted' || b.status === 'approved') && !!b.pullRequestNumber
@@ -1300,7 +1307,10 @@ function BranchHealthRow({
           {b.syncStatus === 'sync-failed' ? (
             <TooltipDetail
               preLine
-              detail={syncFailedDetail(b.syncFailureReason, hold?.kind === 'rewritten')}
+              detail={syncFailedDetail(
+                b.syncFailureReason,
+                hold?.kind !== 'rewritten' && b.status !== 'archived' && !b.submitNotQueued,
+              )}
             >
               <Badge color="red" variant="light">
                 Sync failed
