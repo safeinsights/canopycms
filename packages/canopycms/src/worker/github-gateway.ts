@@ -913,8 +913,9 @@ class LocalGitHubGateway implements GitHubGateway {
     const session = (received: ReceivedBundle | null) =>
       this.afterGitHubFetch(
         async () => {
-          // A reused fetch can predate a reset, whose heads would still show the commit `seen` names.
-          if (request.seen !== undefined) this.invalidateGitHubFetch()
+          // A reused fetch can predate a reset, whose heads would still show the commit `seen`
+          // names. Nothing moved at GitHub, so this ends the reuse and leaves other fetches good.
+          if (request.seen !== undefined) this.githubFetch = null
           const snapshot = await this.joinGitHubFetchForPush(credential, request.branch, signal)
           await credential()
           return snapshot
@@ -1001,9 +1002,10 @@ class LocalGitHubGateway implements GitHubGateway {
       )
     }
 
-    const attempt = (lease?: string) =>
+    const attempt = (lease?: string, pin?: string) =>
       mirror.pushToGitHub(credential, branch, sha, {
         lease,
+        pin,
         signal,
         repo,
         policy: this.policy,
@@ -1011,7 +1013,8 @@ class LocalGitHubGateway implements GitHubGateway {
         onPushing: () => this.invalidateGitHubFetch(),
       })
     try {
-      return { kind: 'pushed', ...(await attempt(request.lease)), pastStaleLease: false }
+      const pin = request.seen === undefined || request.lease !== undefined ? undefined : tip
+      return { kind: 'pushed', ...(await attempt(request.lease, pin)), pastStaleLease: false }
     } catch (err) {
       if (err instanceof RefusedPushError || err instanceof GitHubTransientError) throw err
       const message = getErrorMessage(err)

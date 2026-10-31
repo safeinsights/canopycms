@@ -74,6 +74,8 @@ interface Setup {
   updateBranchFromGitHub(name: string, files: Record<string, string>): Promise<string>
   /** Replace GitHub's copy with a history that drops what it held. */
   forcePushOnGitHub(files: Record<string, string>): Promise<string>
+  /** Move GitHub's copy back to `sha`. */
+  resetOnGitHub(sha: string): Promise<void>
   remoteSha(ref: string): Promise<string | null>
   head(): Promise<string>
   /** Subjects of a commit's history, newest first. */
@@ -236,6 +238,9 @@ async function createSetup(workspace: string): Promise<Setup> {
       await outside.raw(['push', '--force', 'origin', `HEAD:refs/remotes/github/${BRANCH}`])
       return sha
     },
+    async resetOnGitHub(sha) {
+      await trackGitHub(sha)
+    },
     async remoteSha(ref) {
       return bare(['rev-parse', '--verify', ref]).then(
         (out) => out.trim(),
@@ -261,6 +266,9 @@ const writeMeta = (s: Setup, data: Partial<BranchMetadata> = {}) =>
       ...data,
     },
   })
+
+const contains = async (s: Setup, commit: string, ancestor: string) =>
+  (await s.clone.raw(['rev-list', '--count', `${commit}..${ancestor}`])).trim() === '0'
 
 const readMeta = async (s: Setup) =>
   (await BranchMetadataFileManager.loadOnly(s.branchPath))?.branch
@@ -1273,23 +1281,61 @@ describe('bringing commits made on GitHub into a branch clone', () => {
     expect(await queued(s, 'push-branch')).toEqual([])
   })
 
-  it('leaves a branch whose push failed where it is, as a rebase would read as a rewrite', async () => {
-    const pushed = await s.head()
-    await writeMeta(s, { lastGitHubTip: pushed })
+  describe('a branch whose push failed for good', () => {
+    let pushed: string
+    let unpushed: string
+    beforeEach(async () => {
+      pushed = await s.head()
+      await writeMeta(s, { lastGitHubTip: pushed })
+      await s.commit({ 'editor.txt': 'v2\n' }, 'resubmitted')
+      await s.clone.raw(['push', 'origin', `${BRANCH}:${BRANCH}`])
+      unpushed = await s.head()
+      await writeMeta(s, { lastGitHubTip: pushed, syncStatus: 'sync-failed' })
+      await s.advanceBase({ 'base2.txt': 'moved\n' })
+    })
+
+    it('takes the base by a merge, as a rebase would replace what GitHub never received', async () => {
+      await cycle(s)
+
+      const meta = await readMeta(s)
+      expect(await s.file('base2.txt')).toBe('moved\n')
+      expect(await contains(s, await s.head(), unpushed)).toBe(true)
+      expect(meta?.historyRewrittenFrom).toBeUndefined()
+      expect(meta?.lastGitHubTip).toBe(pushed)
+      expect(await queued(s, 'push-branch')).toEqual([BRANCH])
+    })
+
+    it('reads as nothing wrong on the next cycle, with the merge on its way', async () => {
+      await cycle(s)
+      await cycle(s)
+
+      expect((await readMeta(s))?.rewrittenOnGitHub).toBeUndefined()
+      expect(await queued(s, 'push-branch')).toEqual([BRANCH])
+    })
+  })
+
+  it('reads a removal as one after a crash left a merge in remote.git ahead of the clone', async () => {
+    const kept = await s.head()
+    await writeMeta(s, { lastGitHubTip: kept })
     await s.commit({ 'editor.txt': 'v2\n' }, 'resubmitted')
     await s.clone.raw(['push', 'origin', `${BRANCH}:${BRANCH}`])
-    await writeMeta(s, { lastGitHubTip: pushed, syncStatus: 'sync-failed' })
     const before = await s.head()
-    await s.advanceBase({ 'base2.txt': 'moved\n' })
-
+    const removed = await s.moveGitHubOnly({ 'leak.txt': 'secret\n' })
+    // Holds git off the clone's index, as a crash does at the same point: the merge is built and
+    // published, and the clone can't follow.
+    const lock = path.join(s.branchPath, '.git/index.lock')
+    await fs.writeFile(lock, '')
     await cycle(s)
-    await cycle(s)
-
-    const meta = await readMeta(s)
+    await fs.rm(lock)
     expect(await s.head()).toBe(before)
-    expect(meta?.historyRewrittenFrom).toBeUndefined()
-    expect(meta?.rewrittenOnGitHub).toBeUndefined()
-    expect(await queued(s, 'push-branch')).toEqual([])
+    expect((await readMeta(s))?.lastGitHubTip).toBe(removed)
+
+    await s.resetOnGitHub(kept)
+    await cycle(s)
+
+    expect((await readMeta(s))?.rewrittenOnGitHub).toBe(removed)
+    expect(await s.head()).toBe(before)
+    expect(await s.file('leak.txt')).toBeNull()
   })
 
   it('stays level with remote.git when reconcile left it behind this tip', async () => {

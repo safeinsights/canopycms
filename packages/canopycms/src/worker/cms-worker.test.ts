@@ -10,7 +10,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { simpleGit } from 'simple-git'
 
-import { REWRITTEN_PUSH_REFUSAL } from './github-commits'
+import { REWRITTEN_PUSH_REFUSAL, SEEN_COMMIT_GONE_PUSH_REFUSAL } from './github-commits'
 import type { GitHubGateway } from './github-gateway'
 import { CmsWorker, PermanentTaskError, isPermanentTaskFailure } from './cms-worker'
 import { enqueueTask, dequeueTask, getTask, listTasks } from '../task-queue/cms-task-queue'
@@ -1662,6 +1662,7 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     const branch = 'canopycms/prod/feature-retried'
     const dir = () => path.join(contentBranchesPath, 'canopycms-prod-feature-retried')
     const submittedAt = '2026-10-01T00:00:00.000Z'
+    let seededAt: string | undefined
 
     const retrySubmit = async (
       live: Record<string, unknown>,
@@ -1670,9 +1671,10 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     ) => {
       await seedBranchInRemoteGit(branch, 'hello')
       await fs.mkdir(dir(), { recursive: true })
-      await getBranchMetadataFileManager(dir(), contentBranchesPath).save({
+      const seeded = await getBranchMetadataFileManager(dir(), contentBranchesPath).save({
         branch: { name: branch, pullRequestNumber: 12, ...live },
       })
+      seededAt = seeded.branch.updatedAt
       const worker = makePushWorker()
       ;(worker as unknown as { running: boolean }).running = true
       gateway?.((worker as unknown as { github(): GitHubGateway }).github())
@@ -1901,6 +1903,7 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
       expect(after?.syncStatus).toBe('synced')
       expect(after?.syncFailureReason).toBeUndefined()
       expect(after?.unpublishedAtMerge).toBe(true)
+      expect(after?.updatedAt).toBe(seededAt)
     })
 
     it('sends an approved branch back to review when its submit fails, clearing the verdict', async () => {
@@ -1937,6 +1940,7 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
       const meta = await BranchMetadataFileManager.loadOnly(dir())
       expect(meta?.branch.syncStatus).toBe('sync-failed')
       expect(meta?.branch.submitUnfinished).toBe(true)
+      expect(meta?.branch.updatedAt).toBe(seededAt)
     })
 
     it('records no unfinished submit for a plain push that failed', async () => {
@@ -2090,6 +2094,8 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     expect(task?.status).toBe('pending')
     // Until the next sync, not an ordinary retry's backoff, which would only meet the same refusal.
     expect(Date.parse(task?.retryAfter ?? '') - Date.now()).toBeGreaterThan(60_000)
+    // What an editor reads if the retries run out: no commit ID, and no promise of a sync.
+    expect(task?.error).toBe(SEEN_COMMIT_GONE_PUSH_REFUSAL)
   })
 
   it('fails a push-branch task once its retries are spent, and records the reason on branch metadata', async () => {

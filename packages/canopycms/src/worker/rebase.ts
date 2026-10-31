@@ -1250,12 +1250,14 @@ async function rebaseOneBranch(
           : null
 
       // Before the dirty return: a fast-forward passes saves that touch other files.
+      let unpushed = false
       if (commitArgs !== null) {
         const outcome = await bringInGitHubCommits(ctx, commitArgs)
         if (outcome.kind === 'blocked') {
           return recordBlocked(ctx, branchDir, branchPath, branchRef, outcome.reason)
         }
-        if (outcome.kind !== 'in-step') {
+        if (outcome.kind === 'unpushed') unpushed = true
+        else if (outcome.kind !== 'in-step') {
           return editorDirt.length > 0 ? { kind: 'skippedDirty' } : { kind: 'none' }
         }
       }
@@ -1362,7 +1364,7 @@ async function rebaseOneBranch(
       const cannotReplay =
         (await countAboveBase(['--merges', '--end-of-options', aboveBase])) !== '0' ||
         (await countAboveBase(['--end-of-options', aboveBase, '--', CANOPY_META_DIR])) !== '0'
-      if (commitArgs !== null && cannotReplay) {
+      if (commitArgs !== null && (cannotReplay || unpushed)) {
         const outcome = await mergeIntoBranch(ctx, commitArgs, {
           head: (await branchGit.revparse(['HEAD'])).trim(),
           other: fetchedBaseTip,

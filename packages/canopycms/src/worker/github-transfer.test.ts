@@ -6,12 +6,17 @@ import path from 'node:path'
 import { PassThrough, Readable } from 'node:stream'
 import { promisify } from 'node:util'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { GITHUB_TRACKING_REF_PREFIX } from '../git-manager'
 import { BUNDLE_HEADER_MAX_BYTES } from './bundle-header'
 import type { GitHubGateway } from './github-gateway'
-import { fetchGitHubIntoRemoteGit, unreachableFrom, type TransferContext } from './github-transfer'
+import {
+  fetchGitHubIntoRemoteGit,
+  pushToGitHub,
+  unreachableFrom,
+  type TransferContext,
+} from './github-transfer'
 
 const execFileAsync = promisify(execFile)
 const git = async (...args: string[]) => (await execFileAsync('git', args)).stdout.trim()
@@ -257,5 +262,46 @@ describe('fetchGitHubIntoRemoteGit', () => {
 
     expect(refs.size).toBe(count)
     expect((await trackingRefs()).split('\n')).toHaveLength(count)
+  })
+})
+
+describe('pushToGitHub', () => {
+  it('reads the commit last seen on GitHub after the commit it pushes, for each attempt', async () => {
+    const reads: string[] = []
+    const push = vi.fn(async () => ({
+      kind: 'pushed' as const,
+      moved: true as const,
+      from: 'abc1234',
+      to: 'def5678',
+      pastStaleLease: false,
+    }))
+    const ctx = {
+      github: () => ({ push }),
+      remoteGitPath: repo,
+      taskTimeoutMs: 30_000,
+    } as unknown as TransferContext
+
+    await pushToGitHub(
+      ctx,
+      {
+        branch: 'feature',
+        prerequisiteBranches: [],
+        readSeen: async () => {
+          reads.push('seen')
+          return 'b'.repeat(40)
+        },
+      },
+      async () => {
+        reads.push('sha')
+        return 'a'.repeat(40)
+      },
+    )
+
+    expect(reads).toEqual(['sha', 'seen'])
+    expect(push).toHaveBeenCalledWith(
+      expect.objectContaining({ sha: 'a'.repeat(40), seen: 'b'.repeat(40) }),
+      undefined,
+      undefined,
+    )
   })
 })

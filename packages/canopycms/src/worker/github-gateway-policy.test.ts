@@ -33,7 +33,7 @@ import {
   type LocalGitHubGatewayOptions,
   GitHubPushError,
 } from './github-gateway'
-import { GitHubTransientError, RefusedPushError } from './github-mirror'
+import { GitHubTransientError, MirrorSession, RefusedPushError } from './github-mirror'
 import { pushToGitHub } from './github-transfer'
 import { isPermanentTaskFailure } from './task-runner'
 
@@ -118,7 +118,7 @@ function gateway(
 function pushVia(github: GitHubGateway, branch: string, lease?: string, seen?: string) {
   return pushToGitHub(
     { github: () => github, remoteGitPath, taskTimeoutMs: 30_000 },
-    { branch, lease, ...(seen ? { seen } : {}), prerequisiteBranches: [branch, 'main'] },
+    { branch, lease, readSeen: async () => seen, prerequisiteBranches: [branch, 'main'] },
     async () => git('--git-dir', remoteGitPath, 'rev-parse', `refs/heads/${branch}`),
   )
 }
@@ -254,6 +254,23 @@ describe('pushes', () => {
       const caught = await pushVia(github, branch, undefined, seen).catch((err: unknown) => err)
 
       expect((caught as GitHubPushError).kind).toBe('seen-commit-gone')
+      expect(await tip(`refs/heads/${branch}`)).toBe(kept)
+    })
+
+    it('refuses a reset that lands after the check, as nothing else holds GitHub still', async () => {
+      const { kept, seen } = await published()
+      await commitAndPush(remoteGitPath, `refs/heads/${branch}`, 'editor.txt')
+      const push = MirrorSession.prototype.pushToGitHub
+      vi.spyOn(MirrorSession.prototype, 'pushToGitHub').mockImplementation(async function (
+        this: MirrorSession,
+        ...args: Parameters<MirrorSession['pushToGitHub']>
+      ) {
+        await git('--git-dir', githubPath, 'update-ref', `refs/heads/${branch}`, kept)
+        return push.apply(this, args)
+      })
+
+      await expect(pushVia(gateway({}), branch, undefined, seen)).rejects.toThrow()
+
       expect(await tip(`refs/heads/${branch}`)).toBe(kept)
     })
 

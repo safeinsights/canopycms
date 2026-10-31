@@ -30,7 +30,12 @@ import { pushToGitHub } from './github-transfer'
 import { clearHistoryRewrittenMarker, readPublishedSha } from './history-rewrite'
 import { writeWorkerStatus } from '../task-queue/worker-status'
 import { SYNC_PR_COMMENTS_ACTION, refreshCommentsBlock, renderPrCommentsBody } from '../pr-comments'
-import { COMMIT_ID, REWRITTEN_PUSH_REFUSAL, enqueueReviewBlockSync } from './github-commits'
+import {
+  COMMIT_ID,
+  REWRITTEN_PUSH_REFUSAL,
+  SEEN_COMMIT_GONE_PUSH_REFUSAL,
+  enqueueReviewBlockSync,
+} from './github-commits'
 import { workerLog, workerLogError, workerLogWarn } from './log'
 import { assertSharedRepoConfig } from './shared-repo-git'
 import type { WorkerContext } from './worker-context'
@@ -885,9 +890,12 @@ export async function pushBranchToGitHub(
   // refuses in every other case (including a commit someone else pushed).
   const branchPath = ctx.branchWorkspacePath(branch)
   // An unreadable branch.json throws: without it nothing could say a push is safe.
-  const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
+  const readMetadata = () =>
+    BranchMetadataFileManager.loadOnly(branchPath).catch((err: unknown) => {
+      throw err instanceof BranchMetadataCorruptError ? new Error(err.parseCause) : err
+    })
+  const metaFile = await readMetadata()
   const marker = metaFile?.branch.historyRewrittenFrom
-  const lastSeen = metaFile?.branch.lastGitHubTip
   // github-commits.ts recorded it: this push would restore what someone removed from GitHub.
   if (metaFile?.branch.rewrittenOnGitHub !== undefined) {
     workerLogWarn(
@@ -903,6 +911,16 @@ export async function pushBranchToGitHub(
     }
     return sha
   }
+  // Read after the commit it goes with, each attempt: a merge records what it took from GitHub
+  // before `remote.git` holds it, so this names everything that commit brought in. A pending
+  // rewrite's stamp names the commit this push is taking to GitHub.
+  const readSeen = async () => {
+    const live = (await readMetadata())?.branch
+    const seen = live?.lastGitHubTip
+    return live?.historyRewrittenFrom === undefined && seen !== undefined && COMMIT_ID.test(seen)
+      ? seen
+      : undefined
+  }
   // The commit GitHub was sent: the transfer reads it again if the branch moves under it.
   let outgoingSha: string
   let outcome: GitHubPushOutcome
@@ -912,10 +930,7 @@ export async function pushBranchToGitHub(
       {
         branch,
         lease: marker,
-        // A pending rewrite's stamp names the commit this push is taking to GitHub.
-        ...(marker === undefined && lastSeen !== undefined && COMMIT_ID.test(lastSeen)
-          ? { seen: lastSeen }
-          : {}),
+        readSeen,
         prerequisiteBranches: [branch, ctx.baseBranch],
       },
       readSha,
@@ -928,9 +943,7 @@ export async function pushBranchToGitHub(
     // The next sync sees why, and records the rewrite if that's what it was.
     if (err.kind === 'seen-commit-gone') {
       workerLogWarn(`Not pushing ${branch}: ${err.message}`)
-      throw new GitHubMovedTaskError(
-        'A commit this branch had on GitHub is no longer there, so nothing was pushed. Nothing is lost.',
-      )
+      throw new GitHubMovedTaskError(SEEN_COMMIT_GONE_PUSH_REFUSAL)
     }
     throwIfWorkflowRefusal(branch, err.message)
     // A refused lease was already retried plain, and that retry rejected too: only a

@@ -1096,6 +1096,12 @@ export class MirrorSession {
     sha: string,
     options: {
       lease?: string
+      /**
+       * The tip a caller's check saw. A reset to an ancestor of `sha` after that check would
+       * otherwise take a plain push, so a push that fast-forwards this tip carries it as a lease,
+       * which forces nothing there and is refused if the ref moved.
+       */
+      pin?: string
       signal?: AbortSignal
       repo?: string
       policy: BranchPolicy
@@ -1143,6 +1149,12 @@ export class MirrorSession {
         )
       }
     }
+    const pinned =
+      options.pin !== undefined &&
+      (await this.run(['rev-list', '--max-count=1', '--end-of-options', options.pin, `^${sha}`], {
+        repo: options.repo,
+      })) === ''
+    const lease = options.lease ?? (pinned ? options.pin : undefined)
     options.onPushing?.()
     const status = await this.githubBound(
       credential,
@@ -1150,7 +1162,7 @@ export class MirrorSession {
         'push',
         '--porcelain',
         '--progress',
-        ...(options.lease ? [`--force-with-lease=refs/heads/${branch}:${options.lease}`] : []),
+        ...(lease ? [`--force-with-lease=refs/heads/${branch}:${lease}`] : []),
         '--end-of-options',
         credential.url,
         `${sha}:refs/heads/${branch}`,

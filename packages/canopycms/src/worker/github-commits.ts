@@ -28,7 +28,7 @@ import {
   RETIRED_SCHEMA_CACHE_PATH,
   TRACKED_CANOPY_STATE_FIX,
 } from './canopy-state'
-import { enqueueGitHubPush, readPublishedSha } from './history-rewrite'
+import { enqueueGitHubPush, readPublishedSha, recordSeenOnGitHub } from './history-rewrite'
 import { workerLog, workerLogWarn } from './log'
 import { assertNoIncomingSubmodules, fetchFromRemoteGit } from './shared-repo-git'
 import type { WorkerContext } from './worker-context'
@@ -74,6 +74,11 @@ export type GitHubCommitsOutcome =
   | { kind: 'in-step' }
   /** Looked at again next cycle. Nothing else in this cycle may move the branch. */
   | { kind: 'wait' }
+  /**
+   * `remote.git` holds commits GitHub lacks, whose push failed for good. A rebase would replace
+   * commits GitHub never received, so the base comes in by a merge, which keeps them.
+   */
+  | { kind: 'unpushed' }
   /** A merge landed. A rebase now would replace a merge GitHub has not received. */
   | { kind: 'merged' }
   /** Left as it is until a person acts. `reason` says what to do. */
@@ -100,12 +105,20 @@ const MAX_LISTED_PATH_LENGTH = 200
 export const REWRITTEN_PUSH_REFUSAL =
   "This branch was changed on GitHub in a way CanopyCMS can't combine with the work here, so nothing was pushed. Nothing is lost."
 
+/** Why a push was refused before any sync had seen the rewrite (task-runner.ts). */
+export const SEEN_COMMIT_GONE_PUSH_REFUSAL =
+  'A commit this branch had on GitHub is no longer there, so nothing was pushed. Nothing is lost.'
+
 /**
  * What clears a rewrite: the flag, and the refusal's text, which would go on saying the work can't
  * be combined. The failed sync it left goes too, unless {@link awaitsSubmitRetry}.
  */
 export function rewriteCleared(branch: BranchMetadata): Partial<BranchMetadata> {
-  if (!branch.syncFailureReason?.includes(REWRITTEN_PUSH_REFUSAL)) {
+  const reason = branch.syncFailureReason
+  if (
+    !reason?.includes(REWRITTEN_PUSH_REFUSAL) &&
+    !reason?.includes(SEEN_COMMIT_GONE_PUSH_REFUSAL)
+  ) {
     return { rewrittenOnGitHub: undefined }
   }
   return awaitsSubmitRetry(branch)
@@ -215,9 +228,9 @@ export async function bringInGitHubCommits(
 
   // A merge or a submit that reached remote.git with no GitHub push queued, as after a crash
   // between the two. A rebase now would strand the push, which leases on a commit GitHub never
-  // held, and read as a rewrite on GitHub once it failed, so the branch waits for the push. A push
-  // that failed for good isn't queued again, unless a cleared rewrite was all that stopped it: its
-  // failure is on the branch, and a new attempt would fail the same way every cycle.
+  // held, and read as a rewrite on GitHub once it failed. So the branch waits for the push, or takes
+  // the base by a merge when the push failed for good, which isn't queued again unless a cleared
+  // rewrite was all that stopped it: a new attempt would fail the same way every cycle.
   if (
     gitHubTip !== undefined &&
     published !== null &&
@@ -225,9 +238,8 @@ export async function bringInGitHubCommits(
     (!gatewayPolicy || publishesBranch(gatewayPolicy, branchRef)) &&
     (await contains(git, published, tip))
   ) {
-    if (branch.syncStatus !== 'sync-failed' || rewriteResolved) {
-      await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
-    }
+    if (branch.syncStatus === 'sync-failed' && !rewriteResolved) return { kind: 'unpushed' }
+    await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
     return { kind: 'wait' }
   }
   return { kind: 'in-step' }
@@ -478,6 +490,9 @@ export async function mergeIntoBranch(
   // Recorded before the merge is visible anywhere: the next cycle only fast-forwards to it, and
   // the conflicts cannot be read back from the merge.
   if (conflicted.length > 0) await recordKeptVersions(ctx, args, conflicted, fromGitHub)
+  // Before `remote.git` holds it, as reconcile does: a crash past this point leaves GitHub's commit
+  // in `remote.git`, and a removal then has to read as one (`rewrittenFrom`).
+  if (fromGitHub) await recordSeenOnGitHub(ctx, branchRef, other)
   if (published !== null) {
     if (!(await publishPlainToLocalRemote(ctx, branchPath, branchRef, sha))) {
       return { kind: 'blocked', reason: unpublishable }
