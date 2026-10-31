@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
 
-import type { BranchAccessControl, BranchContext, BranchMetadata } from '../types'
+import type { BranchAccessControl, BranchContext, BranchHold, BranchMetadata } from '../types'
 import { BranchWorkspaceManager, type ProvisionOutcome } from '../branch-workspace'
 import {
   BranchDirOccupiedError,
@@ -53,8 +53,16 @@ const log = createDebugLogger({ prefix: 'BranchAPI' })
  */
 export interface BranchListItem extends Omit<
   BranchMetadata,
-  'review' | 'keptOverGitHub' | 'lastGitHubTip' | 'rewrittenOnGitHub' | 'rebaseFailure'
+  | 'review'
+  | 'keptOverGitHub'
+  | 'lastGitHubTip'
+  | 'rewrittenOnGitHub'
+  | 'submitUnfinished'
+  | 'rebaseFailure'
+  | 'pullRequestHold'
 > {
+  /** What is stuck and needs a person, for the branch card. Names no file. */
+  hold?: BranchHold
   /**
    * What pull request links carry for this branch, which `?branch=` and the `/:branch` segment
    * accept beside `name` (branch-param.ts's `shortNameOf`): `name` less the namespace for a branch
@@ -71,7 +79,8 @@ export interface BranchListItem extends Omit<
    */
   writeBlocked?: boolean
   /**
-   * Populated from {@link BranchWriteProtection.submitBlockedIncludingStatus}
+   * Populated from {@link BranchWriteProtection.submitBlockedIncludingStatus},
+   * or true for a branch rewritten on GitHub
    * -- READ THAT DOC COMMENT before touching this field. On the wire this
    * name means the COMPOUND answer (base-branch OR non-'editing' status),
    * mirroring how `writeBlocked` above is the compound of `readOnly` + status
@@ -274,23 +283,36 @@ export const toBranchListItem = (
   const protection = getBranchWriteProtection(config, branch.name, branch.baseBranch, branch.status)
   // `review` names the reviewer, whom the editor has no use for. `keptOverGitHub` and
   // `rebaseFailure` can name files, which a viewer's path rules can hide; System Health reads
-  // failures from the admin endpoint. The other two are the worker's.
+  // failures from the admin endpoint. The others are the worker's.
   const {
     review: _review,
     keptOverGitHub: _kept,
     lastGitHubTip: _tip,
     rewrittenOnGitHub: _rewritten,
+    submitUnfinished: _unfinished,
     rebaseFailure: _failure,
+    pullRequestHold,
     ...listed
   } = branch
+  const inReview = branch.status === 'submitted' || branch.status === 'approved'
+  const rewritten = branch.rewrittenOnGitHub !== undefined && branch.status !== 'archived'
+  const hold: BranchHold | undefined = rewritten
+    ? { kind: 'rewritten' }
+    : !inReview
+      ? undefined
+      : branch.submitUnfinished
+        ? { kind: 'submit-unfinished', opened: branch.pullRequestNumber !== undefined }
+        : pullRequestHold
   return {
     ...listed,
+    hold,
     shortName: shortNameOf(config, branch.name),
     ...accessForViewer(branch.access ?? {}, viewer),
     isProtected: protection.isProtected,
     readOnly: protection.readOnly,
     writeBlocked: protection.writeBlocked,
-    submitBlocked: protection.submitBlockedIncludingStatus,
+    // The worker refuses to push such a branch, so a submit could only fail later.
+    submitBlocked: protection.submitBlockedIncludingStatus || rewritten,
   }
 }
 

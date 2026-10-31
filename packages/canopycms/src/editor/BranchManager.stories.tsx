@@ -100,6 +100,125 @@ export const WithPullRequests: Story = {
   },
 }
 
+/** Branches stuck on something a person has to do, each saying what and how. */
+export const HeldPullRequests: Story = {
+  args: {
+    ...WithPullRequests.args,
+    branches: [
+      {
+        name: 'feature/conflicting',
+        status: 'submitted',
+        updatedAt: ago(DAY),
+        createdBy: 'bob',
+        access: { users: ['bob'] },
+        pullRequestUrl: 'https://github.com/owner/repo/pull/123',
+        pullRequestNumber: 123,
+        hold: { kind: 'conflicts' },
+      },
+      {
+        name: 'feature/retargeted',
+        status: 'approved',
+        updatedAt: ago(DAY),
+        createdBy: 'bob',
+        access: { users: ['bob'] },
+        pullRequestUrl: 'https://github.com/owner/repo/pull/124',
+        pullRequestNumber: 124,
+        hold: { kind: 'retargeted', base: 'release/2026' },
+      },
+      {
+        name: 'feature/force-pushed',
+        status: 'editing',
+        updatedAt: ago(DAY),
+        createdBy: 'bob',
+        access: { users: ['bob'] },
+        pullRequestUrl: 'https://github.com/owner/repo/pull/125',
+        pullRequestNumber: 125,
+        hold: { kind: 'rewritten' },
+        submitBlocked: true,
+      },
+      {
+        name: 'feature/submit-unfinished',
+        status: 'submitted',
+        updatedAt: ago(DAY),
+        createdBy: 'bob',
+        access: { users: ['bob'] },
+        pullRequestUrl: 'https://github.com/owner/repo/pull/127',
+        pullRequestNumber: 127,
+        syncStatus: 'sync-failed',
+        syncFailureReason: 'Push rejected by GitHub.',
+        hold: { kind: 'submit-unfinished', opened: true },
+      },
+      {
+        name: 'feature/never-opened',
+        status: 'submitted',
+        updatedAt: ago(DAY),
+        createdBy: 'bob',
+        access: { users: ['bob'] },
+        syncStatus: 'sync-failed',
+        syncFailureReason: 'Push rejected by GitHub.',
+        hold: { kind: 'submit-unfinished', opened: false },
+      },
+      {
+        name: 'feature/sync-failed',
+        status: 'submitted',
+        updatedAt: ago(DAY),
+        createdBy: 'bob',
+        access: { users: ['bob'] },
+        pullRequestUrl: 'https://github.com/owner/repo/pull/126',
+        pullRequestNumber: 126,
+        syncStatus: 'sync-failed',
+      },
+    ],
+  },
+}
+
+/** The author's view: the way forward is theirs, and a hold and a failed sync stay one message. */
+export const HeldPullRequestsAsAuthor: Story = {
+  args: { ...HeldPullRequests.args, user: { userId: 'bob', groups: [] } },
+}
+
+/** A reviewer of someone else's branch, who sends it back rather than withdrawing it. */
+export const HeldAsReviewer: Story = {
+  args: { ...HeldPullRequests.args, user: { userId: 'rita', groups: [RESERVED_GROUPS.REVIEWERS] } },
+}
+
+/** A reviewer the branches were shared with reads them as their editor, with Withdraw. */
+export const HeldAsReviewerSharedWith: Story = {
+  args: {
+    ...HeldAsReviewer.args,
+    branches: HeldPullRequests.args?.branches?.map((b) => ({
+      ...b,
+      access: { users: ['bob', 'rita'] },
+    })),
+  },
+}
+
+/** Everything at once, for how the badges wrap. */
+export const HeldWithEveryBadge: Story = {
+  args: {
+    ...HeldPullRequests.args,
+    user: { userId: 'bob', groups: [] },
+    currentBranchName: 'feature/everything',
+    branches: [
+      {
+        name: 'feature/everything',
+        status: 'submitted',
+        updatedAt: ago(DAY),
+        createdBy: 'bob',
+        access: { users: ['bob'] },
+        pullRequestUrl: 'https://github.com/owner/repo/pull/127',
+        pullRequestNumber: 127,
+        commentCount: 3,
+        syncStatus: 'sync-failed',
+        syncFailureReason: 'Push rejected for this branch: GitHub has moved on.',
+        conflictStatus: 'conflicts-detected',
+        conflictFiles: ['a', 'b'],
+        hold: { kind: 'retargeted', base: 'release_2026_winter_campaign_landing_pages_v2' },
+      },
+    ],
+  },
+}
+
 /** A branch CanopyCMS provisioned shows its owner as "CanopyCMS bot", with no lookup. */
 export const WithBotOwner: Story = {
   args: {

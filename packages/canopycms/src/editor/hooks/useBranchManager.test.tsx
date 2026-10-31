@@ -2687,6 +2687,34 @@ describe('useBranchManager', () => {
       expect(notifications.hide).toHaveBeenCalledWith('canopy-approve-failed-feature')
     })
 
+    it('shows a refused submit in yellow until it is read, and reloads the list', async () => {
+      const { notifications } = await import('@mantine/notifications')
+      const error = 'This branch was changed on GitHub. Nothing is lost.'
+      mockClient.workflow.submit.mockResolvedValueOnce({ ok: false, status: 409, error })
+      const { result } = await loaded(editingFeature)
+      mockClient.branches.list.mockClear()
+
+      await act(async () => {
+        await result.current.handleSubmit('feature').catch(() => {})
+      })
+
+      expect(notifications.show).toHaveBeenCalledWith({
+        id: 'canopy-submit-refused-feature',
+        message: error,
+        color: 'yellow',
+        autoClose: false,
+        withCloseButton: true,
+      })
+      expect(mockClient.branches.list).toHaveBeenCalledTimes(1)
+
+      vi.mocked(notifications.hide).mockClear()
+      mockClient.workflow.submit.mockResolvedValueOnce({ ok: true, status: 200 })
+      await act(async () => {
+        await result.current.handleSubmit('feature')
+      })
+      expect(notifications.hide).toHaveBeenCalledWith('canopy-submit-refused-feature')
+    })
+
     it('shows a stale-status 409 in yellow, which closes itself, with no Retry, and reloads the list', async () => {
       const { notifications } = await import('@mantine/notifications')
       mockClient.workflow.approve.mockResolvedValueOnce({

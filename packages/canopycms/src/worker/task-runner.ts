@@ -29,6 +29,7 @@ import { pushToGitHub } from './github-transfer'
 import { clearHistoryRewrittenMarker, readPublishedSha } from './history-rewrite'
 import { writeWorkerStatus } from '../task-queue/worker-status'
 import { SYNC_PR_COMMENTS_ACTION, refreshCommentsBlock, renderPrCommentsBody } from '../pr-comments'
+import { REWRITTEN_PUSH_REFUSAL, awaitsSubmitRetry } from './github-commits'
 import { workerLog, workerLogError, workerLogWarn } from './log'
 import { assertSharedRepoConfig } from './shared-repo-git'
 import type { WorkerContext } from './worker-context'
@@ -598,8 +599,10 @@ async function isSupersededSubmit(
   task: Task,
   branch: string,
 ): Promise<boolean> {
-  const { submittedAt } = task.payload
-  if (!task.retryCount || typeof submittedAt !== 'string') return false
+  const { submittedAt, requeuedFrom } = task.payload
+  if ((!task.retryCount && requeuedFrom === undefined) || typeof submittedAt !== 'string') {
+    return false
+  }
   const live = await BranchMetadataFileManager.loadOnly(ctx.branchWorkspacePath(branch))
   if (live === null) return false
   const { status } = live.branch
@@ -657,27 +660,38 @@ export async function updateBranchMetadata(
 
   try {
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
-    // A superseded submit synced nothing. A branch taken back to editing waits on no other task,
-    // and would read as syncing until its next submit.
+    // A superseded submit synced nothing. A branch taken back to editing waits on no other task
+    // and owes no pull request step, so it would read as syncing or failed until its next submit.
     if (result.superseded === true) {
       await meta.saveIf(
-        { branch: { syncStatus: 'synced' } },
+        {
+          branch: {
+            syncStatus: 'synced',
+            syncFailureReason: undefined,
+            submitUnfinished: undefined,
+          },
+        },
         (existing) =>
           existing?.branch.name === branch &&
           existing.branch.status === 'editing' &&
-          existing.branch.syncStatus === 'pending-sync',
+          (existing.branch.syncStatus === 'pending-sync' ||
+            existing.branch.submitUnfinished === true),
       )
       return
     }
     const saved = await meta.update((existing) => {
       if (existing?.branch.name !== branch) return null
-      const updates: Record<string, unknown> = {
-        syncStatus: 'synced',
-        // save()'s merge only overwrites keys present in this update, so a prior
-        // syncFailureReason would survive this successful sync forever unless
-        // cleared explicitly (same pattern as rebaseFailure elsewhere).
-        syncFailureReason: undefined,
-      }
+      const updates: Record<string, unknown> =
+        task.action !== SUBMIT_ACTION && awaitsSubmitRetry(existing.branch)
+          ? {}
+          : {
+              syncStatus: 'synced',
+              // save()'s merge only overwrites keys present in this update, so a prior
+              // syncFailureReason would survive this successful sync forever unless
+              // cleared explicitly (same pattern as rebaseFailure elsewhere).
+              syncFailureReason: undefined,
+              submitUnfinished: undefined,
+            }
       if (result.prUrl) updates.pullRequestUrl = result.prUrl
       if (result.prNumber) {
         updates.pullRequestNumber = result.prNumber
@@ -753,10 +767,13 @@ async function updateBranchMetadataOnFailure(
           existing.branch.submittedAt === submittedAt,
       )) !== null
     if (!unlocked) {
-      const saved = await meta.saveIf(
-        { branch: failed },
-        (existing) => existing?.branch.name === branch,
-      )
+      const saved = await meta.update((existing) => {
+        if (existing?.branch.name !== branch) return null
+        // Only the branch's latest submit: an older one running late has no step left to finish.
+        const unfinished =
+          task.action === SUBMIT_ACTION && existing.branch.submittedAt === submittedAt
+        return { branch: unfinished ? { ...failed, submitUnfinished: true } : failed }
+      })
       if (saved === null) noMetadataToRecord(branch, `${task.action} failure`)
     }
   } catch (err) {
@@ -823,11 +840,11 @@ export async function pushBranchToGitHub(
   const marker = metaFile?.branch.historyRewrittenFrom
   // github-commits.ts recorded it: this push would restore what someone removed from GitHub.
   if (metaFile?.branch.rewrittenOnGitHub !== undefined) {
-    throw new PermanentTaskError(
-      `Not pushing branch "${branch}": it was force-pushed or rewritten on GitHub and no longer ` +
-        `contains ${metaFile.branch.rewrittenOnGitHub}. An administrator can see how to continue ` +
-        `in System Health.`,
+    workerLogWarn(
+      `Not pushing ${branch}: GitHub's branch no longer contains ` +
+        `${metaFile.branch.rewrittenOnGitHub}`,
     )
+    throw new PermanentTaskError(REWRITTEN_PUSH_REFUSAL)
   }
   const readSha = async () => {
     const sha = await readPublishedSha(ctx, branch)

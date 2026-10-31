@@ -13,7 +13,6 @@
 import {
   Alert,
   Badge,
-  Box,
   Button,
   Code,
   Group,
@@ -29,9 +28,7 @@ import {
   Text,
   ThemeIcon,
   Tooltip,
-  VisuallyHidden,
 } from '@mantine/core'
-import { useId, type ReactNode } from 'react'
 import { IconAlertCircle, IconAlertTriangle } from '@tabler/icons-react'
 import { openConfirm } from '../utils/confirm-modal'
 import { focusReturnProps } from '../utils/focus-return'
@@ -51,11 +48,18 @@ import type { BranchHealthEntry, DuplicateIdScan } from '../../branch-health'
 import type {
   BaseRefreshReport,
   BaseSchemaHold,
+  BranchHold,
   UnpublishableBranch,
   UnpublishableBranchesReport,
 } from '../../types'
 import { escapeForLog } from '../../utils/escape-text'
-import { branchStatusPresentation } from '../branch-status'
+import { TooltipDetail } from '../components/TooltipDetail'
+import {
+  HOLD_BADGE,
+  branchHoldMessage,
+  branchStatusPresentation,
+  endSentence,
+} from '../branch-status'
 
 // ============================================================================
 // Small pure helpers
@@ -169,6 +173,12 @@ const BASE_REFRESH_LABELS: Record<BaseRefreshReport['outcome'], string> = {
   'skipped-locked': 'refresh skipped (workspace busy: provisioning or an admin action)',
   'skipped-not-provisioned': 'not yet provisioned',
   failed: 'refresh failed',
+}
+
+/** A failed sync's detail. The worker refuses every push while a rewrite stands, so no retry passes. */
+function syncFailedDetail(reason = 'GitHub sync failed.', rewritten: boolean): string {
+  if (rewritten) return reason
+  return `${endSentence(reason)}\nRetry it from the "Tasks" tab.`
 }
 
 /**
@@ -1167,52 +1177,6 @@ const firstFailed = (iso: string): string => {
   return Number.isNaN(date.getTime()) ? iso : `${formatRelativeTime(iso)}, ${date.toLocaleString()}`
 }
 
-/**
- * A detail that only a Tooltip would show: hidden text for assistive tech, plus a Tooltip that
- * opens on hover, focus and touch. The trigger is a focusable span, not a button: it does nothing
- * when pressed, so it must not be announced as one. A trigger with no text of its own, such as an
- * icon, takes its name from `name`.
- */
-function TooltipDetail({
-  detail,
-  name,
-  maw = 320,
-  preLine = false,
-  children,
-}: {
-  detail: string
-  name?: string
-  maw?: number
-  preLine?: boolean
-  children: ReactNode
-}) {
-  const detailId = useId()
-  return (
-    <>
-      <Tooltip
-        // A sighted user sees only the icon, so the tooltip names it too.
-        label={name ? `${name}: ${detail}` : detail}
-        multiline
-        maw={maw}
-        style={preLine ? { whiteSpace: 'pre-line' } : undefined}
-        events={{ hover: true, focus: true, touch: true }}
-      >
-        <Box
-          component="span"
-          tabIndex={0}
-          role={name ? 'img' : undefined}
-          aria-label={name}
-          aria-describedby={detailId}
-          className="mantine-focus-auto"
-        >
-          {children}
-        </Box>
-      </Tooltip>
-      <VisuallyHidden id={detailId}>{detail}</VisuallyHidden>
-    </>
-  )
-}
-
 function BranchHealthRow({
   entry,
   baseWarning,
@@ -1242,6 +1206,15 @@ function BranchHealthRow({
     // rebased, but commits from GitHub are still brought into it. An exclusion, not a list of
     // statuses, so a status added later still shows its failures by default.
     const showRebaseFailure = b.status !== 'archived' && !!b.rebaseFailure
+    const inReview = b.status === 'submitted' || b.status === 'approved'
+    const hold: BranchHold | undefined =
+      b.rewrittenOnGitHub !== undefined && b.status !== 'archived'
+        ? { kind: 'rewritten' }
+        : !inReview
+          ? undefined
+          : b.submitUnfinished
+            ? { kind: 'submit-unfinished', opened: b.pullRequestNumber !== undefined }
+            : b.pullRequestHold
     const canMarkMerged =
       (b.status === 'submitted' || b.status === 'approved') && !!b.pullRequestNumber
 
@@ -1286,11 +1259,8 @@ function BranchHealthRow({
         <Table.Td>
           {b.syncStatus === 'sync-failed' ? (
             <TooltipDetail
-              detail={
-                b.syncFailureReason
-                  ? `${b.syncFailureReason} — retry from the "Tasks" tab`
-                  : 'GitHub sync failed — retry from the "Tasks" tab'
-              }
+              preLine
+              detail={syncFailedDetail(b.syncFailureReason, hold?.kind === 'rewritten')}
             >
               <Badge color="red" variant="light">
                 Sync failed
@@ -1303,11 +1273,28 @@ function BranchHealthRow({
           ) : null}
         </Table.Td>
         <Table.Td>
-          <Group gap={6} wrap="nowrap">
+          <Group gap={6}>
             {!!b.conflictFiles?.length && (
               <Badge color="orange" variant="light">
                 {b.conflictFiles.length} conflict{b.conflictFiles.length === 1 ? '' : 's'}
               </Badge>
+            )}
+            {hold && (
+              <TooltipDetail
+                detail={branchHoldMessage(hold, {
+                  role: 'none',
+                  isAdmin: true,
+                  inSystemHealth: true,
+                })}
+              >
+                <Badge
+                  color={HOLD_BADGE.color}
+                  variant="light"
+                  data-testid={`held-pr-${entry.dirName}`}
+                >
+                  {HOLD_BADGE.label}
+                </Badge>
+              </TooltipDetail>
             )}
             {showRebaseFailure && b.rebaseFailure && (
               <TooltipDetail

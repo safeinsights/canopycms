@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { RESERVED_GROUPS } from '../authorization'
 import type { BranchName } from '../paths/types'
 import type { BranchContext, BranchStatus } from '../types'
 import type { CanopyUser } from '../user'
@@ -213,6 +214,56 @@ describe('branch status api', () => {
     )
   })
 
+  it('refuses a branch rewritten on GitHub before committing anything', async () => {
+    const ctx = createMockApiContext({
+      branchContext: {
+        ...baseContext,
+        branch: { ...baseContext.branch, rewrittenOnGitHub: 'a'.repeat(40) },
+      },
+      allowBranchAccess: true,
+      services: { config: { defaultBranchAccess: 'allow' } as any },
+    })
+    ctx.services.submitBranch = vi.fn()
+
+    const res = await submitBranchForMerge(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+      undefined,
+    )
+
+    expect(res.status).toBe(409)
+    expect(res.error).toContain('"feature/x"')
+    expect(res.error).toContain('Ask an admin')
+    expect(ctx.services.submitBranch).not.toHaveBeenCalled()
+
+    const asAdmin = await submitBranchForMerge(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      { branch: 'feature/x' as BranchName },
+      undefined,
+    )
+    expect(asAdmin.error).toContain('"System health"')
+    expect(asAdmin.error).not.toContain('Ask an admin')
+  })
+
+  it('clears what held the last submit, as the card reads it at once', async () => {
+    mockMetadataUpdate.mockClear()
+
+    await submitBranchForMerge(
+      makeCtx(true),
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+      undefined,
+    )
+
+    expect(mockMetadataUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        branch: expect.objectContaining({ pullRequestHold: undefined }),
+      }),
+    )
+  })
+
   it('clears rebaseFailure on submit (PR-W2 M2)', async () => {
     mockMetadataUpdate.mockClear()
 
@@ -378,6 +429,16 @@ describe('branch status api', () => {
     // No raw git output (branch/ref internals, hint text) leaks to the client.
     expect(res.error).not.toContain('rejected')
     expect(res.error).not.toContain('/tmp/canopy-test')
+    expect(res.error).toContain('ask an admin to check "System health"')
+
+    const asAdmin = await submitBranchForMerge(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      { branch: 'feature/x' as BranchName },
+      undefined,
+    )
+    expect(asAdmin.error).toContain('check "System health"')
+    expect(asAdmin.error).not.toContain('ask an admin')
     consoleSpy.restore()
   })
 

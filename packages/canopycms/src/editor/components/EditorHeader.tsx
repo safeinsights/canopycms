@@ -1,5 +1,6 @@
 import React, { useRef, type ReactNode, type Ref } from 'react'
 import {
+  Badge,
   Box,
   Button,
   Group,
@@ -13,15 +14,17 @@ import {
 } from '@mantine/core'
 import { useMediaQuery, useMergedRef } from '@mantine/hooks'
 import { IconChevronDown, IconLock } from '@tabler/icons-react'
-import type { BranchStatus, PullRequestState } from '../../types'
+import type { BranchHold, BranchStatus, PullRequestState } from '../../types'
 import type { SaveAllProgress } from '../hooks/save-all'
 import { isAdmin, isLockedOutOfBranch, isReviewer } from '../../authorization/helpers'
 import { branchBarStatus, describeBranchLock, type BranchBarStatus } from '../branch-lock'
-import { EDITOR_ACTIONS } from '../copy'
+import { HOLD_BADGE, branchHoldMessage } from '../branch-status'
+import { EDITOR_ACTIONS, rewrittenSubmitReason } from '../copy'
 import { reviewRoleOf, type ReviewRole } from '../../authorization/review-role'
 import { SYSTEM_USER_ID } from '../../system-users'
 import { TopBar } from '../shell/TopBar'
 import { BranchPill } from './BranchPill'
+import { TooltipDetail } from './TooltipDetail'
 import { ReasonedMenuItem } from './ReasonedMenuItem'
 import { UnsavedMark } from './UnsavedMark'
 import { DraftStorageWarning, HIDDEN_STYLE, SaveAllButton } from './SaveAllButton'
@@ -83,6 +86,8 @@ export interface EditorHeaderProps {
   branchServerProtected?: boolean
   /** Whether the current branch is read-only (protected base branch in prod); disables Save all. */
   branchReadOnly?: boolean
+  /** What holds the branch (api/branch.ts). */
+  branchHold?: BranchHold
   /** Server-computed: content writes are rejected on this branch; see `branchLockState`. */
   branchWriteBlocked?: boolean
   /** No branch details yet: the fail-closed lock defaults are guesses the status doesn't name. */
@@ -126,6 +131,7 @@ export function EditorHeader({
   branchIsProtected = false,
   branchServerProtected,
   branchReadOnly = false,
+  branchHold,
   branchWriteBlocked = false,
   branchLoading = false,
   branchPending = false,
@@ -152,6 +158,7 @@ export function EditorHeader({
     branchIsProtected,
     reviewRole,
     savingAll: !!saveAllProgress,
+    rewritten: branchHold?.kind === 'rewritten',
   })
   const lock = {
     branchStatus,
@@ -164,6 +171,13 @@ export function EditorHeader({
   }
   const branchLockReason = describeBranchLock(lock)
   const status = branchBarStatus({ ...lock, isProtected: branchServerProtected })
+  const holdMessage =
+    branchName && branchHold && status.value !== 'loading'
+      ? branchHoldMessage(branchHold, {
+          role: workflow?.kind === 'review' ? 'review' : workflow?.permitted ? 'withdraw' : 'none',
+          isAdmin: isAdmin(userContext?.groups ?? []),
+        })
+      : undefined
 
   const theme = useMantineTheme()
   // Mantine's own below-`md` query, the one `visibleFrom="md"` hides under.
@@ -216,6 +230,7 @@ export function EditorHeader({
           <BranchStatusLabel
             status={branchName ? status : { value: 'none', readOnly: false }}
             reason={branchLockReason}
+            holdMessage={holdMessage}
           />
           {modifiedCount > 0 && (
             <Tooltip
@@ -326,29 +341,49 @@ function unsavedTooltip(
   return `${edits} They can be saved once the branch is editable again.`
 }
 
-/** The branch's state beside the pill, heard in words with its reason, but not while it loads. */
-function BranchStatusLabel({ status, reason }: { status: BranchBarStatus; reason?: string }) {
+/**
+ * The branch's state beside the pill, heard in words with its reason, but not while it loads. A
+ * hold follows it whatever the lock, since a lock doesn't say that the branch is stuck.
+ */
+function BranchStatusLabel({
+  status,
+  reason,
+  holdMessage,
+}: {
+  status: BranchBarStatus
+  reason?: string
+  holdMessage?: string
+}) {
   const spoken =
     status.label && status.value !== 'loading'
       ? [status.label.replace(' · ', ', '), reason].filter(Boolean).join('. ')
       : ''
   return (
     // Always mounted, so a lock that arrives is announced.
-    <Box role="status" style={status.label ? { flexShrink: 0 } : HIDDEN_STYLE}>
-      {status.label && (
-        <Group
-          gap={4}
-          wrap="nowrap"
-          aria-hidden="true"
-          data-testid="branch-status"
-          data-status={status.value}
-        >
-          {status.readOnly && <IconLock size={14} />}
-          <Text span size="sm">
-            {status.label}
-          </Text>
-        </Group>
-      )}
+    <Box role="status" style={status.label || holdMessage ? { flexShrink: 0 } : HIDDEN_STYLE}>
+      <Group gap="xs" wrap="nowrap">
+        {status.label && (
+          <Group
+            gap={4}
+            wrap="nowrap"
+            aria-hidden="true"
+            data-testid="branch-status"
+            data-status={status.value}
+          >
+            {status.readOnly && <IconLock size={14} />}
+            <Text span size="sm">
+              {status.label}
+            </Text>
+          </Group>
+        )}
+        {holdMessage && (
+          <TooltipDetail detail={holdMessage}>
+            <Badge color={HOLD_BADGE.color} variant="light" data-testid="branch-hold-status">
+              {HOLD_BADGE.label}
+            </Badge>
+          </TooltipDetail>
+        )}
+      </Group>
       <VisuallyHidden>{spoken}</VisuallyHidden>
     </Box>
   )
@@ -420,6 +455,8 @@ type WorkflowActionInput = Pick<
   branchIsProtected: boolean
   reviewRole: ReviewRole
   savingAll: boolean
+  /** The worker pushes nothing for the branch, so a submit could only fail later. */
+  rewritten: boolean
 }
 
 /**
@@ -436,6 +473,7 @@ function workflowAction({
   branchIsProtected,
   reviewRole,
   savingAll,
+  rewritten,
 }: WorkflowActionInput): WorkflowAction | null {
   const isSubmitted = branchStatus === 'submitted'
   const isEditing = branchStatus === 'editing'
@@ -489,22 +527,24 @@ function workflowAction({
   return {
     kind: isWithdrawable ? 'withdraw' : 'submit',
     // `busy` alone can't hold it: an entry load clears that shared flag mid-run.
-    blocked: !branchName || busy || savingAll || !canPerformAction,
+    blocked: !branchName || busy || savingAll || !canPerformAction || (rewritten && isEditing),
     permitted: canPerformAction,
     reason: savingAll
       ? 'Wait for Save all to finish.'
-      : // No branch data (`branchStatus === undefined`) must not be
-        // interpolated raw into this label. Guarded explicitly here rather
-        // than left to the early return above, which hides the action
-        // today only as a side effect of `branchIsProtected`'s `?? true`
-        // default -- not a guarantee this arm stays unreachable.
-        branchStatus === undefined
-        ? 'Branch details could not be loaded. Use "Refresh branch" to try again.'
-        : !statusHasAction
-          ? `This branch is ${branchStatus}, so it can't be submitted for review or withdrawn from review.`
-          : !userHasPermission
-            ? 'You do not have permission to submit this branch for review or withdraw it from review. Ask an admin for access.'
-            : '',
+      : rewritten && isEditing
+        ? rewrittenSubmitReason(isAdmin(userContext?.groups ?? []))
+        : // No branch data (`branchStatus === undefined`) must not be
+          // interpolated raw into this label. Guarded explicitly here rather
+          // than left to the early return above, which hides the action
+          // today only as a side effect of `branchIsProtected`'s `?? true`
+          // default -- not a guarantee this arm stays unreachable.
+          branchStatus === undefined
+          ? 'Branch details could not be loaded. Use "Refresh branch" to try again.'
+          : !statusHasAction
+            ? `This branch is ${branchStatus}, so it can't be submitted for review or withdrawn from review.`
+            : !userHasPermission
+              ? 'You do not have permission to submit this branch for review or withdraw it from review. Ask an admin for access.'
+              : '',
   }
 }
 

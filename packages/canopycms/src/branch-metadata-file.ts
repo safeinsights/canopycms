@@ -109,9 +109,18 @@ const branchMetadataShape = {
   lastGitHubTip: z.string().optional(),
   keptOverGitHub: z.array(z.string()).optional(),
   rewrittenOnGitHub: z.string().optional(),
+  submitUnfinished: z.boolean().optional(),
   syncFailureReason: z.string().optional(),
   editors: z.array(z.string()).optional(),
   uncommittedEditors: z.array(z.string()).optional(),
+  // Dropped when malformed: it only decorates the branch card, so it never fails a read.
+  pullRequestHold: z
+    .discriminatedUnion('kind', [
+      z.object({ kind: z.literal('conflicts') }),
+      z.object({ kind: z.literal('retargeted'), base: z.string() }),
+    ])
+    .optional()
+    .catch(undefined),
   // Dropped when malformed: it only decorates the PR body, so it never fails a read.
   review: z
     .object({

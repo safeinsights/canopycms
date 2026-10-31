@@ -9,7 +9,7 @@ import { withdrawBranch } from './branch-withdraw'
 import { requestChanges, approveBranch } from './branch-review'
 import { markAsMerged } from './branch-merge'
 import { defineEndpoint } from './route-builder'
-import { canPerformWorkflowAction, getBranchProtection } from '../authorization'
+import { canPerformWorkflowAction, getBranchProtection, isAdmin } from '../authorization'
 import { syncSubmitPr } from './github-sync'
 import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from '../utils/error'
 import { isNonFastForwardRejection } from '../utils/git'
@@ -130,6 +130,21 @@ const submitBranchForMergeHandler = async (
     }
   }
 
+  // The worker pushes nothing for such a branch, so this would commit and report a failure later.
+  if (branchContext.branch.rewrittenOnGitHub !== undefined) {
+    return {
+      ok: false,
+      status: 409,
+      error:
+        `"${shortNameOf(ctx.services.config, branchContext.branch.name)}" was changed on GitHub in ` +
+        "a way CanopyCMS can't combine with the work here, so it can't be submitted. Nothing is " +
+        'lost. ' +
+        (isAdmin(req.user.groups)
+          ? 'See the "Branches" tab in "System health".'
+          : 'Ask an admin for help.'),
+    }
+  }
+
   // Commit and push changes
   const submitter = submissionEditorFromUser(req.user)
   const { authPlugin } = ctx
@@ -184,8 +199,8 @@ const submitBranchForMergeHandler = async (
         error:
           `Could not submit "${shortName}": it has commits from GitHub that aren't in the editor ` +
           `yet. Your saved changes are safe. CanopyCMS brings those commits in at its next sync, ` +
-          `usually within a few minutes, so submit again then. If this keeps happening, ask an ` +
-          `administrator to check System Health.`,
+          `usually within a few minutes, so submit again then. If this keeps happening, ` +
+          `${isAdmin(req.user.groups) ? 'check' : 'ask an admin to check'} "System health".`,
       }
     }
 
@@ -250,6 +265,10 @@ const submitBranchForMergeHandler = async (
       // warning through review and archive.
       rebaseFailure: undefined,
       review: undefined,
+      // Read by the card as soon as the status says review, and the worker's next read is minutes
+      // away, so what held the last submit must not show as holding this one.
+      pullRequestHold: undefined,
+      submitUnfinished: undefined,
     },
   })
 

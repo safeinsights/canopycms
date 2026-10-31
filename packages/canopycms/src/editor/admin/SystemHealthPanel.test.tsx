@@ -1301,6 +1301,113 @@ describe('SystemHealthPanel', () => {
       expect(screen.queryByTestId('rebase-failure-feature-c')).toBeNull() // archived: never looked at
     })
 
+    it('marks a branch in review whose pull request is held, and not one back in editing', async () => {
+      const held = (dirName: string, status: 'submitted' | 'editing'): BranchHealthEntry => ({
+        dirName,
+        kind: 'healthy',
+        branch: {
+          name: dirName,
+          status,
+          access: {},
+          createdBy: 'user-1',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-02T00:00:00.000Z',
+          pullRequestHold: { kind: 'conflicts' },
+        },
+      })
+      mockClient.admin.branchHealth.mockResolvedValue(
+        mockSuccess({
+          entries: [held('held-review', 'submitted'), held('held-editing', 'editing')],
+          generatedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      )
+      renderPanel()
+      await userEvent.click(screen.getByText('Branches'))
+      await waitFor(() => expect(screen.getByText('held-review')).toBeTruthy())
+
+      expect(screen.getByTestId('held-pr-held-review').textContent).toBe('Needs action')
+      expect(screen.queryByTestId('held-pr-held-editing')).toBeNull()
+    })
+
+    const rewritten = (dirName: string, status: 'editing' | 'archived'): BranchHealthEntry => ({
+      dirName,
+      kind: 'healthy',
+      branch: {
+        name: dirName,
+        status,
+        access: {},
+        createdBy: 'user-1',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-02T00:00:00.000Z',
+        rewrittenOnGitHub: 'a'.repeat(40),
+        syncStatus: 'sync-failed',
+        syncFailureReason: 'Nothing was pushed.',
+      },
+    })
+
+    it('marks a submit that never finished, with the retry that finishes it', async () => {
+      mockClient.admin.branchHealth.mockResolvedValue(
+        mockSuccess({
+          entries: [
+            {
+              ...rewritten('unfinished', 'editing'),
+              branch: {
+                ...rewritten('unfinished', 'editing').branch!,
+                status: 'submitted',
+                rewrittenOnGitHub: undefined,
+                submitUnfinished: true,
+              },
+            },
+          ],
+          generatedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      )
+      renderPanel()
+      await userEvent.click(screen.getByText('Branches'))
+      await waitFor(() => expect(screen.getByText('unfinished')).toBeTruthy())
+
+      const trigger = screen.getByTestId('held-pr-unfinished').closest('[aria-describedby]')
+      const detail = document.getElementById(trigger?.getAttribute('aria-describedby') ?? '')
+      expect(detail?.textContent).toContain('Retry the submit from the "Tasks" tab.')
+      expect(detail?.textContent).toContain("its pull request wasn't opened")
+    })
+
+    it('marks no rewrite on an archived branch, which nothing can act on', async () => {
+      mockClient.admin.branchHealth.mockResolvedValue(
+        mockSuccess({
+          entries: [rewritten('live', 'editing'), rewritten('gone', 'archived')],
+          generatedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      )
+      renderPanel()
+      await userEvent.click(screen.getByText('Branches'))
+      await waitFor(() => expect(screen.getByText('gone')).toBeTruthy())
+
+      expect(screen.getByTestId('held-pr-live')).toBeTruthy()
+      expect(screen.queryByTestId('held-pr-gone')).toBeNull()
+    })
+
+    it('gives a rewritten branch the fix itself, not a pointer back to this tab', async () => {
+      mockClient.admin.branchHealth.mockResolvedValue(
+        mockSuccess({
+          entries: [rewritten('rewritten', 'editing')],
+          generatedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      )
+      renderPanel()
+      await userEvent.click(screen.getByText('Branches'))
+      await waitFor(() => expect(screen.getByText('rewritten')).toBeTruthy())
+
+      const badge = screen.getByTestId('held-pr-rewritten')
+      const detail = badge.closest('[aria-describedby]')?.getAttribute('aria-describedby')
+      const text = document.getElementById(detail ?? '')?.textContent
+      expect(text).toContain('merge the missing commit back')
+      expect(text).not.toContain('"System health"')
+      const sync = screen.getByText('Sync failed').closest('[aria-describedby]')
+      const syncDetail = document.getElementById(sync?.getAttribute('aria-describedby') ?? '')
+      expect(syncDetail?.textContent).toBe('Nothing was pushed.')
+    })
+
     it('reaches the rebase failure by keyboard: a named focusable icon described by the message', async () => {
       renderPanel()
       await userEvent.click(screen.getByText('Branches'))
@@ -1456,7 +1563,7 @@ describe('SystemHealthPanel', () => {
       expect(document.activeElement).toBe(trigger)
       const describedBy = trigger.getAttribute('aria-describedby')
       expect(document.getElementById(describedBy!)?.textContent).toBe(
-        'Push rejected for branch "feature-d": it has moved on GitHub — retry from the "Tasks" tab',
+        'Push rejected for branch "feature-d": it has moved on GitHub.\nRetry it from the "Tasks" tab.',
       )
       expect((await screen.findByRole('tooltip')).textContent).toMatch(/moved on GitHub/)
     })

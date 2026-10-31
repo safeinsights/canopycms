@@ -9,7 +9,7 @@ import {
 } from '../branch-metadata'
 import { invalidateBranchContentCaches } from '../content-index-generation'
 import { isSettingsBranchName, sanitizeBranchName } from '../paths/branch-name'
-import type { PullRequestState } from '../types'
+import type { PullRequestHold, PullRequestState } from '../types'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import {
   holdProvisionedWorkspace,
@@ -39,6 +39,7 @@ import {
   bringInGitHubCommits,
   mergeIntoBranch,
   returnToReview,
+  rewriteCleared,
   type GitHubCommitsArgs,
   type GitHubSnapshot,
 } from './github-commits'
@@ -713,9 +714,10 @@ async function clearRebaseFailure(
   branchPath: string,
   branchRef: string,
 ): Promise<void> {
-  await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).saveIf(
-    { branch: { rebaseFailure: undefined, rewrittenOnGitHub: undefined } },
-    (current) => current?.branch.name === branchRef,
+  await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update((current) =>
+    current?.branch.name === branchRef
+      ? { branch: { rebaseFailure: undefined, ...rewriteCleared(current.branch) } }
+      : null,
   )
 }
 
@@ -826,15 +828,65 @@ async function bringInCommitsForBranchInReview(
 }
 
 /**
+ * What GitHub's answer says keeps this pull request behind its base and needs a person, undefined
+ * for nothing, or null for no information: GitHub answers `unknown` until it has computed the
+ * state, which it redoes after every push to the base. A base other than the branch's own comes
+ * first, because withdrawing resolves nothing there: the worker rebases onto the recorded base.
+ * Pure.
+ */
+function pullRequestHoldOf(
+  pullRequest: GitHubPullRequest,
+  recordedBase: string,
+): PullRequestHold | undefined | null {
+  const { state, mergeable_state: mergeState, baseRef } = pullRequest
+  if (state !== 'open') return undefined
+  if (mergeState === undefined || mergeState === 'unknown') return null
+  if (mergeState !== 'behind' && mergeState !== 'dirty') return undefined
+  if (baseRef !== undefined && baseRef !== recordedBase)
+    return { kind: 'retargeted', base: baseRef }
+  return mergeState === 'dirty' ? { kind: 'conflicts' } : undefined
+}
+
+/**
+ * Record {@link pullRequestHoldOf} for the branch card, when it changed: every save regenerates the
+ * branch registry. It's bookkeeping, so it leaves `updatedAt`, which the card shows as an edit.
+ * Best-effort: a failure leaves the card as it was until the next cycle.
+ */
+async function recordPullRequestHold(
+  ctx: RebaseContext,
+  branchDir: string,
+  branchPath: string,
+  metaFile: BranchMetadataFile,
+  pullRequest: GitHubPullRequest,
+): Promise<void> {
+  const { name, baseBranch, pullRequestHold, submittedAt } = metaFile.branch
+  const hold = pullRequestHoldOf(pullRequest, baseBranch ?? ctx.baseBranch)
+  if (hold === null || JSON.stringify(hold) === JSON.stringify(pullRequestHold)) return
+  try {
+    await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update(
+      // A newer submit's pull request isn't the one measured.
+      (current) =>
+        current?.branch.name === name && current.branch.submittedAt === submittedAt
+          ? { branch: { pullRequestHold: hold } }
+          : null,
+      { keepUpdatedAt: true },
+    )
+  } catch (err) {
+    workerLogWarn(`  ${branchDir}: could not record the PR's state: ${getErrorMessage(err)}`)
+  }
+}
+
+/**
  * Merge the base into a submitted or approved branch whose open pull request GitHub reports
  * `behind`, so it can merge. It keeps the approval and the PR body: the pull request's diff is what
  * was reviewed. Only from a clone, `remote.git` and GitHub all at one commit, since anything else
  * is work still on its way, and only for the base GitHub measured against: a pull request someone
  * retargeted would gain another branch's commits under its approval. A branch with a failed sync
- * is left for its next submit, as a push here would clear that failure with the PR still stale. A
- * conflict leaves the branch as it is; withdrawing it brings the rebase loop's rule into play,
- * where an editor can see the result. A failure goes in the cycle's summary only: the step before
- * this one clears `rebaseFailure` each cycle, so recording it would reset its age every time.
+ * is left for its next submit or a retry of the task, as a push here would clear that failure with
+ * the PR still stale. A conflict leaves the branch as it is; withdrawing it brings the rebase
+ * loop's rule into play, where an editor can see the result. A failure goes in the cycle's summary
+ * only: the step before this one clears `rebaseFailure` each cycle, so recording it would reset its
+ * age every time.
  * Never throws.
  */
 async function updateBranchInReviewFromBase(
@@ -998,6 +1050,9 @@ async function rebaseOneBranch(
         gitHub,
       )
       const pullRequest = await pollMergeState(ctx, branchDir, branchPath, metaFile)
+      if (pullRequest !== null) {
+        await recordPullRequestHold(ctx, branchDir, branchPath, metaFile, pullRequest)
+      }
       // GitHub reports `behind` only where up-to-date branches are required, so a repository
       // that doesn't require them gets no commits or CI runs from this.
       if (

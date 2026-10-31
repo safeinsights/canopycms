@@ -21,7 +21,7 @@ import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import type { BranchMetadata } from '../types'
 import type { BranchPolicyDescription } from './branch-policy'
 import { CmsWorker } from './cms-worker'
-import type { GitHubSnapshot } from './github-commits'
+import { REWRITTEN_PUSH_REFUSAL, type GitHubSnapshot } from './github-commits'
 import type { RebaseSummary } from './rebase'
 
 const BASE = 'main'
@@ -301,24 +301,31 @@ const queued = async (s: Setup, action: string) =>
 function workerWithPullRequest(
   s: Setup,
   mergeableState: string,
-  { state = 'open', base = BASE }: { state?: string; base?: string } = {},
+  {
+    state = 'open',
+    base = BASE,
+    onFetch,
+  }: { state?: string; base?: string; onFetch?: () => Promise<unknown> } = {},
 ) {
   const worker = makeWorker(s)
   useLocalGitHubGateway(worker, {
     octokit: {
       pulls: {
-        get: async () => ({
-          data: {
-            merged: false,
-            merged_at: null,
-            state,
-            node_id: 'PR_7',
-            body: '',
-            mergeable_state: mergeableState,
-            head: { ref: BRANCH, repo: { id: 1 } },
-            base: { ref: base, repo: { id: 1 } },
-          },
-        }),
+        get: async () => {
+          await onFetch?.()
+          return {
+            data: {
+              merged: false,
+              merged_at: null,
+              state,
+              node_id: 'PR_7',
+              body: '',
+              mergeable_state: mergeableState,
+              head: { ref: BRANCH, repo: { id: 1 } },
+              base: { ref: base, repo: { id: 1 } },
+            },
+          }
+        },
       },
     } as never,
   })
@@ -414,6 +421,77 @@ describe('an open pull request GitHub reports behind', () => {
 
     expect(summary.failed.map((f) => f.branch)).toEqual([BRANCH])
     expect((await readMeta(s))?.rebaseFailure).toBeUndefined()
+  })
+
+  describe('what the branch card is told', () => {
+    it('records a conflict GitHub reports, and clears it once GitHub stops', async () => {
+      await cycle(s, workerWithPullRequest(s, 'dirty'))
+      expect((await readMeta(s))?.pullRequestHold).toEqual({ kind: 'conflicts' })
+
+      await cycle(s, workerWithPullRequest(s, 'clean'))
+      expect((await readMeta(s))?.pullRequestHold).toBeUndefined()
+    })
+
+    it('records a pull request retargeted while it is behind, naming the base', async () => {
+      await cycle(s, workerWithPullRequest(s, 'behind', { base: 'release' }))
+      expect((await readMeta(s))?.pullRequestHold).toEqual({ kind: 'retargeted', base: 'release' })
+    })
+
+    it('keeps a hold while GitHub is still working the state out', async () => {
+      await cycle(s, workerWithPullRequest(s, 'dirty'))
+      const before = await BranchMetadataFileManager.loadOnly(s.branchPath)
+
+      await cycle(s, workerWithPullRequest(s, 'unknown'))
+
+      const after = await BranchMetadataFileManager.loadOnly(s.branchPath)
+      expect(after?.branch.pullRequestHold).toEqual({ kind: 'conflicts' })
+      expect(after?.version).toBe(before?.version)
+    })
+
+    it('calls a conflict on a retargeted pull request retargeted, as withdrawing cannot fix it', async () => {
+      await cycle(s, workerWithPullRequest(s, 'dirty', { base: 'release' }))
+      expect((await readMeta(s))?.pullRequestHold).toEqual({ kind: 'retargeted', base: 'release' })
+    })
+
+    it('leaves the time editors read as the last edit alone', async () => {
+      await writeMeta(s, { ...submitted, pullRequestState: 'open' })
+      const before = (await readMeta(s))?.updatedAt
+      await cycle(s, workerWithPullRequest(s, 'dirty'))
+      expect((await readMeta(s))?.pullRequestHold).toEqual({ kind: 'conflicts' })
+      expect((await readMeta(s))?.lastGitHubTip).toBeDefined()
+      expect((await readMeta(s))?.updatedAt).toBe(before)
+    })
+
+    it('records nothing for a pull request retargeted but not behind', async () => {
+      await cycle(s, workerWithPullRequest(s, 'clean', { base: 'release' }))
+      expect((await readMeta(s))?.pullRequestHold).toBeUndefined()
+    })
+
+    it('records nothing about a pull request a newer submit replaced as it was measured', async () => {
+      const resubmitted = '2026-10-02T00:00:00.000Z'
+      await writeMeta(s, { ...submitted, submittedAt: '2026-10-01T00:00:00.000Z' })
+      const worker = workerWithPullRequest(s, 'dirty', {
+        onFetch: () => writeMeta(s, { ...submitted, submittedAt: resubmitted }),
+      })
+
+      await cycle(s, worker)
+
+      expect((await readMeta(s))?.submittedAt).toBe(resubmitted)
+      expect((await readMeta(s))?.pullRequestHold).toBeUndefined()
+    })
+
+    it('records nothing for a closed pull request', async () => {
+      await cycle(s, workerWithPullRequest(s, 'dirty', { state: 'closed' }))
+      expect((await readMeta(s))?.pullRequestHold).toBeUndefined()
+    })
+
+    it('writes once, not every cycle a hold stands', async () => {
+      const worker = workerWithPullRequest(s, 'dirty')
+      await cycle(s, worker)
+      const version = (await BranchMetadataFileManager.loadOnly(s.branchPath))?.version
+      await cycle(s, worker)
+      expect((await BranchMetadataFileManager.loadOnly(s.branchPath))?.version).toBe(version)
+    })
   })
 
   it('leaves a conflict as it is, with nothing recorded as kept', async () => {
@@ -917,6 +995,111 @@ describe('bringing commits made on GitHub into a branch clone', () => {
         expect(meta?.rewrittenOnGitHub).toBeUndefined()
       })
     }
+
+    describe("the failed sync a rewrite's refused push left", () => {
+      const refused = {
+        syncStatus: 'sync-failed',
+        syncFailureReason: REWRITTEN_PUSH_REFUSAL,
+      } as const
+
+      describe('on a branch in review whose submit never finished', () => {
+        const inReview = {
+          ...refused,
+          status: 'submitted',
+          pullRequestNumber: 7,
+          submitUnfinished: true,
+        } as const
+
+        for (const status of ['submitted', 'approved'] as const) {
+          it(`stays failed when ${status}, for a retry to run the PR step, without the false reason`, async () => {
+            await writeMeta(s, {
+              ...inReview,
+              status,
+              rewrittenOnGitHub: flag,
+              lastGitHubTip: await s.head(),
+            })
+
+            await cycle(s)
+
+            const meta = await readMeta(s)
+            expect(meta?.rewrittenOnGitHub).toBeUndefined()
+            expect(meta?.syncStatus).toBe('sync-failed')
+            expect(meta?.syncFailureReason).toBeUndefined()
+          })
+        }
+      })
+
+      it('clears on a branch in review when only a plain push was refused', async () => {
+        await writeMeta(s, {
+          ...refused,
+          status: 'submitted',
+          pullRequestNumber: 7,
+          rewrittenOnGitHub: flag,
+          lastGitHubTip: await s.head(),
+        })
+
+        await cycle(s)
+
+        expect((await readMeta(s))?.syncStatus).toBe('synced')
+      })
+
+      it('clears with a rewrite GitHub stands past', async () => {
+        const held = await s.head()
+        await writeMeta(s, { ...refused, rewrittenOnGitHub: flag, lastGitHubTip: held })
+        await s.commit({ 'editor.txt': 'v2\n' }, 'resubmitted')
+
+        await cycle(s)
+
+        const meta = await readMeta(s)
+        expect(meta?.syncStatus).toBe('synced')
+        expect(meta?.syncFailureReason).toBeUndefined()
+      })
+
+      it('clears with a rewrite GitHub is back from', async () => {
+        await writeMeta(s, { ...refused, rewrittenOnGitHub: flag, lastGitHubTip: await s.head() })
+
+        await cycle(s)
+
+        expect((await readMeta(s))?.syncStatus).toBe('synced')
+      })
+
+      for (const [status, after] of [
+        ['editing', 'synced'],
+        ['submitted', 'sync-failed'],
+      ] as const) {
+        it(`drops the reason on a ${status} branch GitHub no longer has`, async () => {
+          await writeMeta(s, {
+            ...refused,
+            status,
+            submitUnfinished: true,
+            rewrittenOnGitHub: flag,
+          })
+          await s.dropGitHubBranch()
+
+          await cycle(s)
+
+          expect((await readMeta(s))?.syncFailureReason).toBeUndefined()
+          expect((await readMeta(s))?.syncStatus).toBe(after)
+        })
+      }
+
+      it('leaves any other failure, which says what still needs doing', async () => {
+        const syncFailureReason = 'Push rejected.'
+        await writeMeta(s, {
+          syncStatus: 'sync-failed',
+          syncFailureReason,
+          rewrittenOnGitHub: flag,
+          lastGitHubTip: await s.head(),
+        })
+
+        await cycle(s)
+
+        const meta = await readMeta(s)
+        expect(meta?.rewrittenOnGitHub).toBeUndefined()
+        expect(meta?.syncStatus).toBe('sync-failed')
+        expect(meta?.syncFailureReason).toBe(syncFailureReason)
+      })
+    })
 
     it('clears when GitHub is back exactly at the last tip seen', async () => {
       await writeMeta(s, { rewrittenOnGitHub: flag, lastGitHubTip: await s.head() })

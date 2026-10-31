@@ -8,7 +8,7 @@ import { openConfirm } from '../utils/confirm-modal'
 import { focusReturnProps } from '../utils/focus-return'
 import { EDITOR_ACTIONS } from '../copy'
 import { notifications } from '@mantine/notifications'
-import type { ConflictStatus, PullRequestState, SyncStatus } from '../../types'
+import type { BranchHold, ConflictStatus, PullRequestState, SyncStatus } from '../../types'
 import type { OperatingMode } from '../../operating-mode'
 import type { CommentThread } from '../../comment-store'
 import type { BranchListItem } from '../../api/branch'
@@ -404,6 +404,8 @@ interface BranchSummary {
   conflictStatus?: ConflictStatus
   /** ContentIds of entries where --theirs was applied during rebase; cleared on clean rebase */
   conflictFiles?: string[]
+  /** What is stuck and needs a person (api/branch.ts). */
+  hold?: BranchHold
   commentCount: number
   isProtected: boolean
   readOnly: boolean
@@ -415,8 +417,9 @@ interface BranchSummary {
   writeBlocked: boolean
   /**
    * Server-computed compound submit rule: true when the branch can never be
-   * submitted for review, for EITHER reason -- it is the protected base
-   * branch, or its workflow status has moved past 'editing'. Mirrors
+   * submitted for review, for ANY reason -- it is the protected base
+   * branch, its workflow status has moved past 'editing', or it was rewritten
+   * on GitHub (`toBranchListItem`). Mirrors
    * `writeBlocked`'s shape (a base-branch half + a status half, combined),
    * except this one is built from `isProtected`/`submitBlocked` (both modes)
    * rather than `readOnly` (prod-only) -- see
@@ -649,6 +652,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         syncFailureReason: b.syncFailureReason,
         conflictStatus: b.conflictStatus,
         conflictFiles: b.conflictFiles,
+        hold: b.hold,
         commentCount: unresolvedCount,
         // Fail CLOSED (`?? true`): these flags are optional on the wire (see
         // BranchListItem's doc comment in api/branch.ts) so a version-skewed
@@ -844,6 +848,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   }
 
   const reviewFailureId = (kind: ReviewKind, branch: string) => `canopy-${kind}-failed-${branch}`
+  const submitRefusedId = (branch: string) => `canopy-submit-refused-${branch}`
 
   /**
    * Why an Approve or Request changes failed. Retry only on an API 5xx, 408, 429 or unsent request;
@@ -976,6 +981,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               if (stamped && branchNameToSubmit === openListedName()) {
                 options.onStamped?.(stamped)
               }
+              notifications.hide(submitRefusedId(branchNameToSubmit))
               notifications.show({
                 message: submittedMessage(stamped?.length ?? 0),
                 color: 'green',
@@ -984,11 +990,26 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               await loadBranches()
               resolve()
             } catch (err) {
-              await reportActionFailure(
-                err,
-                'Failed to submit branch',
-                EDITOR_ACTIONS.submitForReview,
-              )
+              if (err instanceof RefusedError && err.status === 409) {
+                // Nothing is lost, and it says what to do, so it stays until read. The reload shows
+                // whatever the page hadn't heard yet, such as what's holding the branch.
+                const id = submitRefusedId(branchNameToSubmit)
+                notifications.hide(id)
+                notifications.show({
+                  id,
+                  message: err.message,
+                  color: 'yellow',
+                  autoClose: false,
+                  withCloseButton: true,
+                })
+                await loadBranches()
+              } else {
+                await reportActionFailure(
+                  err,
+                  'Failed to submit branch',
+                  EDITOR_ACTIONS.submitForReview,
+                )
+              }
               reject(err)
             } finally {
               options.setBusy(false)

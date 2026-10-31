@@ -104,6 +104,7 @@ import type { BranchRegistry } from '../branch-registry'
 import type { CanopyConfig } from '../config'
 import type { GitHubService } from '../github-service'
 import { createCheckBranchAccess } from '../authorization/branch'
+import type { BranchMetadata } from '../types'
 import type { ApiContext, ApiRequest } from './types'
 
 /**
@@ -1912,6 +1913,55 @@ describe('updateBranchAccess api', () => {
 })
 
 describe('toBranchListItem', () => {
+  const listed = (branch: Partial<BranchMetadata>) =>
+    toBranchListItem(
+      baseCtx.services.config,
+      { ...createMockBranchContext({ branchName: 'x', createdBy: 'u' }).branch, ...branch },
+      { type: 'authenticated', userId: 'v', groups: [] },
+    )
+
+  it('says what holds a pull request while the branch is in review', () => {
+    const pullRequestHold = { kind: 'retargeted', base: 'release' } as const
+    expect(listed({ status: 'approved', pullRequestHold }).hold).toEqual(pullRequestHold)
+    expect(listed({ status: 'submitted', pullRequestHold }).hold).toEqual(pullRequestHold)
+    expect(listed({ status: 'submitted', pullRequestHold })).not.toHaveProperty('pullRequestHold')
+  })
+
+  it('drops a hold left from before the branch came back to editing', () => {
+    const item = listed({ status: 'editing', pullRequestHold: { kind: 'conflicts' } })
+    expect(item.hold).toBeUndefined()
+  })
+
+  it('says a failed submit never finished, only while the branch is in review', () => {
+    const item = listed({ status: 'submitted', submitUnfinished: true, pullRequestNumber: 7 })
+    expect(item.hold).toEqual({ kind: 'submit-unfinished', opened: true })
+    expect(listed({ status: 'approved', submitUnfinished: true }).hold).toEqual({
+      kind: 'submit-unfinished',
+      opened: false,
+    })
+    expect(item).not.toHaveProperty('submitUnfinished')
+    expect(listed({ status: 'editing', submitUnfinished: true }).hold).toBeUndefined()
+    expect(
+      listed({ status: 'submitted', submitUnfinished: true, rewrittenOnGitHub: 'a'.repeat(40) })
+        .hold,
+    ).toEqual({ kind: 'rewritten' })
+  })
+
+  it('says a branch was rewritten on GitHub, without the commit, and blocks its submit', () => {
+    const item = listed({ status: 'editing', rewrittenOnGitHub: 'a'.repeat(40) })
+    expect(item.hold).toEqual({ kind: 'rewritten' })
+    expect(item.submitBlocked).toBe(true)
+  })
+
+  it('says nothing of a rewrite on an archived branch, which nothing clears', () => {
+    expect(listed({ status: 'archived', rewrittenOnGitHub: 'a'.repeat(40) }).hold).toBeUndefined()
+  })
+
+  it('ignores a hold written into the file by hand', () => {
+    const forged = { hold: { kind: 'retargeted', base: 5 } } as unknown as Partial<BranchMetadata>
+    expect(listed({ status: 'editing', ...forged }).hold).toBeUndefined()
+  })
+
   it('leaves out what only the worker reads, including file paths a viewer may not see', () => {
     const item = toBranchListItem(
       { mode: 'dev' } as unknown as Parameters<typeof toBranchListItem>[0],
