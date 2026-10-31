@@ -768,6 +768,20 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
       expect((await readBranch())?.rewrittenOnGitHub).toBeUndefined()
     })
 
+    it('advances the base whatever its workspace holds, as nothing reads a record there', async () => {
+      const basePath = path.join(workspacePath, 'content-branches', 'main')
+      await simpleGit().clone(remoteGitPath, basePath, ['--branch', 'main'])
+      await getBranchMetadataFileManager(basePath, path.dirname(basePath)).save({
+        branch: { name: 'main' },
+      })
+      await fs.writeFile(path.join(basePath, BRANCH_META_DIR, BRANCH_META_FILE), 'not json')
+      const next = await commitOnto(tmpDir, githubPath, 'main', { 'base.txt': 'moved\n' })
+
+      await makeWorker().syncGit()
+
+      await expect(bareRevParse(remoteGitPath, 'refs/heads/main')).resolves.toBe(next)
+    })
+
     it('leaves remote.git behind GitHub when the record cannot be written', async () => {
       const { kept } = await publish()
       const removed = await commitOnto(tmpDir, githubPath, NAME, { 'x.txt': 'x\n' }, 'x')

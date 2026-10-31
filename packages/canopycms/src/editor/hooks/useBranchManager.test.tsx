@@ -1026,6 +1026,7 @@ describe('useBranchManager', () => {
       }),
     )
 
+    vi.mocked(notifications.hide).mockClear()
     mockClient.branches.delete.mockResolvedValueOnce({ ok: true, status: 200 })
     await act(async () => {
       await result.current.handleDelete(mockBranches[1].name)

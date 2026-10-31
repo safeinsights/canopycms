@@ -1696,6 +1696,39 @@ describe('SystemHealthPanel', () => {
       expect((await screen.findByRole('tooltip')).textContent).toMatch(/moved on GitHub/)
     })
 
+    it('offers a retry again once a later failure has a task, whatever an old submit left', async () => {
+      mockClient.admin.branchHealth.mockResolvedValueOnce(
+        mockSuccess({
+          entries: [
+            {
+              dirName: 'feature-d',
+              kind: 'healthy',
+              branch: {
+                name: 'feature-d',
+                status: 'editing' as const,
+                access: {},
+                createdBy: 'user-1',
+                createdAt: '2026-01-01T00:00:00.000Z',
+                updatedAt: '2026-01-02T00:00:00.000Z',
+                syncStatus: 'sync-failed' as const,
+                syncFailureReason: 'Failed.',
+                submitNotQueued: true,
+              },
+            },
+          ],
+          generatedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      )
+
+      renderPanel()
+      await userEvent.click(screen.getByText('Branches'))
+      await waitFor(() => expect(screen.getByText('feature-d')).toBeTruthy())
+
+      const trigger = screen.getByText('Sync failed').closest('[tabindex="0"]') as HTMLElement
+      const describedBy = trigger.getAttribute('aria-describedby')
+      expect(document.getElementById(describedBy!)?.textContent).toContain('Retry it')
+    })
+
     it('tells an admin no task stands behind a submit that was never queued', async () => {
       mockClient.admin.branchHealth.mockResolvedValueOnce(
         mockSuccess({

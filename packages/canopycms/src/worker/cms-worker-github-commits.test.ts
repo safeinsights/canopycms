@@ -1238,6 +1238,28 @@ describe('bringing commits made on GitHub into a branch clone', () => {
     expect((await readMeta(s))?.rewrittenOnGitHub).toBeUndefined()
   })
 
+  it('calls nothing a rewrite until the tip is read through', async () => {
+    await s.commit({ 'editor.txt': 'v2\n' }, 'resubmitted')
+    await s.clone.raw(['push', 'origin', `${BRANCH}:${BRANCH}`])
+    await s.moveGitHubOnly({ 'fix.txt': 'fix\n' })
+    await writeMeta(s, { lastGitHubTip: 'e'.repeat(40) })
+    const proto = Object.getPrototypeOf(s.clone) as { raw(args: string[]): Promise<string> }
+    const raw = proto.raw
+    const killed = vi.spyOn(proto, 'raw').mockImplementation(function (
+      this: SimpleGit,
+      args: string[],
+    ) {
+      if (args[0] === 'rev-list' && args[1] === '--count') return Promise.resolve('')
+      return raw.call(this, args)
+    })
+
+    const summary = await cycle(s)
+    killed.mockRestore()
+
+    expect(summary.failed.map((f) => f.branch)).toEqual([BRANCH])
+    expect((await readMeta(s))?.rewrittenOnGitHub).toBeUndefined()
+  })
+
   it('takes the first force-push it sees on an unrecorded branch for what it is', async () => {
     const kept = await s.head()
     const removed = await s.commitOnGitHub({ 'leak.txt': 'secret\n' })

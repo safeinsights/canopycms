@@ -2065,7 +2065,10 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     await worker.processTaskQueue()
 
     await expect(shaOf(githubFixture, `refs/heads/${name}`)).resolves.toBe(kept)
-    expect((await getTask(taskDir, id))?.status).toBe('pending')
+    const task = await getTask(taskDir, id)
+    expect(task?.status).toBe('pending')
+    // Until the next sync, not an ordinary retry's backoff, which would only meet the same refusal.
+    expect(Date.parse(task?.retryAfter ?? '') - Date.now()).toBeGreaterThan(60_000)
   })
 
   it('fails a push-branch task once its retries are spent, and records the reason on branch metadata', async () => {

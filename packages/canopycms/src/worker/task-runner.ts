@@ -694,7 +694,7 @@ export async function updateBranchMetadata(
       return
     }
     let found = false
-    // Only a submit is an edit an editor made. Anything else is bookkeeping.
+    // Bookkeeping: the save that queued this already said when the branch last changed.
     await meta.update(
       (existing) => {
         if (existing?.branch.name !== branch) return null
@@ -734,7 +734,7 @@ export async function updateBranchMetadata(
         }
         return Object.keys(updates).length > 0 ? { branch: updates } : null
       },
-      { keepUpdatedAt: task.action !== SUBMIT_ACTION },
+      { keepUpdatedAt: true },
     )
     if (!found) noMetadataToRecord(branch, `${task.action} outcome`)
   } catch (err) {
