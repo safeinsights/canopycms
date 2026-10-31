@@ -1446,7 +1446,7 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
   // -------------------------------------------------------------------------
 
   /** Write branch metadata carrying a pending history rewrite. */
-  const writeRewriteMarker = async (branchName: string, marker: string) => {
+  const writeRewriteMarker = async (branchName: string, marker: string, rewrittenTip?: string) => {
     const branchPath = path.join(contentBranchesPath, sanitizeBranchName(branchName))
     await fs.mkdir(branchPath, { recursive: true })
     const meta = BranchMetadataFileManager.get(branchPath, contentBranchesPath)
@@ -1457,6 +1457,7 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
         access: {},
         createdBy: 'test',
         historyRewrittenFrom: marker,
+        ...(rewrittenTip ? { lastGitHubTip: rewrittenTip } : {}),
       },
     })
   }
@@ -1478,7 +1479,8 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     const published = await shaOf(githubFixture, 'refs/heads/canopycms/prod/feature-rebased')
     await seedBranchInRemoteGit('canopycms/prod/feature-rebased', 'rewritten by the rebase loop')
     const rewrittenTip = await shaOf(remoteGitPath, 'refs/heads/canopycms/prod/feature-rebased')
-    await writeRewriteMarker('canopycms/prod/feature-rebased', published)
+    // Stamped as markHistoryRewritten stamps it: GitHub doesn't hold this until the push lands.
+    await writeRewriteMarker('canopycms/prod/feature-rebased', published, rewrittenTip)
 
     const worker = makePushWorker()
     await (worker as unknown as PushBranchInternals).pushBranchToGitHub(
