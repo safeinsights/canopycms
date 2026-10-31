@@ -233,6 +233,7 @@ describe('branch status api', () => {
     )
 
     expect(res.status).toBe(409)
+    expect(res.error).toContain('"feature/x"')
     expect(res.error).toContain('Ask an admin')
     expect(ctx.services.submitBranch).not.toHaveBeenCalled()
 

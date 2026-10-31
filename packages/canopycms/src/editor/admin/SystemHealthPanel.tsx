@@ -54,7 +54,12 @@ import type {
 } from '../../types'
 import { escapeForLog } from '../../utils/escape-text'
 import { TooltipDetail } from '../components/TooltipDetail'
-import { HOLD_BADGE, branchHoldMessage, branchStatusPresentation } from '../branch-status'
+import {
+  HOLD_BADGE,
+  branchHoldMessage,
+  branchStatusPresentation,
+  endSentence,
+} from '../branch-status'
 
 // ============================================================================
 // Small pure helpers
@@ -173,7 +178,7 @@ const BASE_REFRESH_LABELS: Record<BaseRefreshReport['outcome'], string> = {
 /** A failed sync's detail. The worker refuses every push while a rewrite stands, so no retry passes. */
 function syncFailedDetail(reason = 'GitHub sync failed.', rewritten: boolean): string {
   if (rewritten) return reason
-  return `${/[.!?]$/.test(reason) ? reason : `${reason}.`}\nRetry it from the "Tasks" tab.`
+  return `${endSentence(reason)}\nRetry it from the "Tasks" tab.`
 }
 
 /**
@@ -1205,9 +1210,11 @@ function BranchHealthRow({
     const hold: BranchHold | undefined =
       b.rewrittenOnGitHub !== undefined && b.status !== 'archived'
         ? { kind: 'rewritten' }
-        : inReview
-          ? b.pullRequestHold
-          : undefined
+        : !inReview
+          ? undefined
+          : b.submitUnfinished
+            ? { kind: 'submit-unfinished' }
+            : b.pullRequestHold
     const canMarkMerged =
       (b.status === 'submitted' || b.status === 'approved') && !!b.pullRequestNumber
 

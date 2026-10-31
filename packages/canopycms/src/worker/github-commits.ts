@@ -99,23 +99,19 @@ const MAX_LISTED_PATH_LENGTH = 200
 export const REWRITTEN_PUSH_REFUSAL =
   "This branch was changed on GitHub in a way CanopyCMS can't combine with the work here, so nothing was pushed. Nothing is lost."
 
-const wasRefusedForRewrite = ({ syncFailureReason }: BranchMetadata): boolean =>
-  syncFailureReason?.includes(REWRITTEN_PUSH_REFUSAL) === true
-
-/**
- * A push refused in review may have been a submit, and only a retry of that task runs its pull
- * request step. So the failure stays, and no plain push may succeed and clear it.
- */
-const needsTaskRetry = (branch: BranchMetadata): boolean =>
-  wasRefusedForRewrite(branch) && (branch.status === 'submitted' || branch.status === 'approved')
+/** A failed submit whose pull request step hasn't run; no other task's success clears its failure. */
+export const awaitsSubmitRetry = ({ submitUnfinished, status }: BranchMetadata): boolean =>
+  submitUnfinished === true && (status === 'submitted' || status === 'approved')
 
 /**
  * What clears a rewrite: the flag, and the refusal's text, which would go on saying the work can't
- * be combined. The failed sync it left goes too, unless {@link needsTaskRetry}.
+ * be combined. The failed sync it left goes too, unless {@link awaitsSubmitRetry}.
  */
 export function rewriteCleared(branch: BranchMetadata): Partial<BranchMetadata> {
-  if (!wasRefusedForRewrite(branch)) return { rewrittenOnGitHub: undefined }
-  return needsTaskRetry(branch)
+  if (!branch.syncFailureReason?.includes(REWRITTEN_PUSH_REFUSAL)) {
+    return { rewrittenOnGitHub: undefined }
+  }
+  return awaitsSubmitRetry(branch)
     ? { rewrittenOnGitHub: undefined, syncFailureReason: undefined }
     : { rewrittenOnGitHub: undefined, syncStatus: 'synced', syncFailureReason: undefined }
 }
@@ -198,9 +194,7 @@ export async function bringInGitHubCommits(
       // The worker's own rewrite with its push still on the way: GitHub stands at the commit it
       // replaced, and history-rewrite.ts completes that hop.
       if (branch.historyRewrittenFrom === tip) {
-        if (rewriteResolved && !needsTaskRetry(branch)) {
-          await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
-        }
+        if (rewriteResolved) await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
         return { kind: 'in-step' }
       }
       if (dirty) return { kind: 'wait' }
@@ -226,7 +220,7 @@ export async function bringInGitHubCommits(
     gitHubTip !== undefined &&
     published !== null &&
     published !== tip &&
-    (branch.syncStatus !== 'sync-failed' || (rewriteResolved && !needsTaskRetry(branch))) &&
+    (branch.syncStatus !== 'sync-failed' || rewriteResolved) &&
     (!gatewayPolicy || publishesBranch(gatewayPolicy, branchRef)) &&
     (await contains(git, published, tip))
   ) {

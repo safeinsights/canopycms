@@ -15,4 +15,5 @@ row: Editor shows held pull requests
 - A branch in review that conflicts with its base: the line gives its author, a reviewer and anyone else their own way forward.
 - A pull request retargeted to another base on GitHub: update it on the pull request, or ask an admin.
 - A branch force-pushed on GitHub: submit is blocked, as nothing can reach GitHub until an admin sorts it out.
+- A submit that failed before its pull request step ran: the line says the pull request may not have the latest changes, and how to finish it. The failure now stays until the submit is retried or made again, where another task's success could clear it.
 - A branch in review with a failed sync now says it won't update from its base until it syncs.

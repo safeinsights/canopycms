@@ -2706,6 +2706,13 @@ describe('useBranchManager', () => {
         withCloseButton: true,
       })
       expect(mockClient.branches.list).toHaveBeenCalledTimes(1)
+
+      vi.mocked(notifications.hide).mockClear()
+      mockClient.workflow.submit.mockResolvedValueOnce({ ok: true, status: 200 })
+      await act(async () => {
+        await result.current.handleSubmit('feature')
+      })
+      expect(notifications.hide).toHaveBeenCalledWith('canopy-submit-refused-feature')
     })
 
     it('shows a stale-status 409 in yellow, which closes itself, with no Retry, and reloads the list', async () => {

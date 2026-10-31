@@ -57,6 +57,7 @@ export interface BranchListItem extends Omit<
   | 'keptOverGitHub'
   | 'lastGitHubTip'
   | 'rewrittenOnGitHub'
+  | 'submitUnfinished'
   | 'rebaseFailure'
   | 'pullRequestHold'
 > {
@@ -288,6 +289,7 @@ export const toBranchListItem = (
     keptOverGitHub: _kept,
     lastGitHubTip: _tip,
     rewrittenOnGitHub: _rewritten,
+    submitUnfinished: _unfinished,
     rebaseFailure: _failure,
     pullRequestHold,
     ...listed
@@ -296,9 +298,11 @@ export const toBranchListItem = (
   const rewritten = branch.rewrittenOnGitHub !== undefined && branch.status !== 'archived'
   const hold: BranchHold | undefined = rewritten
     ? { kind: 'rewritten' }
-    : inReview
-      ? pullRequestHold
-      : undefined
+    : !inReview
+      ? undefined
+      : branch.submitUnfinished
+        ? { kind: 'submit-unfinished' }
+        : pullRequestHold
   return {
     ...listed,
     hold,

@@ -29,7 +29,7 @@ import { pushToGitHub } from './github-transfer'
 import { clearHistoryRewrittenMarker, readPublishedSha } from './history-rewrite'
 import { writeWorkerStatus } from '../task-queue/worker-status'
 import { SYNC_PR_COMMENTS_ACTION, refreshCommentsBlock, renderPrCommentsBody } from '../pr-comments'
-import { REWRITTEN_PUSH_REFUSAL } from './github-commits'
+import { REWRITTEN_PUSH_REFUSAL, awaitsSubmitRetry } from './github-commits'
 import { workerLog, workerLogError, workerLogWarn } from './log'
 import { assertSharedRepoConfig } from './shared-repo-git'
 import type { WorkerContext } from './worker-context'
@@ -599,8 +599,10 @@ async function isSupersededSubmit(
   task: Task,
   branch: string,
 ): Promise<boolean> {
-  const { submittedAt } = task.payload
-  if (!task.retryCount || typeof submittedAt !== 'string') return false
+  const { submittedAt, requeuedFrom } = task.payload
+  if ((!task.retryCount && requeuedFrom === undefined) || typeof submittedAt !== 'string') {
+    return false
+  }
   const live = await BranchMetadataFileManager.loadOnly(ctx.branchWorkspacePath(branch))
   if (live === null) return false
   const { status } = live.branch
@@ -672,13 +674,17 @@ export async function updateBranchMetadata(
     }
     const saved = await meta.update((existing) => {
       if (existing?.branch.name !== branch) return null
-      const updates: Record<string, unknown> = {
-        syncStatus: 'synced',
-        // save()'s merge only overwrites keys present in this update, so a prior
-        // syncFailureReason would survive this successful sync forever unless
-        // cleared explicitly (same pattern as rebaseFailure elsewhere).
-        syncFailureReason: undefined,
-      }
+      const updates: Record<string, unknown> =
+        task.action !== SUBMIT_ACTION && awaitsSubmitRetry(existing.branch)
+          ? {}
+          : {
+              syncStatus: 'synced',
+              // save()'s merge only overwrites keys present in this update, so a prior
+              // syncFailureReason would survive this successful sync forever unless
+              // cleared explicitly (same pattern as rebaseFailure elsewhere).
+              syncFailureReason: undefined,
+              submitUnfinished: undefined,
+            }
       if (result.prUrl) updates.pullRequestUrl = result.prUrl
       if (result.prNumber) {
         updates.pullRequestNumber = result.prNumber
@@ -734,7 +740,11 @@ async function updateBranchMetadataOnFailure(
 
   try {
     const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
-    const failed = { syncStatus: 'sync-failed', syncFailureReason: error } as const
+    const failed = {
+      syncStatus: 'sync-failed',
+      syncFailureReason: error,
+      ...(task.action === SUBMIT_ACTION ? { submitUnfinished: true } : {}),
+    } as const
     const submittedAt = task.payload.submittedAt
     const unlocked =
       options.unlock &&

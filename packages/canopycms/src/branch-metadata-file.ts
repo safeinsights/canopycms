@@ -109,6 +109,7 @@ const branchMetadataShape = {
   lastGitHubTip: z.string().optional(),
   keptOverGitHub: z.array(z.string()).optional(),
   rewrittenOnGitHub: z.string().optional(),
+  submitUnfinished: z.boolean().optional(),
   syncFailureReason: z.string().optional(),
   editors: z.array(z.string()).optional(),
   uncommittedEditors: z.array(z.string()).optional(),

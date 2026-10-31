@@ -1932,6 +1932,17 @@ describe('toBranchListItem', () => {
     expect(item.hold).toBeUndefined()
   })
 
+  it('says a failed submit never finished, only while the branch is in review', () => {
+    const item = listed({ status: 'submitted', submitUnfinished: true })
+    expect(item.hold).toEqual({ kind: 'submit-unfinished' })
+    expect(item).not.toHaveProperty('submitUnfinished')
+    expect(listed({ status: 'editing', submitUnfinished: true }).hold).toBeUndefined()
+    expect(
+      listed({ status: 'submitted', submitUnfinished: true, rewrittenOnGitHub: 'a'.repeat(40) })
+        .hold,
+    ).toEqual({ kind: 'rewritten' })
+  })
+
   it('says a branch was rewritten on GitHub, without the commit, and blocks its submit', () => {
     const item = listed({ status: 'editing', rewrittenOnGitHub: 'a'.repeat(40) })
     expect(item.hold).toEqual({ kind: 'rewritten' })

@@ -1345,6 +1345,32 @@ describe('SystemHealthPanel', () => {
       },
     })
 
+    it('marks a submit that never finished, with the retry that finishes it', async () => {
+      mockClient.admin.branchHealth.mockResolvedValue(
+        mockSuccess({
+          entries: [
+            {
+              ...rewritten('unfinished', 'editing'),
+              branch: {
+                ...rewritten('unfinished', 'editing').branch!,
+                status: 'submitted',
+                rewrittenOnGitHub: undefined,
+                submitUnfinished: true,
+              },
+            },
+          ],
+          generatedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      )
+      renderPanel()
+      await userEvent.click(screen.getByText('Branches'))
+      await waitFor(() => expect(screen.getByText('unfinished')).toBeTruthy())
+
+      const trigger = screen.getByTestId('held-pr-unfinished').closest('[aria-describedby]')
+      const detail = document.getElementById(trigger?.getAttribute('aria-describedby') ?? '')
+      expect(detail?.textContent).toContain('Retry it from the "Tasks" tab.')
+    })
+
     it('marks no rewrite on an archived branch, which nothing can act on', async () => {
       mockClient.admin.branchHealth.mockResolvedValue(
         mockSuccess({

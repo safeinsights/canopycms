@@ -707,6 +707,23 @@ describe('BranchManager', () => {
     )
   })
 
+  it('ends a recorded reason before the sentence after it', () => {
+    const branches: BranchSummary[] = [
+      {
+        ...baseBranches[0],
+        status: 'approved',
+        syncStatus: 'sync-failed',
+        syncFailureReason: 'It has moved on GitHub',
+        pullRequestNumber: 1,
+      },
+    ]
+    renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
+
+    expect(screen.getByTestId('sync-failed-reason-main').textContent).toContain(
+      `It has moved on GitHub. ${SYNC_FAILED_IN_REVIEW_NOTE}`,
+    )
+  })
+
   it('tells only someone who may withdraw to, on a failed branch in review', () => {
     const branches: BranchSummary[] = [
       {

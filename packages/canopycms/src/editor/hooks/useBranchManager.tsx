@@ -848,6 +848,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   }
 
   const reviewFailureId = (kind: ReviewKind, branch: string) => `canopy-${kind}-failed-${branch}`
+  const submitRefusedId = (branch: string) => `canopy-submit-refused-${branch}`
 
   /**
    * Why an Approve or Request changes failed. Retry only on an API 5xx, 408, 429 or unsent request;
@@ -980,6 +981,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               if (stamped && branchNameToSubmit === openListedName()) {
                 options.onStamped?.(stamped)
               }
+              notifications.hide(submitRefusedId(branchNameToSubmit))
               notifications.show({
                 message: submittedMessage(stamped?.length ?? 0),
                 color: 'green',
@@ -991,7 +993,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               if (err instanceof RefusedError && err.status === 409) {
                 // Nothing is lost, and it says what to do, so it stays until read. The reload shows
                 // whatever the page hadn't heard yet, such as what's holding the branch.
-                const id = `canopy-submit-refused-${branchNameToSubmit}`
+                const id = submitRefusedId(branchNameToSubmit)
                 notifications.hide(id)
                 notifications.show({
                   id,

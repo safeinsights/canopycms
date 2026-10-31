@@ -40,7 +40,7 @@ export interface BranchReview {
 export type PullRequestHold = { kind: 'conflicts' } | { kind: 'retargeted'; base: string }
 
 /** What the editor tells a branch's viewers is stuck, and needs a person. */
-export type BranchHold = PullRequestHold | { kind: 'rewritten' }
+export type BranchHold = PullRequestHold | { kind: 'rewritten' } | { kind: 'submit-unfinished' }
 
 export interface BranchMetadata {
   name: string
@@ -131,6 +131,11 @@ export interface BranchMetadata {
    * it is known to have held, or GitHub no longer has the branch.
    */
   rewrittenOnGitHub?: string
+  /**
+   * The last submit failed, so its pull request step hasn't run. Only a retry of that task or a new
+   * submit runs it, so nothing else clears the failed sync while the branch is in review.
+   */
+  submitUnfinished?: boolean
   /**
    * What GitHub reports keeps this branch's open pull request from being updated from its base,
    * as of the worker's last read while the branch was in review. Read only while it still is.

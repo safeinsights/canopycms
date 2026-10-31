@@ -137,6 +137,17 @@ export const HeldPullRequests: Story = {
         submitBlocked: true,
       },
       {
+        name: 'feature/submit-unfinished',
+        status: 'submitted',
+        updatedAt: ago(DAY),
+        createdBy: 'bob',
+        access: { users: ['bob'] },
+        pullRequestUrl: 'https://github.com/owner/repo/pull/127',
+        pullRequestNumber: 127,
+        syncStatus: 'sync-failed',
+        hold: { kind: 'submit-unfinished' },
+      },
+      {
         name: 'feature/sync-failed',
         status: 'submitted',
         updatedAt: ago(DAY),
@@ -155,7 +166,7 @@ export const HeldPullRequestsAsAuthor: Story = {
   args: { ...HeldPullRequests.args, user: { userId: 'bob', groups: [] } },
 }
 
-/** Everything at once, for how the badges wrap. */
+/** A reviewer of someone else's branch, who sends it back rather than withdrawing it. */
 export const HeldAsReviewer: Story = {
   args: { ...HeldPullRequests.args, user: { userId: 'rita', groups: [RESERVED_GROUPS.REVIEWERS] } },
 }
@@ -171,6 +182,7 @@ export const HeldAsReviewerSharedWith: Story = {
   },
 }
 
+/** Everything at once, for how the badges wrap. */
 export const HeldWithEveryBadge: Story = {
   args: {
     ...HeldPullRequests.args,

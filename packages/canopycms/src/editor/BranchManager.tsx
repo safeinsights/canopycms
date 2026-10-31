@@ -37,6 +37,7 @@ import {
   HOLD_BADGE,
   SYNC_FAILED_IN_REVIEW_NOTE,
   branchHoldMessage,
+  endSentence,
   syncFailedFallback,
   branchStatusPresentation,
   type HoldViewer,
@@ -524,7 +525,9 @@ const BranchCard: React.FC<BranchCardProps> = ({
               style={WRAP_ANYWHERE}
               data-testid={`sync-failed-reason-${b.name}`}
             >
-              {b.syncFailureReason ?? syncFailedFallback({ isAdmin: userIsAdmin, held: !!b.hold })}
+              {endSentence(
+                b.syncFailureReason ?? syncFailedFallback({ isAdmin: userIsAdmin, held: !!b.hold }),
+              )}
               {!b.hold && inReview && b.pullRequestNumber && ` ${SYNC_FAILED_IN_REVIEW_NOTE}`}
               {!b.hold &&
                 inReview &&

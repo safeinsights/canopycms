@@ -78,8 +78,21 @@ export function branchHoldMessage(hold: BranchHold, viewer: HoldViewer): string 
         ? `${stuck} See the "Branches" tab in "System health".`
         : `${stuck} Ask an admin for help.`
     }
+    case 'submit-unfinished': {
+      const retry = viewer.inSystemHealth
+        ? 'Retry it from the "Tasks" tab'
+        : viewer.isAdmin
+          ? 'Retry it from the "Tasks" tab in "System health"'
+          : 'Ask an admin to retry it'
+      const withdraw =
+        viewer.role === 'withdraw' ? ', or use "Withdraw from review", then submit it again' : ''
+      return `The last submit of this branch didn't finish, so its pull request may not have its latest changes. ${retry}${withdraw}.`
+    }
   }
 }
+
+/** Ends `text` as a sentence, for a recorded reason that another sentence follows. */
+export const endSentence = (text: string): string => (/[.!?]$/.test(text) ? text : `${text}.`)
 
 /** Why a branch in review with a failed sync stays behind its base, after the failure itself. */
 export const SYNC_FAILED_IN_REVIEW_NOTE =

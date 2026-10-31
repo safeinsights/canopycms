@@ -136,8 +136,9 @@ const submitBranchForMergeHandler = async (
       ok: false,
       status: 409,
       error:
-        "This branch was changed on GitHub in a way CanopyCMS can't combine with the work here, " +
-        "so it can't be submitted. Nothing is lost. " +
+        `"${shortNameOf(ctx.services.config, branchContext.branch.name)}" was changed on GitHub in ` +
+        "a way CanopyCMS can't combine with the work here, so it can't be submitted. Nothing is " +
+        'lost. ' +
         (isAdmin(req.user.groups)
           ? 'See the "Branches" tab in "System health".'
           : 'Ask an admin for help.'),
@@ -199,7 +200,7 @@ const submitBranchForMergeHandler = async (
           `Could not submit "${shortName}": it has commits from GitHub that aren't in the editor ` +
           `yet. Your saved changes are safe. CanopyCMS brings those commits in at its next sync, ` +
           `usually within a few minutes, so submit again then. If this keeps happening, ask an ` +
-          `administrator to check System Health.`,
+          `admin to check "System health".`,
       }
     }
 
@@ -267,6 +268,7 @@ const submitBranchForMergeHandler = async (
       // Read by the card as soon as the status says review, and the worker's next read is minutes
       // away, so what held the last submit must not show as holding this one.
       pullRequestHold: undefined,
+      submitUnfinished: undefined,
     },
   })
 

@@ -4,6 +4,7 @@ import {
   PROTECTED_BRANCH_PRESENTATION,
   branchHoldMessage,
   branchStatusPresentation,
+  endSentence,
   syncFailedFallback,
 } from './branch-status'
 
@@ -49,6 +50,39 @@ describe('branchHoldMessage', () => {
     expect(branchHoldMessage(hold, { role: 'none', isAdmin: true })).toMatch(
       /Update it on the pull request\.$/,
     )
+  })
+})
+
+describe('a submit that never finished', () => {
+  const hold = { kind: 'submit-unfinished' } as const
+
+  it('says what the pull request may be missing, for anyone', () => {
+    const line = branchHoldMessage(hold, { role: 'none', isAdmin: false })
+    expect(line).toContain('may not have its latest changes')
+    expect(line).toContain('Ask an admin to retry it.')
+    expect(line).not.toContain('Withdraw')
+  })
+
+  it('offers its editor the way out that needs no admin, and no failed task', () => {
+    expect(branchHoldMessage(hold, { role: 'withdraw', isAdmin: false })).toContain(
+      'Ask an admin to retry it, or use "Withdraw from review", then submit it again.',
+    )
+  })
+
+  it('sends an admin to the task, naming the panel only outside it', () => {
+    expect(branchHoldMessage(hold, { role: 'none', isAdmin: true })).toContain(
+      'Retry it from the "Tasks" tab in "System health".',
+    )
+    expect(branchHoldMessage(hold, { role: 'none', isAdmin: true, inSystemHealth: true })).toMatch(
+      /Retry it from the "Tasks" tab\.$/,
+    )
+  })
+})
+
+describe('endSentence', () => {
+  it('ends a reason only where it has no ending', () => {
+    expect(endSentence('It has moved on GitHub')).toBe('It has moved on GitHub.')
+    expect(endSentence('It has moved.')).toBe('It has moved.')
   })
 })
 
