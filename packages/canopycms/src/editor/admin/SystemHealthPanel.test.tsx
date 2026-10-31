@@ -1536,7 +1536,7 @@ describe('SystemHealthPanel', () => {
       expect(document.activeElement).toBe(trigger)
       const describedBy = trigger.getAttribute('aria-describedby')
       expect(document.getElementById(describedBy!)?.textContent).toBe(
-        'Push rejected for branch "feature-d": it has moved on GitHub\nRetry it from the "Tasks" tab.',
+        'Push rejected for branch "feature-d": it has moved on GitHub.\nRetry it from the "Tasks" tab.',
       )
       expect((await screen.findByRole('tooltip')).textContent).toMatch(/moved on GitHub/)
     })

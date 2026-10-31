@@ -1002,6 +1002,56 @@ describe('bringing commits made on GitHub into a branch clone', () => {
         syncFailureReason: REWRITTEN_PUSH_REFUSAL,
       } as const
 
+      describe('on a branch in review, where it may have been a submit', () => {
+        const inReview = { ...refused, status: 'submitted', pullRequestNumber: 7 } as const
+
+        for (const status of ['submitted', 'approved'] as const) {
+          it(`stays failed when ${status}, for a retry to run the PR step, without the false reason`, async () => {
+            await writeMeta(s, {
+              ...inReview,
+              status,
+              rewrittenOnGitHub: flag,
+              lastGitHubTip: await s.head(),
+            })
+
+            await cycle(s)
+
+            const meta = await readMeta(s)
+            expect(meta?.rewrittenOnGitHub).toBeUndefined()
+            expect(meta?.syncStatus).toBe('sync-failed')
+            expect(meta?.syncFailureReason).toBeUndefined()
+          })
+        }
+
+        it('queues no plain push, whose success would hide the unfinished PR step', async () => {
+          const held = await s.head()
+          await writeMeta(s, { ...inReview, rewrittenOnGitHub: flag, lastGitHubTip: held })
+          await s.commit({ 'editor.txt': 'v2\n' }, 'resubmitted')
+          await s.clone.raw(['push', 'origin', `${BRANCH}:${BRANCH}`])
+
+          await cycle(s)
+
+          expect(await queued(s, 'push-branch')).toEqual([])
+          expect((await readMeta(s))?.syncStatus).toBe('sync-failed')
+        })
+
+        it('queues no plain push to finish a rewrite of its own either', async () => {
+          const replaced = await s.head()
+          await s.clone.commit('amended', [], { '--amend': null, '--allow-empty': null })
+          await s.clone.raw(['push', '--force', 'origin', `${BRANCH}:${BRANCH}`])
+          await writeMeta(s, {
+            ...inReview,
+            historyRewrittenFrom: replaced,
+            lastGitHubTip: await s.head(),
+            rewrittenOnGitHub: replaced,
+          })
+
+          await cycle(s)
+
+          expect(await queued(s, 'push-branch')).toEqual([])
+        })
+      })
+
       it('clears with a rewrite GitHub stands past', async () => {
         const held = await s.head()
         await writeMeta(s, { ...refused, rewrittenOnGitHub: flag, lastGitHubTip: held })
@@ -1022,14 +1072,18 @@ describe('bringing commits made on GitHub into a branch clone', () => {
         expect((await readMeta(s))?.syncStatus).toBe('synced')
       })
 
-      for (const status of ['editing', 'submitted'] as const) {
-        it(`clears with a ${status} branch GitHub no longer has`, async () => {
+      for (const [status, after] of [
+        ['editing', 'synced'],
+        ['submitted', 'sync-failed'],
+      ] as const) {
+        it(`drops the reason on a ${status} branch GitHub no longer has`, async () => {
           await writeMeta(s, { ...refused, status, rewrittenOnGitHub: flag })
           await s.dropGitHubBranch()
 
           await cycle(s)
 
           expect((await readMeta(s))?.syncFailureReason).toBeUndefined()
+          expect((await readMeta(s))?.syncStatus).toBe(after)
         })
       }
 

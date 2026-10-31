@@ -170,6 +170,12 @@ const BASE_REFRESH_LABELS: Record<BaseRefreshReport['outcome'], string> = {
   failed: 'refresh failed',
 }
 
+/** A failed sync's detail. The worker refuses every push while a rewrite stands, so no retry passes. */
+function syncFailedDetail(reason = 'GitHub sync failed.', rewritten: boolean): string {
+  if (rewritten) return reason
+  return `${/[.!?]$/.test(reason) ? reason : `${reason}.`}\nRetry it from the "Tasks" tab.`
+}
+
 /**
  * The worker holding the base branch for an editor deploy, or the cycle it stopped waiting.
  * The rule and its bound live in worker/schema-gate.ts.
@@ -1247,11 +1253,7 @@ function BranchHealthRow({
           {b.syncStatus === 'sync-failed' ? (
             <TooltipDetail
               preLine
-              detail={
-                // The worker refuses every push while a rewrite stands, so a retry can't pass.
-                `${b.syncFailureReason ?? 'GitHub sync failed.'}` +
-                (hold?.kind === 'rewritten' ? '' : '\nRetry it from the "Tasks" tab.')
-              }
+              detail={syncFailedDetail(b.syncFailureReason, hold?.kind === 'rewritten')}
             >
               <Badge color="red" variant="light">
                 Sync failed

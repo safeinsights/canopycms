@@ -99,14 +99,25 @@ const MAX_LISTED_PATH_LENGTH = 200
 export const REWRITTEN_PUSH_REFUSAL =
   "This branch was changed on GitHub in a way CanopyCMS can't combine with the work here, so nothing was pushed. Nothing is lost."
 
+const wasRefusedForRewrite = ({ syncFailureReason }: BranchMetadata): boolean =>
+  syncFailureReason?.includes(REWRITTEN_PUSH_REFUSAL) === true
+
 /**
- * What clears a rewrite: the flag, and the failed sync its refused push left. That failure would go
- * on saying the work can't be combined, and would keep the branch's pull request from updating.
+ * A push refused in review may have been a submit, and only a retry of that task runs its pull
+ * request step. So the failure stays, and no plain push may succeed and clear it.
  */
-export function rewriteCleared({ syncFailureReason }: BranchMetadata): Partial<BranchMetadata> {
-  return syncFailureReason?.includes(REWRITTEN_PUSH_REFUSAL)
-    ? { rewrittenOnGitHub: undefined, syncStatus: 'synced', syncFailureReason: undefined }
-    : { rewrittenOnGitHub: undefined }
+const needsTaskRetry = (branch: BranchMetadata): boolean =>
+  wasRefusedForRewrite(branch) && (branch.status === 'submitted' || branch.status === 'approved')
+
+/**
+ * What clears a rewrite: the flag, and the refusal's text, which would go on saying the work can't
+ * be combined. The failed sync it left goes too, unless {@link needsTaskRetry}.
+ */
+export function rewriteCleared(branch: BranchMetadata): Partial<BranchMetadata> {
+  if (!wasRefusedForRewrite(branch)) return { rewrittenOnGitHub: undefined }
+  return needsTaskRetry(branch)
+    ? { rewrittenOnGitHub: undefined, syncFailureReason: undefined }
+    : { rewrittenOnGitHub: undefined, syncStatus: 'synced', syncFailureReason: undefined }
 }
 
 /** A branch this deployment put on GitHub. Any other GitHub branch of that name is not its own. */
@@ -187,7 +198,9 @@ export async function bringInGitHubCommits(
       // The worker's own rewrite with its push still on the way: GitHub stands at the commit it
       // replaced, and history-rewrite.ts completes that hop.
       if (branch.historyRewrittenFrom === tip) {
-        if (rewriteResolved) await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
+        if (rewriteResolved && !needsTaskRetry(branch)) {
+          await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
+        }
         return { kind: 'in-step' }
       }
       if (dirty) return { kind: 'wait' }
@@ -206,13 +219,14 @@ export async function bringInGitHubCommits(
 
   // A merge or a submit that reached remote.git with no GitHub push queued, as after a crash
   // between the two. A rebase now would strand the push, which leases on a commit GitHub never
-  // held, so it waits for the push. A push that failed for good stays as it is: its failure is on
-  // the branch, and a new attempt would fail the same way every cycle.
+  // held, so it waits for the push. A push that failed for good stays as it is, unless a cleared
+  // rewrite was all that stopped it: its failure is on the branch, and a new attempt would fail the
+  // same way every cycle.
   if (
     gitHubTip !== undefined &&
     published !== null &&
     published !== tip &&
-    (branch.syncStatus !== 'sync-failed' || rewriteResolved) &&
+    (branch.syncStatus !== 'sync-failed' || (rewriteResolved && !needsTaskRetry(branch))) &&
     (!gatewayPolicy || publishesBranch(gatewayPolicy, branchRef)) &&
     (await contains(git, published, tip))
   ) {

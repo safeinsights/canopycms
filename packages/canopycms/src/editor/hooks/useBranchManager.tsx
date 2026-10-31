@@ -988,11 +988,26 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               await loadBranches()
               resolve()
             } catch (err) {
-              await reportActionFailure(
-                err,
-                'Failed to submit branch',
-                EDITOR_ACTIONS.submitForReview,
-              )
+              if (err instanceof RefusedError && err.status === 409) {
+                // Nothing is lost, and it says what to do, so it stays until read. The reload shows
+                // whatever the page hadn't heard yet, such as what's holding the branch.
+                const id = `canopy-submit-refused-${branchNameToSubmit}`
+                notifications.hide(id)
+                notifications.show({
+                  id,
+                  message: err.message,
+                  color: 'yellow',
+                  autoClose: false,
+                  withCloseButton: true,
+                })
+                await loadBranches()
+              } else {
+                await reportActionFailure(
+                  err,
+                  'Failed to submit branch',
+                  EDITOR_ACTIONS.submitForReview,
+                )
+              }
               reject(err)
             } finally {
               options.setBusy(false)

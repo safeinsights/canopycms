@@ -156,6 +156,21 @@ export const HeldPullRequestsAsAuthor: Story = {
 }
 
 /** Everything at once, for how the badges wrap. */
+export const HeldAsReviewer: Story = {
+  args: { ...HeldPullRequests.args, user: { userId: 'rita', groups: [RESERVED_GROUPS.REVIEWERS] } },
+}
+
+/** A reviewer the branches were shared with reads them as their editor, with Withdraw. */
+export const HeldAsReviewerSharedWith: Story = {
+  args: {
+    ...HeldAsReviewer.args,
+    branches: HeldPullRequests.args?.branches?.map((b) => ({
+      ...b,
+      access: { users: ['bob', 'rita'] },
+    })),
+  },
+}
+
 export const HeldWithEveryBadge: Story = {
   args: {
     ...HeldPullRequests.args,
