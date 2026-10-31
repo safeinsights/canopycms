@@ -10,7 +10,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { simpleGit, type SimpleGit } from 'simple-git'
 
 import { BranchMetadataFileManager } from '../branch-metadata'
@@ -1162,6 +1162,24 @@ describe('bringing commits made on GitHub into a branch clone', () => {
     const summary = await cycle(s, makeWorker(s), { tip: 'c'.repeat(40) })
     expect(summary.failed).toEqual([])
     expect((await readMeta(s))?.rewrittenOnGitHub).toBeUndefined()
+  })
+
+  it('keeps a stamp from a push that landed after the cycle read the branch', async () => {
+    await s.commitOnGitHub({ 'fix.txt': 'fix\n' })
+    const pushed = 'b'.repeat(40)
+    const realLoad = BranchMetadataFileManager.loadOnly.bind(BranchMetadataFileManager)
+    let reads = 0
+    const load = vi.spyOn(BranchMetadataFileManager, 'loadOnly')
+    // The review check's fresh read comes after the cycle's own, ahead of the stamp.
+    load.mockImplementation(async (root) => {
+      if (++reads === 2) await writeMeta(s, { lastGitHubTip: pushed })
+      return realLoad(root)
+    })
+
+    await cycle(s)
+    load.mockRestore()
+
+    expect((await readMeta(s))?.lastGitHubTip).toBe(pushed)
   })
 
   it('leaves a branch as it is when a git call fails, rather than call it a rewrite', async () => {

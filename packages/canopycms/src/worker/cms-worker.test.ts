@@ -1808,6 +1808,12 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
         expect(after?.unpublishedAtMerge).toBe(true)
       })
 
+      it('opens nothing for a branch that merged before this submit was recorded', async () => {
+        await firstRun({ status: 'archived', submittedAt: '2026-09-01T00:00:00.000Z' })
+
+        await expect(shaOf(githubFixture, `refs/heads/${branch}`)).rejects.toThrow()
+      })
+
       it('runs when the API has yet to record the submit that queued it', async () => {
         await firstRun({ status: 'editing', submittedAt: '2026-09-01T00:00:00.000Z' })
 
