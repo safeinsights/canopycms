@@ -45,7 +45,7 @@ import {
 const BRANCHES_LOAD_FAILED_TOAST_ID = 'canopy-branches-load-failed'
 const BRANCH_OUTCOME_UNKNOWN_TOAST_ID = 'canopy-branch-outcome-unknown'
 
-/** The API's 409: the branch is no longer in the state the action needs, so a retry cannot pass. */
+/** The API's 409: the branch isn't in the state the action needs, so a retry cannot pass. */
 class StaleStatusError extends Error {
   override readonly name = 'StaleStatusError'
 }
@@ -284,6 +284,7 @@ const showRequestChangesConfirmation = (
 const showDeleteConfirmation = (
   branchName: string,
   pr: BranchPullRequest,
+  mayHoldUnpublished: boolean,
   onConfirm: () => Promise<void>,
   onDismiss: () => void,
 ) => {
@@ -295,6 +296,9 @@ const showDeleteConfirmation = (
       ? `Delete its branch on GitHub too, which closes pull request #${pr.pullRequestNumber} if it is still open`
       : undefined,
     'Discard any unsaved or unmerged changes',
+    mayHoldUnpublished
+      ? 'Remove the only copy of any changes that never reached GitHub, and the warning about them'
+      : undefined,
   ].filter((b): b is string => b !== undefined)
   openConfirm({
     title: 'Delete branch',
@@ -429,6 +433,8 @@ interface BranchSummary {
    * re-derive the status/protection halves client-side.
    */
   submitBlocked: boolean
+  /** Server-computed: the API refuses Approve, as the last submit didn't finish. */
+  approveBlocked?: boolean
 }
 
 export interface UseBranchManagerOptions {
@@ -653,6 +659,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         conflictStatus: b.conflictStatus,
         conflictFiles: b.conflictFiles,
         hold: b.hold,
+        approveBlocked: b.approveBlocked,
         commentCount: unresolvedCount,
         // Fail CLOSED (`?? true`): these flags are optional on the wire (see
         // BranchListItem's doc comment in api/branch.ts) so a version-skewed
@@ -853,7 +860,8 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   /**
    * Why an Approve or Request changes failed. Retry only on an API 5xx, 408, 429 or unsent request;
    * a timeout or gateway 5xx may have landed, so it reloads and says what to check. Other 4xx: a
-   * plain message and a reload. A 409 means the branch left review (see `showLeftReview`).
+   * plain message and a reload. A 409 means the branch left review, or for Approve that its last
+   * submit didn't finish (see `showLeftReview`, which shows the server's reason either way).
    */
   const reportReviewFailure = async (
     err: unknown,
@@ -1205,6 +1213,8 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
           showDeleteConfirmation(
             shownName(branchNameToDelete),
             pullRequestOf(branchNameToDelete),
+            listedBefore.find((b) => b.name === branchNameToDelete)?.hold?.kind ===
+              'unpublished-at-merge',
             async () => {
               options.setBusy(true)
               try {

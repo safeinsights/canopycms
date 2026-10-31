@@ -37,6 +37,7 @@ import { baseBranchOf } from '../utils/base-branch'
 // file per namespace.
 export type {
   BranchHealthResponse,
+  DismissUnpublishedResponse,
   PurgeBranchDirResponse,
   RepairBranchDirResponse,
   RepairContentDuplicatesResponse,

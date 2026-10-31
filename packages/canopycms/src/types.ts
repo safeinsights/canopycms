@@ -45,6 +45,8 @@ export type BranchHold =
   | { kind: 'rewritten' }
   /** `opened`: a pull request's number is on record, from an earlier submit. */
   | { kind: 'submit-unfinished'; opened: boolean }
+  /** Admins see what to do in System health. */
+  | { kind: 'unpublished-at-merge' }
 
 export interface BranchMetadata {
   name: string
@@ -140,6 +142,12 @@ export interface BranchMetadata {
    * submit runs it, so nothing else clears the failed sync while the branch is in review.
    */
   submitUnfinished?: boolean
+  /**
+   * The pull request merged before a submit finished, so commits from that submit may not be in
+   * the merge. Archiving leaves no retry or new submit, so this stays for an admin until dismissed
+   * in System health, and only an admin may delete the branch meanwhile.
+   */
+  unpublishedAtMerge?: boolean
   /**
    * What GitHub reports keeps this branch's open pull request from being updated from its base,
    * as of the worker's last read while the branch was in review. Read only while it still is.

@@ -147,6 +147,7 @@ export const HeldPullRequests: Story = {
         syncStatus: 'sync-failed',
         syncFailureReason: 'Push rejected by GitHub.',
         hold: { kind: 'submit-unfinished', opened: true },
+        approveBlocked: true,
       },
       {
         name: 'feature/never-opened',
@@ -157,6 +158,19 @@ export const HeldPullRequests: Story = {
         syncStatus: 'sync-failed',
         syncFailureReason: 'Push rejected by GitHub.',
         hold: { kind: 'submit-unfinished', opened: false },
+        approveBlocked: true,
+      },
+      {
+        name: 'feature/merged-early',
+        status: 'archived',
+        updatedAt: ago(DAY),
+        createdBy: 'bob',
+        access: { users: ['bob'] },
+        mergedAt: ago(DAY),
+        pullRequestUrl: 'https://github.com/owner/repo/pull/128',
+        pullRequestNumber: 128,
+        pullRequestState: 'merged',
+        hold: { kind: 'unpublished-at-merge' },
       },
       {
         name: 'feature/sync-failed',

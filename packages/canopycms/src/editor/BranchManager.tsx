@@ -45,7 +45,12 @@ import {
 import { TooltipDetail } from './components/TooltipDetail'
 import { branchAddress, displayBranchName } from './branch-names'
 import type { CreateRefusal } from './hooks/create-branch-request'
-import { CLOSED_PULL_REQUEST_REASON, EDITOR_ACTIONS, rewrittenSubmitReason } from './copy'
+import {
+  CLOSED_PULL_REQUEST_REASON,
+  EDITOR_ACTIONS,
+  rewrittenSubmitReason,
+  unfinishedSubmitApproveReason,
+} from './copy'
 import { isReviewerOfOthersReview } from '../authorization/review-role'
 import { SYSTEM_USER_ID } from '../system-users'
 
@@ -90,6 +95,8 @@ export interface BranchSummary {
    * instead of re-deriving `status === 'editing' && !isProtected`.
    */
   submitBlocked?: boolean
+  /** Server-computed: the API refuses Approve, as the last submit didn't finish. */
+  approveBlocked?: boolean
 }
 
 export interface UserContext {
@@ -182,10 +189,12 @@ export const getBranchPermissions = (
   // Approve and Request changes: a Reviewer or Admin other than the creator, who for an author
   // would only do what Withdraw does. Neither applies to the protected base branch, whose way
   // out of review is Withdraw. A closed PR refuses both (Request changes converts the PR to
-  // a draft); Approve also needs the branch submitted, Request changes accepts approved too.
+  // a draft); Approve also needs the branch submitted and its last submit finished, Request changes
+  // accepts approved too.
   const reviewsOthers = (userIsAdmin || userIsReviewer) && !userIsCreator && !branch.isProtected
   const prLive = branch.pullRequestState !== 'closed'
-  const canApprove = reviewsOthers && branch.status === 'submitted' && prLive
+  const canApprove =
+    reviewsOthers && branch.status === 'submitted' && prLive && !branch.approveBlocked
   const canRequestChanges =
     reviewsOthers && (branch.status === 'submitted' || branch.status === 'approved') && prLive
 
@@ -377,7 +386,11 @@ const BranchCard: React.FC<BranchCardProps> = ({
           color: 'brand',
           testId: `approve-branch-button-${b.name}`,
           run: () => onApprove?.(b.name),
-          blockedReason: perms.canApprove ? undefined : CLOSED_PULL_REQUEST_REASON,
+          blockedReason: perms.canApprove
+            ? undefined
+            : b.pullRequestState === 'closed'
+              ? CLOSED_PULL_REQUEST_REASON
+              : unfinishedSubmitApproveReason(userIsAdmin),
         }
       : undefined,
   )
@@ -636,7 +649,9 @@ const BranchCard: React.FC<BranchCardProps> = ({
                       blockedReason={
                         b.status === 'submitted' || b.status === 'approved'
                           ? 'This branch is in review. Withdraw it from review before deleting it.'
-                          : undefined
+                          : b.hold?.kind === 'unpublished-at-merge' && !userIsAdmin
+                            ? 'This branch may hold changes that never reached GitHub. Ask an admin to check it before deleting it.'
+                            : undefined
                       }
                       onClick={() => onDelete?.(b.name)}
                     >

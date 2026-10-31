@@ -10,6 +10,7 @@
  * re-check that itself, same as GroupManager and PermissionManager.
  */
 
+import { useRef, type RefObject } from 'react'
 import {
   Alert,
   Badge,
@@ -54,6 +55,7 @@ import type {
 } from '../../types'
 import { escapeForLog } from '../../utils/escape-text'
 import { TooltipDetail } from '../components/TooltipDetail'
+import { DISMISS_UNPUBLISHED_ATTRIBUTE, UnpublishedAtMergeAlert } from './UnpublishedAtMergeAlert'
 import {
   HOLD_BADGE,
   branchHoldMessage,
@@ -515,6 +517,7 @@ export interface SystemHealthPanelProps {
 
 export function SystemHealthPanel({ opened, onClose, returnFocusTo }: SystemHealthPanelProps) {
   const health = useSystemHealth({ isOpen: opened })
+  const overviewTabRef = useRef<HTMLButtonElement>(null)
 
   return (
     <Modal
@@ -526,12 +529,14 @@ export function SystemHealthPanel({ opened, onClose, returnFocusTo }: SystemHeal
     >
       <Tabs defaultValue="overview">
         <Tabs.List>
-          <Tabs.Tab value="overview">Overview</Tabs.Tab>
+          <Tabs.Tab ref={overviewTabRef} value="overview">
+            Overview
+          </Tabs.Tab>
           <Tabs.Tab value="tasks">Tasks</Tabs.Tab>
           <Tabs.Tab value="branches">Branches</Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="overview" pt="md">
-          <OverviewTab health={health} />
+          <OverviewTab health={health} overviewTabRef={overviewTabRef} />
         </Tabs.Panel>
         <Tabs.Panel value="tasks" pt="md">
           <TasksTab health={health} />
@@ -544,8 +549,37 @@ export function SystemHealthPanel({ opened, onClose, returnFocusTo }: SystemHeal
   )
 }
 
-function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
+function OverviewTab({
+  health,
+  overviewTabRef,
+}: {
+  health: UseSystemHealthReturn
+  overviewTabRef: RefObject<HTMLButtonElement | null>
+}) {
   const { status, statusLoading, isRecentFatalError, error, refresh } = health
+  const unpublished = (health.branchHealth?.entries ?? []).flatMap((entry) =>
+    entry.kind === 'healthy' && entry.branch?.unpublishedAtMerge
+      ? [
+          {
+            dirName: entry.dirName,
+            name: entry.branch.name,
+            pullRequestUrl: entry.branch.pullRequestUrl,
+          },
+        ]
+      : [],
+  )
+
+  // The row goes with the dismissal, so focus moves to the next one, else to the tab.
+  const overviewRef = useRef<HTMLDivElement>(null)
+  const handleDismissUnpublished = async (dirName: string) => {
+    await health.dismissUnpublished(dirName)
+    setTimeout(() => {
+      const overview = overviewRef.current
+      if (!overview || overview.contains(document.activeElement)) return
+      const next = overview.querySelector<HTMLElement>(`[${DISMISS_UNPUBLISHED_ATTRIBUTE}]`)
+      ;(next ?? overviewTabRef.current)?.focus()
+    })
+  }
 
   if (!status && statusLoading) {
     return (
@@ -586,7 +620,7 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
     workerVersion !== build.canopycmsVersion
 
   return (
-    <Stack gap="md">
+    <Stack ref={overviewRef} gap="md">
       {error && (
         <Alert color="red" icon={<IconAlertCircle size={16} />} variant="light">
           {error}
@@ -661,6 +695,10 @@ function OverviewTab({ health }: { health: UseSystemHealthReturn }) {
       />
 
       {status.workerStatus?.baseHold && <BaseHoldAlert hold={status.workerStatus.baseHold} />}
+
+      {unpublished.length > 0 && (
+        <UnpublishedAtMergeAlert branches={unpublished} onDismiss={handleDismissUnpublished} />
+      )}
 
       {status.statusReadError && (
         <Text size="xs" c="orange">
@@ -1211,7 +1249,9 @@ function BranchHealthRow({
       b.rewrittenOnGitHub !== undefined && b.status !== 'archived'
         ? { kind: 'rewritten' }
         : !inReview
-          ? undefined
+          ? b.unpublishedAtMerge
+            ? { kind: 'unpublished-at-merge' }
+            : undefined
           : b.submitUnfinished
             ? { kind: 'submit-unfinished', opened: b.pullRequestNumber !== undefined }
             : b.pullRequestHold

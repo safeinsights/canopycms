@@ -11,7 +11,12 @@ const markAsMergedHandler = markAsMerged.handler
 // Shared mock `save` so tests can inspect what markAsMerged actually wrote,
 // created via vi.hoisted since vi.mock factories can't close over ordinary
 // module-scope variables (hoisting).
-const { mockSave } = vi.hoisted(() => ({ mockSave: vi.fn().mockResolvedValue(undefined) }))
+const { mockSave, disk } = vi.hoisted(() => ({
+  mockSave: vi.fn().mockResolvedValue(undefined),
+  disk: { branch: { status: 'submitted' } as Record<string, unknown> },
+}))
+const mockUpdate = (compute: (current: unknown) => unknown) =>
+  mockSave(compute({ branch: disk.branch }))
 
 vi.mock('../branch-metadata', async () => {
   // buildMergedBranchUpdate is a pure helper (no fs/git access) that the
@@ -21,12 +26,8 @@ vi.mock('../branch-metadata', async () => {
   const actual = await vi.importActual<typeof import('../branch-metadata')>('../branch-metadata')
   return {
     ...actual,
-    BranchMetadataFileManager: vi.fn().mockImplementation(() => ({
-      save: mockSave,
-    })),
-    getBranchMetadataFileManager: vi.fn().mockImplementation(() => ({
-      save: mockSave,
-    })),
+    BranchMetadataFileManager: vi.fn().mockImplementation(() => ({ update: mockUpdate })),
+    getBranchMetadataFileManager: vi.fn().mockImplementation(() => ({ update: mockUpdate })),
   }
 })
 
@@ -90,6 +91,15 @@ describe('branch merge api - markAsMerged', () => {
         mergedAt: expect.any(String),
       }),
     })
+  })
+
+  it('records an unfinished submit as it stands on disk, as the worker does', async () => {
+    disk.branch = { status: 'approved', submitUnfinished: true }
+
+    await markAsMergedHandler(ctx, req, { branch: 'feature/x' as BranchName })
+
+    expect(mockSave.mock.lastCall?.[0].branch.unpublishedAtMerge).toBe(true)
+    disk.branch = { status: 'submitted' }
   })
 
   it("keeps the branch's stored name, whatever the URL segment called it", async () => {

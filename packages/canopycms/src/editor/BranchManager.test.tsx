@@ -1339,6 +1339,31 @@ describe('BranchManager', () => {
     expect(onDelete).toHaveBeenCalledWith('main')
   })
 
+  it('disables Delete for an editor on a flagged branch, leaving it to an admin', async () => {
+    const onDelete = vi.fn()
+    const branches: BranchSummary[] = [
+      {
+        ...baseBranches[0],
+        status: 'archived',
+        pullRequestNumber: 1,
+        hold: { kind: 'unpublished-at-merge' },
+      },
+    ]
+    renderBranchManager({ branches, onDelete, user: creatorUser, mode: 'prod' })
+
+    await openMenu('main')
+    const item = screen.getByTestId('delete-branch-button-main')
+    expect(item.textContent).toContain('Ask an admin to check it before deleting it.')
+    await userEvent.click(item)
+    expect(onDelete).not.toHaveBeenCalled()
+    cleanup()
+
+    renderBranchManager({ branches, onDelete, user: adminUser, mode: 'prod' })
+    await openMenu('main')
+    await userEvent.click(screen.getByTestId('delete-branch-button-main'))
+    expect(onDelete).toHaveBeenCalledWith('main')
+  })
+
   it('disables Delete for a branch in review, saying to withdraw it first', async () => {
     const branches: BranchSummary[] = [{ ...baseBranches[0], status: 'approved' }]
     renderBranchManager({ branches, user: creatorUser, mode: 'prod' })

@@ -78,6 +78,12 @@ describe('a submit that never finished', () => {
     )
   })
 
+  it('offers a reviewer the way out they have', () => {
+    expect(branchHoldMessage(hold, { role: 'review', isAdmin: false })).toContain(
+      'Ask an admin to retry the submit, or use "Request changes" to send it back to its editor.',
+    )
+  })
+
   it('sends an admin to the task, naming the panel only outside it', () => {
     expect(branchHoldMessage(hold, { role: 'none', isAdmin: true })).toContain(
       'Retry the submit from the "Tasks" tab in "System health".',
@@ -85,6 +91,25 @@ describe('a submit that never finished', () => {
     expect(branchHoldMessage(hold, { role: 'none', isAdmin: true, inSystemHealth: true })).toMatch(
       /Retry the submit from the "Tasks" tab\.$/,
     )
+  })
+})
+
+describe('a branch merged before its submit finished', () => {
+  const hold = { kind: 'unpublished-at-merge' } as const
+
+  it('tells an editor who can check it, and an admin where', () => {
+    expect(branchHoldMessage(hold, { role: 'none', isAdmin: false })).toContain(
+      'Ask an admin to check it.',
+    )
+    expect(branchHoldMessage(hold, { role: 'none', isAdmin: true })).toContain(
+      'the "Overview" tab in "System health"',
+    )
+  })
+
+  it('never sends System health to itself', () => {
+    expect(
+      branchHoldMessage(hold, { role: 'none', isAdmin: true, inSystemHealth: true }),
+    ).not.toContain('"System health"')
   })
 })
 

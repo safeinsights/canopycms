@@ -87,6 +87,8 @@ export interface EntryHeaderProps {
   branchReviewing?: boolean
   /** The user would review this branch but its pull request was closed; the lock reason says so. */
   branchPullRequestClosed?: boolean
+  /** The server refuses Approve on this branch (`describeBranchLock`). */
+  branchApproveBlocked?: boolean
 }
 
 /**
@@ -179,6 +181,7 @@ export function EntryHeader({
   branchMissing = false,
   branchReviewing = false,
   branchPullRequestClosed = false,
+  branchApproveBlocked = false,
 }: EntryHeaderProps) {
   const branchLockReason = describeBranchLock({
     branchStatus,
@@ -188,6 +191,7 @@ export function EntryHeader({
     branchMissing,
     reviewing: branchReviewing,
     pullRequestClosed: branchPullRequestClosed,
+    approveBlocked: branchApproveBlocked,
   })
   const entryLockReason = entryReadOnly
     ? "You don't have edit access to this entry. Ask a CanopyCMS admin to grant it."

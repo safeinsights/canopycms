@@ -10,7 +10,7 @@ import { syncPrComments } from './pr-comment-sync'
 import { CommentStore } from '../comment-store'
 import { getErrorMessage } from '../utils/error'
 import { REQUEST_CHANGES_NOTE_MAX_LENGTH } from '../authorization/review-role'
-import { getBranchProtection } from '../authorization'
+import { getBranchProtection, isAdmin } from '../authorization'
 import type { CanopyUser } from '../user'
 import type { BranchReview } from '../types'
 import { sanitizeDisplayName } from '../submission-attribution'
@@ -184,8 +184,10 @@ const approveBranchHandler = async (
 
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
 
-  // As for request changes, the status on disk decides, in the step that writes.
+  // As for request changes, the status on disk decides, in the step that writes. So does an
+  // unfinished submit: what's approved may not be what the pull request holds.
   let found: string | undefined
+  let unfinished = false
   const updated = await meta.saveIf(
     {
       branch: {
@@ -196,9 +198,21 @@ const approveBranchHandler = async (
     },
     (existing) => {
       found = existing?.branch.status
-      return found === 'submitted'
+      unfinished = existing?.branch.submitUnfinished === true
+      return found === 'submitted' && !unfinished
     },
   )
+  if (unfinished && found === 'submitted') {
+    return {
+      ok: false,
+      status: 409,
+      error:
+        "This branch's last submit didn't finish, so it can't be approved until it does. " +
+        (isAdmin(req.user.groups)
+          ? 'Retry the submit from the "Tasks" tab in "System health".'
+          : 'Ask an admin to retry the submit.'),
+    }
+  }
   if (!updated) return approveConflict(found)
 
   // Against the branch the save returned, as for request changes. Best-effort: syncPrComments

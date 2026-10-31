@@ -249,6 +249,54 @@ describe('BranchCard review actions', () => {
     expect(await menuActions()).toEqual([])
   })
 
+  describe('while a submit is unfinished', () => {
+    const unfinished = branch({
+      hold: { kind: 'submit-unfinished', opened: true },
+      approveBlocked: true,
+    })
+
+    it('blocks Approve with the reason, and leaves Request changes open', async () => {
+      const onApprove = vi.fn()
+      const onRequestChanges = vi.fn()
+      renderCard(unfinished, reviewer, true, { onApprove, onRequestChanges })
+      const approve = screen.getByTestId(`approve-branch-button-${NAME}`)
+
+      expect(approve.getAttribute('aria-disabled')).toBe('true')
+      await userEvent.click(approve)
+      expect(onApprove).not.toHaveBeenCalled()
+      await userEvent.hover(approve)
+      expect((await screen.findByRole('tooltip')).textContent).toContain(
+        "can't be approved yet. Ask an admin to retry the submit",
+      )
+
+      const requestChanges = screen.getByTestId(`request-changes-branch-button-${NAME}`)
+      expect(requestChanges.getAttribute('aria-disabled')).toBeNull()
+      await userEvent.click(requestChanges)
+      expect(onRequestChanges).toHaveBeenCalledWith(NAME)
+    })
+
+    it('tells an admin where the retry is', async () => {
+      renderCard(unfinished, { userId: 'adam', groups: [RESERVED_GROUPS.ADMINS] }, true)
+
+      await userEvent.hover(screen.getByTestId(`approve-branch-button-${NAME}`))
+      expect(await screen.findByRole('tooltip')).toBeTruthy()
+      expect(screen.getByRole('tooltip').textContent).toContain('"Tasks" tab in "System health"')
+    })
+
+    it('keeps the closed pull request as the reason when the PR is closed too', async () => {
+      const closedToo = branch({
+        hold: { kind: 'submit-unfinished', opened: true },
+        approveBlocked: true,
+        pullRequestState: 'closed',
+      })
+      renderCard(closedToo, reviewer, false)
+
+      await userEvent.click(screen.getByTestId(`branch-actions-menu-${NAME}`))
+      const menu = await screen.findByRole('menu')
+      expect(within(menu).getAllByText(CLOSED_REASON)).toHaveLength(1)
+    })
+  })
+
   describe('handlers', () => {
     it('calls onApprove from Approve, on the open branch', async () => {
       const onApprove = vi.fn()
