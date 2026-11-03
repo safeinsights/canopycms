@@ -313,15 +313,16 @@ describe("branch access: dev's auto-provisioned active branch", () => {
     expect(res).toEqual({ allowed: true, reason: 'dev_active_branch' })
   })
 
-  it('allows it for the system owner the editor provisions with too', () => {
-    const editorProvisioned: BranchContext = {
-      ...activeContext,
-      branch: { ...activeContext.branch, createdBy: 'canopycms-system' },
-    }
-    expect(createCheckBranchAccess('deny', devConfig)(editorProvisioned, devUser).allowed).toBe(
-      true,
-    )
-  })
+  it.each(['canopycms-system', 'canopycms-content-reader', 'canopycms-ai'])(
+    'allows it for the other system owner %s too',
+    (createdBy) => {
+      const provisioned: BranchContext = {
+        ...activeContext,
+        branch: { ...activeContext.branch, createdBy },
+      }
+      expect(createCheckBranchAccess('deny', devConfig)(provisioned, devUser).allowed).toBe(true)
+    },
+  )
 
   it('never applies in prod, even to a system-created branch named like the active branch', () => {
     const res = createCheckBranchAccess('deny', { ...devConfig, mode: 'prod' })(
@@ -361,8 +362,25 @@ describe("branch access: dev's auto-provisioned active branch", () => {
     })
   })
 
-  it('does not confer workflow actions', () => {
-    expect(canPerformWorkflowAction(activeContext, devUser, 'deny')).toBe(false)
+  it('leaves a managerOrAdminAllowed lockdown to decide', () => {
+    const locked: BranchContext = {
+      ...activeContext,
+      branch: { ...activeContext.branch, access: { managerOrAdminAllowed: true } },
+    }
+    expect(createCheckBranchAccess('deny', devConfig)(locked, devUser)).toEqual({
+      allowed: false,
+      reason: 'denied_by_acl',
+    })
+  })
+
+  it('does not confer workflow actions, even with the system owner that grants them under allow', () => {
+    // canPerformWorkflowAction's system-branch clause would turn any access grant into
+    // Submit/Withdraw rights for a 'canopycms-system' branch.
+    const editorProvisioned: BranchContext = {
+      ...activeContext,
+      branch: { ...activeContext.branch, createdBy: 'canopycms-system' },
+    }
+    expect(canPerformWorkflowAction(editorProvisioned, devUser, 'deny')).toBe(false)
   })
 })
 

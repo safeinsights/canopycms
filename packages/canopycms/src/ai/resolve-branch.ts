@@ -7,6 +7,7 @@ import { loadOrCreateBranchContext } from '../branch-workspace'
 import { readsFromCheckout } from '../build-mode'
 import type { CanopyConfig } from '../config'
 import { GitManager } from '../git-manager'
+import { AI_USER_ID } from '../system-users'
 import { baseBranchOf } from '../utils/base-branch'
 import { detectHeadBranch } from '../utils/git'
 
@@ -41,7 +42,7 @@ export async function resolveBranchRoot(config: CanopyConfig): Promise<string> {
     config: resolved,
     branchName: activeBranch,
     mode: config.mode,
-    createdBy: 'canopycms-ai',
+    createdBy: AI_USER_ID,
     remoteUrl: config.defaultRemoteUrl,
   })
 
