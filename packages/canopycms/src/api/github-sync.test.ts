@@ -606,7 +606,7 @@ describe('syncSubmitPr (GIT-H1)', () => {
       )
     })
 
-    it('returns sync-failed if enqueueing itself fails', async () => {
+    it('says when a submit could not be queued, as no task will finish it', async () => {
       const consoleSpy = mockConsole()
       mockEnqueueTask.mockRejectedValue(new Error('disk full'))
       const ctx = createMockApiContext({
@@ -616,7 +616,11 @@ describe('syncSubmitPr (GIT-H1)', () => {
 
       const result = await syncSubmitPr(ctx, branchContext, noSubmission)
 
-      expect(result).toEqual({ syncStatus: 'sync-failed' })
+      expect(result).toEqual({
+        syncStatus: 'sync-failed',
+        submitNotQueued: true,
+        syncFailureReason: expect.stringContaining("couldn't be queued"),
+      })
       expect(consoleSpy).toHaveErrored('Failed to enqueue task')
       consoleSpy.restore()
     })

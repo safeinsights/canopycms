@@ -140,7 +140,12 @@ export async function unreachableFrom(
 }
 
 /** A push to GitHub of the commit `readSha` finds, as {@link pushToGitHub} takes it. */
-export interface TransferPushRequest extends Omit<GitHubPushRequest, 'sha' | 'prerequisites'> {
+export interface TransferPushRequest extends Omit<
+  GitHubPushRequest,
+  'sha' | 'prerequisites' | 'seen'
+> {
+  /** {@link GitHubPushRequest.seen}, read after each attempt's commit, as the two go together. */
+  readSeen?: () => Promise<string | undefined>
   /**
    * Branches whose GitHub tips, as `remote.git`'s tracking namespace holds them, a bundle of
    * `branch` is built on: the branch itself, and the base for a content branch. Missing ones are
@@ -165,11 +170,12 @@ export async function pushToGitHub(
   readSha: () => Promise<string>,
   signal?: AbortSignal,
 ): Promise<{ sha: string; outcome: GitHubPushOutcome }> {
-  const { prerequisiteBranches, ...rest } = request
+  const { prerequisiteBranches, readSeen, ...rest } = request
   for (let restarts = 0; ; restarts++) {
     const sha = await readSha()
+    const seen = await readSeen?.()
     const prerequisites = await trackingTips(ctx.remoteGitPath, prerequisiteBranches)
-    const ask: GitHubPushRequest = { ...rest, sha, prerequisites }
+    const ask: GitHubPushRequest = { ...rest, sha, ...(seen ? { seen } : {}), prerequisites }
     const first = await ctx.github().push(ask, undefined, signal)
     if (first.kind === 'pushed') return { sha, outcome: outcomeOf(first) }
 

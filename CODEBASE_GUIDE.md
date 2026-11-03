@@ -244,6 +244,7 @@ direction, and every invariant.
 - `canopy-state.ts` — how sync treats adopter-tracked `.canopy-meta/` state: `listTrackedCanopyState`, `trackedCanopyStateChanges`, `splitByUpstreamTracking`, `untrackInIndex`, `restoreRetiredSchemaCache`
 - `provisioned-workspace.ts` — `holdProvisionedWorkspace`: the zero-retry provisioning-lock hold around base refresh and each rebase
 - `rebase.ts` — the rebase loop, `runRebaseCycle`, `pollMergeState`
+- `github-commits.ts`, `branch-merge.ts`: GitHub-side commits
 - `github-gateway.ts` — GitHub access; `branch-policy.ts`, `gateway-egress.ts`, `github-gateway-http.ts` its policy, scrubbing, socket
 - `github-mirror.ts`, `github-mirror-upkeep.ts`, `shared-repo-git.ts` — isolated git
 - `github-transfer.ts`, `bundle-header.ts`, `git-process.ts` — bundle transfer; `self-checks.ts` — boot checks
@@ -598,16 +599,17 @@ Field components, in `editor/fields/`:
 
 Components, in `editor/components/`:
 
+- `TooltipDetail.tsx` — tooltip detail keyboards can reach
 - `EditorHeader.tsx` — branch bar: `BranchPill`, status, "N unsaved", `SaveAllButton.tsx`, Submit/Withdraw (split narrow); toast: `SaveAllResult`
 - `EntryHeader.tsx` — above the panes: `EntryBreadcrumb`, `EntrySaveButton.tsx`
-- `UnsavedMark.tsx` — the unsaved dot
-- `EditorRail.tsx` — the rail's buttons and Settings menu
+- `UnsavedMark.tsx` — unsaved dot
+- `EditorRail.tsx` — rail buttons, Settings menu
 - `EntryCreateModal.tsx` / `RenameEntryModal.tsx` / `ConfirmDeleteModal.tsx` — entry lifecycle dialogs
 - `BranchesDrawer.tsx` / `EntryChangesDrawer.tsx` — Branches, changes drawers
 - `StagedChangesDrawer.tsx` — unsaved-changes drawer
-- `UserBadge.tsx` — user avatar and name
-- `BranchAccessList.tsx` — a branch card's access list
-- `ReasonedMenuItem.tsx` — a blocked menu item and why
+- `UserBadge.tsx` — avatar and name
+- `BranchAccessList.tsx` — a card's access list
+- `ReasonedMenuItem.tsx` — blocked menu item, with why
 - `UndoToastMessage.tsx` — the undo toast for Remove or Clear
 - `RetryToastMessage.tsx` — a failed load's toast body with Retry
 - `PreviewLinkToast.tsx` — preview-link toast
@@ -657,7 +659,8 @@ Group manager, in `editor/group-manager/`:
 
 Admin UI, in `editor/admin/`, gated only by `Editor.tsx`:
 
-- `SystemHealthPanel.tsx` — Overview, Tasks and Branches tabs over the admin endpoints
+- `SystemHealthPanel.tsx` — Overview, Tasks, Branches tabs over admin endpoints
+- `UnpublishedAtMergeAlert.tsx` — branches merged unfinished
 - `useSystemHealth.tsx` — loads on open, polls every 30 s, exposes the actions
 
 Conflict notices (`FormRenderer`'s `conflictNotice`, `EntryNavCollection.conflictNotice`) are

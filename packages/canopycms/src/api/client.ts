@@ -29,7 +29,7 @@ import type { ExternalGroupsResponse, InternalGroupsResponse, UpdateInternalGrou
 import type { UserInfoResponse } from './user'
 import type { AddEntryTypeApiResponse, CreateCollectionApiResponse, DeleteCollectionApiResponse, GetCollectionApiResponse, GetSchemaApiResponse, InvalidateSchemaCacheApiResponse, RemoveEntryTypeApiResponse, UpdateCollectionApiResponse, UpdateEntryTypeApiResponse, UpdateOrderApiResponse, UpdateOrderBody } from './schema'
 import type { CreateCollectionInput, CreateEntryTypeInput, UpdateCollectionInput, UpdateEntryTypeInput } from './../schema/schema-store-types'
-import type { AdminDeleteTaskResponse, AdminRetryTaskResponse, AdminStatusResponse, AdminTasksResponse, BranchHealthResponse, PurgeBranchDirResponse, RepairBranchDirResponse, RepairContentDuplicatesResponse } from './admin'
+import type { AdminDeleteTaskResponse, AdminRetryTaskResponse, AdminStatusResponse, AdminTasksResponse, BranchHealthResponse, DismissUnpublishedResponse, PurgeBranchDirResponse, RepairBranchDirResponse, RepairContentDuplicatesResponse } from './admin'
 
 /** Options for {@link createApiClient}. */
 export interface ApiClientOptions {
@@ -376,6 +376,11 @@ export class CanopyApiClient {
     /** POST /admin/branch-dirs/:dirName/repair-metadata */
     repairBranchDir: (params: Record<string, string>, options?: RequestOptions): Promise<RepairBranchDirResponse> => {
       return this.request('POST', this.buildPath('/admin/branch-dirs/:dirName/repair-metadata', params), undefined, 'long', options)
+    },
+
+    /** POST /admin/branch-dirs/:dirName/dismiss-unpublished */
+    dismissUnpublished: (params: Record<string, string>, options?: RequestOptions): Promise<DismissUnpublishedResponse> => {
+      return this.request('POST', this.buildPath('/admin/branch-dirs/:dirName/dismiss-unpublished', params), undefined, 'standard', options)
     },
 
     /** POST /admin/branch-dirs/:dirName/repair-content-duplicates */

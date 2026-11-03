@@ -56,6 +56,7 @@ export const pushRequest = z
     branch: name,
     sha: objectId,
     lease: objectId.optional(),
+    seen: objectId.optional(),
     prerequisites: z.array(objectId).max(3),
     /** Whether the request body is a bundle; without one it is empty. */
     bundle: z.boolean(),
@@ -128,6 +129,8 @@ export const answers = {
       state: z.enum(['open', 'closed']),
       node_id: z.string().max(256),
       body: pullRequestText.body.nullable(),
+      mergeable_state: z.string().max(64).optional(),
+      baseRef: z.string().max(256).optional(),
     })
     .strict(),
   createOrUpdatePullRequest: pullRequestRef.extend({ created: z.boolean() }).strict(),
@@ -280,7 +283,7 @@ const errorEnvelope = z.discriminatedUnion('kind', [
   z
     .object({
       kind: z.literal('push'),
-      pushKind: z.enum(['rejected', 'rejected-after-stale-lease']),
+      pushKind: z.enum(['rejected', 'rejected-after-stale-lease', 'seen-commit-gone']),
       message,
     })
     .strict(),
