@@ -21,10 +21,10 @@ import { z } from 'zod'
 import { resolveBranchParam, type BranchParamConfig } from '../branch-param'
 import { readBranchMetadataFile } from '../branch-metadata-file'
 import { namesNoWorkspace, resolveBranchPath } from '../paths/branch'
-import { parseBranchRef } from '../paths/validation'
+import { exactBranchName, isExactBranchForm, parseBranchRef } from '../paths/validation'
 import { getErrorMessage } from '../utils/error'
 import { filePathExists } from '../utils/fs'
-import { isCanopyInternalPath, stageAllExceptCanopyState } from '../utils/git'
+import { detectHeadBranch, isCanopyInternalPath, stageAllExceptCanopyState } from '../utils/git'
 import {
   assertWithinDir,
   copyDir,
@@ -125,26 +125,78 @@ const branchConfigSchema = z.object({
   defaultActiveBranch: z.string().optional(),
 })
 
+/** {@link branchConfigSchema}'s fields from the site config: none, with a warning, when unusable. */
+async function readBranchConfigFields(
+  projectDir: string,
+): Promise<z.infer<typeof branchConfigSchema>> {
+  if (!(await filePathExists(path.join(projectDir, 'canopycms.config.ts')))) return {}
+  let why: string
+  try {
+    const parsed = branchConfigSchema.safeParse((await importSiteServerConfig(projectDir)).server)
+    if (parsed.success) return parsed.data
+    why = parsed.error.message
+  } catch (err: unknown) {
+    why = getErrorMessage(err)
+  }
+  p.log.warn(
+    `Could not use canopycms.config.ts (${why}); branch names resolve against the default branch settings.`,
+  )
+  return {}
+}
+
 /**
- * The config {@link resolveBranchParam} resolves names against, in dev mode, which sync always is.
- * Only a namespace branch's short name depends on it, so a config that cannot be loaded leaves
- * the defaults with a warning, and a missing one leaves them silently.
+ * The config {@link resolveBranchParam} resolves names against, built as the dev server builds
+ * it: dev mode, the site config's branch fields, and an unset base or active branch taken from the
+ * project's git HEAD (services.ts).
  */
 async function loadBranchParamConfig(projectDir: string): Promise<BranchParamConfig> {
-  let server: unknown
-  try {
-    server = (await importSiteServerConfig(projectDir)).server
-  } catch (err: unknown) {
-    if (!(await filePathExists(path.join(projectDir, 'canopycms.config.ts')))) {
-      return { mode: 'dev' }
-    }
-    p.log.warn(
-      `Could not load canopycms.config.ts (${getErrorMessage(err)}); short branch names resolve against the default branch namespace.`,
-    )
-    return { mode: 'dev' }
+  const fields = await readBranchConfigFields(projectDir)
+  const head = await detectHeadBranch(projectDir, fields.defaultBaseBranch ?? 'main')
+  return {
+    ...fields,
+    mode: 'dev',
+    defaultBaseBranch: fields.defaultBaseBranch ?? head,
+    defaultActiveBranch: fields.defaultActiveBranch ?? head,
   }
-  const parsed = branchConfigSchema.safeParse(server)
-  return { ...(parsed.success ? parsed.data : {}), mode: 'dev' }
+}
+
+/**
+ * Refuses a directory that is not the top of its own git repository. Git run there would walk up
+ * to the developer's own repository and commit and tag in it.
+ */
+async function assertOwnRepository(branchPath: string): Promise<void> {
+  const top = await simpleGit({ baseDir: branchPath })
+    .revparse(['--show-toplevel'])
+    .then((out) => out.trim())
+    .catch(() => '')
+  if (top && (await fs.realpath(top)) === (await fs.realpath(branchPath))) return
+  throw new SyncError(
+    `"${path.basename(branchPath)}" under content-branches/ is not a branch workspace: it has no git repository of its own.`,
+  )
+}
+
+/** The branch a workspace's HEAD is on (an unborn one included), or null when it is detached. */
+async function workspaceHead(branchPath: string): Promise<string | null> {
+  return simpleGit({ baseDir: branchPath })
+    .raw(['symbolic-ref', '--short', '-q', 'HEAD'])
+    .then((out) => out.trim() || null)
+    .catch(() => null)
+}
+
+/** The workspace at directory `key` under content-branches/, named by its branch.json or HEAD. */
+async function keyWorkspace(key: string, projectDir: string): Promise<SyncWorkspace> {
+  const branchPath = path.join(operatingStrategy('dev').getContentBranchesRoot(projectDir), key)
+  await assertOwnRepository(branchPath)
+  const meta = await readBranchMetadataFile(branchPath)
+  return { branchName: meta?.branch.name ?? (await workspaceHead(branchPath)) ?? key, branchPath }
+}
+
+/** The ref `name` gives: decoded from the exact form (`~fix~x`), else `name` itself. */
+function refOf(name: string): string {
+  if (!isExactBranchForm(name)) return name
+  const ref = exactBranchName(name)
+  if (ref === null) throw new SyncError(`"${name}" is not a valid branch name.`)
+  return ref
 }
 
 /**
@@ -152,9 +204,9 @@ async function loadBranchParamConfig(projectDir: string): Promise<BranchParamCon
  * 1. what the runtime resolves it to (`resolveBranchParam`): the ref, a namespace branch's short
  *    name, or the exact form;
  * 2. a workspace key, the directory itself;
- * 3. the directory the ref keys to, when it holds a workspace sync built (no branch.json).
- * A directory at the ref's key holding another branch's branch.json is refused: two refs can
- * sanitize to one key.
+ * 3. the directory the ref keys to, when it holds a workspace sync built (no branch.json) on that
+ *    ref. Two refs can sanitize to one key, so one whose branch.json or HEAD names another branch
+ *    is refused.
  */
 async function resolveSyncWorkspace(
   name: string,
@@ -168,24 +220,25 @@ async function resolveSyncWorkspace(
       throw err
     },
   )
-  if (resolved) return { branchName: resolved.branch.name, branchPath: resolved.branchRoot }
-
-  const branchesDir = operatingStrategy('dev').getContentBranchesRoot(projectDir)
-  if (keys.includes(name)) {
-    const branchPath = path.join(branchesDir, name)
-    const meta = await readBranchMetadataFile(branchPath)
-    return { branchName: meta?.branch.name ?? name, branchPath }
+  if (resolved) {
+    await assertOwnRepository(resolved.branchRoot)
+    return { branchName: resolved.branch.name, branchPath: resolved.branchRoot }
   }
 
-  const branchPath = refKeyPath(name, projectDir)
+  if (keys.includes(name)) return keyWorkspace(name, projectDir)
+
+  const ref = refOf(name)
+  const branchPath = refKeyPath(ref, projectDir)
   if (!(await filePathExists(branchPath))) return null
+  await assertOwnRepository(branchPath)
   const meta = await readBranchMetadataFile(branchPath)
-  if (meta) {
+  const holder = meta ? meta.branch.name : await workspaceHead(branchPath)
+  if (holder !== ref) {
     throw new SyncError(
-      `Branch workspace "${path.basename(branchPath)}" belongs to branch "${meta.branch.name}", not "${name}".`,
+      `Branch workspace "${path.basename(branchPath)}" holds ${holder === null ? 'a detached HEAD' : `branch "${holder}"`}, not "${ref}".`,
     )
   }
-  return { branchName: name, branchPath }
+  return { branchName: ref, branchPath }
 }
 
 /** The workspace directory the runtime keys ref `name` to (`resolveBranchPath`). */
@@ -200,20 +253,21 @@ function refKeyPath(name: string, projectDir: string): string {
 }
 
 /**
- * Auto-create a minimal workspace for ref `name` (git init + empty commit) so push can copy
- * content in, at the directory the dev server reads for that ref. This is lighter than
+ * Auto-create a minimal workspace for the branch `name` gives (git init + empty commit) so push
+ * can copy content in, at the directory the dev server reads for that ref. This is lighter than
  * BranchWorkspaceManager's clone-based setup -- no remote config, content structure or
- * branch.json -- and the dev server adopts it in place when it first opens the branch
+ * branch.json -- and the dev server adopts it in place when it provisions that ref
  * (BranchWorkspaceManager.provisionBranch).
  */
 async function createSyncWorkspace(name: string, projectDir: string): Promise<SyncWorkspace> {
-  const ref = parseBranchRef(name)
-  if (!ref.ok) throw new SyncError(`"${name}" is not a valid branch name: ${ref.error}`)
-  const branchPath = refKeyPath(name, projectDir)
+  const ref = refOf(name)
+  const parsed = parseBranchRef(ref)
+  if (!parsed.ok) throw new SyncError(`"${ref}" is not a valid branch name: ${parsed.error}`)
+  const branchPath = refKeyPath(ref, projectDir)
   await fs.mkdir(branchPath, { recursive: true })
   const wsGit = simpleGit({ baseDir: branchPath })
   await wsGit.init()
-  await wsGit.checkoutLocalBranch(name)
+  await wsGit.checkoutLocalBranch(ref)
   await wsGit.raw(['commit', '--allow-empty', '-m', 'init: workspace created by sync'])
   // Runtime metadata (.canopy-meta/: branch metadata, comments, content-index
   // marker) must never be staged by sync's `add -A`. Fully provisioned workspaces
@@ -222,14 +276,14 @@ async function createSyncWorkspace(name: string, projectDir: string): Promise<Sy
   // rather than hardcoding it.
   await ensureGitExcludePattern(branchPath, operatingStrategy('dev').getGitExcludePattern())
   p.log.info(`Created branch workspace: ${path.basename(branchPath)}`)
-  return { branchName: name, branchPath }
+  return { branchName: ref, branchPath }
 }
 
 /**
  * Select a branch workspace. Uses the --branch flag (defaulting to the current git branch),
- * else auto-selects if only one exists, else prompts. A name resolves as the dev server
- * resolves it ({@link resolveSyncWorkspace}). When autoCreate is true, creates a new workspace
- * if the branch has none.
+ * resolved as the dev server resolves it ({@link resolveSyncWorkspace}); else auto-selects the
+ * only workspace directory, or prompts for one. When autoCreate is true, creates a new workspace
+ * if a named branch has none.
  */
 async function selectBranch(
   options: Pick<SyncOptions, 'branch' | 'force'> & { projectDir: string; autoCreate?: boolean },
@@ -259,19 +313,16 @@ async function selectBranch(
         'No branch workspaces found and could not detect current git branch. Use --branch to specify.',
       )
     }
-    if (branches.length === 1) {
-      branchName = branches[0]
-    } else {
-      const result = await p.select({
-        message: 'Which branch?',
-        options: branches.map((b) => ({ value: b, label: b })),
-      })
-      if (p.isCancel(result)) {
-        p.cancel('Sync cancelled.')
-        return null
-      }
-      branchName = result
+    if (branches.length === 1) return keyWorkspace(branches[0], options.projectDir)
+    const result = await p.select({
+      message: 'Which branch?',
+      options: branches.map((b) => ({ value: b, label: b })),
+    })
+    if (p.isCancel(result)) {
+      p.cancel('Sync cancelled.')
+      return null
     }
+    return keyWorkspace(result, options.projectDir)
   }
 
   const existing = await resolveSyncWorkspace(branchName, options.projectDir, branches)

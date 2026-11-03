@@ -1104,6 +1104,7 @@ describe('canopycms sync', () => {
 
     beforeEach(async () => {
       vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', '')
+      vi.stubEnv('CANOPYCMS_BRANCH_NAMESPACE', '')
       projectDir = (await setupTestWorkspace()).projectDir
     })
 
@@ -1161,28 +1162,120 @@ describe('canopycms sync', () => {
       ])
     })
 
-    it('pulls from and aborts in the sanitized workspace', async () => {
+    it('pulls from the sanitized workspace', async () => {
       const branchPath = await addWorkspace('fix-x', 'fix/x')
       await fs.writeFile(path.join(branchPath, 'content', 'index.md'), '# Hello\n\nEditor.\n')
 
       await sync({ projectDir, direction: 'pull', branch: 'fix/x', force: true })
+
       expect(await fs.readFile(path.join(projectDir, 'content', 'index.md'), 'utf-8')).toContain(
         'Editor.',
       )
-
-      const pMock = await import('@clack/prompts')
-      vi.mocked(pMock.log.info).mockClear()
-      await sync({ projectDir, direction: 'abort', branch: 'fix/x' })
-      expect(pMock.log.info).toHaveBeenCalledWith(expect.stringContaining('not in a merge state'))
     })
 
-    it('refuses a workspace whose key another branch holds', async () => {
+    it('aborts a merge in the sanitized workspace', async () => {
+      const branchPath = await addWorkspace('fix-x', 'fix/x')
+      const wsGit = simpleGit({ baseDir: branchPath })
+      const index = path.join(branchPath, 'content', 'index.md')
+      await wsGit.checkoutLocalBranch('other')
+      await fs.writeFile(index, '# Hello\n\nOther.\n')
+      await wsGit.add('-A')
+      await wsGit.commit('other')
+      await wsGit.checkout('fix/x')
+      await fs.writeFile(index, '# Hello\n\nMine.\n')
+      await wsGit.add('-A')
+      await wsGit.commit('mine')
+      await wsGit.merge(['other']).catch(() => undefined)
+      expect((await wsGit.status()).conflicted.length).toBeGreaterThan(0)
+
+      await sync({ projectDir, direction: 'abort', branch: 'fix/x' })
+
+      expect((await wsGit.status()).conflicted).toEqual([])
+    })
+
+    it('merges both ways through the sanitized workspace', async () => {
+      await addWorkspace('fix-x', 'fix/x')
+      await simpleGit({ baseDir: projectDir }).checkoutLocalBranch('fix/x')
+      await editIndex('Merged.')
+
+      const result = await sync({ projectDir, direction: 'both', force: true })
+
+      expect(result.pushed).toBeGreaterThan(0)
+      expect(await readIndex('fix-x')).toContain('Merged.')
+      expect(await exists(path.join(branchesDir(), 'fix'))).toBe(false)
+    })
+
+    it('resolves the checked-out branch as the active branch, before a namespace short name', async () => {
+      // The dev server serves HEAD's own workspace, never an editor branch whose short name it is.
+      await addWorkspace('spring', 'spring')
+      await addWorkspace('canopycms-local-spring', 'canopycms/local/spring')
+      await simpleGit({ baseDir: projectDir }).checkoutLocalBranch('spring')
+      await editIndex('Developer on spring.')
+
+      await sync({ projectDir, direction: 'push', force: true })
+
+      expect(await readIndex('spring')).toContain('Developer on spring.')
+      expect(await readIndex('canopycms-local-spring')).not.toContain('Developer on spring.')
+    })
+
+    it('refuses a directory with no git repository of its own, committing nothing in the project', async () => {
+      await fs.mkdir(path.join(branchesDir(), 'fix-x'), { recursive: true })
+      const projectGit = simpleGit({ baseDir: projectDir })
+      await projectGit.checkoutLocalBranch('fix/x')
+      await editIndex('Must not be committed here.')
+      const before = (await projectGit.revparse(['HEAD'])).trim()
+
+      await expect(sync({ projectDir, direction: 'push', force: true })).rejects.toThrow(
+        'is not a branch workspace',
+      )
+
+      expect((await projectGit.revparse(['HEAD'])).trim()).toBe(before)
+      expect((await projectGit.tags()).all).toEqual([])
+    })
+
+    it('refuses a sync-built workspace on another branch that shares the key', async () => {
+      await addWorkspace('fix-x', 'fix-x', null)
+      await simpleGit({ baseDir: projectDir }).checkoutLocalBranch('fix/x')
+      await editIndex('Should not land.')
+
+      await expect(sync({ projectDir, direction: 'push', force: true })).rejects.toThrow(
+        'holds branch "fix-x", not "fix/x"',
+      )
+      expect(await readIndex('fix-x')).not.toContain('Should not land.')
+    })
+
+    it('reaches a sync-built workspace by the exact form of its ref', async () => {
+      await simpleGit({ baseDir: projectDir }).checkoutLocalBranch('fix/x')
+      await editIndex('First.')
+      await sync({ projectDir, direction: 'push', force: true })
+      await editIndex('Via the exact form.')
+
+      await sync({ projectDir, direction: 'push', branch: '~fix~x', force: true })
+
+      expect(await readIndex('fix-x')).toContain('Via the exact form.')
+    })
+
+    it('uses a workspace picked at the prompt as that directory, not as a branch name', async () => {
+      await addWorkspace('fix-x', 'fix/x')
+      await addWorkspace('canopycms-local-fix-x', 'canopycms/local/fix-x')
+      await simpleGit({ baseDir: projectDir }).raw(['checkout', '--detach'])
+      await editIndex('Picked fix-x.')
+      const pMock = await import('@clack/prompts')
+      vi.mocked(pMock.select).mockResolvedValueOnce('fix-x')
+
+      await sync({ projectDir, direction: 'push', force: true })
+
+      expect(await readIndex('fix-x')).toContain('Picked fix-x.')
+      expect(await readIndex('canopycms-local-fix-x')).not.toContain('Picked fix-x.')
+    })
+
+    it('refuses a workspace whose branch.json names another branch sharing the key', async () => {
       await addWorkspace('fix-x', 'fix-x')
       await editIndex('Should not land.')
 
       await expect(
         sync({ projectDir, direction: 'push', branch: 'fix/x', force: true }),
-      ).rejects.toThrow('belongs to branch "fix-x"')
+      ).rejects.toThrow('holds branch "fix-x", not "fix/x"')
       expect(await readIndex('fix-x')).not.toContain('Should not land.')
     })
 
@@ -1200,6 +1293,21 @@ describe('canopycms sync', () => {
       expect(await exists(path.join(branchesDir(), 'spring'))).toBe(false)
     })
 
+    it('warns on a config whose branch settings cannot be read', async () => {
+      await fs.writeFile(
+        path.join(projectDir, 'canopycms.config.ts'),
+        'export default () => ({})\n',
+      )
+      const pMock = await import('@clack/prompts')
+      vi.mocked(pMock.log.warn).mockClear()
+
+      await sync({ projectDir, direction: 'push', branch: 'test-branch', force: true })
+
+      expect(pMock.log.warn).toHaveBeenCalledWith(
+        expect.stringContaining('Could not use canopycms.config.ts'),
+      )
+    })
+
     it('warns and still resolves a full ref when the site config cannot load', async () => {
       await fs.writeFile(path.join(projectDir, 'canopycms.config.ts'), 'export default {\n')
       await addWorkspace('fix-x', 'fix/x')
@@ -1211,7 +1319,7 @@ describe('canopycms sync', () => {
 
       expect(await readIndex('fix-x')).toContain('Despite the config.')
       expect(pMock.log.warn).toHaveBeenCalledWith(
-        expect.stringContaining('Could not load canopycms.config.ts'),
+        expect.stringContaining('Could not use canopycms.config.ts'),
       )
     })
   })
