@@ -4,7 +4,10 @@ import { isAdmin, isLockedOutOfBranch, isReviewer } from './helpers'
 import { getBranchProtection } from './protected-branch'
 import type { CanopyUser } from '../user'
 import type { BranchAccessResult } from './types'
-import { SYSTEM_USER_ID } from '../system-users'
+import { isSystemUserId, SYSTEM_USER_ID } from '../system-users'
+// branch-name, NOT branch: this module is client-reachable (see protected-branch.ts).
+import { sanitizeBranchName } from '../paths/branch-name'
+import { baseBranchOf } from '../utils/base-branch'
 
 /** Options narrowing {@link checkBranchAccessWithDefault} to a specific branch's nature. */
 interface BranchAccessOptions {
@@ -29,6 +32,28 @@ interface BranchAccessOptions {
    * private.
    */
   isProtectedBranch?: boolean
+  /**
+   * Whether this is dev's auto-provisioned active branch ({@link isDevActiveBranch}). It passes
+   * this layer where the base branch does, so it reads (and in dev saves) like the base;
+   * {@link canPerformWorkflowAction} never passes it, so no workflow rights follow.
+   */
+  isDevActiveBranch?: boolean
+}
+
+/**
+ * Whether `context` is the active branch a dev server provisioned for itself: owned by a CanopyCMS
+ * system user and named like the active branch now, which follows git HEAD and, with
+ * `defaultBaseBranch` set, is not the base, so nobody is its creator. A person's branch never is.
+ * `mode` is the adopter's configured operating mode; a prod deployment's is 'prod', so prod
+ * returns before the name comparison and never consults its possibly unresolved base branch.
+ */
+function isDevActiveBranch(
+  config: Pick<CanopyConfig, 'mode' | 'defaultBaseBranch' | 'defaultActiveBranch'>,
+  context: BranchContext,
+): boolean {
+  if (config.mode !== 'dev' || !isSystemUserId(context.branch.createdBy)) return false
+  const active = config.defaultActiveBranch ?? baseBranchOf(config)
+  return sanitizeBranchName(context.branch.name) === sanitizeBranchName(active)
 }
 
 /**
@@ -40,8 +65,7 @@ interface BranchAccessOptions {
  * 3. An explicit user/group ACL -- an allowlist omitting the creator still
  *    denies them, so an admin can lock down a branch someone else created
  * 4. With no ACL: the branch creator, then `defaultAccess`, and only where that
- *    would deny, the protected base branch grant
- *    (see {@link BranchAccessOptions.isProtectedBranch})
+ *    would deny, the base branch or dev active branch grant ({@link BranchAccessOptions})
  * @internal Exported for tests.
  */
 export function checkBranchAccessWithDefault(
@@ -81,6 +105,9 @@ export function checkBranchAccessWithDefault(
     if (options?.isProtectedBranch) {
       return { allowed: true, reason: 'base_branch' }
     }
+    if (options?.isDevActiveBranch) {
+      return { allowed: true, reason: 'dev_active_branch' }
+    }
     return { allowed: false, reason: 'no_acl' }
   }
 
@@ -95,17 +122,19 @@ export function checkBranchAccessWithDefault(
 /**
  * Bind a default access level. `config` is needed only to resolve the
  * protected-base-branch question, which routes through `getBranchProtection`,
- * its single source of truth, rather than repeating the comparison here.
+ * its single source of truth, rather than repeating the comparison here, and
+ * the dev-active-branch question ({@link isDevActiveBranch}).
  */
 export function createCheckBranchAccess(
   defaultAccess: DefaultBranchAccess = 'deny',
-  config?: Pick<CanopyConfig, 'mode' | 'defaultBaseBranch'>,
+  config?: Pick<CanopyConfig, 'mode' | 'defaultBaseBranch' | 'defaultActiveBranch'>,
 ) {
   return (context: BranchContext, user: CanopyUser): BranchAccessResult =>
     checkBranchAccessWithDefault(context, user, defaultAccess, {
       isProtectedBranch: config
         ? getBranchProtection(config, context.branch.name, context.branch.baseBranch).isProtected
         : false,
+      isDevActiveBranch: config ? isDevActiveBranch(config, context) : false,
     })
 }
 
