@@ -162,8 +162,9 @@ export interface CanopyServices {
   config: CanopyConfig
   /**
    * Re-detect the active branch from git HEAD (dev mode only, cached 5s).
-   * Silently updates config if the branch changed — only affects non-editor
-   * content serving since the editor is pinned to its own branch via URL params.
+   * Silently updates config if the branch changed — non-editor content serving follows it, as
+   * does which branch gets dev's active-branch access grant (authorization/branch.ts); the editor
+   * is pinned to its own branch via URL params.
    */
   refreshActiveBranch: () => Promise<void>
   /**

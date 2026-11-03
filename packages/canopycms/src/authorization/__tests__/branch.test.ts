@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { checkBranchAccessWithDefault, canPerformWorkflowAction, RESERVED_GROUPS } from '../'
+import {
+  checkBranchAccessWithDefault,
+  canPerformWorkflowAction,
+  createCheckBranchAccess,
+  RESERVED_GROUPS,
+} from '../'
 import type { BranchContext } from '../../types'
 import { ANONYMOUS_USER } from '../../user'
 
@@ -285,6 +290,97 @@ describe('branch access: protected base branch grant', () => {
         { isProtectedBranch: true },
       ),
     ).toBe(false)
+  })
+})
+
+describe("branch access: dev's auto-provisioned active branch", () => {
+  // defaultBaseBranch set, git HEAD on fix/x: the active branch is not the base,
+  // and context.ts provisions its workspace as 'canopycms-context'.
+  const devConfig = {
+    mode: 'dev' as const,
+    defaultBaseBranch: 'main',
+    defaultActiveBranch: 'fix/x',
+  }
+  const activeContext: BranchContext = {
+    ...baseContext,
+    branchRoot: '/tmp/base/fix-x',
+    branch: { ...baseContext.branch, name: 'fix/x', createdBy: 'canopycms-context' },
+  }
+  const devUser = { type: 'authenticated' as const, userId: 'dev_user1', groups: [] }
+
+  it('allows the non-admin dev user under default deny', () => {
+    const res = createCheckBranchAccess('deny', devConfig)(activeContext, devUser)
+    expect(res).toEqual({ allowed: true, reason: 'dev_active_branch' })
+  })
+
+  it.each(['canopycms-system', 'canopycms-content-reader', 'canopycms-ai'])(
+    'allows it for the other system owner %s too',
+    (createdBy) => {
+      const provisioned: BranchContext = {
+        ...activeContext,
+        branch: { ...activeContext.branch, createdBy },
+      }
+      expect(createCheckBranchAccess('deny', devConfig)(provisioned, devUser).allowed).toBe(true)
+    },
+  )
+
+  it('never applies in prod, even to a system-created branch named like the active branch', () => {
+    const res = createCheckBranchAccess('deny', { ...devConfig, mode: 'prod' })(
+      activeContext,
+      devUser,
+    )
+    expect(res).toEqual({ allowed: false, reason: 'no_acl' })
+  })
+
+  it('does not apply to a branch a person created, even while it is the active branch', () => {
+    const personCreated: BranchContext = {
+      ...activeContext,
+      branch: { ...activeContext.branch, createdBy: 'someone-else' },
+    }
+    expect(createCheckBranchAccess('deny', devConfig)(personCreated, devUser)).toEqual({
+      allowed: false,
+      reason: 'no_acl',
+    })
+  })
+
+  it('does not apply to a system-created branch that is no longer the active branch', () => {
+    const res = createCheckBranchAccess('deny', { ...devConfig, defaultActiveBranch: 'fix/y' })(
+      activeContext,
+      devUser,
+    )
+    expect(res).toEqual({ allowed: false, reason: 'no_acl' })
+  })
+
+  it('leaves an explicit ACL to decide', () => {
+    const aclContext: BranchContext = {
+      ...activeContext,
+      branch: { ...activeContext.branch, access: { allowedUsers: ['someone-else'] } },
+    }
+    expect(createCheckBranchAccess('deny', devConfig)(aclContext, devUser)).toEqual({
+      allowed: false,
+      reason: 'denied_by_acl',
+    })
+  })
+
+  it('leaves a managerOrAdminAllowed lockdown to decide', () => {
+    const locked: BranchContext = {
+      ...activeContext,
+      branch: { ...activeContext.branch, access: { managerOrAdminAllowed: true } },
+    }
+    expect(createCheckBranchAccess('deny', devConfig)(locked, devUser)).toEqual({
+      allowed: false,
+      reason: 'denied_by_acl',
+    })
+  })
+
+  it('does not confer workflow actions, even with the system owner that grants them under allow', () => {
+    // canPerformWorkflowAction's system-branch clause would turn any access grant into
+    // Submit/Withdraw rights for a 'canopycms-system' branch.
+    const editorProvisioned: BranchContext = {
+      ...activeContext,
+      branch: { ...activeContext.branch, createdBy: 'canopycms-system' },
+    }
+    expect(canPerformWorkflowAction(editorProvisioned, devUser, 'deny')).toBe(false)
   })
 })
 

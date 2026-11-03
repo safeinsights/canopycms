@@ -17,8 +17,19 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import * as p from '@clack/prompts'
+import { z } from 'zod'
+import { resolveBranchParam, type BranchParamConfig } from '../branch-param'
+import { readBranchMetadataFile } from '../branch-metadata-file'
+import { namesNoWorkspace, resolveBranchPath } from '../paths/branch'
+import {
+  exactBranchName,
+  exactBranchSegment,
+  isExactBranchForm,
+  parseBranchRef,
+} from '../paths/validation'
+import { getErrorMessage } from '../utils/error'
 import { filePathExists } from '../utils/fs'
-import { isCanopyInternalPath, stageAllExceptCanopyState } from '../utils/git'
+import { detectHeadBranch, isCanopyInternalPath, stageAllExceptCanopyState } from '../utils/git'
 import {
   assertWithinDir,
   copyDir,
@@ -31,6 +42,7 @@ import { invalidateBranchContentCaches } from '../content-index-generation'
 import { ContentWriteLockBusyError, withContentWriteLock } from '../utils/content-write-lock'
 import { ensureGitExcludePattern } from '../git-manager'
 import { operatingStrategy } from '../operating-mode'
+import { importSiteServerConfig } from './site-config'
 
 export interface SyncOptions {
   projectDir: string
@@ -104,15 +116,205 @@ async function detectCurrentBranch(projectDir: string): Promise<string> {
   return branch
 }
 
+/** The branch workspace a sync step works on: its ref, for messages, and its directory. */
+interface SyncWorkspace {
+  branchName: string
+  branchPath: string
+}
+
+/** The site config fields that decide which workspace a branch name names. */
+const branchConfigSchema = z.object({
+  branchNamespace: z.string().optional(),
+  deploymentName: z.string().optional(),
+  defaultBaseBranch: z.string().optional(),
+  defaultActiveBranch: z.string().optional(),
+})
+
+/** {@link branchConfigSchema}'s fields from the site config: none, with a warning, when unusable. */
+async function readBranchConfigFields(
+  projectDir: string,
+): Promise<z.infer<typeof branchConfigSchema>> {
+  if (!(await filePathExists(path.join(projectDir, 'canopycms.config.ts')))) return {}
+  let why: string
+  try {
+    const parsed = branchConfigSchema.safeParse((await importSiteServerConfig(projectDir)).server)
+    if (parsed.success) return parsed.data
+    why = parsed.error.message
+  } catch (err: unknown) {
+    why = getErrorMessage(err)
+  }
+  p.log.warn(
+    `Could not use canopycms.config.ts (${why}); branch names resolve against the default branch settings.`,
+  )
+  return {}
+}
+
 /**
- * Select a branch workspace. Auto-selects if only one exists, prompts if
- * multiple, or uses the --branch flag (defaulting to the current git branch).
- * When autoCreate is true, creates a new workspace if the branch doesn't exist.
+ * The config {@link resolveBranchParam} resolves names against, built as the dev server builds
+ * it: dev mode, the site config's branch fields, and an unset base or active branch taken from the
+ * project's git HEAD (services.ts).
+ */
+async function loadBranchParamConfig(projectDir: string): Promise<BranchParamConfig> {
+  const fields = await readBranchConfigFields(projectDir)
+  const head = await detectHeadBranch(projectDir, fields.defaultBaseBranch ?? 'main')
+  return {
+    ...fields,
+    mode: 'dev',
+    defaultBaseBranch: fields.defaultBaseBranch ?? head,
+    defaultActiveBranch: fields.defaultActiveBranch ?? head,
+  }
+}
+
+/**
+ * Refuses a directory that is not the top of its own git repository. Git run there would walk up
+ * to the developer's own repository and commit and tag in it.
+ */
+async function assertOwnRepository(branchPath: string): Promise<void> {
+  const top = await simpleGit({ baseDir: branchPath })
+    .revparse(['--show-toplevel'])
+    .then((out) => out.trim())
+    .catch(() => '')
+  if (top && (await fs.realpath(top)) === (await fs.realpath(branchPath))) return
+  throw new SyncError(
+    `"${path.basename(branchPath)}" under content-branches/ is not a branch workspace: git does not report it as the top of its own repository.`,
+  )
+}
+
+/** The branch a workspace's HEAD is on (an unborn one included), or null when it is detached. */
+async function workspaceHead(branchPath: string): Promise<string | null> {
+  return simpleGit({ baseDir: branchPath })
+    .raw(['symbolic-ref', '--short', '-q', 'HEAD'])
+    .then((out) => out.trim() || null)
+    .catch(() => null)
+}
+
+/** The workspace at directory `key` under content-branches/, named by its branch.json or HEAD. */
+async function keyWorkspace(key: string, projectDir: string): Promise<SyncWorkspace> {
+  const branchPath = path.join(operatingStrategy('dev').getContentBranchesRoot(projectDir), key)
+  await assertOwnRepository(branchPath)
+  const meta = await readBranchMetadataFile(branchPath)
+  return { branchName: meta?.branch.name ?? (await workspaceHead(branchPath)) ?? key, branchPath }
+}
+
+/** The ref `name` gives: decoded from the exact form (`~fix~x`), else `name` itself. */
+function refOf(name: string): string {
+  if (!isExactBranchForm(name)) return name
+  const ref = exactBranchName(name)
+  if (ref === null) throw new SyncError(`"${name}" is not a valid branch name.`)
+  return ref
+}
+
+/**
+ * The workspace `name` names, as the dev server resolves it, or null:
+ * 1. what the runtime resolves it to (`resolveBranchParam`): the ref, a namespace branch's short
+ *    name, or the exact form;
+ * 2. a workspace key, the directory itself;
+ * 3. the directory the ref keys to, when it holds a workspace sync built (no branch.json) on that
+ *    ref. Two refs can sanitize to one key, so one whose branch.json or HEAD names another branch
+ *    is refused.
+ * A `name` read from git HEAD (`byRef`) is a ref, never a short name or key: it resolves in its
+ * exact form and skips step 2, so a local branch never lands in an editor's branch or in another
+ * ref's workspace that shares its key.
+ */
+async function resolveSyncWorkspace(
+  name: string,
+  projectDir: string,
+  keys: string[],
+  byRef: boolean,
+): Promise<SyncWorkspace | null> {
+  const config = await loadBranchParamConfig(projectDir)
+  const param = byRef ? exactBranchSegment(name) : name
+  const resolved = await resolveBranchParam(param, config, { basePathOverride: projectDir }).catch(
+    (err: unknown) => {
+      if (namesNoWorkspace(err)) return null
+      throw err
+    },
+  )
+  if (resolved) {
+    // The base and active branch resolve by directory alone, without branch.json's name.
+    const ref = refOf(name)
+    if (resolved.branch.name !== ref && resolved.branchRoot === refKeyPath(ref, projectDir)) {
+      throw holdsAnotherBranch(resolved.branchRoot, resolved.branch.name, ref)
+    }
+    await assertOwnRepository(resolved.branchRoot)
+    return { branchName: resolved.branch.name, branchPath: resolved.branchRoot }
+  }
+
+  if (!byRef && keys.includes(name)) return keyWorkspace(name, projectDir)
+
+  const ref = refOf(name)
+  const branchPath = refKeyPath(ref, projectDir)
+  const present = await filePathExists(branchPath).catch((err: unknown) => {
+    if (namesNoWorkspace(err)) throw new SyncError(`"${ref}" cannot name a branch workspace.`)
+    throw err
+  })
+  if (!present) return null
+  await assertOwnRepository(branchPath)
+  const meta = await readBranchMetadataFile(branchPath)
+  const holder = meta ? meta.branch.name : await workspaceHead(branchPath)
+  if (holder !== ref) throw holdsAnotherBranch(branchPath, holder, ref)
+  return { branchName: ref, branchPath }
+}
+
+/** The refusal for a workspace another ref, sharing `ref`'s key, holds (`holder`; null: detached). */
+function holdsAnotherBranch(branchPath: string, holder: string | null, ref: string): SyncError {
+  // mergeIntoWorkspace's temporary branch, left checked out when `both` was interrupted.
+  const recovery = holder?.startsWith('sync-incoming-')
+    ? ` An interrupted "sync both" left it there: run "git checkout ${ref}" in that workspace.`
+    : ''
+  return new SyncError(
+    `Branch workspace "${path.basename(branchPath)}" holds ${holder === null ? 'a detached HEAD' : `branch "${holder}"`}, not "${ref}".${recovery}`,
+  )
+}
+
+/** The workspace directory the runtime keys ref `name` to (`resolveBranchPath`). */
+function refKeyPath(name: string, projectDir: string): string {
+  try {
+    return resolveBranchPath({ mode: 'dev', branchName: name, basePathOverride: projectDir })
+      .branchRoot
+  } catch (err: unknown) {
+    if (namesNoWorkspace(err)) throw new SyncError(`"${name}" cannot name a branch workspace.`)
+    throw err
+  }
+}
+
+/**
+ * Auto-create a minimal workspace for the branch `name` gives (git init + empty commit) so push
+ * can copy content in, at the directory the dev server reads for that ref. This is lighter than
+ * BranchWorkspaceManager's clone-based setup -- no remote config, content structure or
+ * branch.json -- and the dev server adopts it in place when it provisions that ref
+ * (BranchWorkspaceManager.provisionBranch).
+ */
+async function createSyncWorkspace(name: string, projectDir: string): Promise<SyncWorkspace> {
+  const ref = refOf(name)
+  const parsed = parseBranchRef(ref)
+  if (!parsed.ok) throw new SyncError(`"${ref}" is not a valid branch name: ${parsed.error}`)
+  const branchPath = refKeyPath(ref, projectDir)
+  await fs.mkdir(branchPath, { recursive: true })
+  const wsGit = simpleGit({ baseDir: branchPath })
+  await wsGit.init()
+  await wsGit.checkoutLocalBranch(ref)
+  await wsGit.raw(['commit', '--allow-empty', '-m', 'init: workspace created by sync'])
+  // Runtime metadata (.canopy-meta/: branch metadata, comments, content-index
+  // marker) must never be staged by sync's `add -A`. Fully provisioned workspaces
+  // get this exclude from GitManager.initializeWorkspace; this minimal one needs it
+  // too. Sync is dev-mode-only, so this asks the dev strategy for the pattern
+  // rather than hardcoding it.
+  await ensureGitExcludePattern(branchPath, operatingStrategy('dev').getGitExcludePattern())
+  p.log.info(`Created branch workspace: ${path.basename(branchPath)}`)
+  return { branchName: ref, branchPath }
+}
+
+/**
+ * Select a branch workspace. Uses the --branch flag (defaulting to the current git branch),
+ * resolved as the dev server resolves it ({@link resolveSyncWorkspace}); else auto-selects the
+ * only workspace directory, or prompts for one. When autoCreate is true, creates a new workspace
+ * if a named branch has none.
  */
 async function selectBranch(
   options: Pick<SyncOptions, 'branch' | 'force'> & { projectDir: string; autoCreate?: boolean },
-  branchesDir: string,
-): Promise<string | null> {
+): Promise<SyncWorkspace | null> {
+  const branchesDir = operatingStrategy('dev').getContentBranchesRoot(options.projectDir)
   let branches: string[] = []
   if (await filePathExists(branchesDir)) {
     const entries = await fs.readdir(branchesDir, { withFileTypes: true })
@@ -123,6 +325,7 @@ async function selectBranch(
   }
 
   let branchName = options.branch
+  const byRef = !branchName
   if (!branchName) {
     try {
       branchName = await detectCurrentBranch(options.projectDir)
@@ -137,49 +340,23 @@ async function selectBranch(
         'No branch workspaces found and could not detect current git branch. Use --branch to specify.',
       )
     }
-    if (branches.length === 1) {
-      branchName = branches[0]
-    } else {
-      const result = await p.select({
-        message: 'Which branch?',
-        options: branches.map((b) => ({ value: b, label: b })),
-      })
-      if (p.isCancel(result)) {
-        p.cancel('Sync cancelled.')
-        return null
-      }
-      branchName = result
+    if (branches.length === 1) return keyWorkspace(branches[0], options.projectDir)
+    const result = await p.select({
+      message: 'Which branch?',
+      options: branches.map((b) => ({ value: b, label: b })),
+    })
+    if (p.isCancel(result)) {
+      p.cancel('Sync cancelled.')
+      return null
     }
+    return keyWorkspace(result, options.projectDir)
   }
 
-  // Validate branch name does not escape the branches directory
-  const branchPath = path.join(branchesDir, branchName)
-  assertWithinDir(branchPath, branchesDir, '--branch')
-
-  if (!branches.includes(branchName)) {
-    if (options.autoCreate) {
-      // Auto-create a minimal workspace (git init + empty commit) so push can
-      // copy content in. This is lighter than BranchWorkspaceManager's clone-based
-      // setup — no remote config or content structure — but sufficient for sync.
-      await fs.mkdir(branchPath, { recursive: true })
-      const wsGit = simpleGit({ baseDir: branchPath })
-      await wsGit.init()
-      await wsGit.checkoutLocalBranch(branchName)
-      await wsGit.raw(['commit', '--allow-empty', '-m', 'init: workspace created by sync'])
-      // Runtime metadata (.canopy-meta/: branch metadata, comments, content-index
-      // marker) must never be staged by sync's `add -A`. Fully provisioned workspaces
-      // get this exclude from GitManager.initializeWorkspace; this minimal one needs it
-      // too. Sync is dev-mode-only (see branchesDir), so this asks the dev strategy for
-      // the pattern rather than hardcoding it.
-      await ensureGitExcludePattern(branchPath, operatingStrategy('dev').getGitExcludePattern())
-      p.log.info(`Created branch workspace: ${branchName}`)
-    } else {
-      const available = branches.length > 0 ? ` Available branches: ${branches.join(', ')}` : ''
-      throw new SyncError(`Branch workspace "${branchName}" not found.${available}`)
-    }
-  }
-
-  return branchName
+  const existing = await resolveSyncWorkspace(branchName, options.projectDir, branches, byRef)
+  if (existing) return existing
+  if (options.autoCreate) return createSyncWorkspace(branchName, options.projectDir)
+  const available = branches.length > 0 ? ` Available branches: ${branches.join(', ')}` : ''
+  throw new SyncError(`Branch workspace "${branchName}" not found.${available}`)
 }
 
 /**
@@ -189,8 +366,6 @@ async function selectBranch(
 async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
   const { projectDir } = options
   const contentRoot = options.contentRoot || 'content'
-  const branchesDir = path.join(projectDir, '.canopy-dev', 'content-branches')
-
   // Validate source content BEFORE selectBranch, which may create a workspace —
   // a push with nothing to push must not leave side effects behind.
   const srcContentDir = path.join(projectDir, contentRoot)
@@ -201,11 +376,9 @@ async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
     )
   }
 
-  const branchName = await selectBranch({ ...options, projectDir, autoCreate: true }, branchesDir)
-  if (!branchName) return { fileCount: 0 }
-
-  const branchPath = path.join(branchesDir, branchName)
-  assertWithinDir(branchPath, branchesDir, '--branch')
+  const ws = await selectBranch({ ...options, projectDir, autoCreate: true })
+  if (!ws) return { fileCount: 0 }
+  const { branchName, branchPath } = ws
   const wsGit = simpleGit({ baseDir: branchPath })
 
   const status = await wsGit.status()
@@ -278,20 +451,24 @@ async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
  * Pull: copy content from a branch workspace back into the working tree.
  */
 async function syncPull(options: SyncOptions): Promise<{ fileCount: number }> {
+  const ws = await selectBranch({ ...options, projectDir: options.projectDir })
+  if (!ws) return { fileCount: 0 }
+  return pullFromWorkspace(options, ws)
+}
+
+/** The body of {@link syncPull}, once its workspace is chosen. */
+async function pullFromWorkspace(
+  options: SyncOptions,
+  ws: SyncWorkspace,
+): Promise<{ fileCount: number }> {
   const { projectDir } = options
   const contentRoot = options.contentRoot || 'content'
-  const branchesDir = path.join(projectDir, '.canopy-dev', 'content-branches')
-
-  const branchName = await selectBranch({ ...options, projectDir }, branchesDir)
-  if (!branchName) return { fileCount: 0 }
-
-  const branchPath = path.join(branchesDir, branchName)
-  assertWithinDir(branchPath, branchesDir, '--branch')
+  const { branchName, branchPath } = ws
   const branchContentDir = path.join(branchPath, contentRoot)
   assertWithinDir(branchContentDir, branchPath, '--content-root')
   if (!(await filePathExists(branchContentDir))) {
     throw new SyncError(
-      `Content directory not found in branch workspace: ${branchName}/${contentRoot}`,
+      `Content directory not found in branch workspace: ${path.basename(branchPath)}/${contentRoot}`,
     )
   }
 
@@ -402,7 +579,6 @@ async function syncPull(options: SyncOptions): Promise<{ fileCount: number }> {
 async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled: number }> {
   const { projectDir } = options
   const contentRoot = options.contentRoot || 'content'
-  const branchesDir = path.join(projectDir, '.canopy-dev', 'content-branches')
 
   // Validate source content BEFORE selectBranch, which may create a workspace
   const srcContentDir = path.join(projectDir, contentRoot)
@@ -413,11 +589,9 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
     )
   }
 
-  const branchName = await selectBranch({ ...options, projectDir, autoCreate: true }, branchesDir)
-  if (!branchName) return { pushed: 0, pulled: 0 }
-
-  const branchPath = path.join(branchesDir, branchName)
-  assertWithinDir(branchPath, branchesDir, '--branch')
+  const ws = await selectBranch({ ...options, projectDir, autoCreate: true })
+  if (!ws) return { pushed: 0, pulled: 0 }
+  const { branchName, branchPath } = ws
   const wsGit = simpleGit({ baseDir: branchPath })
 
   const status = await wsGit.status()
@@ -447,7 +621,7 @@ async function mergeIntoWorkspace(
   options: SyncOptions,
   ws: { branchName: string; branchPath: string; srcContentDir: string; contentRoot: string },
 ): Promise<{ pushed: number; pulled: number }> {
-  const { branchName, branchPath, srcContentDir, contentRoot } = ws
+  const { branchPath, srcContentDir, contentRoot } = ws
   const wsGit = simpleGit({ baseDir: branchPath })
   const status = await wsGit.status()
 
@@ -498,7 +672,7 @@ async function mergeIntoWorkspace(
       await wsGit.checkout(currentBranch)
       await wsGit.raw(['branch', '-D', incomingBranch])
       p.log.info('No working-tree changes to merge — pulling editor changes only')
-      const pullResult = await syncPull({ ...options, branch: branchName, force: true })
+      const pullResult = await pullFromWorkspace({ ...options, force: true }, ws)
       return { pushed: 0, pulled: pullResult.fileCount }
     }
 
@@ -525,8 +699,11 @@ async function mergeIntoWorkspace(
           p.log.error(`  ${file}`)
         }
         p.log.info('The branch workspace is now in a merge state.')
-        p.log.info('Resolve the conflicts in the workspace, then run: canopycms sync pull')
-        p.log.info('Or abort the merge with: canopycms sync abort')
+        const branchFlag = options.branch ? ` --branch ${options.branch}` : ''
+        p.log.info(
+          `Resolve the conflicts in the workspace, then run: canopycms sync pull${branchFlag}`,
+        )
+        p.log.info(`Or abort the merge with: canopycms sync abort${branchFlag}`)
         // Clean up the incoming branch (leave merge state for user resolution)
         await wsGit.raw(['branch', '-D', incomingBranch]).catch(() => {})
         return { pushed: 0, pulled: 0 }
@@ -540,7 +717,7 @@ async function mergeIntoWorkspace(
     await wsGit.tag(['-f', SYNC_BASE_TAG])
     p.log.success('Merged working-tree changes with editor changes')
 
-    const pullResult = await syncPull({ ...options, branch: branchName, force: true })
+    const pullResult = await pullFromWorkspace({ ...options, force: true }, ws)
     return { pushed: incomingFiles.length, pulled: pullResult.fileCount }
   } finally {
     await invalidateBranchContentCaches(branchPath)
@@ -552,14 +729,9 @@ async function mergeIntoWorkspace(
  * Restores the workspace to its pre-merge state.
  */
 async function syncAbort(options: SyncOptions): Promise<void> {
-  const { projectDir } = options
-  const branchesDir = path.join(projectDir, '.canopy-dev', 'content-branches')
-
-  const branchName = await selectBranch({ ...options, projectDir }, branchesDir)
-  if (!branchName) return
-
-  const branchPath = path.join(branchesDir, branchName)
-  assertWithinDir(branchPath, branchesDir, '--branch')
+  const ws = await selectBranch({ ...options, projectDir: options.projectDir })
+  if (!ws) return
+  const { branchName, branchPath } = ws
 
   if (!(await abortWorkspaceMerge(branchPath, branchName))) {
     p.log.info(`Branch workspace "${branchName}" is not in a merge state — nothing to abort.`)

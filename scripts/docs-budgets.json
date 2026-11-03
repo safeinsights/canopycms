@@ -69,7 +69,7 @@
     "ARCHITECTURE.md": {
       "historyMarkers": 0,
       "maxSectionWords": 2901,
-      "words": 24699
+      "words": 24741
     },
     "CHANGELOG.md": {
       "historyMarkers": null,
@@ -78,7 +78,7 @@
     "CODEBASE_GUIDE.md": {
       "historyMarkers": 0,
       "maxSectionWords": 834,
-      "words": 4485
+      "words": 4489
     },
     "DEVELOPING.md": {
       "historyMarkers": 0,
@@ -88,7 +88,7 @@
     "README.md": {
       "historyMarkers": 0,
       "maxSectionWords": 4969,
-      "words": 16880
+      "words": 16896
     },
     "docs/concurrency.md": {
       "historyMarkers": 0,

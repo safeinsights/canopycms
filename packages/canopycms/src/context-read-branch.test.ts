@@ -264,6 +264,53 @@ describe('read / readByUrlPath with a branch option', () => {
     expect(await ctx.readByUrlPath('/posts/hello')).toBeNull()
   })
 
+  describe("dev's auto-provisioned active branch under defaultBranchAccess 'deny'", () => {
+    // defaultBaseBranch is set, so the active branch (git HEAD in a real dev server) is not the
+    // base, and the context provisions its workspace as 'canopycms-context'.
+    const contextIn = async (mode: 'dev' | 'prod') => {
+      const config = {
+        mode,
+        defaultBaseBranch: 'main',
+        defaultActiveBranch: 'fix/x',
+        defaultBranchAccess: 'deny' as const,
+        defaultPathAccess: 'allow' as const,
+        schema,
+      }
+      const services = await createTestServices(config, {
+        getSettingsBranchRoot: () => Promise.resolve(settingsRoot),
+      })
+      await new BranchWorkspaceManager(services.config).openOrCreateBranch({
+        branchName: 'fix/x',
+        mode,
+        createdBy: 'canopycms-context',
+      })
+      const root =
+        mode === 'dev'
+          ? path.join(workspaceRoot, 'project/.canopy-dev/content-branches/fix-x')
+          : branchRoot('fix-x')
+      await fs.mkdir(path.join(root, 'content/posts'), { recursive: true })
+      await fs.writeFile(
+        path.join(root, 'content/posts/post.hello.RRMDbToFJNTf.json'),
+        JSON.stringify({ title: 'on fix/x' }),
+      )
+      return createCanopyContext({ services, extractUser: async () => USER }).getContext()
+    }
+
+    beforeEach(() => {
+      vi.spyOn(process, 'cwd').mockReturnValue(path.join(workspaceRoot, 'project'))
+    })
+
+    it('reads for a non-admin user in dev', async () => {
+      const ctx = await contextIn('dev')
+      expect((await readHello(ctx)).data.title).toBe('on fix/x')
+    })
+
+    it('stays FORBIDDEN in prod', async () => {
+      const ctx = await contextIn('prod')
+      await expect(readHello(ctx)).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    })
+  })
+
   it('ignores the branch option at build time, reading the checkout', async () => {
     const checkout = path.join(workspaceRoot, 'checkout')
     await fs.mkdir(path.join(checkout, 'content/posts'), { recursive: true })
