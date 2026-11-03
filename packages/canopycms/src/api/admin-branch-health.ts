@@ -113,6 +113,9 @@ interface RepairContentDuplicatesData {
   resolved: RepairedContentDuplicate[]
 }
 
+/** Response type for POST /admin/branch-dirs/:dirName/dismiss-unpublished */
+export type DismissUnpublishedResponse = ApiResponse<{ dismissed: true }>
+
 /** Response type for POST /admin/branch-dirs/:dirName/repair-content-duplicates */
 export type RepairContentDuplicatesResponse = ApiResponse<RepairContentDuplicatesData>
 
@@ -752,6 +755,52 @@ const repairBranchDir = defineEndpoint({
 })
 
 /**
+ * Stop listing a branch merged with an unfinished submit. Bookkeeping, so it leaves `updatedAt`.
+ * The same stat guard as purge: the update's lock would otherwise create the directory.
+ */
+const dismissUnpublishedHandler = async (
+  _gc: Record<string, never>,
+  ctx: ApiContext,
+  _req: ApiRequest,
+  params: BranchDirParams,
+): Promise<DismissUnpublishedResponse> => {
+  const baseRoot = getDefaultBranchBase(ctx.services.config.mode)
+  const dirPath = resolveDirWithinBase(baseRoot, params.dirName)
+  if (!dirPath) {
+    return { ok: false, status: 400, error: 'Invalid directory name' }
+  }
+  const dirExists = await fs
+    .stat(dirPath)
+    .then(() => true)
+    .catch(() => false)
+  if (!dirExists) {
+    return { ok: false, status: 404, error: 'Directory not found' }
+  }
+  const saved = await getBranchMetadataFileManager(dirPath, baseRoot).update(
+    (current) =>
+      current?.branch.unpublishedAtMerge ? { branch: { unpublishedAtMerge: undefined } } : null,
+    { keepUpdatedAt: true },
+  )
+  if (saved === null) {
+    return { ok: false, status: 409, error: 'This warning was already dismissed.' }
+  }
+  return { ok: true, status: 200, data: { dismissed: true } }
+}
+
+const dismissUnpublished = defineEndpoint({
+  namespace: 'admin',
+  name: 'dismissUnpublished',
+  method: 'POST',
+  path: '/admin/branch-dirs/:dirName/dismiss-unpublished',
+  params: branchDirParamsSchema,
+  responseType: 'DismissUnpublishedResponse',
+  response: {} as DismissUnpublishedResponse,
+  defaultMockData: { dismissed: true },
+  guards: ['admin'] as const,
+  handler: dismissUnpublishedHandler,
+})
+
+/**
  * Repair duplicate content IDs in a healthy branch's content tree by
  * archiving the quarantined (losing) file(s) with a dot-prefixed name --
  * see the `ContentIdIndex` class doc and
@@ -788,4 +837,5 @@ export const ADMIN_BRANCH_HEALTH_ROUTES = {
   purgeBranchDir,
   repairBranchDir,
   repairContentDuplicates,
+  dismissUnpublished,
 } as const

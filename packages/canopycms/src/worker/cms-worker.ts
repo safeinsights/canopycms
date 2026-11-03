@@ -12,6 +12,7 @@ import {
   createLocalGitHubGateway,
   type GitHubGateway,
   type LocalGitHubGatewayOptions,
+  type GitHubPullRequest,
 } from './github-gateway'
 import type { BranchMetadataFile } from '../branch-metadata'
 import { GITHUB_TRACKING_REF_PREFIX, ensureRemoteGitConfig, failOnSignalExit } from '../git-manager'
@@ -53,6 +54,7 @@ import {
   updateBranchMetadata,
 } from './task-runner'
 import type { BranchPolicyDescription } from './branch-policy'
+import type { GitHubSnapshot } from './github-commits'
 import { pollMergeState, runRebaseCycle, type RebaseSummary } from './rebase'
 import {
   cleanupTrashedBranchDirs,
@@ -504,6 +506,7 @@ export class CmsWorker {
   private shutdownController = new AbortController()
   private maxTasksPerCycle: number
   private taskTimeoutMs: number
+  private gitSyncIntervalMs: number
   private maxRetries: number
   private lockFilePath: string
   private lockStaleMs: number
@@ -545,6 +548,7 @@ export class CmsWorker {
     if (config.baseBranch !== undefined) this.setBaseBranch(config.baseBranch)
     this.maxTasksPerCycle = config.maxTasksPerCycle ?? 10
     this.taskTimeoutMs = config.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT
+    this.gitSyncIntervalMs = config.gitSyncInterval ?? 5 * 60_000
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES
     this.lockFilePath = path.join(config.workspacePath, '.tasks', '.worker-lock')
     this.lockStaleMs = config.lockStaleMs ?? DEFAULT_LOCK_STALE_MS
@@ -622,6 +626,7 @@ export class CmsWorker {
       contentRoot: this.contentRoot,
       schemaHoldMaxMs: this.schemaHoldMaxMs,
       taskTimeoutMs: this.taskTimeoutMs,
+      gitSyncIntervalMs: this.gitSyncIntervalMs,
       maxTasksPerCycle: this.maxTasksPerCycle,
       maxRetries: this.maxRetries,
       log: this.log,
@@ -782,7 +787,7 @@ export class CmsWorker {
     if (this.stopping) return
 
     const taskInterval = this.config.taskPollInterval ?? 5_000
-    const gitInterval = this.config.gitSyncInterval ?? 5 * 60_000
+    const gitInterval = this.gitSyncIntervalMs
 
     this.scheduleLoop('task queue', () => this.processTaskQueue(), taskInterval)
     this.scheduleLoop('git sync', () => this.syncGit(), gitInterval)
@@ -1650,8 +1655,9 @@ export class CmsWorker {
 
   private async rebaseActiveBranches(
     gatewayPolicy?: BranchPolicyDescription,
+    gitHub?: GitHubSnapshot,
   ): Promise<RebaseSummary> {
-    return runRebaseCycle(this.ctx(), gatewayPolicy)
+    return runRebaseCycle(this.ctx(), gatewayPolicy, gitHub)
   }
 
   // --- Git-sync cluster (worker/git-sync.ts) -----------------------------
@@ -1687,7 +1693,7 @@ export class CmsWorker {
     branchDir: string,
     branchPath: string,
     metaFile: BranchMetadataFile | null,
-  ): Promise<void> {
+  ): Promise<GitHubPullRequest | null> {
     return pollMergeState(this.ctx(), branchDir, branchPath, metaFile)
   }
 

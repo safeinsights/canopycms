@@ -54,6 +54,61 @@ entries under **Released**.
 
 ## Released
 
+### 0.8.2
+
+#### The editor says when a pull request is stuck, and what to do
+
+<!-- changeset: editor-shows-held-prs -->
+
+_First in 0.8.2._
+
+**What changed.** A branch could sit stuck with nothing in the editor to say why. The branch bar and the branch card now show a "Needs action" badge, with what's wrong and what this person can do about it, and System health shows the same.
+
+- A branch in review that conflicts with its base: the line gives its author, a reviewer and anyone else their own way forward.
+- A pull request retargeted to another base on GitHub that has fallen behind it or conflicts with it: update it on the pull request, or ask an admin.
+- A branch force-pushed on GitHub: submit is blocked, as nothing can reach GitHub until an admin sorts it out.
+- A submit that failed before its pull request step ran: the line says the pull request may not have the latest changes, and how to finish it. The failure now stays until the submit is retried or made again, where another task's success could clear it.
+- A branch in review with a failed sync now says it won't update from its base until it syncs.
+
+#### Commits made on a pull request's branch on GitHub now reach the editor
+
+<!-- changeset: github-commits-into-clones -->
+
+_First in 0.8.2._
+
+**What changed.** After Update branch or a maintainer's fix on GitHub, submitting a branch that had returned to editing failed for good with a 409 saying to try again shortly. Each sync now brings those commits into the branch's workspace, so the submit goes through.
+
+- If both sides changed a file, the editor's version is kept and the pull request lists the file.
+- A commit that isn't the base catching up sends an approved branch back to review.
+- A branch that has merged GitHub's commits catches up with its base by merging it rather than rebasing, so nothing it settled is undone. So does a branch whose push failed for good, whose commits GitHub never received.
+- A branch force-pushed on GitHub is left alone, and nothing more is pushed for it, so a commit removed there stays removed. System health says what a developer needs to do.
+- A submit or push GitHub rejects because its branch moved runs again after the next sync, unless the branch has moved on since.
+
+**Rolling back.** Don't roll the worker back past this version once it has run. An older worker rebases editing branches, and a rebase drops the merge commits this one makes: a version kept over GitHub's is replaced by GitHub's, and the result is force-pushed to the pull request. If you have to, first merge or delete every editing branch holding a merge commit, and let the task queue drain.
+
+#### Pull requests from the editor stay up to date with their base
+
+<!-- changeset: keep-editor-prs-current -->
+
+_First in 0.8.2._
+
+**What changed.** Where a repository requires branches to be up to date before merging, a pull request from the editor no longer waits behind its base for someone to click Update branch. When GitHub reports it behind, the next sync merges the base into it.
+
+- Each update is a new commit, so required checks run again.
+- An approval in CanopyCMS stays, because the pull request's changes are the same. In our test, GitHub kept an approval through a merge of the base that left the diff unchanged, under both "dismiss stale approvals" and "require approval of the most recent push". That test used a person's push under classic branch protection, so check it against your own rules.
+- A pull request that conflicts with its base stays as it is. Withdraw it from review to resolve the conflict.
+- Repositories that don't require up-to-date branches see no change.
+
+#### A branch whose submit failed can't be approved, and a merge that may miss commits is flagged
+
+<!-- changeset: unfinished-submit-rulings -->
+
+_First in 0.8.2._
+
+**What changed.** Approve is disabled while a branch's last submit has failed, with the reason beside it, and the API refuses it with a 409, because what's approved may not be what the pull request holds. Request changes stays open. A submit that fails after an approval sends the branch back to review and clears the verdict from the pull request. A submit that couldn't be queued counts as failed, and says to submit again.
+
+If a pull request merges before a submit finishes, commits from that submit may not be in the merge. Archiving now records that. System health's Overview names the branch until an admin dismisses the warning or deletes the branch, the branch shows "Needs action", and only an admin can delete it meanwhile.
+
 ### 0.8.1
 
 #### Content reads stop re-reading and re-parsing the schema cache

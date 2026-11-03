@@ -997,7 +997,69 @@ describe('useBranchManager', () => {
     })
   })
 
+  it('reloads the list when a delete is refused, which is what says why', async () => {
+    mockClient.branches.delete.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      error: 'Ask an admin to check it before deleting it.',
+    })
+    const { notifications } = await import('@mantine/notifications')
+    mockClient.branches.list.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { branches: mockBranches, defaultBranch: 'main', users: [] },
+    })
+    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+    await waitFor(() => expect(result.current.branches.length).toBeGreaterThan(0))
+    mockClient.branches.list.mockClear()
+
+    await act(async () => {
+      await result.current.handleDelete(mockBranches[1].name)
+    })
+
+    expect(mockClient.branches.list).toHaveBeenCalled()
+    expect(notifications.show).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: expect.stringContaining(mockBranches[1].name),
+        message: 'Ask an admin to check it before deleting it.',
+        color: 'yellow',
+      }),
+    )
+
+    vi.mocked(notifications.hide).mockClear()
+    mockClient.branches.delete.mockResolvedValueOnce({ ok: true, status: 200 })
+    await act(async () => {
+      await result.current.handleDelete(mockBranches[1].name)
+    })
+
+    expect(notifications.hide).toHaveBeenCalledWith(expect.stringContaining(mockBranches[1].name))
+  })
+
   describe('confirmation dialog copy', () => {
+    it("hands the card the server's answer on Approve", async () => {
+      const blocked = mockBranches.map((b) =>
+        b.name === 'feature' ? { ...b, approveBlocked: true } : b,
+      )
+      const { result } = await loaded(blocked as BranchMetadata[])
+
+      const card = result.current.branchSummaries.find((b) => b.name === 'feature')
+      expect(card?.approveBlocked).toBe(true)
+    })
+
+    it('warns of what deleting a flagged branch removes', async () => {
+      const flagged = mockBranches.map((b) =>
+        b.name === 'feature' ? { ...b, hold: { kind: 'unpublished-at-merge' as const } } : b,
+      )
+      mockClient.branches.delete.mockResolvedValueOnce({ ok: true, status: 200 })
+      const { result } = await loaded(flagged as BranchMetadata[])
+
+      await act(async () => {
+        await result.current.handleDelete('feature')
+      })
+
+      expect((await lastDialog()).body).toContain('never reached GitHub')
+    })
+
     const lastDialog = async () => {
       const { modals } = await import('@mantine/modals')
       const options = vi.mocked(modals.openConfirmModal).mock.calls.at(-1)?.[0]
@@ -1191,6 +1253,7 @@ describe('useBranchManager', () => {
       })
 
       const { options, body } = await lastDialog()
+      expect(body).not.toContain('never reached GitHub')
       expect(options.title).toBe('Delete branch')
       expect(options.labels).toEqual({ confirm: 'Delete branch', cancel: 'Cancel' })
       expect(body).toContain('Delete “feature”?')
@@ -2685,6 +2748,34 @@ describe('useBranchManager', () => {
       await waitFor(() => expect(mockClient.workflow.approve).toHaveBeenCalledTimes(2))
       expect(vi.mocked(modals.openConfirmModal)).toHaveBeenCalledTimes(2)
       expect(notifications.hide).toHaveBeenCalledWith('canopy-approve-failed-feature')
+    })
+
+    it('shows a refused submit in yellow until it is read, and reloads the list', async () => {
+      const { notifications } = await import('@mantine/notifications')
+      const error = 'This branch was changed on GitHub. Nothing is lost.'
+      mockClient.workflow.submit.mockResolvedValueOnce({ ok: false, status: 409, error })
+      const { result } = await loaded(editingFeature)
+      mockClient.branches.list.mockClear()
+
+      await act(async () => {
+        await result.current.handleSubmit('feature').catch(() => {})
+      })
+
+      expect(notifications.show).toHaveBeenCalledWith({
+        id: 'canopy-submit-refused-feature',
+        message: error,
+        color: 'yellow',
+        autoClose: false,
+        withCloseButton: true,
+      })
+      expect(mockClient.branches.list).toHaveBeenCalledTimes(1)
+
+      vi.mocked(notifications.hide).mockClear()
+      mockClient.workflow.submit.mockResolvedValueOnce({ ok: true, status: 200 })
+      await act(async () => {
+        await result.current.handleSubmit('feature')
+      })
+      expect(notifications.hide).toHaveBeenCalledWith('canopy-submit-refused-feature')
     })
 
     it('shows a stale-status 409 in yellow, which closes itself, with no Retry, and reloads the list', async () => {

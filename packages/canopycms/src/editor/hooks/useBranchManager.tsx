@@ -8,7 +8,7 @@ import { openConfirm } from '../utils/confirm-modal'
 import { focusReturnProps } from '../utils/focus-return'
 import { EDITOR_ACTIONS } from '../copy'
 import { notifications } from '@mantine/notifications'
-import type { ConflictStatus, PullRequestState, SyncStatus } from '../../types'
+import type { BranchHold, ConflictStatus, PullRequestState, SyncStatus } from '../../types'
 import type { OperatingMode } from '../../operating-mode'
 import type { CommentThread } from '../../comment-store'
 import type { BranchListItem } from '../../api/branch'
@@ -45,7 +45,7 @@ import {
 const BRANCHES_LOAD_FAILED_TOAST_ID = 'canopy-branches-load-failed'
 const BRANCH_OUTCOME_UNKNOWN_TOAST_ID = 'canopy-branch-outcome-unknown'
 
-/** The API's 409: the branch is no longer in the state the action needs, so a retry cannot pass. */
+/** The API's 409: the branch isn't in the state the action needs, so a retry cannot pass. */
 class StaleStatusError extends Error {
   override readonly name = 'StaleStatusError'
 }
@@ -284,6 +284,7 @@ const showRequestChangesConfirmation = (
 const showDeleteConfirmation = (
   branchName: string,
   pr: BranchPullRequest,
+  mayHoldUnpublished: boolean,
   onConfirm: () => Promise<void>,
   onDismiss: () => void,
 ) => {
@@ -295,6 +296,9 @@ const showDeleteConfirmation = (
       ? `Delete its branch on GitHub too, which closes pull request #${pr.pullRequestNumber} if it is still open`
       : undefined,
     'Discard any unsaved or unmerged changes',
+    mayHoldUnpublished
+      ? 'Remove the only copy of any changes that never reached GitHub, and the warning about them'
+      : undefined,
   ].filter((b): b is string => b !== undefined)
   openConfirm({
     title: 'Delete branch',
@@ -404,6 +408,8 @@ interface BranchSummary {
   conflictStatus?: ConflictStatus
   /** ContentIds of entries where --theirs was applied during rebase; cleared on clean rebase */
   conflictFiles?: string[]
+  /** What is stuck and needs a person (api/branch.ts). */
+  hold?: BranchHold
   commentCount: number
   isProtected: boolean
   readOnly: boolean
@@ -415,8 +421,9 @@ interface BranchSummary {
   writeBlocked: boolean
   /**
    * Server-computed compound submit rule: true when the branch can never be
-   * submitted for review, for EITHER reason -- it is the protected base
-   * branch, or its workflow status has moved past 'editing'. Mirrors
+   * submitted for review, for ANY reason -- it is the protected base
+   * branch, its workflow status has moved past 'editing', or it was rewritten
+   * on GitHub (`toBranchListItem`). Mirrors
    * `writeBlocked`'s shape (a base-branch half + a status half, combined),
    * except this one is built from `isProtected`/`submitBlocked` (both modes)
    * rather than `readOnly` (prod-only) -- see
@@ -426,6 +433,8 @@ interface BranchSummary {
    * re-derive the status/protection halves client-side.
    */
   submitBlocked: boolean
+  /** Server-computed: the API refuses Approve, as the last submit didn't finish. */
+  approveBlocked?: boolean
 }
 
 export interface UseBranchManagerOptions {
@@ -649,6 +658,8 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         syncFailureReason: b.syncFailureReason,
         conflictStatus: b.conflictStatus,
         conflictFiles: b.conflictFiles,
+        hold: b.hold,
+        approveBlocked: b.approveBlocked,
         commentCount: unresolvedCount,
         // Fail CLOSED (`?? true`): these flags are optional on the wire (see
         // BranchListItem's doc comment in api/branch.ts) so a version-skewed
@@ -844,11 +855,14 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   }
 
   const reviewFailureId = (kind: ReviewKind, branch: string) => `canopy-${kind}-failed-${branch}`
+  const submitRefusedId = (branch: string) => `canopy-submit-refused-${branch}`
+  const deleteRefusedId = (branch: string) => `canopy-delete-refused-${branch}`
 
   /**
    * Why an Approve or Request changes failed. Retry only on an API 5xx, 408, 429 or unsent request;
    * a timeout or gateway 5xx may have landed, so it reloads and says what to check. Other 4xx: a
-   * plain message and a reload. A 409 means the branch left review (see `showLeftReview`).
+   * plain message and a reload. A 409 means the branch left review, or for Approve that its last
+   * submit didn't finish (see `showLeftReview`, which shows the server's reason either way).
    */
   const reportReviewFailure = async (
     err: unknown,
@@ -976,6 +990,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               if (stamped && branchNameToSubmit === openListedName()) {
                 options.onStamped?.(stamped)
               }
+              notifications.hide(submitRefusedId(branchNameToSubmit))
               notifications.show({
                 message: submittedMessage(stamped?.length ?? 0),
                 color: 'green',
@@ -984,11 +999,26 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               await loadBranches()
               resolve()
             } catch (err) {
-              await reportActionFailure(
-                err,
-                'Failed to submit branch',
-                EDITOR_ACTIONS.submitForReview,
-              )
+              if (err instanceof RefusedError && err.status === 409) {
+                // Nothing is lost, and it says what to do, so it stays until read. The reload shows
+                // whatever the page hadn't heard yet, such as what's holding the branch.
+                const id = submitRefusedId(branchNameToSubmit)
+                notifications.hide(id)
+                notifications.show({
+                  id,
+                  message: err.message,
+                  color: 'yellow',
+                  autoClose: false,
+                  withCloseButton: true,
+                })
+                await loadBranches()
+              } else {
+                await reportActionFailure(
+                  err,
+                  'Failed to submit branch',
+                  EDITOR_ACTIONS.submitForReview,
+                )
+              }
               reject(err)
             } finally {
               options.setBusy(false)
@@ -1184,6 +1214,8 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
           showDeleteConfirmation(
             shownName(branchNameToDelete),
             pullRequestOf(branchNameToDelete),
+            listedBefore.find((b) => b.name === branchNameToDelete)?.hold?.kind ===
+              'unpublished-at-merge',
             async () => {
               options.setBusy(true)
               try {
@@ -1193,12 +1225,14 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 // The API's own 404: the branch is already gone, by an earlier unanswered delete or
                 // another user's.
                 if (!result.ok && result.status === 404 && !isNonApiResponse(result)) {
+                  notifications.hide(deleteRefusedId(branchNameToDelete))
                   notifications.show({ message: 'Branch deleted', color: 'green' })
                   leaveDeletedBranch(branchNameToDelete, listedBefore, await reloadBranches())
                   return
                 }
                 if (!result.ok) throw actionError(result, 'Failed to delete branch')
                 const cleanupWarning = result.data?.cleanupWarning
+                notifications.hide(deleteRefusedId(branchNameToDelete))
                 notifications.show(
                   cleanupWarning
                     ? {
@@ -1210,6 +1244,20 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 )
                 leaveDeletedBranch(branchNameToDelete, listedBefore, await reloadBranches())
               } catch (err) {
+                if (err instanceof RefusedError && err.status === 409) {
+                  // Nothing is lost, and the list says what changed.
+                  const id = deleteRefusedId(branchNameToDelete)
+                  notifications.hide(id)
+                  notifications.show({
+                    id,
+                    message: err.message,
+                    color: 'yellow',
+                    autoClose: false,
+                    withCloseButton: true,
+                  })
+                  await reloadBranches()
+                  return
+                }
                 if (!isUnanswered(err)) {
                   await reportActionFailure(err, 'Failed to delete branch', 'Delete branch')
                   return
@@ -1223,6 +1271,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                   (b) => sanitizeBranchName(b.name) === sanitizeBranchName(branchNameToDelete),
                 )
                 if (fresh && !listed) {
+                  notifications.hide(deleteRefusedId(branchNameToDelete))
                   notifications.show({ message: 'Branch deleted', color: 'green' })
                   leaveDeletedBranch(branchNameToDelete, listedBefore, fresh)
                 } else {

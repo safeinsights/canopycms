@@ -19,7 +19,7 @@ export const TRACKED_CANOPY_STATE_FIX =
 export const MAX_REPORTED_PATHS = 10
 
 /** The schema cache's location in a clone before it moved under `.git/` (branch-schema-cache.ts). */
-const RETIRED_SCHEMA_CACHE_PATH = `${CANOPY_META_DIR}/${SCHEMA_CACHE_FILE}`
+export const RETIRED_SCHEMA_CACHE_PATH = `${CANOPY_META_DIR}/${SCHEMA_CACHE_FILE}`
 
 export function isUntracked(file: FileStatusResult): boolean {
   return file.index === '?' && file.working_dir === '?'

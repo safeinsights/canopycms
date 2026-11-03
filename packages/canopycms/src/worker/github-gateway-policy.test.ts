@@ -31,8 +31,9 @@ import {
   createLocalGitHubGateway,
   type GitHubGateway,
   type LocalGitHubGatewayOptions,
+  GitHubPushError,
 } from './github-gateway'
-import { GitHubTransientError, RefusedPushError } from './github-mirror'
+import { GitHubTransientError, MirrorSession, RefusedPushError } from './github-mirror'
 import { pushToGitHub } from './github-transfer'
 import { isPermanentTaskFailure } from './task-runner'
 
@@ -114,10 +115,10 @@ function gateway(
 }
 
 /** Push remote.git's `branch` as the worker does, optionally under a lease. */
-function pushVia(github: GitHubGateway, branch: string, lease?: string) {
+function pushVia(github: GitHubGateway, branch: string, lease?: string, seen?: string) {
   return pushToGitHub(
     { github: () => github, remoteGitPath, taskTimeoutMs: 30_000 },
-    { branch, lease, prerequisiteBranches: [branch, 'main'] },
+    { branch, lease, readSeen: async () => seen, prerequisiteBranches: [branch, 'main'] },
     async () => git('--git-dir', remoteGitPath, 'rev-parse', `refs/heads/${branch}`),
   )
 }
@@ -216,6 +217,105 @@ describe('pushes', () => {
     await pushVia(gateway({ protectedBranches: ['*-prod'] }), 'canopycms-settings-prod')
 
     expect(await tip('refs/heads/canopycms-settings-prod')).toBe(sha)
+  })
+
+  describe('a commit last seen on GitHub', () => {
+    const branch = 'canopycms/prod/feature'
+    /** A branch on GitHub at `kept` then `seen`, as a reset on GitHub would find it. */
+    const published = async () => {
+      const kept = await onMain(branch)
+      await git('--git-dir', remoteGitPath, 'push', '-q', githubPath, `${branch}:${branch}`)
+      const seen = await commitAndPush(remoteGitPath, `refs/heads/${branch}`, 'leak.txt')
+      await git('--git-dir', remoteGitPath, 'push', '-q', githubPath, `${branch}:${branch}`)
+      return { kept, seen }
+    }
+
+    it('refuses a push a reset on GitHub would let fast-forward, leaving GitHub as it is', async () => {
+      const { kept, seen } = await published()
+      await git('--git-dir', githubPath, 'update-ref', `refs/heads/${branch}`, kept)
+      await commitAndPush(remoteGitPath, `refs/heads/${branch}`, 'editor.txt')
+
+      const caught = await pushVia(gateway({}), branch, undefined, seen).catch(
+        (err: unknown) => err,
+      )
+
+      expect(caught).toBeInstanceOf(GitHubPushError)
+      expect((caught as GitHubPushError).kind).toBe('seen-commit-gone')
+      expect(await tip(`refs/heads/${branch}`)).toBe(kept)
+    })
+
+    it('refuses straight after a fetch that predates the reset', async () => {
+      const { kept, seen } = await published()
+      const github = gateway({})
+      await github.fetch({ have: [] })
+      await git('--git-dir', githubPath, 'update-ref', `refs/heads/${branch}`, kept)
+      await commitAndPush(remoteGitPath, `refs/heads/${branch}`, 'editor.txt')
+
+      const caught = await pushVia(github, branch, undefined, seen).catch((err: unknown) => err)
+
+      expect((caught as GitHubPushError).kind).toBe('seen-commit-gone')
+      expect(await tip(`refs/heads/${branch}`)).toBe(kept)
+    })
+
+    it('refuses a reset that lands after the check, as nothing else holds GitHub still', async () => {
+      const { kept, seen } = await published()
+      await commitAndPush(remoteGitPath, `refs/heads/${branch}`, 'editor.txt')
+      const push = MirrorSession.prototype.pushToGitHub
+      vi.spyOn(MirrorSession.prototype, 'pushToGitHub').mockImplementation(async function (
+        this: MirrorSession,
+        ...args: Parameters<MirrorSession['pushToGitHub']>
+      ) {
+        await git('--git-dir', githubPath, 'update-ref', `refs/heads/${branch}`, kept)
+        return push.apply(this, args)
+      })
+
+      await expect(pushVia(gateway({}), branch, undefined, seen)).rejects.toThrow()
+
+      expect(await tip(`refs/heads/${branch}`)).toBe(kept)
+    })
+
+    it('forces nothing: a push that would not fast-forward the tip is still rejected', async () => {
+      const { kept, seen } = await published()
+      await seed.raw(['reset', '-q', '--hard', kept])
+      await git('--git-dir', remoteGitPath, 'update-ref', `refs/heads/${branch}`, kept)
+      await commitAndPush(remoteGitPath, `refs/heads/${branch}`, 'other.txt')
+
+      await expect(pushVia(gateway({}), branch, undefined, seen)).rejects.toBeInstanceOf(
+        GitHubPushError,
+      )
+
+      expect(await tip(`refs/heads/${branch}`)).toBe(seen)
+    })
+
+    it('pushes while GitHub still holds it', async () => {
+      const { seen } = await published()
+      const next = await commitAndPush(remoteGitPath, `refs/heads/${branch}`, 'editor.txt')
+
+      await pushVia(gateway({}), branch, undefined, seen)
+
+      expect(await tip(`refs/heads/${branch}`)).toBe(next)
+    })
+
+    it('refuses for a commit GitHub never had, which its branch cannot hold', async () => {
+      const { kept } = await published()
+      const next = await commitAndPush(remoteGitPath, `refs/heads/${branch}`, 'editor.txt')
+
+      const caught = await pushVia(gateway({}), branch, undefined, 'e'.repeat(40)).catch(
+        (err: unknown) => err,
+      )
+
+      expect((caught as GitHubPushError).kind).toBe('seen-commit-gone')
+      expect(next).not.toBe(kept)
+    })
+
+    it('leaves a branch deleted on GitHub to the push that recreates it', async () => {
+      const { seen } = await published()
+      await git('--git-dir', githubPath, 'update-ref', '-d', `refs/heads/${branch}`)
+
+      await pushVia(gateway({}), branch, undefined, seen)
+
+      expect(await tip(`refs/heads/${branch}`)).toBe(seen)
+    })
   })
 
   it('pushes a settings branch plainly, and refuses it under a lease', async () => {
@@ -512,6 +612,15 @@ describe('reading a pull request by number', () => {
     return gateway({ ...options, octokit: octokit as unknown as Octokit }).getPullRequest(2)
   }
 
+  it('answers what stands between a pull request and a merge', async () => {
+    const pr = await read({
+      ...pullRequestHead('canopycms/prod/feature'),
+      mergeable_state: 'behind',
+    })
+    expect(pr.mergeable_state).toBe('behind')
+    expect(pr.baseRef).toBe('main')
+  })
+
   it('answers the body of one whose head is in the namespace, in this repository', async () => {
     expect(await read(pullRequestHead('canopycms/prod/feature'))).toEqual({
       merged: true,
@@ -519,6 +628,7 @@ describe('reading a pull request by number', () => {
       state: 'closed',
       node_id: 'PR_2',
       body: 'Notes',
+      baseRef: 'main',
     })
   })
 
@@ -567,6 +677,7 @@ describe('reading a pull request by number', () => {
         state: 'closed',
         node_id: 'PR_2',
         body: null,
+        baseRef: 'main',
       })
     },
   )
@@ -601,6 +712,7 @@ describe('reading a pull request by number', () => {
         state: 'closed',
         node_id: 'PR_2',
         body,
+        baseRef: 'main',
       })
     },
   )
@@ -634,6 +746,7 @@ describe('a pull request read after the default branch read expired', () => {
       state: 'closed',
       node_id: 'PR_2',
       body: null,
+      baseRef: 'main',
     })
     expect(octokit.repos.get).toHaveBeenCalledTimes(2)
   })

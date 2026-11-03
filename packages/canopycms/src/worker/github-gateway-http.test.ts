@@ -85,6 +85,8 @@ function fakeGateway(): FakeGateway {
       state: 'open' as const,
       node_id: 'PR_1',
       body: 'B',
+      mergeable_state: 'behind',
+      baseRef: 'main',
     })),
     createOrUpdatePullRequest: vi.fn(async () => ({
       number: 1,
@@ -217,7 +219,7 @@ describe('errors across the socket', () => {
     expect(isPermanentTaskFailure(caught)).toBe(true)
   })
 
-  it.each(['rejected', 'rejected-after-stale-lease'] as const)(
+  it.each(['rejected', 'rejected-after-stale-lease', 'seen-commit-gone'] as const)(
     'rebuilds a GitHubPushError (%s) with git’s message, transient',
     async (kind) => {
       const message = ' ! [rejected]        x -> feature (non-fast-forward)\nerror: failed to push'
@@ -799,6 +801,8 @@ describe('operations across the socket', () => {
       state: 'open',
       node_id: 'PR_1',
       body: 'B',
+      mergeable_state: 'behind',
+      baseRef: 'main',
     })
     expect(
       await client.createOrUpdatePullRequest({

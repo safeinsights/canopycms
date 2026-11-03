@@ -19,6 +19,7 @@ import { generateId } from '../id'
 const branchHealthHandler = ADMIN_ROUTES.branchHealth.handler
 const purgeHandler = ADMIN_ROUTES.purgeBranchDir.handler
 const repairHandler = ADMIN_ROUTES.repairBranchDir.handler
+const dismissHandler = ADMIN_ROUTES.dismissUnpublished.handler
 const repairContentDuplicatesHandler = ADMIN_ROUTES.repairContentDuplicates.handler
 
 describe('admin branch-health api', () => {
@@ -284,6 +285,61 @@ describe('admin branch-health api', () => {
 
       const entries = await fs.readdir(branchesRoot)
       expect(entries.some((e) => e.startsWith('.trash-'))).toBe(false)
+    })
+  })
+
+  describe('POST /admin/branch-dirs/:dirName/dismiss-unpublished', () => {
+    const flagged = async (dirName: string) => {
+      await createHealthyBranch(dirName)
+      const branchDir = path.join(branchesRoot, dirName)
+      await getBranchMetadataFileManager(branchDir, branchesRoot, { settleMs: 0 }).save({
+        branch: { status: 'archived', unpublishedAtMerge: true },
+      })
+      return branchDir
+    }
+
+    it('clears the flag and nothing else, leaving the time editors read as an edit', async () => {
+      const branchDir = await flagged('merged')
+      const before = await BranchMetadataFileManager.loadOnly(branchDir)
+
+      const result = await dismissHandler(ctx, req, { dirName: 'merged' })
+
+      expect(result.ok).toBe(true)
+      const after = await BranchMetadataFileManager.loadOnly(branchDir)
+      expect(after?.branch.unpublishedAtMerge).toBeUndefined()
+      expect(after?.branch.status).toBe('archived')
+      expect(after?.branch.updatedAt).toBe(before?.branch.updatedAt)
+    })
+
+    it('answers a conflict for a warning already dismissed', async () => {
+      await createHealthyBranch('clean')
+
+      const result = await dismissHandler(ctx, req, { dirName: 'clean' })
+
+      expect(result.status).toBe(409)
+      expect(result.error).toContain('already dismissed')
+    })
+
+    it('creates no directory for a name that has none', async () => {
+      const result = await dismissHandler(ctx, req, { dirName: 'absent' })
+
+      expect(result.status).toBe(404)
+      await expect(fs.stat(path.join(branchesRoot, 'absent'))).rejects.toThrow()
+    })
+
+    it('refuses a name that escapes the branches root', async () => {
+      const result = await dismissHandler(ctx, req, { dirName: '../outside' })
+
+      expect(result.status).toBe(400)
+    })
+
+    it('lets the health scan see the flag for System health', async () => {
+      await flagged('merged')
+
+      const scan = await branchHealthHandler(ctx, req, {})
+      const entry = scan.data?.entries.find((e) => e.dirName === 'merged')
+
+      expect(entry?.kind === 'healthy' && entry.branch?.unpublishedAtMerge).toBe(true)
     })
   })
 

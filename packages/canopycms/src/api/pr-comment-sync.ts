@@ -75,7 +75,9 @@ export async function syncPrComments(ctx: ApiContext, context: BranchContext): P
       (t) =>
         t.action === SYNC_PR_COMMENTS_ACTION &&
         t.payload.branch === branch &&
-        t.payload.pullRequestNumber === prNumber,
+        t.payload.pullRequestNumber === prNumber &&
+        // The worker's own task leaves the comment summary as it is, so it carries no comment.
+        t.payload.reviewBlockOnly !== true,
     )
     if (queued) return
     await enqueueTask(taskDir, {
