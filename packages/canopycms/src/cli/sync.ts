@@ -176,7 +176,7 @@ async function assertOwnRepository(branchPath: string): Promise<void> {
     .catch(() => '')
   if (top && (await fs.realpath(top)) === (await fs.realpath(branchPath))) return
   throw new SyncError(
-    `"${path.basename(branchPath)}" under content-branches/ is not a branch workspace: it has no git repository of its own.`,
+    `"${path.basename(branchPath)}" under content-branches/ is not a branch workspace: git does not report it as the top of its own repository.`,
   )
 }
 
@@ -258,8 +258,12 @@ async function resolveSyncWorkspace(
 
 /** The refusal for a workspace another ref, sharing `ref`'s key, holds (`holder`; null: detached). */
 function holdsAnotherBranch(branchPath: string, holder: string | null, ref: string): SyncError {
+  // mergeIntoWorkspace's temporary branch, left checked out when `both` was interrupted.
+  const recovery = holder?.startsWith('sync-incoming-')
+    ? ` An interrupted "sync both" left it there: run "git checkout ${ref}" in that workspace.`
+    : ''
   return new SyncError(
-    `Branch workspace "${path.basename(branchPath)}" holds ${holder === null ? 'a detached HEAD' : `branch "${holder}"`}, not "${ref}".`,
+    `Branch workspace "${path.basename(branchPath)}" holds ${holder === null ? 'a detached HEAD' : `branch "${holder}"`}, not "${ref}".${recovery}`,
   )
 }
 
@@ -695,8 +699,11 @@ async function mergeIntoWorkspace(
           p.log.error(`  ${file}`)
         }
         p.log.info('The branch workspace is now in a merge state.')
-        p.log.info('Resolve the conflicts in the workspace, then run: canopycms sync pull')
-        p.log.info('Or abort the merge with: canopycms sync abort')
+        const branchFlag = options.branch ? ` --branch ${options.branch}` : ''
+        p.log.info(
+          `Resolve the conflicts in the workspace, then run: canopycms sync pull${branchFlag}`,
+        )
+        p.log.info(`Or abort the merge with: canopycms sync abort${branchFlag}`)
         // Clean up the incoming branch (leave merge state for user resolution)
         await wsGit.raw(['branch', '-D', incomingBranch]).catch(() => {})
         return { pushed: 0, pulled: 0 }

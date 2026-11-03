@@ -745,6 +745,13 @@ describe('canopycms sync', () => {
       expect(pMock.log.error).toHaveBeenCalledWith(
         expect.stringContaining('Merge conflicts detected'),
       )
+      // The follow-up commands name the workspace the user named.
+      expect(pMock.log.info).toHaveBeenCalledWith(
+        expect.stringContaining('canopycms sync pull --branch test-branch'),
+      )
+      expect(pMock.log.info).toHaveBeenCalledWith(
+        expect.stringContaining('canopycms sync abort --branch test-branch'),
+      )
 
       // Workspace should be in merge state
       const status = await branchGit.status()
@@ -1265,6 +1272,15 @@ describe('canopycms sync', () => {
       await expect(
         sync({ projectDir, direction: 'pull', branch: `x/${'a'.repeat(300)}`, force: true }),
       ).rejects.toThrow('cannot name a branch workspace')
+    })
+
+    it('tells how to recover a workspace an interrupted sync both left on its temporary branch', async () => {
+      await addWorkspace('fix-x', 'sync-incoming-123', null)
+      await simpleGit({ baseDir: projectDir }).checkoutLocalBranch('fix/x')
+
+      await expect(sync({ projectDir, direction: 'abort' })).rejects.toThrow(
+        'run "git checkout fix/x" in that workspace',
+      )
     })
 
     it('refuses a directory with no git repository of its own, committing nothing in the project', async () => {

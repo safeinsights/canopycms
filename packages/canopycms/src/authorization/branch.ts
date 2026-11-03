@@ -5,7 +5,6 @@ import { getBranchProtection } from './protected-branch'
 import type { CanopyUser } from '../user'
 import type { BranchAccessResult } from './types'
 import { isSystemUserId, SYSTEM_USER_ID } from '../system-users'
-// branch-name, NOT branch: this module is client-reachable (see protected-branch.ts).
 import { sanitizeBranchName } from '../paths/branch-name'
 import { baseBranchOf } from '../utils/base-branch'
 
@@ -42,8 +41,9 @@ interface BranchAccessOptions {
 
 /**
  * Whether `context` is the active branch a dev server provisioned for itself: owned by a CanopyCMS
- * system user and named like the active branch now, which follows git HEAD and, with
- * `defaultBaseBranch` set, is not the base, so nobody is its creator. A person's branch never is.
+ * system user, so nobody is its creator, and named like the active branch now, which follows git
+ * HEAD unless configured and is not the base when HEAD has left a configured `defaultBaseBranch`.
+ * A person's branch never is.
  * `mode` is the adopter's configured operating mode; a prod deployment's is 'prod', so prod
  * returns before the name comparison and never consults its possibly unresolved base branch.
  */

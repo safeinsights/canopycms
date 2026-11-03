@@ -1,7 +1,6 @@
 /**
- * Imports a site's `canopycms.config.ts` for CLI commands that need it. Loading the config pulls in
- * jiti and the site's own dependencies, so a command imports this only on the path that reads the
- * config.
+ * Imports a site's `canopycms.config.ts` for CLI commands that need it (`sync`, and
+ * `configured-asset-store.ts`). Importing runs the site's config and loads its own dependencies.
  */
 
 import path from 'node:path'
