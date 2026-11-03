@@ -1218,6 +1218,37 @@ describe('canopycms sync', () => {
       expect(await readIndex('canopycms-local-spring')).not.toContain('Developer on spring.')
     })
 
+    it('resolves the checked-out branch by ref when the config pins base and active branch', async () => {
+      await fs.writeFile(
+        path.join(projectDir, 'canopycms.config.ts'),
+        "export default { server: { mode: 'dev', defaultBaseBranch: 'main', defaultActiveBranch: 'main' } }\n",
+      )
+      await addWorkspace('canopycms-local-spring', 'canopycms/local/spring')
+      await simpleGit({ baseDir: projectDir }).checkoutLocalBranch('spring')
+      await editIndex('Developer on spring.')
+
+      await sync({ projectDir, direction: 'push', force: true })
+
+      expect(await readIndex('spring')).toContain('Developer on spring.')
+      expect(await readIndex('canopycms-local-spring')).not.toContain('Developer on spring.')
+    })
+
+    it("refuses the checked-out branch's own key when another ref's sync-built workspace holds it", async () => {
+      const projectGit = simpleGit({ baseDir: projectDir })
+      await projectGit.checkoutLocalBranch('fix/x')
+      await editIndex('On fix/x.')
+      await sync({ projectDir, direction: 'push', force: true })
+      await projectGit.add('-A')
+      await projectGit.commit('fix/x content')
+      await projectGit.checkoutLocalBranch('fix-x')
+      await editIndex('On fix-x.')
+
+      await expect(sync({ projectDir, direction: 'push', force: true })).rejects.toThrow(
+        'holds branch "fix/x", not "fix-x"',
+      )
+      expect(await readIndex('fix-x')).toContain('On fix/x.')
+    })
+
     it('refuses a directory with no git repository of its own, committing nothing in the project', async () => {
       await fs.mkdir(path.join(branchesDir(), 'fix-x'), { recursive: true })
       const projectGit = simpleGit({ baseDir: projectDir })

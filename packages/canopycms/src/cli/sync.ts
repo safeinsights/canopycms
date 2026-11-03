@@ -21,7 +21,12 @@ import { z } from 'zod'
 import { resolveBranchParam, type BranchParamConfig } from '../branch-param'
 import { readBranchMetadataFile } from '../branch-metadata-file'
 import { namesNoWorkspace, resolveBranchPath } from '../paths/branch'
-import { exactBranchName, isExactBranchForm, parseBranchRef } from '../paths/validation'
+import {
+  exactBranchName,
+  exactBranchSegment,
+  isExactBranchForm,
+  parseBranchRef,
+} from '../paths/validation'
 import { getErrorMessage } from '../utils/error'
 import { filePathExists } from '../utils/fs'
 import { detectHeadBranch, isCanopyInternalPath, stageAllExceptCanopyState } from '../utils/git'
@@ -207,14 +212,19 @@ function refOf(name: string): string {
  * 3. the directory the ref keys to, when it holds a workspace sync built (no branch.json) on that
  *    ref. Two refs can sanitize to one key, so one whose branch.json or HEAD names another branch
  *    is refused.
+ * A `name` read from git HEAD (`byRef`) is a ref, never a short name or key: it resolves in its
+ * exact form and skips step 2, so a local branch never lands in an editor's branch or in another
+ * ref's workspace that shares its key.
  */
 async function resolveSyncWorkspace(
   name: string,
   projectDir: string,
   keys: string[],
+  byRef: boolean,
 ): Promise<SyncWorkspace | null> {
   const config = await loadBranchParamConfig(projectDir)
-  const resolved = await resolveBranchParam(name, config, { basePathOverride: projectDir }).catch(
+  const param = byRef ? exactBranchSegment(name) : name
+  const resolved = await resolveBranchParam(param, config, { basePathOverride: projectDir }).catch(
     (err: unknown) => {
       if (namesNoWorkspace(err)) return null
       throw err
@@ -225,7 +235,7 @@ async function resolveSyncWorkspace(
     return { branchName: resolved.branch.name, branchPath: resolved.branchRoot }
   }
 
-  if (keys.includes(name)) return keyWorkspace(name, projectDir)
+  if (!byRef && keys.includes(name)) return keyWorkspace(name, projectDir)
 
   const ref = refOf(name)
   const branchPath = refKeyPath(ref, projectDir)
@@ -299,6 +309,7 @@ async function selectBranch(
   }
 
   let branchName = options.branch
+  const byRef = !branchName
   if (!branchName) {
     try {
       branchName = await detectCurrentBranch(options.projectDir)
@@ -325,7 +336,7 @@ async function selectBranch(
     return keyWorkspace(result, options.projectDir)
   }
 
-  const existing = await resolveSyncWorkspace(branchName, options.projectDir, branches)
+  const existing = await resolveSyncWorkspace(branchName, options.projectDir, branches, byRef)
   if (existing) return existing
   if (options.autoCreate) return createSyncWorkspace(branchName, options.projectDir)
   const available = branches.length > 0 ? ` Available branches: ${branches.join(', ')}` : ''
