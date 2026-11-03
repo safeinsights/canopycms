@@ -231,6 +231,11 @@ async function resolveSyncWorkspace(
     },
   )
   if (resolved) {
+    // The base and active branch resolve by directory alone, without branch.json's name.
+    const ref = refOf(name)
+    if (resolved.branch.name !== ref && resolved.branchRoot === refKeyPath(ref, projectDir)) {
+      throw holdsAnotherBranch(resolved.branchRoot, resolved.branch.name, ref)
+    }
     await assertOwnRepository(resolved.branchRoot)
     return { branchName: resolved.branch.name, branchPath: resolved.branchRoot }
   }
@@ -239,16 +244,23 @@ async function resolveSyncWorkspace(
 
   const ref = refOf(name)
   const branchPath = refKeyPath(ref, projectDir)
-  if (!(await filePathExists(branchPath))) return null
+  const present = await filePathExists(branchPath).catch((err: unknown) => {
+    if (namesNoWorkspace(err)) throw new SyncError(`"${ref}" cannot name a branch workspace.`)
+    throw err
+  })
+  if (!present) return null
   await assertOwnRepository(branchPath)
   const meta = await readBranchMetadataFile(branchPath)
   const holder = meta ? meta.branch.name : await workspaceHead(branchPath)
-  if (holder !== ref) {
-    throw new SyncError(
-      `Branch workspace "${path.basename(branchPath)}" holds ${holder === null ? 'a detached HEAD' : `branch "${holder}"`}, not "${ref}".`,
-    )
-  }
+  if (holder !== ref) throw holdsAnotherBranch(branchPath, holder, ref)
   return { branchName: ref, branchPath }
+}
+
+/** The refusal for a workspace another ref, sharing `ref`'s key, holds (`holder`; null: detached). */
+function holdsAnotherBranch(branchPath: string, holder: string | null, ref: string): SyncError {
+  return new SyncError(
+    `Branch workspace "${path.basename(branchPath)}" holds ${holder === null ? 'a detached HEAD' : `branch "${holder}"`}, not "${ref}".`,
+  )
 }
 
 /** The workspace directory the runtime keys ref `name` to (`resolveBranchPath`). */

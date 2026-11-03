@@ -1249,6 +1249,24 @@ describe('canopycms sync', () => {
       expect(await readIndex('fix-x')).toContain('On fix/x.')
     })
 
+    it('refuses --branch naming the checked-out ref when another ref sharing its key holds the workspace', async () => {
+      // The active branch resolves by directory alone; sync must not write fix/x's content there.
+      await addWorkspace('fix-x', 'fix-x')
+      await simpleGit({ baseDir: projectDir }).checkoutLocalBranch('fix/x')
+      await editIndex('Should not land.')
+
+      await expect(
+        sync({ projectDir, direction: 'push', branch: 'fix/x', force: true }),
+      ).rejects.toThrow('holds branch "fix-x", not "fix/x"')
+      expect(await readIndex('fix-x')).not.toContain('Should not land.')
+    })
+
+    it('refuses a branch name too long for a workspace directory', async () => {
+      await expect(
+        sync({ projectDir, direction: 'pull', branch: `x/${'a'.repeat(300)}`, force: true }),
+      ).rejects.toThrow('cannot name a branch workspace')
+    })
+
     it('refuses a directory with no git repository of its own, committing nothing in the project', async () => {
       await fs.mkdir(path.join(branchesDir(), 'fix-x'), { recursive: true })
       const projectGit = simpleGit({ baseDir: projectDir })
