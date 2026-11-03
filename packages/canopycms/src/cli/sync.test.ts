@@ -6,6 +6,7 @@ import { simpleGit } from 'simple-git'
 import { sync } from './sync'
 import { mockConsole } from '../test-utils/console-spy'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
+import { buildInitialBranchMetadata } from '../branch-metadata'
 
 // Mock @clack/prompts to avoid interactive prompts in tests
 vi.mock('@clack/prompts', () => ({
@@ -469,7 +470,7 @@ describe('canopycms sync', () => {
           branch: '../../.git',
           force: true,
         }),
-      ).rejects.toThrow('escapes the expected directory')
+      ).rejects.toThrow('cannot name a branch workspace')
     })
   })
 
@@ -611,7 +612,7 @@ describe('canopycms sync', () => {
           branch: '../../.git',
           force: true,
         }),
-      ).rejects.toThrow('escapes the expected directory')
+      ).rejects.toThrow('cannot name a branch workspace')
     })
 
     it('replaces entire content directory (files absent in branch are deleted)', async () => {
@@ -933,7 +934,7 @@ describe('canopycms sync', () => {
           direction: 'abort',
           branch: '../../.git',
         }),
-      ).rejects.toThrow('escapes the expected directory')
+      ).rejects.toThrow('cannot name a branch workspace')
     })
 
     it('offers interactive abort when push encounters merge conflicts', async () => {
@@ -1059,6 +1060,159 @@ describe('canopycms sync', () => {
 
       await sync({ projectDir, direction: 'abort', branch: 'test-branch' })
       expect((await branchGit.status()).conflicted).toEqual([])
+    })
+  })
+
+  describe('a branch named with a slash, as the dev server names its workspace', () => {
+    const branchesDir = () => path.join(projectDir, '.canopy-dev', 'content-branches')
+    const exists = (p: string) =>
+      fs.access(p).then(
+        () => true,
+        () => false,
+      )
+    const readIndex = (key: string) =>
+      fs.readFile(path.join(branchesDir(), key, 'content', 'index.md'), 'utf-8')
+    const editIndex = (text: string) =>
+      fs.writeFile(path.join(projectDir, 'content', 'index.md'), `# Hello\n\n${text}\n`)
+
+    /** A workspace at directory `key` whose git branch is `ref`, with a branch.json naming `name`. */
+    const addWorkspace = async (key: string, ref: string, name: string | null = ref) => {
+      const branchPath = path.join(branchesDir(), key)
+      await simpleGit().clone(path.join(projectDir, '.canopy-dev', 'remote.git'), branchPath, [
+        '--branch',
+        'main',
+        '--single-branch',
+      ])
+      const branchGit = simpleGit({ baseDir: branchPath })
+      await branchGit.addConfig('user.name', 'CMS Bot')
+      await branchGit.addConfig('user.email', 'bot@canopycms.local')
+      await branchGit.checkoutLocalBranch(ref)
+      await fs.appendFile(path.join(branchPath, '.git', 'info', 'exclude'), '.canopy-meta/\n')
+      if (name !== null) {
+        await fs.mkdir(path.join(branchPath, '.canopy-meta'), { recursive: true })
+        await fs.writeFile(
+          path.join(branchPath, '.canopy-meta', 'branch.json'),
+          JSON.stringify(
+            buildInitialBranchMetadata({
+              branch: { name, status: 'editing', access: {}, createdBy: 'canopycms-context' },
+            }),
+          ),
+        )
+      }
+      return branchPath
+    }
+
+    beforeEach(async () => {
+      vi.stubEnv('CANOPYCMS_DEPLOYMENT_NAME', '')
+      projectDir = (await setupTestWorkspace()).projectDir
+    })
+
+    afterEach(() => {
+      vi.unstubAllEnvs()
+    })
+
+    it('pushes the checked-out branch into its sanitized workspace, creating nothing nested', async () => {
+      await simpleGit({ baseDir: projectDir }).checkoutLocalBranch('fix/x')
+      await editIndex('From fix/x.')
+
+      await sync({ projectDir, direction: 'push', force: true })
+
+      expect(await readIndex('fix-x')).toContain('From fix/x.')
+      expect(await exists(path.join(branchesDir(), 'fix'))).toBe(false)
+      const wsGit = simpleGit({ baseDir: path.join(branchesDir(), 'fix-x') })
+      expect((await wsGit.revparse(['--abbrev-ref', 'HEAD'])).trim()).toBe('fix/x')
+    })
+
+    it('pushes into the workspace the dev server already provisioned for the branch', async () => {
+      await addWorkspace('fix-x', 'fix/x')
+      await simpleGit({ baseDir: projectDir }).checkoutLocalBranch('fix/x')
+      await editIndex('Into the served workspace.')
+
+      const result = await sync({ projectDir, direction: 'push', force: true })
+
+      expect(result.pushed).toBeGreaterThan(0)
+      expect(await readIndex('fix-x')).toContain('Into the served workspace.')
+      expect(await exists(path.join(branchesDir(), 'fix'))).toBe(false)
+    })
+
+    it('reuses a workspace sync built on a later push', async () => {
+      await simpleGit({ baseDir: projectDir }).checkoutLocalBranch('fix/x')
+      await editIndex('First.')
+      await sync({ projectDir, direction: 'push', force: true })
+      await editIndex('Second.')
+
+      await sync({ projectDir, direction: 'push', force: true })
+
+      expect(await readIndex('fix-x')).toContain('Second.')
+      expect((await fs.readdir(branchesDir())).sort()).toEqual(['fix-x', 'test-branch'])
+    })
+
+    it('reaches a namespace branch by its full ref, its short name and its workspace key', async () => {
+      await addWorkspace('canopycms-local-spring', 'canopycms/local/spring')
+
+      for (const branch of ['canopycms/local/spring', 'spring', 'canopycms-local-spring']) {
+        await editIndex(`Via ${branch}.`)
+        await sync({ projectDir, direction: 'push', branch, force: true })
+        expect(await readIndex('canopycms-local-spring')).toContain(`Via ${branch}.`)
+      }
+      expect((await fs.readdir(branchesDir())).sort()).toEqual([
+        'canopycms-local-spring',
+        'test-branch',
+      ])
+    })
+
+    it('pulls from and aborts in the sanitized workspace', async () => {
+      const branchPath = await addWorkspace('fix-x', 'fix/x')
+      await fs.writeFile(path.join(branchPath, 'content', 'index.md'), '# Hello\n\nEditor.\n')
+
+      await sync({ projectDir, direction: 'pull', branch: 'fix/x', force: true })
+      expect(await fs.readFile(path.join(projectDir, 'content', 'index.md'), 'utf-8')).toContain(
+        'Editor.',
+      )
+
+      const pMock = await import('@clack/prompts')
+      vi.mocked(pMock.log.info).mockClear()
+      await sync({ projectDir, direction: 'abort', branch: 'fix/x' })
+      expect(pMock.log.info).toHaveBeenCalledWith(expect.stringContaining('not in a merge state'))
+    })
+
+    it('refuses a workspace whose key another branch holds', async () => {
+      await addWorkspace('fix-x', 'fix-x')
+      await editIndex('Should not land.')
+
+      await expect(
+        sync({ projectDir, direction: 'push', branch: 'fix/x', force: true }),
+      ).rejects.toThrow('belongs to branch "fix-x"')
+      expect(await readIndex('fix-x')).not.toContain('Should not land.')
+    })
+
+    it("resolves a short name in the site config's branch namespace", async () => {
+      await fs.writeFile(
+        path.join(projectDir, 'canopycms.config.ts'),
+        "export default { server: { mode: 'dev', branchNamespace: 'team/' } }\n",
+      )
+      await addWorkspace('team-spring', 'team/spring')
+      await editIndex('Via the configured namespace.')
+
+      await sync({ projectDir, direction: 'push', branch: 'spring', force: true })
+
+      expect(await readIndex('team-spring')).toContain('Via the configured namespace.')
+      expect(await exists(path.join(branchesDir(), 'spring'))).toBe(false)
+    })
+
+    it('warns and still resolves a full ref when the site config cannot load', async () => {
+      await fs.writeFile(path.join(projectDir, 'canopycms.config.ts'), 'export default {\n')
+      await addWorkspace('fix-x', 'fix/x')
+      await editIndex('Despite the config.')
+      const pMock = await import('@clack/prompts')
+      vi.mocked(pMock.log.warn).mockClear()
+
+      await sync({ projectDir, direction: 'push', branch: 'fix/x', force: true })
+
+      expect(await readIndex('fix-x')).toContain('Despite the config.')
+      expect(pMock.log.warn).toHaveBeenCalledWith(
+        expect.stringContaining('Could not load canopycms.config.ts'),
+      )
     })
   })
 })

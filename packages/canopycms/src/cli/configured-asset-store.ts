@@ -5,13 +5,13 @@
  */
 
 import path from 'node:path'
-import { createJiti } from 'jiti'
 import { z } from 'zod'
 
 import { createAssetStore } from '../assets/factory'
 import type { AssetStore } from '../assets/types'
 import { mediaSchema } from '../config/schemas/media'
 import { operatingStrategy } from '../operating-mode'
+import { importSiteServerConfig } from './site-config'
 
 const serverConfigSchema = z.object({
   mode: z.enum(['prod', 'dev']),
@@ -24,15 +24,7 @@ const serverConfigSchema = z.object({
  * local store, prod never does.
  */
 export async function loadConfiguredAssetStore(projectDir: string): Promise<AssetStore> {
-  const configPath = path.join(projectDir, 'canopycms.config.ts')
-  const jiti = createJiti(import.meta.url)
-  const mod = (await jiti.import(configPath)) as Record<string, unknown>
-  const configExport = mod.default ?? mod.config ?? mod
-  const server =
-    typeof configExport === 'object' && configExport !== null && 'server' in configExport
-      ? (configExport as { server: unknown }).server
-      : configExport
-
+  const { configPath, server } = await importSiteServerConfig(projectDir)
   const parsed = serverConfigSchema.safeParse(server)
   if (!parsed.success) {
     throw new Error(`Invalid CanopyCMS config at ${configPath}: ${parsed.error.message}`)
