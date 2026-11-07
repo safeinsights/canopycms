@@ -45,6 +45,7 @@ export interface BranchListItem extends Omit<
   | 'review'
   | 'keptOverGitHub'
   | 'lastGitHubTip'
+  | 'gitHubTipAtArchive'
   | 'rewrittenOnGitHub'
   | 'submitUnfinished'
   | 'unpublishedAtMerge'
@@ -281,6 +282,7 @@ export const toBranchListItem = (
     review: _review,
     keptOverGitHub: _kept,
     lastGitHubTip: _tip,
+    gitHubTipAtArchive: _tipAtArchive,
     rewrittenOnGitHub: _rewritten,
     submitUnfinished: _unfinished,
     submitNotQueued,
@@ -877,11 +879,12 @@ export const deleteBranchHandler = async (
   const outcome = await deleteBranchWorkspace(
     branchDeleteOptions(ctx, branchContext, ctx.services.registry),
   )
-  if (outcome.kind === 'busy') {
-    return { ok: false, status: 409, error: `Branch is busy, try again: ${outcome.error}` }
+  if (outcome.kind !== 'deleted') {
+    const detail = outcome.kind === 'busy' ? outcome.error : 'it is already being deleted'
+    return { ok: false, status: 409, error: `Branch is busy, try again: ${detail}` }
   }
 
-  const cleanupWarning = outcome.kind === 'deleted' ? outcome.cleanupWarning : undefined
+  const { cleanupWarning } = outcome
   return {
     ok: true,
     status: 200,

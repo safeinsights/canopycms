@@ -7,6 +7,7 @@ import {
   Anchor,
   Badge,
   Button,
+  CloseButton,
   Group,
   Menu,
   Paper,
@@ -18,6 +19,7 @@ import {
   Collapse,
   Tooltip,
   UnstyledButton,
+  VisuallyHidden,
 } from '@mantine/core'
 import { IconChevronDown, IconChevronRight, IconDots, IconExternalLink } from '@tabler/icons-react'
 import type { OperatingMode } from '../operating-mode'
@@ -529,6 +531,11 @@ const BranchCard: React.FC<BranchCardProps> = ({
               </TooltipDetail>
             )}
           </Group>
+          {b.title && (
+            <Text size="xs" c="dimmed" style={WRAP_ANYWHERE} data-testid={`branch-title-${b.name}`}>
+              {b.title}
+            </Text>
+          )}
           {b.hold && (
             <Text size="xs" maw={480} style={WRAP_ANYWHERE} data-testid={`branch-hold-${b.name}`}>
               {branchHoldMessage(b.hold, holdViewer)}
@@ -719,15 +726,30 @@ const newestFirst = (a: BranchSummary, b: BranchSummary): number =>
   (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '')
 
 /**
- * The list's two parts: the current branch, whatever its status, then live branches newest first;
- * and the other archived branches newest first.
+ * Each branch's place, newest first, kept while the list stays open so a listing arriving in the
+ * background moves no card. A branch that first appears then goes last.
+ */
+const useOpeningOrder = (branches: readonly BranchSummary[]): ReadonlyMap<string, number> => {
+  const [places] = useState(() => new Map<string, number>())
+  for (const { name } of [...branches].sort(newestFirst)) {
+    if (!places.has(name)) places.set(name, places.size)
+  }
+  return places
+}
+
+/**
+ * The list's two parts: the current branch, whatever its status, then live branches in `places`;
+ * and the other archived branches in `places`.
  * @internal Exported for tests.
  */
 export const arrangeBranches = (
   branches: readonly BranchSummary[],
   currentBranchName: string | undefined,
+  places: ReadonlyMap<string, number>,
 ): { live: BranchSummary[]; archived: BranchSummary[] } => {
-  const others = branches.filter((b) => b.name !== currentBranchName).sort(newestFirst)
+  const others = branches
+    .filter((b) => b.name !== currentBranchName)
+    .sort((a, b) => (places.get(a.name) ?? 0) - (places.get(b.name) ?? 0))
   return {
     live: [
       ...branches.filter((b) => b.name === currentBranchName),
@@ -738,12 +760,13 @@ export const arrangeBranches = (
 }
 
 /**
- * Whether `query` appears in the branch's name, title or owner's name, ignoring case.
+ * Whether `query` appears in what the card shows of the branch: its name, title or owner's name,
+ * ignoring case.
  * @internal Exported for tests.
  */
 export const matchesBranchFilter = (branch: BranchSummary, query: string): boolean => {
   const needle = query.trim().toLowerCase()
-  return [branch.name, branch.shortName, branch.title, branch.ownerName].some((text) =>
+  return [displayBranchName(branch), branch.title, branch.ownerName].some((text) =>
     text?.toLowerCase().includes(needle),
   )
 }
@@ -768,6 +791,9 @@ const ArchivedSection: React.FC<{
         <UnstyledButton
           onClick={onToggle}
           aria-expanded={open}
+          px={4}
+          // Inset and content-width, or the ScrollArea clips the focus ring.
+          style={{ alignSelf: 'flex-start', outlineOffset: -2 }}
           data-testid="archived-branches-toggle"
         >
           <Group gap={4} wrap="nowrap">
@@ -873,10 +899,13 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   // Read through this, so a list shrinking past the threshold can't leave a filter no box shows.
   const showFilter = branches.length > BRANCH_FILTER_THRESHOLD
   const query = showFilter ? filter.trim() : ''
+  const places = useOpeningOrder(branches)
   const { live, archived } = arrangeBranches(
     query ? branches.filter((b) => matchesBranchFilter(b, query)) : branches,
     currentBranchName,
+    places,
   )
+  const matchCount = live.length + archived.length
 
   const renderCard = (b: BranchSummary) => {
     // The editor resolves a shadowed outside branch's full name to the namespace branch whose
@@ -1009,11 +1038,24 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
           placeholder="Filter by name, title or owner"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
+          rightSectionPointerEvents="all"
+          rightSection={
+            filter && (
+              <Tooltip label="Clear search" withinPortal>
+                <CloseButton size="sm" aria-label="Clear search" onClick={() => setFilter('')} />
+              </Tooltip>
+            )
+          }
           data-testid="branch-filter-input"
         />
       )}
+      {showFilter && (
+        <VisuallyHidden role="status" data-testid="branch-filter-status">
+          {query && `${matchCount} ${matchCount === 1 ? 'branch matches' : 'branches match'}`}
+        </VisuallyHidden>
+      )}
 
-      <ScrollArea style={{ flex: 1 }} pt="sm" pb="md">
+      <ScrollArea style={{ flex: 1 }} pt={showFilter ? 'sm' : undefined} pb="md">
         {branches.length === 0 ? (
           <Text size="sm" c="dimmed" py="md">
             {!supportsBranching ? 'Branch management is not available.' : 'No branches available.'}
@@ -1031,10 +1073,15 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                 {archived.map(renderCard)}
               </ArchivedSection>
             )}
-            {live.length === 0 && archived.length === 0 && (
-              <Text size="sm" c="dimmed" py="md" role="status">
-                No branches match “{query}”.
-              </Text>
+            {matchCount === 0 && (
+              <Stack gap={4} py="sm" align="flex-start" data-testid="branch-filter-empty">
+                <Text size="sm" c="dimmed">
+                  No branches match “{query}”.
+                </Text>
+                <Button size="compact-sm" variant="subtle" onClick={() => setFilter('')}>
+                  Clear search
+                </Button>
+              </Stack>
             )}
           </Stack>
         )}

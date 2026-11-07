@@ -103,6 +103,7 @@ const branchMetadataShape = {
   }).optional(),
   mergedAt: z.string().optional(),
   archivedAt: z.string().optional(),
+  gitHubTipAtArchive: z.string().optional(),
   rebaseFailure: z
     .object({ message: z.string(), firstAt: z.string(), lastAt: z.string() })
     .optional(),

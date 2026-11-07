@@ -1061,11 +1061,16 @@ function TasksTab({ health }: { health: UseSystemHealthReturn }) {
   )
 }
 
-/** How `lastGitSync.archivedSweep`'s failures read, or nothing when the last one had none. */
-const sweepTrouble = ({ failed = [] }: Partial<ArchivedSweepReport> = {}): string =>
-  failed.length === 0
-    ? ''
-    : ` The last sweep could not delete ${failed.map((f) => f.branch).join(', ')} and tries again next sync.`
+/** What `lastGitSync.archivedSweep` left undone, or nothing when it finished clean. */
+const sweepTrouble = ({ failed = [], warnings = [] }: Partial<ArchivedSweepReport> = {}): string =>
+  [
+    failed.length === 0
+      ? ''
+      : ` The last sweep could not delete ${failed.map((f) => f.branch).join(', ')} and tries again next sync.`,
+    ...warnings.map((warning) => ` ${endSentence(warning)}`),
+  ].join('')
+
+const dayCount = (days: number): string => `${days} ${days === 1 ? 'day' : 'days'}`
 
 /** The deployment's retention, and the admin's own delete by the same rule. */
 function ArchivedBranchesCleanup({ health }: { health: UseSystemHealthReturn }) {
@@ -1079,25 +1084,24 @@ function ArchivedBranchesCleanup({ health }: { health: UseSystemHealthReturn }) 
       ? archivedCutoff(olderThanDays, Date.parse(generatedAt))
       : null
   const candidates = (health.branchHealth?.entries ?? []).filter((e) => !e.isBaseBranch)
-  const dirsMatching = (matches: (branch: BranchMetadata, cutoff: number) => boolean) =>
+  const branchesMatching = (matches: (branch: BranchMetadata, cutoff: number) => boolean) =>
     cutoff === null
       ? []
-      : candidates.filter((e) => e.branch && matches(e.branch, cutoff)).map((e) => e.dirName)
-  const due = dirsMatching(deletableByAge)
-  const old = dirsMatching(archivedBefore)
+      : candidates.flatMap((e) => (e.branch && matches(e.branch, cutoff) ? [e.branch] : []))
+  const due = branchesMatching(deletableByAge)
+  const old = branchesMatching(archivedBefore)
   const heldFor = (hold: AgeDeletionHold) =>
-    candidates
-      .filter((e) => old.includes(e.dirName) && e.branch && ageDeletionHold(e.branch) === hold)
-      .map((e) => e.dirName)
+    old.filter((branch) => ageDeletionHold(branch) === hold).map((branch) => branch.name)
   const notMerged = heldFor('not-merged')
   const unpublished = heldFor('unpublished')
+  const movedOnGitHub = heldFor('moved-on-github')
   const dueLabel = `${due.length} archived ${due.length === 1 ? 'branch' : 'branches'}`
 
   const blockedReason =
     olderThanDays === null
       ? 'Enter a whole number of days.'
       : due.length === 0
-        ? `No merged archived branches are older than ${olderThanDays} ${olderThanDays === 1 ? 'day' : 'days'}.`
+        ? `No merged archived branches are older than ${dayCount(olderThanDays)}. Lower the number of days to include newer ones.${old.length > 0 ? ' Older branches kept from this delete go one at a time, from the Branches drawer.' : ''}`
         : undefined
 
   const handleDeleteClick = () => {
@@ -1111,7 +1115,7 @@ function ArchivedBranchesCleanup({ health }: { health: UseSystemHealthReturn }) 
             cannot be undone.
           </Text>
           <Text size="xs" data-testid="delete-archived-names">
-            {due.join(', ')}
+            {due.map((branch) => branch.name).join(', ')}
           </Text>
           {notMerged.length > 0 && (
             <Text size="xs" data-testid="delete-archived-not-merged">
@@ -1123,22 +1127,34 @@ function ArchivedBranchesCleanup({ health }: { health: UseSystemHealthReturn }) 
               Kept, as they may hold changes that never reached GitHub: {unpublished.join(', ')}.
             </Text>
           )}
+          {movedOnGitHub.length > 0 && (
+            <Text size="xs" data-testid="delete-archived-moved">
+              Kept, as they changed on GitHub after merging: {movedOnGitHub.join(', ')}.
+            </Text>
+          )}
         </Stack>
       ),
       labels: { confirm: 'Delete branches', cancel: 'Cancel' },
       confirmProps: { color: 'red', 'data-testid': 'confirm-delete-archived' },
-      onConfirm: () => health.deleteArchivedBranches(olderThanDays),
+      onConfirm: () =>
+        health.deleteArchivedBranches(
+          olderThanDays,
+          due.map((branch) => branch.name),
+        ),
     })
   }
 
   return (
-    <Stack gap={4} data-testid="archived-branches-cleanup">
+    <Stack gap={4} mb="sm" data-testid="archived-branches-cleanup">
+      <Text size="sm" fw={600}>
+        Archived branches
+      </Text>
       <Group align="flex-end" gap="xs">
         <NumberInput
           label="Delete merged archived branches older than"
-          suffix=" days"
+          suffix={days === 1 ? ' day' : ' days'}
           size="xs"
-          w={240}
+          w={280}
           min={1}
           allowDecimal={false}
           allowNegative={false}
@@ -1146,12 +1162,19 @@ function ArchivedBranchesCleanup({ health }: { health: UseSystemHealthReturn }) 
           onChange={setDays}
           data-testid="archived-days-input"
         />
-        <Tooltip label={blockedReason} disabled={!blockedReason} multiline maw={280}>
+        <Tooltip
+          label={blockedReason}
+          disabled={!blockedReason}
+          multiline
+          maw={280}
+          position="top-end"
+        >
           <Button
             size="xs"
             variant="light"
             color="red"
             onClick={handleDeleteClick}
+            loading={health.deletingArchivedBranches}
             data-disabled={blockedReason ? true : undefined}
             aria-disabled={blockedReason ? true : undefined}
             data-testid="delete-archived-button"
@@ -1387,7 +1410,9 @@ function BranchHealthRow({
               }
             : b.pullRequestHold
     const canMarkMerged =
-      (b.status === 'submitted' || b.status === 'approved') && !!b.pullRequestNumber
+      (b.status === 'submitted' || b.status === 'approved') &&
+      !!b.pullRequestNumber &&
+      b.pullRequestState !== 'closed'
 
     return (
       <Table.Tr>

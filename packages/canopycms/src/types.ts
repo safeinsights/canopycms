@@ -21,9 +21,12 @@ export interface ArchivedSweepReport {
   deleted: string[]
   /** Due, but another process held the branch's provisioning lock; retried next cycle. */
   skippedLocked: string[]
+  /** [REDACT] Served to the admin panel, so `error` is sanitized. */
   failed: { branch: string; error: string }[]
   /** Due, beyond this cycle's cap; the next cycle takes the oldest of them. */
   deferred: number
+  /** Deleted, with something left behind, sanitized as `failed` is ([REDACT]). */
+  warnings: string[]
 }
 export type SyncStatus = 'synced' | 'pending-sync' | 'sync-failed'
 export type ConflictStatus = 'clean' | 'conflicts-detected'
@@ -115,6 +118,11 @@ export interface BranchMetadata {
    * archived before this field existed has only `mergedAt` (branch-archive.ts).
    */
   archivedAt?: string
+  /**
+   * `lastGitHubTip` when a merge archived the branch. A later `lastGitHubTip` means GitHub's branch
+   * took commits after the merge, which deletion by age must not destroy (branch-archive.ts).
+   */
+  gitHubTipAtArchive?: string
   /**
    * Set by the worker when a rebase cycle fails for this branch; cleared on
    * the next successful cycle (and on submit). firstAt survives repeated

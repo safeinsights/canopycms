@@ -66,7 +66,7 @@ export function createMockApiClient(): MockApiClient {
   },
 
   admin: {
-    deleteArchivedBranches: vi.fn().mockResolvedValue(mockSuccess({"deleted":[],"skipped":{"notMerged":[],"unpublished":[]},"failed":[],"remaining":0,"warnings":[]})),
+    deleteArchivedBranches: vi.fn().mockResolvedValue(mockSuccess({"deleted":[],"skipped":{"notMerged":[],"unpublished":[],"movedOnGitHub":[]},"failed":[],"remaining":0,"warnings":[]})),
     branchHealth: vi.fn().mockResolvedValue(mockSuccess({"entries":[],"generatedAt":"2024-01-01T00:00:00.000Z"})),
     purgeBranchDir: vi.fn().mockResolvedValue(mockSuccess({"trashedAs":".trash-example-branch-20240101T000000Z"})),
     repairBranchDir: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"example-branch","status":"editing","access":{},"createdBy":"admin","createdAt":"2024-01-01T00:00:00.000Z","updatedAt":"2024-01-01T00:00:00.000Z"},"archivedAs":"branch.json.corrupt-20240101T000000Z","reset":{"status":"editing","access":{},"createdBy":"admin"}})),
@@ -186,7 +186,7 @@ export function mockSubmitBranchResponse(): SubmitBranchResponse {
 }
 
 export function mockDeleteArchivedBranchesResponse(): DeleteArchivedBranchesResponse {
-  return mockSuccess({"deleted":[],"skipped":{"notMerged":[],"unpublished":[]},"failed":[],"remaining":0,"warnings":[]})
+  return mockSuccess({"deleted":[],"skipped":{"notMerged":[],"unpublished":[],"movedOnGitHub":[]},"failed":[],"remaining":0,"warnings":[]})
 }
 
 export function mockBranchHealthResponse(): BranchHealthResponse {

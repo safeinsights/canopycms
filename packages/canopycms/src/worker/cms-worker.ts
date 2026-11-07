@@ -584,6 +584,7 @@ export class CmsWorker {
         workerVersion: CANOPYCMS_VERSION,
         startedAt: now,
         updatedAt: now,
+        archivedBranchRetentionDays: this.archivedBranchRetentionDays,
       }
     }
     return this.statusReport

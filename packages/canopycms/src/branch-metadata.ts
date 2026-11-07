@@ -373,13 +373,15 @@ const owesSubmit = (branch: BranchMetadata): boolean =>
  */
 export function buildMergedBranchUpdate(
   branch: BranchMetadata,
-  now: Date = new Date(),
+  mergedAt: Date = new Date(),
 ): NonNullable<BranchMetadataUpdate['branch']> {
   return {
     status: 'archived',
     pullRequestState: 'merged',
-    mergedAt: now.toISOString(),
-    archivedAt: now.toISOString(),
+    mergedAt: mergedAt.toISOString(),
+    // Now, not the merge: retention's clock must not start before a worker outage that hid it.
+    archivedAt: new Date().toISOString(),
+    gitHubTipAtArchive: branch.lastGitHubTip,
     // The merge settled every conflict the record named.
     conflictStatus: 'clean',
     conflictFiles: [],
@@ -392,10 +394,12 @@ export function buildMergedBranchUpdate(
  * The metadata update for archiving a branch whose PR closed without merging. Records no merge:
  * `mergedAt` is what tells the two apart, and `pullRequestState` stays `closed`.
  */
-export function buildUnmergedArchiveUpdate(
-  now: Date = new Date(),
-): NonNullable<BranchMetadataUpdate['branch']> {
-  return { status: 'archived', archivedAt: now.toISOString(), submitUnfinished: undefined }
+export function buildUnmergedArchiveUpdate(): NonNullable<BranchMetadataUpdate['branch']> {
+  return {
+    status: 'archived',
+    archivedAt: new Date().toISOString(),
+    submitUnfinished: undefined,
+  }
 }
 
 /** {@link BranchMetadataFileManager.get} as a function. */

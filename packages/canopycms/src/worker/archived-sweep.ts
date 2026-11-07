@@ -8,7 +8,8 @@ import { BranchRegistry } from '../branch-registry'
 import { isSettingsBranchName, sanitizeBranchName } from '../paths/branch-name'
 import { enqueueTask } from '../task-queue/cms-task-queue'
 import type { ArchivedSweepReport, BranchContext, BranchMetadata } from '../types'
-import { getErrorMessage, isNotFoundError } from '../utils/error'
+import { getErrorMessage, isNotFoundError, sanitizeErrorMessage } from '../utils/error'
+import { escapeForLog } from '../utils/escape-text'
 import { workerLog, workerLogError, workerLogWarn } from './log'
 import { holdProvisionedWorkspace, releaseProvisionedWorkspace } from './provisioned-workspace'
 import { sharedRepoGit } from './shared-repo-git'
@@ -23,7 +24,9 @@ export type ArchivedSweepContext = Pick<
   | 'isDraining'
   | 'remoteGitPath'
   | 'sanitizedBaseBranch'
+  | 'shutdownSignal'
   | 'taskDir'
+  | 'taskTimeoutMs'
 >
 
 /**
@@ -56,8 +59,10 @@ async function listDueBranches(ctx: ArchivedSweepContext, cutoff: number): Promi
       )
       branch = metaFile?.branch
     } catch (err: unknown) {
-      // System health lists a corrupt branch.json; what it says can't select a branch here.
-      if (!(err instanceof BranchMetadataCorruptError)) throw err
+      // One unreadable directory costs only itself. System health lists a corrupt branch.json.
+      if (!(err instanceof BranchMetadataCorruptError)) {
+        workerLogWarn(`Skipping ${dirName} in the archived sweep: ${getErrorMessage(err)}`)
+      }
     }
     if (
       branch !== undefined &&
@@ -71,12 +76,25 @@ async function listDueBranches(ctx: ArchivedSweepContext, cutoff: number): Promi
   return due.sort((a, b) => (archivedTime(a.branch) ?? 0) - (archivedTime(b.branch) ?? 0))
 }
 
-/** `git update-ref -d` by expected value, so a head a reused name pushed meanwhile stays. */
+/** `git update-ref -d` by expected value, so a head a push moves after this read stays. */
 async function deleteMirrorHead(ctx: ArchivedSweepContext, branch: string): Promise<void> {
-  const git = sharedRepoGit(ctx.remoteGitPath, 'bare')
+  const git = sharedRepoGit(ctx.remoteGitPath, 'bare', {
+    timeout: { block: ctx.taskTimeoutMs },
+    abort: ctx.shutdownSignal(),
+  })
   const ref = `refs/heads/${branch}`
-  const sha = (await git.raw(['for-each-ref', '--format=%(objectname)', ref])).trim()
-  if (sha !== '') await git.raw(['update-ref', '--no-deref', '-d', ref, sha])
+  const heads = await git.raw([
+    'for-each-ref',
+    '--format=%(refname) %(objectname)',
+    '--end-of-options',
+    ref,
+  ])
+  // for-each-ref also matches `ref/...`.
+  const sha = heads
+    .split('\n')
+    .map((line) => line.split(' '))
+    .find(([refname]) => refname === ref)?.[1]
+  if (sha !== undefined) await git.raw(['update-ref', '--no-deref', '-d', ref, sha])
 }
 
 /** The API's `syncDeleteRemoteBranch`, queued to this worker: the task guards a reused name. */
@@ -93,7 +111,7 @@ async function queueGitHubDelete(
     })
     return undefined
   } catch (err: unknown) {
-    return `Deleting the branch on GitHub could not be queued: ${getErrorMessage(err)}`
+    return `Deleting the branch on GitHub could not be queued: ${sanitizeErrorMessage(getErrorMessage(err))}`
   }
 }
 
@@ -132,6 +150,7 @@ export async function sweepArchivedBranches(
     skippedLocked: [],
     failed: [],
     deferred: Math.max(0, due.length - MAX_ARCHIVED_SWEEP_PER_CYCLE),
+    warnings: [],
   }
   const registry = new BranchRegistry(ctx.contentBranchesPath)
 
@@ -165,20 +184,21 @@ export async function sweepArchivedBranches(
         })
         if (outcome.kind === 'deleted') {
           report.deleted.push(name)
-          workerLog(`  Deleted archived branch ${name}: past the retention period`)
-          if (outcome.cleanupWarning) workerLogWarn(`  ${name}: ${outcome.cleanupWarning}`)
+          workerLog(`  Deleted archived branch ${escapeForLog(name)}: past the retention period`)
+          if (outcome.cleanupWarning) report.warnings.push(`${name}: ${outcome.cleanupWarning}`)
         } else if (outcome.kind === 'busy') {
-          report.failed.push({ branch: name, error: outcome.error })
+          report.failed.push({ branch: name, error: sanitizeErrorMessage(outcome.error) })
         }
       } finally {
         await releaseProvisionedWorkspace(hold.release, dirName)
       }
     } catch (err: unknown) {
-      report.failed.push({ branch: name, error: getErrorMessage(err) })
+      report.failed.push({ branch: name, error: sanitizeErrorMessage(getErrorMessage(err)) })
     }
   }
   for (const { branch, error } of report.failed) {
-    workerLogWarn(`  Could not delete archived branch ${branch}: ${error}`)
+    workerLogWarn(`  Could not delete archived branch ${escapeForLog(branch)}: ${error}`)
   }
+  for (const warning of report.warnings) workerLogWarn(`  ${escapeForLog(warning)}`)
   return report
 }

@@ -8,6 +8,7 @@ import { RESERVED_SETTINGS_BRANCH_PREFIX, sanitizeBranchName } from './paths/bra
 import type { BranchContext, BranchMetadata } from './types'
 import { getErrorMessage, isNotFoundError, sanitizeErrorMessage } from './utils/error'
 import { filePathExists } from './utils/fs'
+import { canopyLogError, canopyLogWarn } from './utils/logger'
 import { withOccFileLock } from './utils/occ-json-write'
 
 export interface DeleteBranchWorkspaceOptions {
@@ -79,7 +80,7 @@ export async function deleteBranchWorkspace(
         await fs.unlink(metadataFile).catch(() => {})
         // [REDACT] Returned to the browser; the console line keeps the path.
         warn(`Failed to remove branch directory: ${sanitizeErrorMessage(getErrorMessage(err))}`)
-        console.error(
+        canopyLogError(
           `CanopyCMS: Failed to move branch directory for ${context.branch.name} aside:`,
           getErrorMessage(err),
         )
@@ -107,7 +108,7 @@ export async function deleteBranchWorkspace(
       warn(
         `Failed to remove the deleted branch's head from the local mirror: ${sanitizeErrorMessage(getErrorMessage(err))}`,
       )
-      console.warn(
+      canopyLogWarn(
         `CanopyCMS: failed to remove deleted branch's mirror head (branch ${context.branch.name}): ${getErrorMessage(err)}`,
       )
     }
@@ -115,7 +116,12 @@ export async function deleteBranchWorkspace(
     if (warning) warn(warning)
   }
 
-  await registry.invalidate()
+  try {
+    await registry.invalidate()
+  } catch (err: unknown) {
+    // The branch is gone; a listing corrects itself at the next bump.
+    warn(`Failed to refresh the branch list: ${sanitizeErrorMessage(getErrorMessage(err))}`)
+  }
   if (deletingPath) await removeLeftoverDir(deletingPath)
 
   return { kind: 'deleted', ...(cleanupWarning && { cleanupWarning }) }

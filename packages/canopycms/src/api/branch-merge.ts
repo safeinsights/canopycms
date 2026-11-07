@@ -69,9 +69,23 @@ const markAsMergedHandler = async (
 
   // Update branch status to 'archived'
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
-  await meta.update((current) =>
-    current === null ? null : { branch: buildMergedBranchUpdate(current.branch) },
+  const saved = await meta.update((current) =>
+    current === null ||
+    current.branch.pullRequestState === 'closed' ||
+    (current.branch.status !== 'submitted' && current.branch.status !== 'approved')
+      ? null
+      : { branch: buildMergedBranchUpdate(current.branch) },
   )
+  // `mergedAt` is what lets a branch be deleted by age (branch-archive.ts), so a branch GitHub
+  // reported closed unmerged never takes one on an admin's word.
+  if (saved === null) {
+    return {
+      ok: false,
+      status: 409,
+      error:
+        'Cannot mark as merged: its pull request was closed without merging, or its status changed. Archive the branch instead.',
+    }
+  }
 
   // Optionally delete remote branch (disabled by default for safety)
   // if (ctx.services.githubService && req.body?.deleteRemoteBranch) {

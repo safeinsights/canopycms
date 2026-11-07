@@ -54,6 +54,13 @@ describe('branch-archive', () => {
     expect(deletableByAge({ status: 'archived', mergedAt: 'not a date' }, cutoff)).toBe(false)
   })
 
+  it('holds a branch GitHub took commits on after the merge back from deletion by age', () => {
+    const merged = { status: 'archived', mergedAt: OLD, gitHubTipAtArchive: 'aaa' } as const
+    expect(deletableByAge({ ...merged, lastGitHubTip: 'aaa' }, cutoff)).toBe(true)
+    expect(ageDeletionHold({ ...merged, lastGitHubTip: 'bbb' })).toBe('moved-on-github')
+    expect(deletableByAge({ ...merged, lastGitHubTip: 'bbb' }, cutoff)).toBe(false)
+  })
+
   it('holds a branch that may have unpublished commits back from deletion by age', () => {
     const held = { status: 'archived', mergedAt: OLD, unpublishedAtMerge: true } as const
     expect(ageDeletionHold(held)).toBe('unpublished')

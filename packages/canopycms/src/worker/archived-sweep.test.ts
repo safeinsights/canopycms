@@ -48,6 +48,8 @@ const ctxWith = (overrides: Partial<ArchivedSweepContext> = {}): ArchivedSweepCo
   taskDir,
   ensureSettingsBranch: () => 'canopycms-settings-prod',
   isDraining: () => false,
+  shutdownSignal: () => new AbortController().signal,
+  taskTimeoutMs: 30_000,
   ...overrides,
 })
 
@@ -182,6 +184,27 @@ describe('sweepArchivedBranches', () => {
     expect(await hasWorkspace('corrupt')).toBe(true)
   })
 
+  it('costs a directory it cannot read only that directory', async () => {
+    await addBranch('expired', expired)
+    await fs.mkdir(path.join(contentBranchesPath, 'not-a-branch'))
+    // A file where the metadata directory belongs fails with something other than ENOENT.
+    await fs.writeFile(path.join(contentBranchesPath, 'not-a-branch', BRANCH_META_DIR), 'x')
+
+    const report = await sweepArchivedBranches(ctxWith(), NOW)
+
+    expect(report?.deleted).toEqual(['expired'])
+  })
+
+  it('keeps a branch GitHub took commits on after the merge', async () => {
+    await addBranch('moved', { ...expired, gitHubTipAtArchive: 'aaa', lastGitHubTip: 'bbb' })
+    await addBranch('settled', { ...expired, gitHubTipAtArchive: 'aaa', lastGitHubTip: 'aaa' })
+
+    const report = await sweepArchivedBranches(ctxWith(), NOW)
+
+    expect(report?.deleted).toEqual(['settled'])
+    expect(await hasWorkspace('moved')).toBe(true)
+  })
+
   it('takes the oldest first, up to the cap, and leaves the rest for later', async () => {
     const count = MAX_ARCHIVED_SWEEP_PER_CYCLE + 2
     for (let i = 0; i < count; i++) {
@@ -282,21 +305,23 @@ describe('sweepArchivedBranches', () => {
         },
       },
     )
-    for (const ref of ['refs/heads/gone/branch', 'refs/heads/stays']) {
+    for (const ref of ['refs/heads/gone/branch', 'refs/heads/stays', 'refs/heads/prefix/inside']) {
       await git('git', ['--git-dir', remoteGitPath, 'update-ref', ref, commit.trim()])
     }
     await addBranch('gone/branch', { ...expired, pullRequestNumber: 7 })
+    await addBranch('prefix', expired)
 
     const report = await sweepArchivedBranches(ctxWith(), NOW)
 
-    expect(report?.deleted).toEqual(['gone/branch'])
+    expect(report?.deleted.sort()).toEqual(['gone/branch', 'prefix'])
+    expect(report?.warnings).toEqual([])
     const { stdout: refs } = await git('git', [
       '--git-dir',
       remoteGitPath,
       'for-each-ref',
       '--format=%(refname)',
     ])
-    expect(refs.trim().split('\n')).toEqual(['refs/heads/stays'])
+    expect(refs.trim().split('\n')).toEqual(['refs/heads/prefix/inside', 'refs/heads/stays'])
     const tasks = await listTasks(taskDir, 'pending')
     expect(tasks).toHaveLength(1)
     expect(tasks[0]).toMatchObject({

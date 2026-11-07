@@ -5,6 +5,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { RESERVED_GROUPS } from '../authorization'
+import { mockConsole } from '../test-utils/console-spy'
 import { buildInitialBranchMetadata, BranchMetadataFileManager } from '../branch-metadata'
 import { BRANCH_META_DIR, BRANCH_META_FILE } from '../branch-metadata-file'
 import type { BranchContext, BranchMetadata } from '../types'
@@ -17,6 +18,19 @@ import {
   deleteArchivedBranchesHandler,
 } from './archived-branches'
 import type { ApiContext, ApiRequest } from './types'
+
+const { throwFor } = vi.hoisted(() => ({ throwFor: new Set<string>() }))
+
+vi.mock('../branch-delete', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../branch-delete')>()
+  return {
+    ...actual,
+    deleteBranchWorkspace: (options: Parameters<typeof actual.deleteBranchWorkspace>[0]) =>
+      throwFor.has(options.context.branch.name)
+        ? Promise.reject(new Error('boom'))
+        : actual.deleteBranchWorkspace(options),
+  }
+})
 
 const DAY = 24 * 60 * 60_000
 const daysAgo = (days: number) => new Date(Date.now() - days * DAY).toISOString()
@@ -125,8 +139,11 @@ describe('POST /:branch/archive', () => {
 })
 
 describe('POST /admin/archived-branches/delete', () => {
-  const run = (ctx: ApiContext, olderThanDays = 30) =>
-    deleteArchivedBranchesHandler(undefined, ctx, admin, { olderThanDays })
+  const run = (
+    ctx: ApiContext,
+    branches = contexts.map((c) => c.branch.name),
+    olderThanDays = 30,
+  ) => deleteArchivedBranchesHandler(undefined, ctx, admin, { olderThanDays, branches })
 
   it('deletes merged, archived branches past the cutoff and nothing else', async () => {
     await addBranch('old-merged', { status: 'archived', mergedAt: daysAgo(40) })
@@ -149,11 +166,22 @@ describe('POST /admin/archived-branches/delete', () => {
       unpublishedAtMerge: true,
     })
 
+    await addBranch('moved', {
+      status: 'archived',
+      mergedAt: daysAgo(40),
+      gitHubTipAtArchive: 'aaa',
+      lastGitHubTip: 'bbb',
+    })
+
     const result = await run(contextFor())
 
     expect(result.data).toMatchObject({
       deleted: [],
-      skipped: { notMerged: ['abandoned'], unpublished: ['unpublished'] },
+      skipped: {
+        notMerged: ['abandoned'],
+        unpublished: ['unpublished'],
+        movedOnGitHub: ['moved'],
+      },
     })
     expect(await hasWorkspace('abandoned')).toBe(true)
     expect(await hasWorkspace('unpublished')).toBe(true)
@@ -165,8 +193,34 @@ describe('POST /admin/archived-branches/delete', () => {
 
     const result = await run(contextFor())
 
-    expect(result.data).toMatchObject({ deleted: [], skipped: { notMerged: [], unpublished: [] } })
+    expect(result.data).toMatchObject({
+      deleted: [],
+      skipped: { notMerged: [], unpublished: [], movedOnGitHub: [] },
+    })
     expect(await hasWorkspace('main')).toBe(true)
+  })
+
+  it('deletes nothing the admin did not confirm', async () => {
+    await addBranch('confirmed', { status: 'archived', mergedAt: daysAgo(40) })
+    await addBranch('aged-since', { status: 'archived', mergedAt: daysAgo(40) })
+
+    const result = await run(contextFor(), ['confirmed'])
+
+    expect(result.data?.deleted).toEqual(['confirmed'])
+    expect(await hasWorkspace('aged-since')).toBe(true)
+  })
+
+  it('costs a throwing delete only that branch', async () => {
+    await addBranch('throws', { status: 'archived', mergedAt: daysAgo(40) })
+    await addBranch('fine', { status: 'archived', mergedAt: daysAgo(40) })
+    const consoleSpy = mockConsole()
+    throwFor.add('throws')
+
+    const result = await run(contextFor())
+
+    throwFor.clear()
+    expect(result.data).toMatchObject({ deleted: ['fine'], failed: ['throws'] })
+    consoleSpy.restore()
   })
 
   it('leaves a branch that changed since the listing, as failed', async () => {
@@ -201,7 +255,10 @@ describe('POST /admin/archived-branches/delete', () => {
     await addBranch('old-merged', { status: 'archived', mergedAt: daysAgo(40) })
 
     const route = ADMIN_ARCHIVED_BRANCH_ROUTES.deleteArchivedBranches
-    const result = await route.handler(contextFor(), editor, { olderThanDays: 1 })
+    const result = await route.handler(contextFor(), editor, {
+      olderThanDays: 1,
+      branches: ['old-merged'],
+    })
 
     expect(result.status).toBe(403)
     expect(await hasWorkspace('old-merged')).toBe(true)
@@ -209,6 +266,6 @@ describe('POST /admin/archived-branches/delete', () => {
 
   it.each([0, -1, 1.5])('refuses olderThanDays %s', (olderThanDays) => {
     const route = ADMIN_ARCHIVED_BRANCH_ROUTES.deleteArchivedBranches
-    expect(route.validate({ body: { olderThanDays } }).ok).toBe(false)
+    expect(route.validate({ body: { olderThanDays, branches: [] } }).ok).toBe(false)
   })
 })

@@ -133,6 +133,18 @@ describe('deleteBranchWorkspace', () => {
     consoleSpy.restore()
   })
 
+  it('still removes the workspace when the registry refresh fails, and says so', async () => {
+    const outcome = await deleteBranchWorkspace(
+      options({ registry: { invalidate: vi.fn().mockRejectedValue(new Error('no marker')) } }),
+    )
+
+    expect(outcome).toEqual({
+      kind: 'deleted',
+      cleanupWarning: expect.stringContaining('no marker'),
+    })
+    expect(await fs.readdir(baseRoot)).toEqual([])
+  })
+
   it('never touches the mirror or GitHub for the base branch', async () => {
     const opts = options({ baseBranch: 'feature/x' })
     await deleteBranchWorkspace(opts)

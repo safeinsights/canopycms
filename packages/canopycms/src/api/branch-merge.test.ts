@@ -190,6 +190,22 @@ describe('branch merge api - markAsMerged', () => {
     expect(result.error).toContain('no pull request')
   })
 
+  it.each([
+    ['closed unmerged', { status: 'submitted', pullRequestState: 'closed' }],
+    ['archived since the guard read it', { status: 'archived' }],
+  ])('refuses a branch %s on disk, stamping no merge', async (_label, onDisk) => {
+    const before = disk.branch
+    disk.branch = onDisk
+    mockSave.mockResolvedValueOnce(null)
+    try {
+      const result = await markAsMergedHandler(ctx, req, { branch: 'feature/x' as BranchName })
+      expect(result).toMatchObject({ ok: false, status: 409 })
+      expect(mockSave).toHaveBeenCalledWith(null)
+    } finally {
+      disk.branch = before
+    }
+  })
+
   it('returns 400 if PR is not merged on GitHub', async () => {
     mockGithubService.getPullRequest = vi.fn().mockResolvedValue({ merged: false })
 

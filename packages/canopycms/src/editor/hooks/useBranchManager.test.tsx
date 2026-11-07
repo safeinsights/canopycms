@@ -1246,7 +1246,9 @@ describe('useBranchManager', () => {
 
     it('asks to archive, and says deletion by age leaves the branch', async () => {
       mockClient.workflow.archive.mockResolvedValueOnce({ ok: true, status: 200 })
-      const { result } = await loaded(mockBranches)
+      const { result } = await loaded(
+        mockBranches.map((b) => (b.name === 'feature' ? { ...b, status: 'editing' } : b)),
+      )
 
       await act(async () => {
         await result.current.handleArchive('feature')
@@ -1257,6 +1259,41 @@ describe('useBranchManager', () => {
       expect(options.labels).toEqual({ confirm: 'Archive branch', cancel: 'Cancel' })
       expect(body).toContain('Archive “feature”?')
       expect(body).toContain('automatic and bulk deletes only take merged branches')
+      expect(body).not.toContain('Withdraw from review')
+    })
+
+    it('offers Withdraw instead only for a branch in review', async () => {
+      mockClient.workflow.archive.mockResolvedValueOnce({ ok: true, status: 200 })
+      const { result } = await loaded(
+        mockBranches.map((b) => (b.name === 'feature' ? { ...b, status: 'submitted' } : b)),
+      )
+
+      await act(async () => {
+        await result.current.handleArchive('feature')
+      })
+
+      const { body } = await lastDialog()
+      expect(body).toContain('use “Withdraw from review” instead')
+    })
+
+    it('reloads the list when an archive is refused, which is what says why', async () => {
+      mockClient.workflow.archive.mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        error: 'Only a closed branch.',
+      })
+      const { result } = await loaded(mockBranches)
+      const listings = mockClient.branches.list.mock.calls.length
+
+      await act(async () => {
+        await result.current.handleArchive('feature')
+      })
+
+      expect(mockClient.branches.list.mock.calls.length).toBeGreaterThan(listings)
+      const { notifications } = await import('@mantine/notifications')
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Only a closed branch.', color: 'yellow' }),
+      )
     })
 
     it('asks to delete the branch in sentence case', async () => {

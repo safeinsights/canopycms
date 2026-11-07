@@ -753,7 +753,6 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     if (needsOperator !== null) {
       report.lastGitSyncError = { message: needsOperator, at: report.lastGitSyncAt }
     }
-    report.archivedBranchRetentionDays = ctx.archivedBranchRetentionDays
     report.lastGitSync = {
       durationMs: Date.now() - cycleStartedAt,
       rebased: rebaseSummary.rebased,

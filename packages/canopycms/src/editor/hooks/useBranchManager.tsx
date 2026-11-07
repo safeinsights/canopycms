@@ -321,6 +321,7 @@ const showDeleteConfirmation = (
 /** Archiving is a one-way status change on a branch whose review is over. */
 const showArchiveConfirmation = (
   branchName: string,
+  inReview: boolean,
   onConfirm: () => Promise<void>,
   onDismiss: () => void,
 ) => {
@@ -328,7 +329,7 @@ const showArchiveConfirmation = (
     title: EDITOR_ACTIONS.archiveBranch,
     children: (
       <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
-        {`Archive “${branchName}”?\n\nIts pull request was closed without merging. This will:\n• Make the branch read-only and move it to “Archived”\n• Keep it marked as not merged\n\nAn archived branch can't go back to editing. This one stays until someone deletes it: automatic and bulk deletes only take merged branches. To keep working on it, use “${EDITOR_ACTIONS.withdrawFromReview}” instead.`}
+        {`Archive “${branchName}”?\n\nIts pull request was closed without merging. This will:\n• Make the branch read-only and move it to “Archived”\n• Keep it marked as not merged\n\nAn archived branch can't go back to editing. This one stays until someone deletes it: automatic and bulk deletes only take merged branches.${inReview ? ` To keep working on it, use “${EDITOR_ACTIONS.withdrawFromReview}” instead.` : ''}`}
       </Text>
     ),
     labels: { confirm: EDITOR_ACTIONS.archiveBranch, cancel: 'Cancel' },
@@ -1105,8 +1106,10 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
       branchNameToArchive,
       () =>
         new Promise<void>((resolve, reject) => {
+          const status = latest.current.branches.find((b) => b.name === branchNameToArchive)?.status
           showArchiveConfirmation(
             shownName(branchNameToArchive),
+            status === 'submitted' || status === 'approved',
             async () => {
               options.setBusy(true)
               try {
@@ -1115,9 +1118,22 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 })
                 if (!result.ok) throw actionError(result, 'Failed to archive branch')
                 notifications.show({ message: 'Branch archived', color: 'blue' })
+                forgetCreatedBranch(branchNameToArchive)
                 await loadBranches()
                 resolve()
               } catch (err) {
+                if (err instanceof RefusedError && err.status === 409) {
+                  // Nothing is lost, and the list says what changed.
+                  notifications.show({
+                    message: err.message,
+                    color: 'yellow',
+                    autoClose: false,
+                    withCloseButton: true,
+                  })
+                  await reloadBranches()
+                  resolve()
+                  return
+                }
                 await reportActionFailure(
                   err,
                   'Failed to archive branch',

@@ -21,7 +21,9 @@ import type {
 } from '../../types'
 import { unsafeAsContentId, unsafeAsPhysicalPath } from '../../paths/test-utils'
 import { formatRelativeTime } from '../relative-time'
+import { ApiTimeoutError } from '../../api/request-deadline'
 import { modals } from '@mantine/modals'
+import { notifications } from '@mantine/notifications'
 
 // Mock the API client module (both useApiClient() and useSystemHealth() must
 // resolve to the same mock client instance) -- same pattern as
@@ -1312,7 +1314,7 @@ describe('SystemHealthPanel', () => {
         mockClient.admin.deleteArchivedBranches.mockResolvedValue(
           mockSuccess({
             deleted: ['old-merged'],
-            skipped: { notMerged: [], unpublished: [] },
+            skipped: { notMerged: [], unpublished: [], movedOnGitHub: [] },
             failed: [],
             remaining: 0,
             warnings: [],
@@ -1330,7 +1332,45 @@ describe('SystemHealthPanel', () => {
         expect(modals.openConfirmModal).toHaveBeenCalledWith(
           expect.objectContaining({ title: 'Delete archived branches' }),
         )
-        expect(mockClient.admin.deleteArchivedBranches).toHaveBeenCalledWith({ olderThanDays: 90 })
+        expect(mockClient.admin.deleteArchivedBranches).toHaveBeenCalledWith({
+          olderThanDays: 90,
+          branches: ['old-merged'],
+        })
+      })
+
+      it('warns and re-reads when the delete gets no answer', async () => {
+        const show = vi.spyOn(notifications, 'show')
+        mockClient.admin.deleteArchivedBranches.mockRejectedValue(
+          new ApiTimeoutError('POST', '/x', 1),
+        )
+        const button = await openBranches([healthy('old-merged', { mergedAt: old })])
+        const scansBefore = mockClient.admin.branchHealth.mock.calls.length
+
+        await userEvent.click(button)
+
+        await waitFor(() =>
+          expect(show).toHaveBeenCalledWith(
+            expect.objectContaining({
+              color: 'yellow',
+              message: expect.stringContaining('may have gone through'),
+            }),
+          ),
+        )
+        await waitFor(() =>
+          expect(mockClient.admin.branchHealth.mock.calls.length).toBeGreaterThan(scansBefore),
+        )
+      })
+
+      it('offers no "Mark merged" for a pull request closed unmerged', async () => {
+        await openBranches([
+          healthy('closed', {
+            status: 'submitted',
+            pullRequestNumber: 5,
+            pullRequestState: 'closed',
+          }),
+        ])
+
+        expect(screen.queryByRole('button', { name: /mark merged/i })).toBeNull()
       })
 
       it('counts neither an unmerged branch nor one holding unpublished changes', async () => {
@@ -1342,6 +1382,16 @@ describe('SystemHealthPanel', () => {
         expect(button.getAttribute('aria-disabled')).toBe('true')
         await userEvent.click(button)
         expect(mockClient.admin.deleteArchivedBranches).not.toHaveBeenCalled()
+      })
+
+      it('names the unit in the singular at 1', async () => {
+        await openBranches([healthy('live', { status: 'editing' })])
+        const input = screen.getByTestId('archived-days-input') as HTMLInputElement
+
+        await userEvent.clear(input)
+        await userEvent.type(input, '1')
+
+        expect(input.value).toBe('1 day')
       })
 
       it('leaves the base branch out of the count', async () => {
@@ -1377,6 +1427,7 @@ describe('SystemHealthPanel', () => {
             skippedLocked: [],
             failed: [{ branch: 'stuck', error: 'busy' }],
             deferred: 0,
+            warnings: ['stuck: could not reach GitHub'],
           },
         }
         await openBranches([healthy('live', { status: 'editing' })], {
@@ -1385,6 +1436,9 @@ describe('SystemHealthPanel', () => {
         })
         expect((await screen.findByTestId('archived-retention-note')).textContent).toContain(
           'could not delete stuck',
+        )
+        expect(screen.getByTestId('archived-retention-note').textContent).toContain(
+          'stuck: could not reach GitHub.',
         )
       })
     })

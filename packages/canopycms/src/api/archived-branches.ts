@@ -13,6 +13,7 @@ import { clientOperatingStrategy, operatingStrategy } from '../operating-mode'
 import { isSettingsBranchName } from '../paths'
 import { getBranchProtection } from '../authorization'
 import type { BranchContext } from '../types'
+import { getErrorMessage } from '../utils/error'
 import { branchDeleteOptions } from './branch'
 import type { BranchMergeResponse } from './branch-merge'
 import { defineEndpoint } from './route-builder'
@@ -76,18 +77,21 @@ export const DELETE_ARCHIVED_BUDGET_MS = 25_000
 
 const deleteArchivedBranchesBodySchema = z.object({
   olderThanDays: z.number().int().min(1),
+  branches: z.array(z.string()),
 })
 
 export interface DeleteArchivedBranchesBody {
   olderThanDays: number
+  /** The full names the admin confirmed. Nothing outside them is deleted. */
+  branches: string[]
 }
 
 interface DeleteArchivedBranchesData {
   /** Full names of the branches deleted. */
   deleted: string[]
   /** Old enough, but left for a person to delete, by reason (`ageDeletionHold`). */
-  skipped: { notMerged: string[]; unpublished: string[] }
-  /** Old enough, but not deleted: busy, or changed since they were listed. */
+  skipped: { notMerged: string[]; unpublished: string[]; movedOnGitHub: string[] }
+  /** Old enough, but not deleted: busy, gone, or changed since they were listed. */
   failed: string[]
   /** Not reached before the time budget ran out; asking again continues. */
   remaining: number
@@ -126,13 +130,20 @@ export const deleteArchivedBranchesHandler = async (
       !isSettingsBranchName(branch.name, settingsBranch) &&
       !getBranchProtection(config, branch.name, branch.baseBranch).isProtected,
   )
-  const due = old.filter(({ branch }) => deletableByAge(branch, cutoff))
+  const confirmed = new Set(body.branches)
+  const due = old.filter(
+    ({ branch }) => deletableByAge(branch, cutoff) && confirmed.has(branch.name),
+  )
   const heldFor = (hold: AgeDeletionHold) =>
     old.filter(({ branch }) => ageDeletionHold(branch) === hold).map(({ branch }) => branch.name)
 
   const data: DeleteArchivedBranchesData = {
     deleted: [],
-    skipped: { notMerged: heldFor('not-merged'), unpublished: heldFor('unpublished') },
+    skipped: {
+      notMerged: heldFor('not-merged'),
+      unpublished: heldFor('unpublished'),
+      movedOnGitHub: heldFor('moved-on-github'),
+    },
     failed: [],
     remaining: 0,
     warnings: [],
@@ -143,14 +154,19 @@ export const deleteArchivedBranchesHandler = async (
       break
     }
     const name = context.branch.name
-    const outcome = await deleteBranchWorkspace({
-      ...branchDeleteOptions(ctx, context, registry),
-      stillWanted: (current) => current.name === name && deletableByAge(current, cutoff),
-    })
-    if (outcome.kind === 'deleted') {
-      data.deleted.push(name)
-      if (outcome.cleanupWarning) data.warnings.push(`${name}: ${outcome.cleanupWarning}`)
-    } else {
+    try {
+      const outcome = await deleteBranchWorkspace({
+        ...branchDeleteOptions(ctx, context, registry),
+        stillWanted: (current) => current.name === name && deletableByAge(current, cutoff),
+      })
+      if (outcome.kind === 'deleted') {
+        data.deleted.push(name)
+        if (outcome.cleanupWarning) data.warnings.push(`${name}: ${outcome.cleanupWarning}`)
+      } else {
+        data.failed.push(name)
+      }
+    } catch (err: unknown) {
+      console.error(`CanopyCMS: Failed to delete archived branch ${name}:`, getErrorMessage(err))
       data.failed.push(name)
     }
   }
@@ -174,7 +190,7 @@ const deleteArchivedBranches = defineEndpoint({
   response: {} as DeleteArchivedBranchesResponse,
   defaultMockData: {
     deleted: [],
-    skipped: { notMerged: [], unpublished: [] },
+    skipped: { notMerged: [], unpublished: [], movedOnGitHub: [] },
     failed: [],
     remaining: 0,
     warnings: [],

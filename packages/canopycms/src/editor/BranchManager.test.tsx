@@ -2040,6 +2040,7 @@ describe('BranchManager', () => {
 })
 
 describe('the list order and the Archived section', () => {
+  const old = '2026-01-01T00:00:00.000Z'
   const live = (name: string, updatedAt: string): BranchSummary => ({
     name,
     status: 'editing',
@@ -2058,27 +2059,61 @@ describe('the list order and the Archived section', () => {
     live('newer', '2026-04-01T00:00:00.000Z'),
     live('current', '2026-01-15T00:00:00.000Z'),
   ]
+  const opening = new Map(
+    ['newer', 'new-archived', 'older', 'current', 'old-archived'].map((name, i) => [name, i]),
+  )
   const cardNames = () =>
     screen
       .getAllByTestId(/^branch-list-item-/)
       .map((card) => card.getAttribute('data-testid')?.replace('branch-list-item-', ''))
+  const inProviders = (list: BranchSummary[], current?: string) => (
+    <SWRConfig value={{ provider: () => new Map() }}>
+      <CanopyCMSProvider>
+        <BranchManager branches={list} mode="prod" currentBranchName={current} />
+      </CanopyCMSProvider>
+    </SWRConfig>
+  )
+
+  it('moves no card when a listing arrives while it is open, and adds a new branch last', () => {
+    const { rerender } = render(inProviders(branches, 'current'))
+    expect(cardNames()).toEqual(['current', 'newer', 'older'])
+
+    rerender(
+      inProviders(
+        [
+          ...branches.map((b) =>
+            b.name === 'older' ? { ...b, updatedAt: '2026-09-01T00:00:00.000Z' } : b,
+          ),
+          live('brand-new', '2026-09-02T00:00:00.000Z'),
+        ],
+        'current',
+      ),
+    )
+
+    expect(cardNames()).toEqual(['current', 'newer', 'older', 'brand-new'])
+  })
+
+  it('shows the title it searches on the card', () => {
+    render(inProviders([{ ...live('plain', old), title: 'Spring campaign' }]))
+    expect(screen.getByTestId('branch-title-plain').textContent).toBe('Spring campaign')
+  })
 
   it('puts the current branch first, then live branches newest first, archived last', () => {
-    expect(arrangeBranches(branches, 'current')).toEqual({
+    expect(arrangeBranches(branches, 'current', opening)).toEqual({
       live: [branches[4], branches[3], branches[1]],
       archived: [branches[2], branches[0]],
     })
   })
 
   it('keeps an archived current branch first, outside the section', () => {
-    const { live: first, archived: rest } = arrangeBranches(branches, 'new-archived')
+    const { live: first, archived: rest } = arrangeBranches(branches, 'new-archived', opening)
     expect(first[0].name).toBe('new-archived')
     expect(rest.map((b) => b.name)).toEqual(['old-archived'])
   })
 
   it('does not reorder the list it is given', () => {
     const given = [...branches]
-    arrangeBranches(given, 'current')
+    arrangeBranches(given, 'current', opening)
     expect(given).toEqual(branches)
   })
 
@@ -2140,11 +2175,12 @@ describe('the list order and the Archived section', () => {
         ownerName: 'Pat Example',
         status: 'editing',
       }
-      expect(matchesBranchFilter(branch, 'CANOPYCMS/PROD')).toBe(true)
-      expect(matchesBranchFilter(branch, 'Spring')).toBe(true)
+      expect(matchesBranchFilter(branch, 'SPRING')).toBe(true)
       expect(matchesBranchFilter(branch, 'hero')).toBe(true)
       expect(matchesBranchFilter(branch, ' pat ')).toBe(true)
       expect(matchesBranchFilter(branch, 'nothing')).toBe(false)
+      // The namespace is on every card's full name and none of its text.
+      expect(matchesBranchFilter(branch, 'prod')).toBe(false)
     })
 
     it('narrows the list, and shows a match inside Archived with the section open', async () => {
@@ -2165,7 +2201,26 @@ describe('the list order and the Archived section', () => {
       await userEvent.type(screen.getByTestId('branch-filter-input'), 'zzz')
 
       expect(screen.queryByTestId(/^branch-list-item-/)).toBeNull()
-      expect(screen.getByRole('status').textContent).toBe('No branches match “zzz”.')
+      expect(screen.getByTestId('branch-filter-empty').textContent).toContain(
+        'No branches match “zzz”.',
+      )
+      expect(screen.getByTestId('branch-filter-status').textContent).toBe('0 branches match')
+
+      await userEvent.click(within(screen.getByTestId('branch-filter-empty')).getByRole('button'))
+
+      expect(cardNames()).toHaveLength(11)
+      expect(screen.getByTestId('branch-filter-status').textContent).toBe('')
+    })
+
+    it('clears from the box too', async () => {
+      renderBranchManager({ branches: many(11), mode: 'prod' })
+      expect(screen.queryByRole('button', { name: 'Clear search' })).toBeNull()
+
+      await userEvent.type(screen.getByTestId('branch-filter-input'), 'branch-1')
+      expect(screen.getByTestId('branch-filter-status').textContent).toBe('2 branches match')
+      await userEvent.click(screen.getByRole('button', { name: 'Clear search' }))
+
+      expect(cardNames()).toHaveLength(11)
     })
 
     it('stops filtering once the list shrinks below the threshold', async () => {

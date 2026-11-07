@@ -342,6 +342,7 @@ const logged = {
   onDelete: (name: string) => console.log(`Delete ${name}`),
   onApprove: (name: string) => console.log(`Approve ${name}`),
   onRequestChanges: (name: string) => console.log(`Request changes on ${name}`),
+  onArchive: (name: string) => console.log(`Archive ${name}`),
 }
 
 /**
@@ -369,6 +370,8 @@ export const ManyBranchesWithArchived: Story = {
       ...reviewBranches,
       ...Array.from({ length: 8 }, (_, i) => ({
         name: `feature/update-${i + 1}`,
+        title: `Update ${i + 1}`,
+        ownerName: 'Bob',
         status: 'editing',
         updatedAt: ago((i + 2) * DAY),
         createdBy: 'bob',
