@@ -24,14 +24,21 @@ const writeMetadata = async (root: string, status: BranchMetadata['status']) => 
   )
 }
 
+const remote = (
+  overrides: Partial<NonNullable<DeleteBranchWorkspaceOptions['remoteCopies']>> = {},
+) => ({
+  baseBranch: 'main',
+  deleteMirrorHead: vi.fn().mockResolvedValue(undefined),
+  deleteOnGitHub: vi.fn().mockResolvedValue(undefined),
+  ...overrides,
+})
+
 const options = (
   overrides: Partial<DeleteBranchWorkspaceOptions> = {},
 ): DeleteBranchWorkspaceOptions => ({
   context: { baseRoot, branchRoot, branch: branch() },
-  baseBranch: 'main',
   registry: { invalidate: vi.fn().mockResolvedValue(undefined) },
-  deleteMirrorHead: vi.fn().mockResolvedValue(undefined),
-  deleteOnGitHub: vi.fn().mockResolvedValue(undefined),
+  remoteCopies: remote(),
   ...overrides,
 })
 
@@ -60,8 +67,8 @@ describe('deleteBranchWorkspace', () => {
 
     expect(outcome).toEqual({ kind: 'deleted' })
     expect(await fs.readdir(baseRoot)).toEqual([])
-    expect(opts.deleteMirrorHead).toHaveBeenCalledOnce()
-    expect(opts.deleteOnGitHub).toHaveBeenCalledOnce()
+    expect(opts.remoteCopies?.deleteMirrorHead).toHaveBeenCalledOnce()
+    expect(opts.remoteCopies?.deleteOnGitHub).toHaveBeenCalledOnce()
     expect(opts.registry.invalidate).toHaveBeenCalledOnce()
   })
 
@@ -92,8 +99,8 @@ describe('deleteBranchWorkspace', () => {
     expect(outcome).toEqual({ kind: 'kept' })
     expect(stillWanted).toHaveBeenCalledWith(expect.objectContaining({ status: 'editing' }))
     expect(await exists(path.join(branchRoot, BRANCH_META_DIR, BRANCH_META_FILE))).toBe(true)
-    expect(opts.deleteMirrorHead).not.toHaveBeenCalled()
-    expect(opts.deleteOnGitHub).not.toHaveBeenCalled()
+    expect(opts.remoteCopies?.deleteMirrorHead).not.toHaveBeenCalled()
+    expect(opts.remoteCopies?.deleteOnGitHub).not.toHaveBeenCalled()
     expect(opts.registry.invalidate).not.toHaveBeenCalled()
   })
 
@@ -102,7 +109,7 @@ describe('deleteBranchWorkspace', () => {
     const opts = options({ stillWanted: () => true })
 
     expect(await deleteBranchWorkspace(opts)).toEqual({ kind: 'kept' })
-    expect(opts.deleteOnGitHub).not.toHaveBeenCalled()
+    expect(opts.remoteCopies?.deleteOnGitHub).not.toHaveBeenCalled()
   })
 
   it('reads an unreadable branch.json as busy and leaves the workspace', async () => {
@@ -118,8 +125,10 @@ describe('deleteBranchWorkspace', () => {
     const consoleSpy = mockConsole()
     const outcome = await deleteBranchWorkspace(
       options({
-        deleteMirrorHead: vi.fn().mockRejectedValue(new Error('mirror down')),
-        deleteOnGitHub: vi.fn().mockResolvedValue('Could not queue it'),
+        remoteCopies: remote({
+          deleteMirrorHead: vi.fn().mockRejectedValue(new Error('mirror down')),
+          deleteOnGitHub: vi.fn().mockResolvedValue('Could not queue it'),
+        }),
       }),
     )
 
@@ -146,10 +155,17 @@ describe('deleteBranchWorkspace', () => {
   })
 
   it('never touches the mirror or GitHub for the base branch', async () => {
-    const opts = options({ baseBranch: 'feature/x' })
+    const opts = options({ remoteCopies: remote({ baseBranch: 'feature/x' }) })
     await deleteBranchWorkspace(opts)
 
-    expect(opts.deleteMirrorHead).not.toHaveBeenCalled()
-    expect(opts.deleteOnGitHub).not.toHaveBeenCalled()
+    expect(opts.remoteCopies?.deleteMirrorHead).not.toHaveBeenCalled()
+    expect(opts.remoteCopies?.deleteOnGitHub).not.toHaveBeenCalled()
+  })
+
+  it('takes only the workspace when given no remote copies', async () => {
+    const outcome = await deleteBranchWorkspace(options({ remoteCopies: undefined }))
+
+    expect(outcome).toEqual({ kind: 'deleted' })
+    expect(await fs.readdir(baseRoot)).toEqual([])
   })
 })

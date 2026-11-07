@@ -1418,6 +1418,15 @@ describe('SystemHealthPanel', () => {
         expect(screen.queryByTestId('archived-retention-note')).toBeNull()
       })
 
+      it('says nothing of retention on a record with no sync, as a failed boot leaves', async () => {
+        const status = makeStatusWithSync()
+        await openBranches([healthy('live', { status: 'editing' })], {
+          ...status,
+          workerStatus: { ...status.workerStatus!, lastGitSync: undefined },
+        })
+        expect(screen.queryByTestId('archived-retention-note')).toBeNull()
+      })
+
       it('names a branch the last sweep could not delete', async () => {
         const status = makeStatusWithSync()
         const lastGitSync = {

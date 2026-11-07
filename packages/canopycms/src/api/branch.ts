@@ -45,7 +45,6 @@ export interface BranchListItem extends Omit<
   | 'review'
   | 'keptOverGitHub'
   | 'lastGitHubTip'
-  | 'gitHubTipAtArchive'
   | 'rewrittenOnGitHub'
   | 'submitUnfinished'
   | 'unpublishedAtMerge'
@@ -282,7 +281,6 @@ export const toBranchListItem = (
     review: _review,
     keptOverGitHub: _kept,
     lastGitHubTip: _tip,
-    gitHubTipAtArchive: _tipAtArchive,
     rewrittenOnGitHub: _rewritten,
     submitUnfinished: _unfinished,
     submitNotQueued,
@@ -876,9 +874,11 @@ export const deleteBranchHandler = async (
     }
   }
 
-  const outcome = await deleteBranchWorkspace(
-    branchDeleteOptions(ctx, branchContext, ctx.services.registry),
-  )
+  const outcome = await deleteBranchWorkspace({
+    context: branchContext,
+    registry: ctx.services.registry,
+    remoteCopies: remoteCopiesOf(ctx, branchContext),
+  })
   if (outcome.kind !== 'deleted') {
     const detail = outcome.kind === 'busy' ? outcome.error : 'it is already being deleted'
     return { ok: false, status: 409, error: `Branch is busy, try again: ${detail}` }
@@ -893,7 +893,7 @@ export const deleteBranchHandler = async (
 }
 
 /**
- * What every API path's delete shares. The mirror's head goes too: the sync loop's
+ * A person's delete also takes the branch off GitHub and the mirror: the sync loop's
  * reconcileTrackedBranches removes a head only once GitHub no longer has its branch, so while
  * GitHub does, this is the path that removes it. Without it the head outlives the branch, and
  * reusing the name after the GitHub side is gone has the reused branch's first publish rejected
@@ -903,14 +903,11 @@ export const deleteBranchHandler = async (
  * `branchContext` was read before the delete, so it still carries the PR number GitHub's delete
  * gates on.
  */
-export const branchDeleteOptions = (
+const remoteCopiesOf = (
   ctx: ApiContext,
   branchContext: BranchContext,
-  registry: NonNullable<ApiContext['services']['registry']>,
-): DeleteBranchWorkspaceOptions => ({
-  context: branchContext,
+): DeleteBranchWorkspaceOptions['remoteCopies'] => ({
   baseBranch: branchContext.branch.baseBranch ?? baseBranchOf(ctx.services.config),
-  registry,
   deleteMirrorHead: async () => {
     const mirrorPath = resolveReadOnlyMirrorPath(ctx, operatingStrategy(ctx.services.config.mode))
     if (mirrorPath && !isNetworkRemoteUrl(mirrorPath) && (await filePathExists(mirrorPath))) {

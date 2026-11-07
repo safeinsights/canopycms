@@ -6,27 +6,20 @@ import { deleteBranchWorkspace } from '../branch-delete'
 import { BranchMetadataCorruptError, BranchMetadataFileManager } from '../branch-metadata'
 import { BranchRegistry } from '../branch-registry'
 import { isSettingsBranchName, sanitizeBranchName } from '../paths/branch-name'
-import { enqueueTask } from '../task-queue/cms-task-queue'
-import type { ArchivedSweepReport, BranchContext, BranchMetadata } from '../types'
+import type { ArchivedSweepReport, BranchMetadata } from '../types'
 import { getErrorMessage, isNotFoundError, sanitizeErrorMessage } from '../utils/error'
 import { escapeForLog } from '../utils/escape-text'
 import { workerLog, workerLogError, workerLogWarn } from './log'
 import { holdProvisionedWorkspace, releaseProvisionedWorkspace } from './provisioned-workspace'
-import { sharedRepoGit } from './shared-repo-git'
 import type { WorkerContext } from './worker-context'
 
 export type ArchivedSweepContext = Pick<
   WorkerContext,
   | 'archivedBranchRetentionDays'
-  | 'baseBranch'
   | 'contentBranchesPath'
   | 'ensureSettingsBranch'
   | 'isDraining'
-  | 'remoteGitPath'
   | 'sanitizedBaseBranch'
-  | 'shutdownSignal'
-  | 'taskDir'
-  | 'taskTimeoutMs'
 >
 
 /**
@@ -76,56 +69,18 @@ async function listDueBranches(ctx: ArchivedSweepContext, cutoff: number): Promi
   return due.sort((a, b) => (archivedTime(a.branch) ?? 0) - (archivedTime(b.branch) ?? 0))
 }
 
-/** `git update-ref -d` by expected value, so a head a push moves after this read stays. */
-async function deleteMirrorHead(ctx: ArchivedSweepContext, branch: string): Promise<void> {
-  const git = sharedRepoGit(ctx.remoteGitPath, 'bare', {
-    timeout: { block: ctx.taskTimeoutMs },
-    abort: ctx.shutdownSignal(),
-  })
-  const ref = `refs/heads/${branch}`
-  const heads = await git.raw([
-    'for-each-ref',
-    '--format=%(refname) %(objectname)',
-    '--end-of-options',
-    ref,
-  ])
-  // for-each-ref also matches `ref/...`.
-  const sha = heads
-    .split('\n')
-    .map((line) => line.split(' '))
-    .find(([refname]) => refname === ref)?.[1]
-  if (sha !== undefined) await git.raw(['update-ref', '--no-deref', '-d', ref, sha])
-}
-
-/** The API's `syncDeleteRemoteBranch`, queued to this worker: the task guards a reused name. */
-async function queueGitHubDelete(
-  ctx: ArchivedSweepContext,
-  branch: BranchMetadata,
-): Promise<string | undefined> {
-  const { name, pullRequestNumber, pushedToGitHubAt } = branch
-  if (!pullRequestNumber && !pushedToGitHubAt) return undefined
-  try {
-    await enqueueTask(ctx.taskDir, {
-      action: 'delete-remote-branch',
-      payload: { branch: name, pullRequestNumber, pushedToGitHubAt },
-    })
-    return undefined
-  } catch (err: unknown) {
-    return `Deleting the branch on GitHub could not be queued: ${sanitizeErrorMessage(getErrorMessage(err))}`
-  }
-}
-
 /**
  * Delete merged, archived branches past `archivedBranchRetentionDays`, oldest first, through the
  * one delete path (branch-delete.ts). Off unless the deployment set that.
  *
- * Each branch is held by its provisioning lock, zero-retry as everywhere in the sync loop, across
- * the rename and the mirror head's delete, so a branch recreated under the name cannot land between
- * them. The selection is decided again under the lock the delete takes, from a fresh read.
+ * Each branch is held by its provisioning lock, zero-retry as everywhere in the sync loop, and the
+ * selection is decided again under the lock the delete takes, from a fresh read.
+ *
+ * Takes the editor's copy only: `remoteCopies` in branch-delete.ts says why, and reconcile prunes
+ * a head no workspace holds once GitHub drops it (stale-mirror.ts).
  *
  * Never throws, and one branch's failure costs only that branch, which the next cycle retries. A
- * kill past the rename leaves a `.deleting-*` directory `sweepProvisioningLeftovers` clears, a
- * mirror head the name's next create clears, and at worst a GitHub branch.
+ * kill past the rename leaves a `.deleting-*` directory `sweepProvisioningLeftovers` clears.
  */
 export async function sweepArchivedBranches(
   ctx: ArchivedSweepContext,
@@ -169,17 +124,13 @@ export async function sweepArchivedBranches(
           report.skippedLocked.push(name)
           continue
         }
-        const context: BranchContext = {
-          baseRoot: ctx.contentBranchesPath,
-          branchRoot: path.join(ctx.contentBranchesPath, dirName),
-          branch,
-        }
         const outcome = await deleteBranchWorkspace({
-          context,
-          baseBranch: branch.baseBranch ?? ctx.baseBranch,
+          context: {
+            baseRoot: ctx.contentBranchesPath,
+            branchRoot: path.join(ctx.contentBranchesPath, dirName),
+            branch,
+          },
           registry,
-          deleteMirrorHead: () => deleteMirrorHead(ctx, name),
-          deleteOnGitHub: () => queueGitHubDelete(ctx, branch),
           stillWanted: (current) => current.name === name && deletableByAge(current, cutoff),
         })
         if (outcome.kind === 'deleted') {

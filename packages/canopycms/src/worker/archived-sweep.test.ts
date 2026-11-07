@@ -41,15 +41,10 @@ let consoleSpy: MockConsole
 
 const ctxWith = (overrides: Partial<ArchivedSweepContext> = {}): ArchivedSweepContext => ({
   archivedBranchRetentionDays: 30,
-  baseBranch: 'main',
   sanitizedBaseBranch: sanitizeBranchName('main'),
   contentBranchesPath,
-  remoteGitPath,
-  taskDir,
   ensureSettingsBranch: () => 'canopycms-settings-prod',
   isDraining: () => false,
-  shutdownSignal: () => new AbortController().signal,
-  taskTimeoutMs: 30_000,
   ...overrides,
 })
 
@@ -195,16 +190,6 @@ describe('sweepArchivedBranches', () => {
     expect(report?.deleted).toEqual(['expired'])
   })
 
-  it('keeps a branch GitHub took commits on after the merge', async () => {
-    await addBranch('moved', { ...expired, gitHubTipAtArchive: 'aaa', lastGitHubTip: 'bbb' })
-    await addBranch('settled', { ...expired, gitHubTipAtArchive: 'aaa', lastGitHubTip: 'aaa' })
-
-    const report = await sweepArchivedBranches(ctxWith(), NOW)
-
-    expect(report?.deleted).toEqual(['settled'])
-    expect(await hasWorkspace('moved')).toBe(true)
-  })
-
   it('takes the oldest first, up to the cap, and leaves the rest for later', async () => {
     const count = MAX_ARCHIVED_SWEEP_PER_CYCLE + 2
     for (let i = 0; i < count; i++) {
@@ -282,7 +267,7 @@ describe('sweepArchivedBranches', () => {
     expect(await hasWorkspace('changing')).toBe(true)
   })
 
-  it('removes the mirror head and queues the GitHub delete with what guards a reused name', async () => {
+  it('leaves the remote.git head alone and queues no GitHub delete, merged or not', async () => {
     const { stdout: tree } = await git('git', [
       '--git-dir',
       remoteGitPath,
@@ -305,36 +290,24 @@ describe('sweepArchivedBranches', () => {
         },
       },
     )
-    for (const ref of ['refs/heads/gone/branch', 'refs/heads/stays', 'refs/heads/prefix/inside']) {
-      await git('git', ['--git-dir', remoteGitPath, 'update-ref', ref, commit.trim()])
-    }
-    await addBranch('gone/branch', { ...expired, pullRequestNumber: 7 })
-    await addBranch('prefix', expired)
+    const ref = 'refs/heads/gone/branch'
+    await git('git', ['--git-dir', remoteGitPath, 'update-ref', ref, commit.trim()])
+    await addBranch('gone/branch', {
+      ...expired,
+      pullRequestNumber: 7,
+      pushedToGitHubAt: daysAgo(40),
+    })
 
     const report = await sweepArchivedBranches(ctxWith(), NOW)
 
-    expect(report?.deleted.sort()).toEqual(['gone/branch', 'prefix'])
-    expect(report?.warnings).toEqual([])
+    expect(report?.deleted).toEqual(['gone/branch'])
     const { stdout: refs } = await git('git', [
       '--git-dir',
       remoteGitPath,
       'for-each-ref',
       '--format=%(refname)',
     ])
-    expect(refs.trim().split('\n')).toEqual(['refs/heads/prefix/inside', 'refs/heads/stays'])
-    const tasks = await listTasks(taskDir, 'pending')
-    expect(tasks).toHaveLength(1)
-    expect(tasks[0]).toMatchObject({
-      action: 'delete-remote-branch',
-      payload: { branch: 'gone/branch', pullRequestNumber: 7 },
-    })
-  })
-
-  it('queues nothing for a branch GitHub never saw', async () => {
-    await addBranch('local-only', expired)
-
-    await sweepArchivedBranches(ctxWith(), NOW)
-
+    expect(refs.trim()).toBe(ref)
     expect(await listTasks(taskDir, 'pending')).toEqual([])
   })
 })

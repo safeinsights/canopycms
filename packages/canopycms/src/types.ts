@@ -119,11 +119,6 @@ export interface BranchMetadata {
    */
   archivedAt?: string
   /**
-   * `lastGitHubTip` when a merge archived the branch. A later `lastGitHubTip` means GitHub's branch
-   * took commits after the merge, which deletion by age must not destroy (branch-archive.ts).
-   */
-  gitHubTipAtArchive?: string
-  /**
    * Set by the worker when a rebase cycle fails for this branch; cleared on
    * the next successful cycle (and on submit). firstAt survives repeated
    * failures with the same message so the panel can show "failing since".

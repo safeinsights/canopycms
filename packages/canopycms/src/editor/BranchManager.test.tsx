@@ -2221,6 +2221,7 @@ describe('the list order and the Archived section', () => {
       await userEvent.click(screen.getByRole('button', { name: 'Clear search' }))
 
       expect(cardNames()).toHaveLength(11)
+      expect(document.activeElement).toBe(screen.getByTestId('branch-filter-input'))
     })
 
     it('stops filtering once the list shrinks below the threshold', async () => {

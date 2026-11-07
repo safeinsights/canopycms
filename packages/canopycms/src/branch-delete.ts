@@ -13,13 +13,19 @@ import { withOccFileLock } from './utils/occ-json-write'
 
 export interface DeleteBranchWorkspaceOptions {
   context: Pick<BranchContext, 'branch' | 'branchRoot' | 'baseRoot'>
-  /** The branch it forked from, or the deployment's base branch. */
-  baseBranch: string
   registry: Pick<BranchRegistry, 'invalidate'>
-  /** Removes the branch's head from `remote.git`; a failure costs a warning, not the delete. */
-  deleteMirrorHead: () => Promise<void>
-  /** Deletes or queues deleting the branch on GitHub, resolving a warning if that failed. */
-  deleteOnGitHub: () => Promise<string | undefined>
+  /**
+   * For a delete a person asked for. Deletion by age passes none: commits pushed to a GitHub branch
+   * after its merge have no other copy, and reconcile prunes the mirror's head once GitHub drops it.
+   */
+  remoteCopies?: {
+    /** The branch it forked from, or the deployment's base branch. */
+    baseBranch: string
+    /** Removes the branch's head from `remote.git`; a failure costs a warning, not the delete. */
+    deleteMirrorHead: () => Promise<void>
+    /** Deletes or queues deleting the branch on GitHub, resolving a warning if that failed. */
+    deleteOnGitHub: () => Promise<string | undefined>
+  }
   /**
    * Re-decides from a fresh read inside the lock every save() takes, so a change before the rename
    * keeps the branch and one after it fails. For a caller that chose the branch earlier.
@@ -45,7 +51,7 @@ export type DeleteBranchWorkspaceOutcome =
 export async function deleteBranchWorkspace(
   options: DeleteBranchWorkspaceOptions,
 ): Promise<DeleteBranchWorkspaceOutcome> {
-  const { context, baseBranch, registry, stillWanted } = options
+  const { context, registry, remoteCopies, stillWanted } = options
   const metadataFile = path.join(context.branchRoot, BRANCH_META_DIR, BRANCH_META_FILE)
   let cleanupWarning: string | undefined
   let deletingPath: string | undefined
@@ -96,12 +102,13 @@ export async function deleteBranchWorkspace(
   // Defense-in-depth only: callers refuse the base branch, and settings branches never resolve
   // to a context here.
   const sanitizedDeleted = sanitizeBranchName(context.branch.name)
-  const deletableHead =
-    sanitizedDeleted !== sanitizeBranchName(baseBranch) &&
+  if (
+    remoteCopies &&
+    sanitizedDeleted !== sanitizeBranchName(remoteCopies.baseBranch) &&
     !sanitizedDeleted.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX)
-  if (deletableHead) {
+  ) {
     try {
-      await options.deleteMirrorHead()
+      await remoteCopies.deleteMirrorHead()
     } catch (err: unknown) {
       // Client-facing copy is sanitized (API-H2 — no absolute EFS paths); the console line keeps
       // the raw detail for server logs.
@@ -112,7 +119,7 @@ export async function deleteBranchWorkspace(
         `CanopyCMS: failed to remove deleted branch's mirror head (branch ${context.branch.name}): ${getErrorMessage(err)}`,
       )
     }
-    const warning = await options.deleteOnGitHub()
+    const warning = await remoteCopies.deleteOnGitHub()
     if (warning) warn(warning)
   }
 

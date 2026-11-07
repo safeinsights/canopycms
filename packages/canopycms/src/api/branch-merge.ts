@@ -49,6 +49,7 @@ const markAsMergedHandler = async (
     }
   }
 
+  let verifiedMerged = false
   if (ctx.services.githubService) {
     try {
       const pr = await ctx.services.githubService.getPullRequest(
@@ -61,6 +62,7 @@ const markAsMergedHandler = async (
           error: `Cannot mark as merged: PR #${branchContext.branch.pullRequestNumber} is not merged on GitHub`,
         }
       }
+      verifiedMerged = true
     } catch (err) {
       console.error(`CanopyCMS: Failed to verify PR merge status for ${branchName}:`, err)
       // Don't fail if we can't verify - allow manual override
@@ -71,7 +73,7 @@ const markAsMergedHandler = async (
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
   const saved = await meta.update((current) =>
     current === null ||
-    current.branch.pullRequestState === 'closed' ||
+    (current.branch.pullRequestState === 'closed' && !verifiedMerged) ||
     (current.branch.status !== 'submitted' && current.branch.status !== 'approved')
       ? null
       : { branch: buildMergedBranchUpdate(current.branch) },

@@ -381,7 +381,6 @@ export function buildMergedBranchUpdate(
     mergedAt: mergedAt.toISOString(),
     // Now, not the merge: retention's clock must not start before a worker outage that hid it.
     archivedAt: new Date().toISOString(),
-    gitHubTipAtArchive: branch.lastGitHubTip,
     // The merge settled every conflict the record named.
     conflictStatus: 'clean',
     conflictFiles: [],

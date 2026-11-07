@@ -17,6 +17,7 @@ import {
   DELETE_ARCHIVED_BUDGET_MS,
   deleteArchivedBranchesHandler,
 } from './archived-branches'
+import { deleteBranchHandler } from './branch'
 import type { ApiContext, ApiRequest } from './types'
 
 const { throwFor } = vi.hoisted(() => ({ throwFor: new Set<string>() }))
@@ -166,22 +167,11 @@ describe('POST /admin/archived-branches/delete', () => {
       unpublishedAtMerge: true,
     })
 
-    await addBranch('moved', {
-      status: 'archived',
-      mergedAt: daysAgo(40),
-      gitHubTipAtArchive: 'aaa',
-      lastGitHubTip: 'bbb',
-    })
-
     const result = await run(contextFor())
 
     expect(result.data).toMatchObject({
       deleted: [],
-      skipped: {
-        notMerged: ['abandoned'],
-        unpublished: ['unpublished'],
-        movedOnGitHub: ['moved'],
-      },
+      skipped: { notMerged: ['abandoned'], unpublished: ['unpublished'] },
     })
     expect(await hasWorkspace('abandoned')).toBe(true)
     expect(await hasWorkspace('unpublished')).toBe(true)
@@ -195,7 +185,7 @@ describe('POST /admin/archived-branches/delete', () => {
 
     expect(result.data).toMatchObject({
       deleted: [],
-      skipped: { notMerged: [], unpublished: [], movedOnGitHub: [] },
+      skipped: { notMerged: [], unpublished: [] },
     })
     expect(await hasWorkspace('main')).toBe(true)
   })
@@ -208,6 +198,28 @@ describe('POST /admin/archived-branches/delete', () => {
 
     expect(result.data?.deleted).toEqual(['confirmed'])
     expect(await hasWorkspace('aged-since')).toBe(true)
+  })
+
+  it('reports a confirmed branch no longer listed, rather than saying nothing', async () => {
+    const result = await run(contextFor(), ['someone-got-there-first'])
+
+    expect(result.data).toMatchObject({ deleted: [], failed: ['someone-got-there-first'] })
+  })
+
+  it('takes the editor copy only, queuing no GitHub delete', async () => {
+    await addBranch('old-merged', {
+      status: 'archived',
+      mergedAt: daysAgo(40),
+      pullRequestNumber: 3,
+    })
+    const ctx = contextFor()
+    const deleteOnGitHub = vi.fn()
+    ctx.services.githubService = { deleteBranch: deleteOnGitHub } as never
+
+    await run(ctx)
+
+    expect(await hasWorkspace('old-merged')).toBe(false)
+    expect(deleteOnGitHub).not.toHaveBeenCalled()
   })
 
   it('costs a throwing delete only that branch', async () => {
@@ -267,5 +279,18 @@ describe('POST /admin/archived-branches/delete', () => {
   it.each([0, -1, 1.5])('refuses olderThanDays %s', (olderThanDays) => {
     const route = ADMIN_ARCHIVED_BRANCH_ROUTES.deleteArchivedBranches
     expect(route.validate({ body: { olderThanDays, branches: [] } }).ok).toBe(false)
+  })
+})
+
+describe('DELETE /:branch', () => {
+  it('answers 409, not success, for a branch whose directory is already gone', async () => {
+    const context = await addBranch('half-deleted', { status: 'archived', mergedAt: daysAgo(40) })
+    await fs.rm(context.branchRoot, { recursive: true })
+
+    const result = await deleteBranchHandler(contextFor(), admin, {
+      branch: 'half-deleted' as BranchName,
+    })
+
+    expect(result).toMatchObject({ ok: false, status: 409 })
   })
 })

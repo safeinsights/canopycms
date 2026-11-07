@@ -175,8 +175,8 @@ export interface CmsWorkerConfig extends GitHubAuthConfig {
   /** Auth cache refresh interval in ms (default: 15 * 60 * 1000) */
   authCacheRefreshInterval?: number
   /**
-   * Delete a merged branch this many days after it was archived, with its workspace, metadata and
-   * comments (worker/archived-sweep.ts). A positive integer; unset keeps archived branches.
+   * Delete a merged branch's workspace, metadata and comments this many days after it was archived
+   * (worker/archived-sweep.ts). A positive integer; unset keeps archived branches.
    */
   archivedBranchRetentionDays?: number
   /** Base branch name (default: detected at start(); see `resolveBaseBranch`) */

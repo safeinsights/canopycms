@@ -621,12 +621,6 @@ describe('BranchMetadataFileManager', () => {
       expect(Date.now() - Date.parse(update.archivedAt ?? '')).toBeLessThan(60_000)
     })
 
-    it('records the GitHub tip the merge saw', () => {
-      const update = buildMergedBranchUpdate({ ...merging, lastGitHubTip: 'abc123' })
-
-      expect(update.gitHubTipAtArchive).toBe('abc123')
-    })
-
     it.each(['submitted', 'approved'] as const)(
       'records an unfinished submit on a branch %s, as nothing is left to finish it',
       (status) => {

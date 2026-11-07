@@ -14,7 +14,6 @@ import { isSettingsBranchName } from '../paths'
 import { getBranchProtection } from '../authorization'
 import type { BranchContext } from '../types'
 import { getErrorMessage } from '../utils/error'
-import { branchDeleteOptions } from './branch'
 import type { BranchMergeResponse } from './branch-merge'
 import { defineEndpoint } from './route-builder'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
@@ -90,7 +89,7 @@ interface DeleteArchivedBranchesData {
   /** Full names of the branches deleted. */
   deleted: string[]
   /** Old enough, but left for a person to delete, by reason (`ageDeletionHold`). */
-  skipped: { notMerged: string[]; unpublished: string[]; movedOnGitHub: string[] }
+  skipped: { notMerged: string[]; unpublished: string[] }
   /** Old enough, but not deleted: busy, gone, or changed since they were listed. */
   failed: string[]
   /** Not reached before the time budget ran out; asking again continues. */
@@ -139,11 +138,7 @@ export const deleteArchivedBranchesHandler = async (
 
   const data: DeleteArchivedBranchesData = {
     deleted: [],
-    skipped: {
-      notMerged: heldFor('not-merged'),
-      unpublished: heldFor('unpublished'),
-      movedOnGitHub: heldFor('moved-on-github'),
-    },
+    skipped: { notMerged: heldFor('not-merged'), unpublished: heldFor('unpublished') },
     failed: [],
     remaining: 0,
     warnings: [],
@@ -156,7 +151,8 @@ export const deleteArchivedBranchesHandler = async (
     const name = context.branch.name
     try {
       const outcome = await deleteBranchWorkspace({
-        ...branchDeleteOptions(ctx, context, registry),
+        context,
+        registry,
         stillWanted: (current) => current.name === name && deletableByAge(current, cutoff),
       })
       if (outcome.kind === 'deleted') {
@@ -170,12 +166,15 @@ export const deleteArchivedBranchesHandler = async (
       data.failed.push(name)
     }
   }
+  // Gone or changed since the admin confirmed them: reported, so nothing reads as deleted.
+  const listed = new Set(old.map(({ branch }) => branch.name))
+  data.failed.push(...body.branches.filter((name) => !listed.has(name)))
   return { ok: true, status: 200, data }
 }
 
 /**
  * Delete merged, archived branches older than a number of days, by the rule the retention sweep
- * uses.
+ * uses. Takes the editor's copy only (`deleteBranchWorkspace`'s `remoteCopies`).
  * Here rather than queued for the worker so the admin gets the answer, and so it works where no
  * worker runs.
  */
@@ -190,7 +189,7 @@ const deleteArchivedBranches = defineEndpoint({
   response: {} as DeleteArchivedBranchesResponse,
   defaultMockData: {
     deleted: [],
-    skipped: { notMerged: [], unpublished: [], movedOnGitHub: [] },
+    skipped: { notMerged: [], unpublished: [] },
     failed: [],
     remaining: 0,
     warnings: [],

@@ -895,6 +895,12 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   }
 
   const [filter, setFilter] = useState('')
+  const filterRef = useRef<HTMLInputElement>(null)
+  // Both clear controls unmount as they act, so focus moves to the box they cleared.
+  const clearFilter = () => {
+    setFilter('')
+    filterRef.current?.focus()
+  }
   const [archivedOpen, setArchivedOpen] = useState(false)
   // Read through this, so a list shrinking past the threshold can't leave a filter no box shows.
   const showFilter = branches.length > BRANCH_FILTER_THRESHOLD
@@ -1034,6 +1040,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
       {showFilter && (
         <TextInput
           pt="sm"
+          ref={filterRef}
           aria-label="Filter branches"
           placeholder="Filter by name, title or owner"
           value={filter}
@@ -1042,7 +1049,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
           rightSection={
             filter && (
               <Tooltip label="Clear search" withinPortal>
-                <CloseButton size="sm" aria-label="Clear search" onClick={() => setFilter('')} />
+                <CloseButton size="sm" aria-label="Clear search" onClick={clearFilter} />
               </Tooltip>
             )
           }
@@ -1078,7 +1085,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                 <Text size="sm" c="dimmed">
                   No branches match “{query}”.
                 </Text>
-                <Button size="compact-sm" variant="subtle" onClick={() => setFilter('')}>
+                <Button size="compact-sm" variant="subtle" onClick={clearFilter}>
                   Clear search
                 </Button>
               </Stack>

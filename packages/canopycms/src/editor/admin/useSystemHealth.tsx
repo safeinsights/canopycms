@@ -32,7 +32,7 @@ const POLL_INTERVAL_MS = 30_000
 
 const EMPTY_DELETE = {
   deleted: [],
-  skipped: { notMerged: [], unpublished: [], movedOnGitHub: [] },
+  skipped: { notMerged: [], unpublished: [] },
   failed: [],
   remaining: 0,
   warnings: [],
@@ -385,9 +385,6 @@ export function useSystemHealth(options: UseSystemHealthOptions): UseSystemHealt
             : '',
           skipped.unpublished.length > 0
             ? `${countBranches(skipped.unpublished.length)} kept: may hold unpublished changes`
-            : '',
-          skipped.movedOnGitHub.length > 0
-            ? `${countBranches(skipped.movedOnGitHub.length)} kept: changed on GitHub after merging`
             : '',
           ...warnings,
         ].filter(Boolean)

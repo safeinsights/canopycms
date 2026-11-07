@@ -1094,7 +1094,6 @@ function ArchivedBranchesCleanup({ health }: { health: UseSystemHealthReturn }) 
     old.filter((branch) => ageDeletionHold(branch) === hold).map((branch) => branch.name)
   const notMerged = heldFor('not-merged')
   const unpublished = heldFor('unpublished')
-  const movedOnGitHub = heldFor('moved-on-github')
   const dueLabel = `${due.length} archived ${due.length === 1 ? 'branch' : 'branches'}`
 
   const blockedReason =
@@ -1111,7 +1110,7 @@ function ArchivedBranchesCleanup({ health }: { health: UseSystemHealthReturn }) 
       children: (
         <Stack gap="xs">
           <Text size="sm">
-            Delete {dueLabel} and their comments? GitHub branches that still exist go too. This
+            Delete {dueLabel} and their comments from the editor? Their GitHub branches stay. This
             cannot be undone.
           </Text>
           <Text size="xs" data-testid="delete-archived-names">
@@ -1125,11 +1124,6 @@ function ArchivedBranchesCleanup({ health }: { health: UseSystemHealthReturn }) 
           {unpublished.length > 0 && (
             <Text size="xs" data-testid="delete-archived-unpublished">
               Kept, as they may hold changes that never reached GitHub: {unpublished.join(', ')}.
-            </Text>
-          )}
-          {movedOnGitHub.length > 0 && (
-            <Text size="xs" data-testid="delete-archived-moved">
-              Kept, as they changed on GitHub after merging: {movedOnGitHub.join(', ')}.
             </Text>
           )}
         </Stack>
@@ -1183,7 +1177,8 @@ function ArchivedBranchesCleanup({ health }: { health: UseSystemHealthReturn }) 
           </Button>
         </Tooltip>
       </Group>
-      {workerStatus && (
+      {/* A record with no sync can be a failed boot's, which doesn't know the setting. */}
+      {workerStatus?.lastGitSync && (
         <Text size="xs" c="dimmed" data-testid="archived-retention-note">
           {workerStatus.archivedBranchRetentionDays === undefined
             ? 'This deployment keeps archived branches until someone deletes them.'

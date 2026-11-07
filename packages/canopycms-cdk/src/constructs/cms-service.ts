@@ -1198,11 +1198,11 @@ export interface CanopyCmsServiceProps {
   protectedBranches?: string[]
 
   /**
-   * Delete a merged branch this many days after it was archived, with its workspace, metadata and
-   * editor comments (default: unset, which keeps archived branches). A positive whole number,
-   * validated at synth. A branch archived without merging, or that may hold commits a merge left
-   * out, is left for a person to delete. The worker sweeps once per git sync. Stamped into the
-   * worker's `CANOPYCMS_ARCHIVED_BRANCH_RETENTION_DAYS`.
+   * Delete a merged branch's editor copy this many days after it was archived: its workspace,
+   * metadata and comments, never its GitHub branch (default: unset, which keeps archived branches).
+   * A positive whole number, validated at synth. A branch archived without merging, or that may
+   * hold commits a merge left out, is left for a person to delete. The worker sweeps once per git
+   * sync. Stamped into the worker's `CANOPYCMS_ARCHIVED_BRANCH_RETENTION_DAYS`.
    */
   archivedBranchRetentionDays?: number
 
