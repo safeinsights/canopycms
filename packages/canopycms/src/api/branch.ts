@@ -11,6 +11,7 @@ import { isCreatorsRecentBranch } from './branch-create-window'
 import { defineEndpoint } from './route-builder'
 import { createDebugLogger } from '../utils/debug'
 import { clientOperatingStrategy } from '../operating-mode'
+import { DELETE_NEEDS_ADMIN_REASON } from '../editor/copy'
 import { getErrorMessage } from '../utils/error'
 import { filePathExists } from '../utils/fs'
 import { isNetworkRemoteUrl } from '../utils/git'
@@ -296,7 +297,9 @@ export const toBranchListItem = (
     : !inReview
       ? branch.unpublishedAtMerge
         ? { kind: 'unpublished-at-merge' }
-        : undefined
+        : branch.status === 'archived' && branch.rewrittenOnGitHub !== undefined
+          ? { kind: 'rewritten-at-merge' }
+          : undefined
       : branch.submitUnfinished
         ? {
             kind: 'submit-unfinished',
@@ -772,6 +775,11 @@ const branchListResponse = async (
   }
 }
 
+/** A person's delete, as deletion by age never does, can take commits only the branch still has. */
+const mayHoldLostCommits = (branch: BranchMetadata): boolean =>
+  branch.unpublishedAtMerge === true ||
+  (branch.status === 'archived' && branch.rewrittenOnGitHub !== undefined)
+
 /** @internal Exported for tests. */
 export const canDeleteBranch = (
   user: CanopyUser,
@@ -857,13 +865,8 @@ export const deleteBranchHandler = async (
 
   // It may hold the only copy of commits the merge left out, and deleting it would drop the alert
   // that says so.
-  if (branchContext.branch.unpublishedAtMerge && !isAdmin(req.user.groups)) {
-    return {
-      ok: false,
-      status: 409,
-      error:
-        'This branch may hold changes that never reached GitHub. Ask an admin to check it before deleting it.',
-    }
+  if (mayHoldLostCommits(branchContext.branch) && !isAdmin(req.user.groups)) {
+    return { ok: false, status: 409, error: DELETE_NEEDS_ADMIN_REASON }
   }
 
   if (!ctx.services.registry) {

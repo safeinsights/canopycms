@@ -44,6 +44,10 @@ export const rewrittenSubmitReason = (isAdmin: boolean): string =>
 export const UNFINISHED_SUBMIT_APPROVE_REASON =
   'The last submit didn\'t finish, so this branch can\'t be approved yet. Use "Request changes" to send it back to its editor.'
 
+/** Why only an admin may delete a branch that may hold commits nothing else has. */
+export const DELETE_NEEDS_ADMIN_REASON =
+  'This branch may hold changes that are missing from GitHub. Ask an admin to check it before deleting it.'
+
 /** Why Approve and Request changes can't act: the pull request they act on is gone. */
 export const CLOSED_PULL_REQUEST_REASON =
   'The pull request was closed on GitHub. Use "Withdraw from review", then submit it again to open a new one.'

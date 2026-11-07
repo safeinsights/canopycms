@@ -1394,6 +1394,41 @@ describe('SystemHealthPanel', () => {
         expect(input.value).toBe('1 day')
       })
 
+      it('offers lowering the days when newer merged branches exist', async () => {
+        const button = await openBranches([
+          healthy('new-merged', { mergedAt: '2026-05-30T00:00:00.000Z' }),
+        ])
+
+        await userEvent.hover(button)
+
+        expect((await screen.findByRole('tooltip')).textContent).toContain('Lower the number')
+      })
+
+      it('offers no lowering at 1 day, the least it takes', async () => {
+        const button = await openBranches([
+          healthy('new-merged', { mergedAt: '2026-05-31T12:00:00.000Z' }),
+        ])
+        const input = screen.getByTestId('archived-days-input')
+        await userEvent.clear(input)
+        await userEvent.type(input, '1')
+
+        await userEvent.hover(button)
+
+        const tooltip = await screen.findByRole('tooltip')
+        expect(tooltip.textContent).toContain('older than 1 day.')
+        expect(tooltip.textContent).not.toContain('Lower the number')
+      })
+
+      it('offers no lowering with no merged archived branch at all', async () => {
+        const button = await openBranches([healthy('abandoned', { archivedAt: old })])
+
+        await userEvent.hover(button)
+        const tooltip = await screen.findByRole('tooltip')
+
+        expect(tooltip.textContent).not.toContain('Lower the number')
+        expect(tooltip.textContent).toContain('"Branches" drawer')
+      })
+
       it('leaves the base branch out of the count', async () => {
         const button = await openBranches([
           { ...healthy('main', { mergedAt: old }), isBaseBranch: true },

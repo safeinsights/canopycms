@@ -25,8 +25,7 @@ export type AgeDeletionHold = 'not-merged' | 'unpublished'
 /**
  * What keeps a branch from deletion by age, past any age: one archived without merging holds work
  * that reached no base branch, and one merged with an unfinished submit, or rewritten on GitHub,
- * may hold the only copy of commits the merge left out. Nothing warns of a rewrite once a branch
- * is archived, so this hold is the only thing standing between those commits and the sweep.
+ * may hold the only copy of commits the merge left out.
  */
 export const ageDeletionHold = (branch: ArchiveFields): AgeDeletionHold | undefined =>
   branch.mergedAt === undefined

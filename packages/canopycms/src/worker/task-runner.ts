@@ -611,11 +611,12 @@ async function isSupersededSubmit(
   const { submittedAt, requeuedFrom } = task.payload
   if (typeof submittedAt !== 'string') return false
   const live = await BranchMetadataFileManager.loadOnly(ctx.branchWorkspacePath(branch))
-  // Every submit starts from a workspace, so with none at all the branch was deleted since.
-  if (live === null) return !(await filePathExists(ctx.branchWorkspacePath(branch)))
+  const firstRun = !task.retryCount && requeuedFrom === undefined
+  // A retry with no workspace at all: its branch was deleted since. A first run proceeds, since a
+  // quarantine's rename can hide a live workspace for a moment.
+  if (live === null) return !firstRun && !(await filePathExists(ctx.branchWorkspacePath(branch)))
   const { status, submittedAt: recorded } = live.branch
   if (status === 'archived') return true
-  const firstRun = !task.retryCount && requeuedFrom === undefined
   if (firstRun && (recorded === undefined || recorded < submittedAt)) return false
   return (status !== 'submitted' && status !== 'approved') || recorded !== submittedAt
 }

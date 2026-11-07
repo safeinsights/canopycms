@@ -17,7 +17,7 @@ import {
   DELETE_ARCHIVED_BUDGET_MS,
   deleteArchivedBranchesHandler,
 } from './archived-branches'
-import { deleteBranchHandler } from './branch'
+import { deleteBranchHandler, toBranchListItem } from './branch'
 import type { ApiContext, ApiRequest } from './types'
 
 const { throwFor } = vi.hoisted(() => ({ throwFor: new Set<string>() }))
@@ -289,6 +289,47 @@ describe('POST /admin/archived-branches/delete', () => {
 })
 
 describe('DELETE /:branch', () => {
+  const creator = {
+    user: { type: 'authenticated', userId: 'creator-1', groups: [] },
+  } as unknown as ApiRequest
+  const rewritten = {
+    status: 'archived',
+    mergedAt: daysAgo(40),
+    rewrittenOnGitHub: 'abc',
+    createdBy: 'creator-1',
+  } as const
+
+  it('refuses the creator of an archived branch rewritten on GitHub, leaving it to an admin', async () => {
+    await addBranch('rewritten', rewritten)
+
+    const result = await deleteBranchHandler(contextFor(), creator, {
+      branch: 'rewritten' as BranchName,
+    })
+
+    expect(result).toMatchObject({ ok: false, status: 409 })
+    expect(result.error).toContain('Ask an admin')
+    expect(await hasWorkspace('rewritten')).toBe(true)
+  })
+
+  it('lets an admin delete it', async () => {
+    await addBranch('rewritten', rewritten)
+
+    const result = await deleteBranchHandler(contextFor(), admin, {
+      branch: 'rewritten' as BranchName,
+    })
+
+    expect(result.ok).toBe(true)
+    expect(await hasWorkspace('rewritten')).toBe(false)
+  })
+
+  it('lists it with a hold that says so', async () => {
+    const { branch } = await addBranch('rewritten', rewritten)
+
+    expect(toBranchListItem(contextFor().services.config, branch, admin.user).hold).toEqual({
+      kind: 'rewritten-at-merge',
+    })
+  })
+
   it('answers 409, not success, for a branch whose directory is already gone', async () => {
     const context = await addBranch('half-deleted', { status: 'archived', mergedAt: daysAgo(40) })
     await fs.rm(context.branchRoot, { recursive: true })

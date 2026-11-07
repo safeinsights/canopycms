@@ -297,7 +297,7 @@ const showDeleteConfirmation = (
       : undefined,
     'Discard any unsaved or unmerged changes',
     mayHoldUnpublished
-      ? 'Remove the only copy of any changes that never reached GitHub, and the warning about them'
+      ? 'Remove the only copy of any changes missing from GitHub, and the warning about them'
       : undefined,
   ].filter((b): b is string => b !== undefined)
   openConfirm({
@@ -1292,8 +1292,9 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
           showDeleteConfirmation(
             shownName(branchNameToDelete),
             pullRequestOf(branchNameToDelete),
-            listedBefore.find((b) => b.name === branchNameToDelete)?.hold?.kind ===
-              'unpublished-at-merge',
+            ['unpublished-at-merge', 'rewritten-at-merge'].includes(
+              listedBefore.find((b) => b.name === branchNameToDelete)?.hold?.kind ?? '',
+            ),
             async () => {
               options.setBusy(true)
               try {

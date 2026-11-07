@@ -1094,13 +1094,14 @@ function ArchivedBranchesCleanup({ health }: { health: UseSystemHealthReturn }) 
     old.filter((branch) => ageDeletionHold(branch) === hold).map((branch) => branch.name)
   const notMerged = heldFor('not-merged')
   const unpublished = heldFor('unpublished')
+  const hasMerged = candidates.some((e) => e.branch?.status === 'archived' && e.branch.mergedAt)
   const dueLabel = `${due.length} archived ${due.length === 1 ? 'branch' : 'branches'}`
 
   const blockedReason =
     olderThanDays === null
       ? 'Enter a whole number of days.'
       : due.length === 0
-        ? `No merged archived branches are older than ${dayCount(olderThanDays)}. Lower the number of days to include newer ones.${old.length > 0 ? ' Older branches kept from this delete go one at a time, from the Branches drawer.' : ''}`
+        ? `No merged archived branches are older than ${dayCount(olderThanDays)}.${olderThanDays > 1 && hasMerged ? ' Lower the number of days to include newer ones.' : ''}${old.length > 0 ? ' Older branches kept from this delete go one at a time, from the "Branches" drawer.' : ''}`
         : undefined
 
   const handleDeleteClick = () => {

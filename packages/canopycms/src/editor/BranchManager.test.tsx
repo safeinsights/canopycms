@@ -1390,6 +1390,26 @@ describe('BranchManager', () => {
     expect(onDelete).toHaveBeenCalledWith('main')
   })
 
+  it('disables Delete for an editor on an archived branch rewritten on GitHub', async () => {
+    const onDelete = vi.fn()
+    const branches: BranchSummary[] = [
+      { ...baseBranches[0], status: 'archived', hold: { kind: 'rewritten-at-merge' } },
+    ]
+    renderBranchManager({
+      branches,
+      onDelete,
+      user: creatorUser,
+      mode: 'prod',
+      currentBranchName: 'main',
+    })
+
+    await openMenu('main')
+    const item = screen.getByTestId('delete-branch-button-main')
+    expect(item.textContent).toContain('Ask an admin to check it before deleting it.')
+    await userEvent.click(item)
+    expect(onDelete).not.toHaveBeenCalled()
+  })
+
   it('disables Delete for a branch in review, saying to withdraw it first', async () => {
     const branches: BranchSummary[] = [{ ...baseBranches[0], status: 'approved' }]
     renderBranchManager({ branches, user: creatorUser, mode: 'prod' })

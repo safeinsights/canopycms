@@ -8,6 +8,19 @@ import {
   syncFailedFallback,
 } from './branch-status'
 
+describe('the rewritten-at-merge hold', () => {
+  const hold = { kind: 'rewritten-at-merge' } as const
+
+  it('tells an admin to check before deleting, and anyone else to ask one', () => {
+    expect(branchHoldMessage(hold, { role: 'none', isAdmin: true })).toContain(
+      'Check them before deleting the branch.',
+    )
+    expect(branchHoldMessage(hold, { role: 'none', isAdmin: false })).toContain(
+      'Ask an admin to check it.',
+    )
+  })
+})
+
 describe('branchHoldMessage', () => {
   const author = { role: 'withdraw', isAdmin: false } as const
 

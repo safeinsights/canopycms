@@ -102,6 +102,13 @@ export function branchHoldMessage(hold: BranchHold, viewer: HoldViewer): string 
             : ''
       return `${stuck} ${retry}${instead}.`
     }
+    case 'rewritten-at-merge': {
+      const stuck =
+        'This branch was changed on GitHub before it merged, so some changes here may be in neither.'
+      return viewer.isAdmin
+        ? `${stuck} Check them before deleting the branch.`
+        : `${stuck} Ask an admin to check it.`
+    }
     case 'unpublished-at-merge': {
       const stuck =
         'This pull request merged before the last submit finished, so some changes may not be in the merge.'

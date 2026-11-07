@@ -1700,6 +1700,26 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
       return getTask(taskDir, id)
     }
 
+    it('still runs a first run whose workspace is out of sight for a moment', async () => {
+      await seedBranchInRemoteGit(branch, 'hello')
+      await fs.mkdir(dir(), { recursive: true })
+      await getBranchMetadataFileManager(dir(), contentBranchesPath).save({
+        branch: { name: branch, status: 'submitted', submittedAt, syncStatus: 'pending-sync' },
+      })
+      await fs.rename(dir(), `${dir()}.aside`)
+      const worker = makePushWorker()
+      ;(worker as unknown as { running: boolean }).running = true
+      const id = await enqueueTask(taskDir, {
+        action: 'push-and-create-or-update-pr',
+        payload: { branch, title: 't', body: '', baseBranch: 'main', submittedAt },
+      })
+
+      await worker.processTaskQueue()
+      await fs.rename(`${dir()}.aside`, dir())
+
+      expect((await getTask(taskDir, id))?.result).not.toEqual({ superseded: true })
+    })
+
     it('does nothing for a branch deleted since', async () => {
       const task = await retrySubmit(
         { status: 'submitted', submittedAt },

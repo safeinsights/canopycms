@@ -50,6 +50,7 @@ import { branchAddress, displayBranchName } from './branch-names'
 import type { CreateRefusal } from './hooks/create-branch-request'
 import {
   CLOSED_PULL_REQUEST_REASON,
+  DELETE_NEEDS_ADMIN_REASON,
   EDITOR_ACTIONS,
   rewrittenSubmitReason,
   UNFINISHED_SUBMIT_APPROVE_REASON,
@@ -671,8 +672,10 @@ const BranchCard: React.FC<BranchCardProps> = ({
                       blockedReason={
                         b.status === 'submitted' || b.status === 'approved'
                           ? 'This branch is in review. Withdraw it from review before deleting it.'
-                          : b.hold?.kind === 'unpublished-at-merge' && !userIsAdmin
-                            ? 'This branch may hold changes that never reached GitHub. Ask an admin to check it before deleting it.'
+                          : (b.hold?.kind === 'unpublished-at-merge' ||
+                                b.hold?.kind === 'rewritten-at-merge') &&
+                              !userIsAdmin
+                            ? DELETE_NEEDS_ADMIN_REASON
                             : undefined
                       }
                       onClick={() => onDelete?.(b.name)}
@@ -1085,7 +1088,13 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                 <Text size="sm" c="dimmed">
                   No branches match “{query}”.
                 </Text>
-                <Button size="compact-sm" variant="subtle" onClick={clearFilter}>
+                <Button
+                  size="compact-sm"
+                  variant="subtle"
+                  // Inset, or the ScrollArea clips the focus ring.
+                  style={{ outlineOffset: -2 }}
+                  onClick={clearFilter}
+                >
                   Clear search
                 </Button>
               </Stack>
