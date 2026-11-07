@@ -568,6 +568,8 @@ describe('CanopyCMSProvider colour and contrast', () => {
   it('draws danger text at red.9 in light mode and red.3 in dark, 4.5:1 wherever it sits', () => {
     expect(light['--canopy-danger-text']).toBe('var(--mantine-color-red-9)')
     expect(darkVars['--canopy-danger-text']).toBe('var(--mantine-color-red-3)')
+    expect(light['--mantine-color-error']).toBe('var(--canopy-danger-text)')
+    expect(darkVars['--mantine-color-error']).toBe('var(--canopy-danger-text)')
     const lightPs = getPrimaryShade(canopyTheme, 'light')
     const darkPs = getPrimaryShade(canopyTheme, 'dark')
     const lightRatios = [white, gray[0], gray[1], composite(red[lightPs], 0.12, white)].map((bg) =>
@@ -889,12 +891,16 @@ describe('CanopyCMSProvider stylesheet', () => {
     const option = await waitFor(() => getByRole('option', { name: 'Posts' }))
     option.setAttribute('data-combobox-selected', 'true')
     expect(canopyRuleSets(option, '--mantine-primary-color-filled')).toBe(true)
-    const day = document.createElement('button')
-    day.className = 'mantine-DateTimePicker-day'
-    day.setAttribute('data-selected', 'true')
-    expect(canopyRuleSets(day, 'background-color')).toBe(true)
-    day.removeAttribute('data-selected')
-    expect(canopyRuleSets(day, 'background-color')).toBe(false)
+    for (const picker of ['DateTimePicker', 'DatePickerInput']) {
+      for (const part of ['day', 'pickerControl']) {
+        const control = document.createElement('button')
+        control.className = `mantine-${picker}-${part}`
+        control.setAttribute('data-selected', 'true')
+        expect(canopyRuleSets(control, 'background-color')).toBe(true)
+        control.removeAttribute('data-selected')
+        expect(canopyRuleSets(control, 'background-color')).toBe(false)
+      }
+    }
   })
 
   it('sets blocked menu items, empty comboboxes and outside days in the dimmed font style', () => {
@@ -904,13 +910,15 @@ describe('CanopyCMSProvider stylesheet', () => {
     expect(canopyRuleSets(item, 'font-style')).toBe(false)
     item.setAttribute('aria-disabled', 'true')
     expect(canopyRuleSets(item, 'font-style')).toBe(true)
-    const outside = document.createElement('button')
-    outside.className = 'mantine-DateTimePicker-day'
-    outside.setAttribute('data-outside', 'true')
-    expect(canopyRuleSets(outside, 'font-style')).toBe(true)
-    expect(canopyRuleSets(outside, 'opacity')).toBe(true)
-    outside.setAttribute('data-disabled', 'true')
-    expect(canopyRuleSets(outside, 'opacity')).toBe(false)
+    for (const picker of ['DateTimePicker', 'DatePickerInput']) {
+      const outside = document.createElement('button')
+      outside.className = `mantine-${picker}-day`
+      outside.setAttribute('data-outside', 'true')
+      expect(canopyRuleSets(outside, 'font-style')).toBe(true)
+      expect(canopyRuleSets(outside, 'opacity')).toBe(true)
+      outside.setAttribute('data-disabled', 'true')
+      expect(canopyRuleSets(outside, 'opacity')).toBe(false)
+    }
   })
 })
 

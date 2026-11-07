@@ -15,10 +15,10 @@ import {
 import { ContentStore, ContentStoreError } from '../content-store'
 import { resolveCollectionPath } from '../content-id-index'
 import { BaseBranchMissingError } from '../git-manager'
-import { withItemKeys } from '../item-keys'
 import { getBranchProtection } from '../authorization/protected-branch'
 import { baseBranchOf } from '../utils/base-branch'
 import { findBodyFieldName } from '../utils/body-field'
+import { entryAsRead } from '../utils/calendar-day'
 import { isNodeError, isNotFoundError } from '../utils/error'
 import { getFormatExtension } from '../utils/format'
 import { entryLogicalPath } from '../paths'
@@ -222,9 +222,7 @@ const readBefore = async (
       return {
         format,
         entryType: ref.entryType,
-        // Keyed as ContentStore.read keys the working tree's side, so an item unchanged since the
-        // base carries the same key on both.
-        data: withItemKeys(fields, parsed.data, 'content'),
+        data: entryAsRead(fields, parsed.data),
         ...(parsed.body !== undefined && {
           body: parsed.body,
           bodyFieldName: findBodyFieldName(fields),

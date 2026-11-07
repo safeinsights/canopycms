@@ -38,6 +38,8 @@ import {
 
 import { isBlockStructuralKey } from '../validation/block-structural-keys'
 import { ITEM_KEY, isItemKey } from '../item-keys'
+import { withCalendarDays } from './calendar-day'
+import type { FieldConfig } from '../config'
 import { createDebugLogger } from './debug'
 import { getErrorMessage } from './error'
 import { preserveMarkdownSource, type MarkdownBodyFormat } from './markdown-body-splice'
@@ -615,9 +617,9 @@ function asJson(value: unknown): unknown {
 }
 
 /** Frontmatter data as the read path hands it over the API, or undefined when it cannot split. */
-function frontmatterAsRead(raw: string): unknown {
+function frontmatterAsRead(raw: string, fields: readonly FieldConfig[]): unknown {
   try {
-    return asJson(matter(raw, {}).data)
+    return asJson(withCalendarDays(fields, matter(raw, {}).data))
   } catch {
     return undefined
   }
@@ -706,13 +708,15 @@ function readsAsAnotherValue(text: string, asKey: boolean): boolean {
  * would have produced. The result is kept only if the read path reads `data` back from it;
  * otherwise gray-matter writes it, without the comments. A fresh string the read path would
  * misread is quoted (`readsAsAnotherValue`), so this is left for a changed value meeting text the
- * two parsers read differently, as 14 meets a file's `014`.
+ * two parsers read differently, as 14 meets a file's `014`. `fields`, the entry's schema, shapes
+ * what the read path reads, so a `date` field's bare date counts as the day it writes.
  */
 export function serializeFrontmatter(
   editorBody: string,
   data: Record<string, unknown>,
   existingRaw: string | undefined,
   format: MarkdownBodyFormat,
+  fields: readonly FieldConfig[] = [],
 ): string {
   // An object, never the body string: `matter.stringify` re-parses a string as a whole file, so a
   // body starting with `---` would be read as frontmatter and dropped.
@@ -725,7 +729,7 @@ export function serializeFrontmatter(
   const onDisk = parseDocument(existingFrontmatter)
   const toReconcile =
     onDisk.errors.length === 0
-      ? withUnchangedAsOnDisk(data, frontmatterAsRead(existingRaw), onDisk.toJS())
+      ? withUnchangedAsOnDisk(data, frontmatterAsRead(existingRaw, fields), onDisk.toJS())
       : data
   const reconciled = reconcileYamlSource(
     existingFrontmatter,
@@ -742,7 +746,7 @@ export function serializeFrontmatter(
       },
     },
   })
-  if (isDeepStrictEqual(frontmatterAsRead(written), asJson(data))) return written
+  if (isDeepStrictEqual(frontmatterAsRead(written, fields), asJson(data))) return written
   log.debug(
     'content-serialize',
     'reconciled frontmatter reads back differently; writing as gray-matter prints it',

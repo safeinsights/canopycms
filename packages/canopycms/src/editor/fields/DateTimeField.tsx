@@ -5,6 +5,7 @@ import { DateTimePicker } from '@mantine/dates'
 import { IconX } from '@tabler/icons-react'
 import dayjs from 'dayjs'
 
+import { isRealDay, localMidnight } from '../../utils/calendar-day'
 import { LabelledInput } from './FieldLabel'
 
 export interface DateTimeFieldProps {
@@ -32,7 +33,7 @@ const valueFormat = (): string => `D MMM YYYY, ${usesTwelveHourClock() ? 'h:mm:s
 const REMOVE_LABEL = 'Remove date and time'
 
 // The picker's own controls are icon-only or unlabelled without these.
-const CALENDAR_LABELS = {
+export const CALENDAR_LABELS = {
   previousMonth: 'Previous month',
   nextMonth: 'Next month',
   previousYear: 'Previous year',
@@ -45,13 +46,6 @@ const CALENDAR_LABELS = {
 
 const DATE_PART = /^(\d{4})-(\d{2})-(\d{2})([Tt ]|$)/
 
-/** Whether the written year, month and day name a real day; `Date` rolls 30 Feb on to 1 Mar. */
-const isCalendarDate = (year: number, month: number, day: number): boolean => {
-  const lastOfMonth = new Date(0)
-  lastOfMonth.setUTCFullYear(year, month, 0)
-  return month >= 1 && month <= 12 && day >= 1 && day <= lastOfMonth.getUTCDate()
-}
-
 /**
  * The stored value as a Date, or null for '', an unparsable value or a day that does not exist. A
  * date-only value is local midnight; `Date` reads UTC midnight, the evening before west of UTC.
@@ -61,14 +55,8 @@ const toDate = (iso: string): Date | null => {
   const datePart = DATE_PART.exec(iso)
   if (datePart) {
     const [year, month, day] = datePart.slice(1, 4).map(Number)
-    if (!isCalendarDate(year, month, day)) return null
-    if (datePart[4] === '') {
-      // setFullYear, since the constructor maps years 0-99 to 1900-1999.
-      const local = new Date(0)
-      local.setFullYear(year, month - 1, day)
-      local.setHours(0, 0, 0, 0)
-      return local
-    }
+    if (!isRealDay(year, month, day)) return null
+    if (datePart[4] === '') return localMidnight(year, month, day)
   }
   const date = new Date(iso)
   return Number.isNaN(date.getTime()) ? null : date

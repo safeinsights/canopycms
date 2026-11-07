@@ -349,6 +349,20 @@ describe('TypeFromEntrySchema', () => {
     })
   })
 
+  describe('date field', () => {
+    it('infers a string', () => {
+      const schema = defineEntrySchema([
+        { name: 'eventDate', type: 'date' },
+        { name: 'endDate', type: 'date', required: false },
+      ])
+      expect(schema).toHaveLength(2)
+      expectTypeOf<TypeFromEntrySchema<typeof schema>>().toEqualTypeOf<{
+        eventDate: string
+        endDate?: string
+      }>()
+    })
+  })
+
   describe('image field', () => {
     it('infers the structured ImageFieldValue shape, not a bare string', () => {
       const schema = defineEntrySchema([{ name: 'hero', type: 'image' }])

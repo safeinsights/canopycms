@@ -11,6 +11,7 @@ import { parse as yamlParse } from 'yaml'
 
 import type { ContentFormat, FlatSchemaItem, EntryTypeConfig, EntrySchema } from './config'
 import { findBodyFieldName } from './utils/body-field'
+import { entryAsRead } from './utils/calendar-day'
 import { computeEntryUrl } from './utils/entry-url'
 import { asRecord, getFormatExtension } from './utils/format'
 import { resolveCollectionPath, toLogicalCollectionPath } from './content-id-index'
@@ -27,7 +28,6 @@ import {
   type ReferenceTargetAccess,
 } from './content-store'
 import { isBuildMode } from './build-mode'
-import { withItemKeys } from './item-keys'
 
 const log = createDebugLogger({ prefix: 'ContentListing' })
 
@@ -719,8 +719,7 @@ export const listCollectionEntries = async (
         fs.stat(absolutePath),
         readEntryData(absolutePath, format, bodyField),
       ])
-      // Keyed as `ContentStore.read` keys it, so every reader names an item alike.
-      const data = withItemKeys(entryType?.schema ?? [], rawData, 'content')
+      const data = entryAsRead(entryType?.schema ?? [], rawData)
 
       const item: CollectionListItem = {
         logicalPath: entryLogicalPath(collection.logicalPath, slug),

@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import matter from 'gray-matter'
 import { parse as yamlParse, stringify as yamlStringify } from 'yaml'
 
+import type { FieldConfig } from '../config'
+import { withCalendarDays } from './calendar-day'
 import { serializeFrontmatter, serializeYaml } from './content-serialize'
 
 /**
@@ -555,6 +557,75 @@ Body text here.
     expect(first).toContain('# Order matters: the first tag is the primary category.')
     expect(second).toContain('# Order matters: the first tag is the primary category.')
     expect(second).toContain('# Post metadata. Keep `draft` first')
+  })
+})
+
+describe('serializeFrontmatter with a date field', () => {
+  const fields: FieldConfig[] = [
+    { name: 'title', type: 'string' },
+    { name: 'on', type: 'date' },
+    { name: 'rows', type: 'object', list: true, fields: [{ name: 'on', type: 'date' }] },
+  ]
+  const asRead = (raw: string) => withCalendarDays(fields, matter(raw, {}).data)
+
+  const HAND_WRITTEN = `---
+title: Launch # shown in the card
+on: 2024-05-01 # the day it runs
+---
+
+Body.
+`
+
+  it('quotes a day in a new file, so any YAML reader keeps it a string', () => {
+    const out = serializeFrontmatter('\nBody.\n', { on: '2024-05-01' }, undefined, 'md', fields)
+    expect(out).toContain(`: '2024-05-01'\n`)
+    expect(matter(out, {}).data.on).toBe('2024-05-01')
+  })
+
+  it('quotes a changed day, and leaves the rest of the file', () => {
+    const data = { title: 'Launch', on: '2024-06-02' }
+    const out = serializeFrontmatter('\nBody.\n', data, HAND_WRITTEN, 'md', fields)
+    expect(out).toBe(HAND_WRITTEN.replace('on: 2024-05-01', `on: '2024-06-02'`))
+    expect(matter(out, {}).data.on).toBe('2024-06-02')
+  })
+
+  it('quotes a day added to a file that had none', () => {
+    const file = '---\ntitle: Launch # shown in the card\n---\n\nBody.\n'
+    const data = { title: 'Launch', on: '2024-05-01' }
+    const out = serializeFrontmatter('\nBody.\n', data, file, 'md', fields)
+    expect(out).toContain('title: Launch # shown in the card\n')
+    expect(matter(out, {}).data.on).toBe('2024-05-01')
+  })
+
+  it('writes a hand-written bare date back byte for byte when its day is unchanged', () => {
+    const data = { title: 'Launch', on: '2024-05-01' }
+    expect(serializeFrontmatter('\nBody.\n', data, HAND_WRITTEN, 'md', fields)).toBe(HAND_WRITTEN)
+  })
+
+  it('keeps comments when another field changes beside a bare date', () => {
+    const data = { title: 'Launched', on: '2024-05-01' }
+    expect(serializeFrontmatter('\nBody.\n', data, HAND_WRITTEN, 'md', fields)).toBe(
+      HAND_WRITTEN.replace('title: Launch #', 'title: Launched #'),
+    )
+  })
+
+  it('finds an item by its bare date on the save that first writes item keys', () => {
+    const file = '---\nrows:\n  - on: 2024-05-01 # first\n  - on: 2024-05-02\n---\n\nBody.\n'
+    const data = {
+      rows: [
+        { on: '2024-05-01', _key: 'aaa' },
+        { on: '2024-05-02', _key: 'bbb' },
+      ],
+    }
+    const out = serializeFrontmatter('\nBody.\n', data, file, 'md', fields)
+    expect(out).toContain('on: 2024-05-01 # first')
+    expect(asRead(out)).toEqual(data)
+  })
+
+  it('round-trips the schema-free way too: a day read as a Date stays as written', () => {
+    expect(
+      serializeFrontmatter('\nBody.\n', matter(HAND_WRITTEN, {}).data, HAND_WRITTEN, 'md'),
+    ).toBe(HAND_WRITTEN)
   })
 })
 

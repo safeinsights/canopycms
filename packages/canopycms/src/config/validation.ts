@@ -123,9 +123,9 @@ export const forEachReferenceField = (
 
 /**
  * Check that every `itemLabel` is non-blank text and, like every `itemTitleField`, sits on a
- * `list: true` object, and that every `itemTitleField` names a direct child of type `string` or
- * `number`, the only values the card heading shows as typed (a reference would show its raw id, a
- * select its stored value). Throws an error when it does not. Entry schemas reach the editor
+ * `list: true` object, and that every `itemTitleField` names a direct child of type `string`,
+ * `number` or `date`, the only values the card heading shows as typed (a reference would show its
+ * raw id, a select its stored value). Throws an error when it does not. Entry schemas reach the editor
  * through these checks, not the zod field schema.
  */
 export const ensureItemTitleFieldsExist = (fields: unknown): void => {
@@ -152,8 +152,8 @@ export const ensureItemTitleFieldsExist = (fields: unknown): void => {
         if (typeof f.itemTitleField !== 'string' || !child) {
           throw new Error(`${label}, which is not one of its child fields`)
         }
-        if (child.type !== 'string' && child.type !== 'number') {
-          throw new Error(`${label}, which must name a string or number field`)
+        if (child.type !== 'string' && child.type !== 'number' && child.type !== 'date') {
+          throw new Error(`${label}, which must name a string, number or date field`)
         }
       }
       ensureItemTitleFieldsExist(children)
@@ -337,6 +337,32 @@ export const ensureMaxItemsPlacement = (fields: unknown, scopeLabel = 'entry sch
         if (f.list !== true && f.type !== 'block') {
           refuse(f, 'but it is not a list; only a `list: true` field or a block field holds items')
         }
+      }
+      if (f?.type === 'group' || f?.type === 'object') check(f.fields)
+      if (f?.type === 'block' && Array.isArray(f.templates)) {
+        for (const template of f.templates as Array<{ fields?: unknown }>) {
+          check(template.fields)
+        }
+      }
+    }
+  }
+  check(fields)
+}
+
+/**
+ * Check that no `date` field is `list: true`: the editor has one picker for one day, and an object
+ * list with a `date` child gives a list of days its rows. Recurses into groups, objects and block
+ * templates like `ensureStampOnPublishPlacement`. Throws on the first problem.
+ */
+export const ensureSingleDateFields = (fields: unknown, scopeLabel = 'entry schema'): void => {
+  const check = (scopeFields: unknown): void => {
+    if (!Array.isArray(scopeFields)) return
+    for (const field of scopeFields) {
+      const f = field as Record<string, unknown>
+      if (f?.type === 'date' && f.list === true) {
+        throw new Error(
+          `${scopeLabel}: field "${String(f.name)}" is a date with list: true; use an object list with a date field inside`,
+        )
       }
       if (f?.type === 'group' || f?.type === 'object') check(f.fields)
       if (f?.type === 'block' && Array.isArray(f.templates)) {
