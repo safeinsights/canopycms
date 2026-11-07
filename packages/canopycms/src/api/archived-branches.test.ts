@@ -206,6 +206,12 @@ describe('POST /admin/archived-branches/delete', () => {
     expect(result.data).toMatchObject({ deleted: [], failed: ['someone-got-there-first'] })
   })
 
+  it('counts a name confirmed twice once', async () => {
+    const result = await run(contextFor(), ['gone', 'gone'])
+
+    expect(result.data?.failed).toEqual(['gone'])
+  })
+
   it('takes the editor copy only, queuing no GitHub delete', async () => {
     await addBranch('old-merged', {
       status: 'archived',

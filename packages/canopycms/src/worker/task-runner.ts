@@ -8,6 +8,7 @@ import {
   retryTask,
 } from '../task-queue/cms-task-queue'
 import type { Task, TaskAction } from '../task-queue/cms-task-queue'
+import { filePathExists } from '../utils/fs'
 import { isNoCommitsBetweenError, isRefAlreadyGoneError } from '../github-service'
 import {
   BranchMetadataCorruptError,
@@ -610,7 +611,8 @@ async function isSupersededSubmit(
   const { submittedAt, requeuedFrom } = task.payload
   if (typeof submittedAt !== 'string') return false
   const live = await BranchMetadataFileManager.loadOnly(ctx.branchWorkspacePath(branch))
-  if (live === null) return false
+  // Every submit starts from a workspace, so with none at all the branch was deleted since.
+  if (live === null) return !(await filePathExists(ctx.branchWorkspacePath(branch)))
   const { status, submittedAt: recorded } = live.branch
   if (status === 'archived') return true
   const firstRun = !task.retryCount && requeuedFrom === undefined

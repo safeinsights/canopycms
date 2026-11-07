@@ -54,6 +54,12 @@ describe('branch-archive', () => {
     expect(deletableByAge({ status: 'archived', mergedAt: 'not a date' }, cutoff)).toBe(false)
   })
 
+  it('holds a branch rewritten on GitHub back from deletion by age', () => {
+    const rewritten = { status: 'archived', mergedAt: OLD, rewrittenOnGitHub: 'abc' } as const
+    expect(ageDeletionHold(rewritten)).toBe('unpublished')
+    expect(deletableByAge(rewritten, cutoff)).toBe(false)
+  })
+
   it('holds a branch that may have unpublished commits back from deletion by age', () => {
     const held = { status: 'archived', mergedAt: OLD, unpublishedAtMerge: true } as const
     expect(ageDeletionHold(held)).toBe('unpublished')

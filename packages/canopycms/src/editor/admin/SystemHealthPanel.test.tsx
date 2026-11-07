@@ -1314,7 +1314,7 @@ describe('SystemHealthPanel', () => {
         mockClient.admin.deleteArchivedBranches.mockResolvedValue(
           mockSuccess({
             deleted: ['old-merged'],
-            skipped: { notMerged: [], unpublished: [], movedOnGitHub: [] },
+            skipped: { notMerged: [], unpublished: [] },
             failed: [],
             remaining: 0,
             warnings: [],

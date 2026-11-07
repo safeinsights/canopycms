@@ -1668,6 +1668,7 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
       live: Record<string, unknown>,
       requeuedFrom?: string,
       gateway?: (seam: GitHubGateway) => void,
+      noWorkspace = false,
     ) => {
       await seedBranchInRemoteGit(branch, 'hello')
       await fs.mkdir(dir(), { recursive: true })
@@ -1675,6 +1676,7 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
         branch: { name: branch, pullRequestNumber: 12, ...live },
       })
       seededAt = seeded.branch.updatedAt
+      if (noWorkspace) await fs.rm(dir(), { recursive: true })
       const worker = makePushWorker()
       ;(worker as unknown as { running: boolean }).running = true
       gateway?.((worker as unknown as { github(): GitHubGateway }).github())
@@ -1697,6 +1699,18 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
       await worker.processTaskQueue()
       return getTask(taskDir, id)
     }
+
+    it('does nothing for a branch deleted since', async () => {
+      const task = await retrySubmit(
+        { status: 'submitted', submittedAt },
+        undefined,
+        undefined,
+        true,
+      )
+
+      expect(task?.status).toBe('completed')
+      await expect(shaOf(githubFixture, `refs/heads/${branch}`)).rejects.toThrow()
+    })
 
     it('does nothing for a branch withdrawn since, which would ready its PR again', async () => {
       const task = await retrySubmit({ status: 'editing', submittedAt, syncStatus: 'sync-failed' })

@@ -168,7 +168,7 @@ export const deleteArchivedBranchesHandler = async (
   }
   // Gone or changed since the admin confirmed them: reported, so nothing reads as deleted.
   const listed = new Set(old.map(({ branch }) => branch.name))
-  data.failed.push(...body.branches.filter((name) => !listed.has(name)))
+  data.failed.push(...[...confirmed].filter((name) => !listed.has(name)))
   return { ok: true, status: 200, data }
 }
 

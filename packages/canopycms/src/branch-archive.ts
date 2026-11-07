@@ -2,7 +2,7 @@ import type { BranchMetadata } from './types'
 
 type ArchiveFields = Pick<
   BranchMetadata,
-  'status' | 'archivedAt' | 'mergedAt' | 'unpublishedAtMerge'
+  'status' | 'archivedAt' | 'mergedAt' | 'unpublishedAtMerge' | 'rewrittenOnGitHub'
 >
 
 /** When the branch was archived, or undefined for one that records neither time. */
@@ -24,13 +24,14 @@ export type AgeDeletionHold = 'not-merged' | 'unpublished'
 
 /**
  * What keeps a branch from deletion by age, past any age: one archived without merging holds work
- * that reached no base branch, and one merged with an unfinished submit may hold the only copy of
- * commits the merge left out, and deleting it would drop the alert that says so.
+ * that reached no base branch, and one merged with an unfinished submit, or rewritten on GitHub,
+ * may hold the only copy of commits the merge left out. Nothing warns of a rewrite once a branch
+ * is archived, so this hold is the only thing standing between those commits and the sweep.
  */
 export const ageDeletionHold = (branch: ArchiveFields): AgeDeletionHold | undefined =>
   branch.mergedAt === undefined
     ? 'not-merged'
-    : branch.unpublishedAtMerge === true
+    : branch.unpublishedAtMerge === true || branch.rewrittenOnGitHub !== undefined
       ? 'unpublished'
       : undefined
 
