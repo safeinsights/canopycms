@@ -163,7 +163,7 @@ describe('a hand-written bare date in an md entry', () => {
     expect(doc.data.at).toEqual(new Date('2024-05-01T00:00:00.000Z'))
   })
 
-  it('refuses a time of day: the file holds a moment, not a day', async () => {
+  it('refuses a time of day other than UTC midnight: the file holds a moment', async () => {
     await handWrite('---\non: 2024-05-01T10:30:00Z\n---\n\nBody.\n')
     const doc = await store.read(collection('md'), launch)
     expect(validateEntryData(fields, JSON.parse(JSON.stringify(doc.data)))).toEqual([

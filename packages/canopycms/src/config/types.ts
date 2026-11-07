@@ -241,7 +241,7 @@ export interface ObjectFieldConfig extends BaseFieldConfig {
   type: 'object'
   fields: FieldConfig[]
   /**
-   * On a `list: true` object, a direct `string` or `number` child whose value titles each
+   * On a `list: true` object, a direct `string`, `number` or `date` child whose value titles each
    * item's card; a blank or non-finite value falls back to the item's first non-blank `string`
    * field, then "Item N".
    */

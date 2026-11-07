@@ -9,8 +9,8 @@ import { isPlainRecord, resolveBlockItem } from '../validation/field-traversal'
 
 /**
  * The value of a `date` field: `YYYY-MM-DD`, a day on the calendar with no time and no zone. It
- * only meets a `Date` at the two edges, a picker and a YAML parser, and there it goes through the
- * local or the UTC parts named below, never from one to the other.
+ * only meets a `Date` at its edges, a picker or a display and a YAML parser, and there it goes
+ * through the local or the UTC parts named below, never from one to the other.
  */
 const DAY = /^(\d{4})-(\d{2})-(\d{2})$/
 
@@ -18,7 +18,7 @@ const MS_PER_DAY = 86_400_000
 
 const twoDigits = (n: number): string => String(n).padStart(2, '0')
 
-/** Whether the year, month and day name a real day; `Date` rolls 30 Feb on to 1 Mar. */
+/** Whether the year, month and day name a real day; `Date` rolls 30 Feb on into March. */
 export const isRealDay = (year: number, month: number, day: number): boolean => {
   const lastOfMonth = new Date(0)
   lastOfMonth.setUTCFullYear(year, month, 0)
@@ -36,8 +36,9 @@ const dayParts = (value: unknown): [number, number, number] | undefined => {
 export const isCalendarDay = (value: unknown): value is string => dayParts(value) !== undefined
 
 /**
- * The first moment of that day in the browser's zone: 01:00 where a clock change skips midnight.
- * `new Date('YYYY-MM-DD')` is UTC midnight instead, the evening before west of UTC.
+ * The first moment of that day in the browser's zone: 01:00 where a clock change skips midnight,
+ * the next day where a zone skipped the day whole. `new Date('YYYY-MM-DD')` is UTC midnight
+ * instead, the evening before west of UTC.
  */
 export const localMidnight = (year: number, month: number, day: number): Date => {
   // setFullYear, since the constructor maps years 0-99 to 1900-1999.
@@ -58,8 +59,9 @@ export const localDateToCalendarDay = (date: Date): string =>
   `${String(date.getFullYear()).padStart(4, '0')}-${twoDigits(date.getMonth() + 1)}-${twoDigits(date.getDate())}`
 
 /**
- * The day gray-matter's js-yaml reads a bare `YYYY-MM-DD` as, or undefined for a time of day. js-yaml
- * reads it as UTC midnight, so the UTC parts are the day written whatever the machine's zone.
+ * The day gray-matter's js-yaml reads a bare `YYYY-MM-DD` as, or undefined for any other time of
+ * day. js-yaml reads it as UTC midnight, so the UTC parts are the day written whatever the
+ * machine's zone. A timestamp at UTC midnight reads alike, so it counts as a day.
  */
 const dayOfBareDate = (value: Date): string | undefined =>
   value.getTime() % MS_PER_DAY === 0 ? value.toISOString().slice(0, 10) : undefined

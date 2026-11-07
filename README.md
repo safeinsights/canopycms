@@ -534,10 +534,10 @@ A non-markdown field that throws while rendering (`customRenderers` too) shows i
 
 `datetime` stores an instant, so a day picked in one zone can read as the day before in another. A `date` is the same day for every reader, typed `string`.
 
-- Saves and builds refuse anything but a real day, such as `2026-02-30` or `2026-5-1`; `''` means not set.
+- Saves and production builds refuse a value that isn't a real day, such as `2026-02-30` or `2026-5-1`; `''` means not set. YAML rolls an unquoted `2026-02-30` forward first, so quote hand-written days.
 - An unquoted `date: 2024-05-01` in md or mdx frontmatter is that day in every zone.
 - `list: true` is refused; use an object list holding a `date` field.
-- To move a `string` field holding `YYYY-MM-DD`, change its type to `date`. Values and the site's types stay as they are, and a build names any entry that isn't a real day.
+- To move a `string` field holding `YYYY-MM-DD`, change its type to `date`. Values and the site's types stay as they are, and a production build names any entry that isn't a real day.
 
 #### Stamping a publication date
 

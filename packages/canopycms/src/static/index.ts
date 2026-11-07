@@ -268,9 +268,9 @@ type BuildScanItem = Pick<ListEntriesItem, 'entryPath' | 'schema'> & {
  * gray-matter parses unquoted YAML dates in hand-authored frontmatter (`date: YYYY-MM-DD`) into
  * JS `Date` objects rather than strings. The shared validator's datetime check requires a string
  * (see `validateScalar` in entry-validator.ts), so a legitimate hand-authored or migrated entry
- * would otherwise fail this build guard. A `date` field never gets here as a `Date`: a read makes
- * it the day written (`withCalendarDays`), and an ISO string is no day, so the scan does the same
- * first. CMS-authored entries round-trip as quoted strings, so
+ * would otherwise fail this build guard. A bare date under a `date` field is read as the day
+ * written (`withCalendarDays`), and its ISO string is no day, so the scan does the same first.
+ * CMS-authored entries round-trip as quoted strings, so
  * this only affects pre-existing content — which is the primary path for adopters retrofitting
  * CanopyCMS onto an existing repo.
  *
