@@ -95,17 +95,15 @@ describe('the IMDS check', () => {
   })
 
   it("reads a real connect's outcome: connected, or refused with its code", async () => {
-    const server = net.createServer()
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-    const port = (server.address() as net.AddressInfo).port
-    await new Promise<void>((resolve) => server.close(() => resolve()))
     const listening = net.createServer()
     await new Promise<void>((resolve) => listening.listen(0, '127.0.0.1', resolve))
     try {
       const open = (listening.address() as net.AddressInfo).port
 
       expect(await tcpConnect('127.0.0.1', open, 1_000)).toBe('connected')
-      expect(await tcpConnect('127.0.0.1', port, 1_000)).toEqual({ code: 'ECONNREFUSED' })
+      // Port 1 is below every OS's default ephemeral range, so no listen(0) in any test worker
+      // can take it. Privilege is no guarantee: a container may let a non-root process bind it.
+      expect(await tcpConnect('127.0.0.1', 1, 1_000)).toEqual({ code: 'ECONNREFUSED' })
     } finally {
       await new Promise<void>((resolve) => listening.close(() => resolve()))
     }
