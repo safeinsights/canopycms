@@ -101,8 +101,8 @@ describe('the IMDS check', () => {
       const open = (listening.address() as net.AddressInfo).port
 
       expect(await tcpConnect('127.0.0.1', open, 1_000)).toBe('connected')
-      // Port 1 is below every OS's ephemeral range, so no listen(0) in any test worker can take
-      // it. Privilege is no guarantee: a container may let a non-root process bind it.
+      // Port 1 is below every OS's default ephemeral range, so no listen(0) in any test worker
+      // can take it. Privilege is no guarantee: a container may let a non-root process bind it.
       expect(await tcpConnect('127.0.0.1', 1, 1_000)).toEqual({ code: 'ECONNREFUSED' })
     } finally {
       await new Promise<void>((resolve) => listening.close(() => resolve()))
