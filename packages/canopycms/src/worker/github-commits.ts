@@ -139,13 +139,15 @@ export async function bringInGitHubCommits(
   const { git, branchRef, metaFile, dirty, gatewayPolicy } = args
   const { branch } = metaFile
   // A branch.json naming another ref is that branch's, which shares this directory's name.
-  if (branch.name !== branchRef || !isPublished(metaFile)) return { kind: 'in-step' }
+  if (branch.name !== branchRef) return { kind: 'in-step' }
 
   const gitHubTip = args.gitHub?.tips.get(branchRef)
-  // No GitHub branch leaves nothing a push could restore.
+  // No GitHub branch leaves nothing a push could restore. Ahead of `isPublished`: withdrawing drops
+  // a closed PR's number, which can be all that marked the branch published.
   if (args.gitHub !== undefined && gitHubTip === undefined && branch.rewrittenOnGitHub) {
     await clearRewritten(ctx, args)
   }
+  if (!isPublished(metaFile)) return { kind: 'in-step' }
   const published = await readPublishedSha(ctx, branchRef)
   const tip = gitHubTip ?? published
   if (tip === null) return { kind: 'in-step' }

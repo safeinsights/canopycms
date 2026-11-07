@@ -1011,6 +1011,27 @@ describe('bringing commits made on GitHub into a branch clone', () => {
       })
     }
 
+    it('clears for a branch a withdraw left with no mark of being published', async () => {
+      await writeMeta(s, { status: 'editing', rewrittenOnGitHub: flag })
+      await BranchMetadataFileManager.get(s.branchPath, s.contentBranches).save({
+        branch: { pushedToGitHubAt: undefined },
+      })
+      await s.dropGitHubBranch()
+
+      await cycle(s)
+
+      expect((await readMeta(s))?.rewrittenOnGitHub).toBeUndefined()
+    })
+
+    it('keeps the flag for a branch in review with a PR, for the merge poll to find', async () => {
+      await writeMeta(s, { status: 'submitted', pullRequestNumber: 7, rewrittenOnGitHub: flag })
+      await s.dropGitHubBranch()
+
+      await cycle(s)
+
+      expect((await readMeta(s))?.rewrittenOnGitHub).toBe(flag)
+    })
+
     it('clears the text a push refused before any sync saw the rewrite', async () => {
       await writeMeta(s, {
         syncStatus: 'sync-failed',

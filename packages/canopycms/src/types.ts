@@ -64,8 +64,11 @@ export type BranchHold =
   | { kind: 'submit-unfinished'; opened: boolean; notQueued?: boolean }
   /** Admins see what to do in System health. */
   | { kind: 'unpublished-at-merge' }
-  /** An archived branch rewritten on GitHub, which may hold commits the merge left out. */
-  | { kind: 'rewritten-at-merge' }
+  /**
+   * An archived branch rewritten on GitHub, which may hold commits GitHub dropped. `commit`, the
+   * one GitHub no longer contains, is for System health; the API leaves it out.
+   */
+  | { kind: 'rewritten-at-merge'; commit?: string }
 
 export interface BranchMetadata {
   name: string

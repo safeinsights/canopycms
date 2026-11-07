@@ -787,7 +787,7 @@ async function bringInCommitsForBranchInReview(
     if (gitHubTip === undefined) {
       if (gitHub === undefined) return { kind: 'none' }
       const { rebaseFailure, rewrittenOnGitHub, pullRequestNumber } = metaFile.branch
-      // A merge can delete the head branch, so with a PR open a rewrite stays recorded for the
+      // A merge can delete the head branch, so with a PR recorded a rewrite stays for the
       // merge poll to find: it is what holds the branch from deletion by age (branch-archive.ts).
       if (rewrittenOnGitHub !== undefined && pullRequestNumber !== undefined)
         return { kind: 'none' }

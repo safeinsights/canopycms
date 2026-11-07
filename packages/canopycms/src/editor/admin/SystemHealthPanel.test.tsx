@@ -22,6 +22,7 @@ import type {
 import { unsafeAsContentId, unsafeAsPhysicalPath } from '../../paths/test-utils'
 import { formatRelativeTime } from '../relative-time'
 import { ApiTimeoutError } from '../../api/request-deadline'
+import { HOLD_BADGE } from '../branch-status'
 import { modals } from '@mantine/modals'
 import { notifications } from '@mantine/notifications'
 
@@ -1419,6 +1420,26 @@ describe('SystemHealthPanel', () => {
         expect(tooltip.textContent).not.toContain('Lower the number')
       })
 
+      it('shows the hold on an archived branch rewritten on GitHub, naming the commit', async () => {
+        await openBranches([healthy('rewritten', { mergedAt: old, rewrittenOnGitHub: 'abc123' })])
+
+        await userEvent.hover(screen.getByText(HOLD_BADGE.label))
+
+        expect((await screen.findByRole('tooltip')).textContent).toContain(
+          'GitHub no longer contains commit abc123.',
+        )
+      })
+
+      it('offers no lowering with a merged branch that is only held', async () => {
+        const button = await openBranches([
+          healthy('unpublished', { mergedAt: old, unpublishedAtMerge: true }),
+        ])
+
+        await userEvent.hover(button)
+
+        expect((await screen.findByRole('tooltip')).textContent).not.toContain('Lower the number')
+      })
+
       it('offers no lowering with no merged archived branch at all', async () => {
         const button = await openBranches([healthy('abandoned', { archivedAt: old })])
 
@@ -1705,7 +1726,7 @@ describe('SystemHealthPanel', () => {
       expect(detail?.textContent).toContain("its pull request wasn't opened")
     })
 
-    it('marks no rewrite on an archived branch, which nothing can act on', async () => {
+    it('marks a rewrite on an archived branch too, which a delete would lose', async () => {
       mockClient.admin.branchHealth.mockResolvedValue(
         mockSuccess({
           entries: [rewritten('live', 'editing'), rewritten('gone', 'archived')],
@@ -1717,7 +1738,7 @@ describe('SystemHealthPanel', () => {
       await waitFor(() => expect(screen.getByText('gone')).toBeTruthy())
 
       expect(screen.getByTestId('held-pr-live')).toBeTruthy()
-      expect(screen.queryByTestId('held-pr-gone')).toBeNull()
+      expect(screen.getByTestId('held-pr-gone')).toBeTruthy()
     })
 
     it('gives a rewritten branch the fix itself, not a pointer back to this tab', async () => {

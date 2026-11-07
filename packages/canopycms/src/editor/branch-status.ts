@@ -103,8 +103,10 @@ export function branchHoldMessage(hold: BranchHold, viewer: HoldViewer): string 
       return `${stuck} ${retry}${instead}.`
     }
     case 'rewritten-at-merge': {
-      const stuck =
-        'This branch was changed on GitHub before it merged, so some changes here may be in neither.'
+      const commit = hold.commit
+        ? ` GitHub no longer contains commit ${escapeForLog(hold.commit)}.`
+        : ''
+      const stuck = `This branch was changed on GitHub before it was archived, so some changes here may be missing from GitHub.${commit}`
       return viewer.isAdmin
         ? `${stuck} Check them before deleting the branch.`
         : `${stuck} Ask an admin to check it.`
