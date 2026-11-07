@@ -26,6 +26,8 @@ export const BRANCHES_KEY = 'canopy:branches'
 export interface BranchesData {
   branches: BranchListItem[]
   defaultBranch?: string
+  /** Display names of the listed branches' creators, by user id. */
+  ownerNames?: Readonly<Record<string, string>>
   /**
    * Client clock when this listing arrived. It makes listings fetched at
    * different moments distinct `data` values even when their branches match,
@@ -53,10 +55,12 @@ export async function fetchBranches(
   if (!result.ok) {
     throw new Error(result.error ?? `Failed to load branches: ${result.status}`)
   }
-  await seedUserProfiles(swr, result.data?.users ?? [])
+  const users = result.data?.users ?? []
+  await seedUserProfiles(swr, users)
   return {
     branches: result.data?.branches ?? [],
     defaultBranch: result.data?.defaultBranch,
+    ownerNames: Object.fromEntries(users.map((user) => [user.id, user.name])),
     receivedAt: Date.now(),
   }
 }

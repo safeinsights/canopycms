@@ -102,6 +102,7 @@ const branchMetadataShape = {
     merged: 'merged',
   }).optional(),
   mergedAt: z.string().optional(),
+  archivedAt: z.string().optional(),
   rebaseFailure: z
     .object({ message: z.string(), firstAt: z.string(), lastAt: z.string() })
     .optional(),

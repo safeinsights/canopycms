@@ -54,6 +54,7 @@ import {
   runWorker,
   type RunWorkerDeps,
   type WorkerHandle,
+  parseArchivedBranchRetentionDays,
 } from './run'
 
 const APP_ID = 'CANOPYCMS_GITHUB_APP_ID'
@@ -1435,5 +1436,26 @@ describe('pollGatewayForTermination', () => {
     await pollGatewayForTermination({ termination }, { sleep: async () => {} })
 
     expect(warnSpy).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('parseArchivedBranchRetentionDays', () => {
+  it('reads unset or blank as off', () => {
+    expect(parseArchivedBranchRetentionDays({})).toBeUndefined()
+    expect(
+      parseArchivedBranchRetentionDays({ CANOPYCMS_ARCHIVED_BRANCH_RETENTION_DAYS: ' ' }),
+    ).toBeUndefined()
+  })
+
+  it('reads whole days', () => {
+    expect(
+      parseArchivedBranchRetentionDays({ CANOPYCMS_ARCHIVED_BRANCH_RETENTION_DAYS: '90' }),
+    ).toBe(90)
+  })
+
+  it.each(['0', '-1', '1.5', '30d', 'NaN', '1e3'])('refuses %s rather than guess', (value) => {
+    expect(() =>
+      parseArchivedBranchRetentionDays({ CANOPYCMS_ARCHIVED_BRANCH_RETENTION_DAYS: value }),
+    ).toThrow(/must be a positive whole number of days/)
   })
 })

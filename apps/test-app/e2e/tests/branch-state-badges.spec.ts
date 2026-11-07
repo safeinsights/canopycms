@@ -283,6 +283,7 @@ test.describe('Branch State Badges', () => {
       await editorPage.goto()
       await editorPage.waitForReady()
       await branchPage.openBranchManager()
+      await branchPage.expandArchivedBranches()
       await branchPage.waitForBranchInList(ref)
       const badge = branchPage.getMergedBadge(ref)
       await expect(badge).toBeVisible()

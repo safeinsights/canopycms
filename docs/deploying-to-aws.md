@@ -1180,6 +1180,10 @@ it always protects: names, or globs in which `*` matches any run of characters, 
 entry may start with `canopycms-settings-`. Set `baseBranch` explicitly: without it the gateway
 does not know your base branch, and protects it only if it is GitHub's default.
 
+**`archivedBranchRetentionDays`** (default: unset, off) has the worker delete a merged branch's
+workspace and comments that many days after archiving; its GitHub branch stays. A branch archived
+unmerged, or that may hold commits the merge left out, stays until someone deletes it.
+
 **`legacyBranches`** lists, exactly, branches outside the
 [branch namespace](#two-deployments-one-repository) the gateway may still write: no `*`,
 nothing in the namespace or that it sits under (`canopycms/prod`). **Before upgrading, or

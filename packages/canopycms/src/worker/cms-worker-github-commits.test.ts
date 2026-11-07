@@ -6,6 +6,7 @@
  * the way syncGit passes it, with `refs/heads/<branch>` moved as `reconcileTrackedBranches` would.
  */
 
+import { ageDeletionHold } from '../branch-archive'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -1010,6 +1011,27 @@ describe('bringing commits made on GitHub into a branch clone', () => {
       })
     }
 
+    it('clears for a branch a withdraw left with no mark of being published', async () => {
+      await writeMeta(s, { status: 'editing', rewrittenOnGitHub: flag })
+      await BranchMetadataFileManager.get(s.branchPath, s.contentBranches).save({
+        branch: { pushedToGitHubAt: undefined },
+      })
+      await s.dropGitHubBranch()
+
+      await cycle(s)
+
+      expect((await readMeta(s))?.rewrittenOnGitHub).toBeUndefined()
+    })
+
+    it('keeps the flag for a branch in review with a PR, for the merge poll to find', async () => {
+      await writeMeta(s, { status: 'submitted', pullRequestNumber: 7, rewrittenOnGitHub: flag })
+      await s.dropGitHubBranch()
+
+      await cycle(s)
+
+      expect((await readMeta(s))?.rewrittenOnGitHub).toBe(flag)
+    })
+
     it('clears the text a push refused before any sync saw the rewrite', async () => {
       await writeMeta(s, {
         syncStatus: 'sync-failed',
@@ -1842,5 +1864,67 @@ describe('bringing commits made on GitHub into a branch clone', () => {
     await cycle(s)
 
     expect(await s.head()).toBe(merged)
+  })
+})
+
+describe('a rewritten branch that then merges', () => {
+  let tmpDir: string
+  let s: Setup
+  const merged = (setup: Setup) => {
+    const worker = makeWorker(setup)
+    useLocalGitHubGateway(worker, {
+      octokit: {
+        pulls: {
+          get: async () => ({
+            data: {
+              merged: true,
+              merged_at: '2026-10-02T00:00:00.000Z',
+              state: 'closed',
+              node_id: 'PR_7',
+              body: '',
+              mergeable_state: 'unknown',
+              head: { ref: BRANCH, repo: { id: 1 } },
+              base: { ref: BASE, repo: { id: 1 } },
+            },
+          }),
+        },
+      } as never,
+    })
+    return worker
+  }
+
+  beforeEach(async () => {
+    mockConsole()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-rewritten-merged-'))
+    s = await createSetup(tmpDir)
+    await s.commit({ 'editor.txt': 'v1\n' })
+    await s.push()
+    await writeMeta(s, { status: 'submitted', pullRequestNumber: 7, syncStatus: 'synced' })
+    await cycle(s)
+    await s.forcePushOnGitHub({ 'rewritten.txt': 'rewritten\n' })
+    await cycle(s, workerWithPullRequest(s, 'clean'))
+    expect((await readMeta(s))?.rewrittenOnGitHub).toBeDefined()
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('stays held from deletion by age when GitHub keeps its branch', async () => {
+    await cycle(s, merged(s))
+
+    const meta = await readMeta(s)
+    expect(meta?.status).toBe('archived')
+    expect(meta && ageDeletionHold(meta)).toBe('unpublished')
+  })
+
+  it('stays held when the merge deleted its head branch in the same cycle', async () => {
+    await s.dropGitHubBranch()
+
+    await cycle(s, merged(s))
+
+    const meta = await readMeta(s)
+    expect(meta?.status).toBe('archived')
+    expect(meta && ageDeletionHold(meta)).toBe('unpublished')
   })
 })

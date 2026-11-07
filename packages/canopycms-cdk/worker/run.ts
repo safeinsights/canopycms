@@ -189,6 +189,25 @@ export function parseLegacyBranches(env: NodeJS.ProcessEnv): string[] {
   return parseBranchList(env, LEGACY_BRANCHES_ENV)
 }
 
+/** The environment variable {@link parseArchivedBranchRetentionDays} reads. */
+const ARCHIVED_BRANCH_RETENTION_ENV = 'CANOPYCMS_ARCHIVED_BRANCH_RETENTION_DAYS'
+
+/**
+ * `CANOPYCMS_ARCHIVED_BRANCH_RETENTION_DAYS` as whole days, or undefined when unset, which keeps
+ * archived branches. Anything else throws rather than reads as off or as zero: this setting deletes
+ * branches, so what it was meant to say is not guessed at.
+ */
+export function parseArchivedBranchRetentionDays(env: NodeJS.ProcessEnv): number | undefined {
+  const raw = env[ARCHIVED_BRANCH_RETENTION_ENV]?.trim()
+  if (!raw) return undefined
+  if (!/^[1-9][0-9]*$/.test(raw)) {
+    throw new Error(
+      `${ARCHIVED_BRANCH_RETENTION_ENV} must be a positive whole number of days, not ${JSON.stringify(raw)}`,
+    )
+  }
+  return Number(raw)
+}
+
 /** The worker unit's missing-`StateDirectory=` message. */
 const WORKER_STATE_DIRECTORY_MISSING =
   'StateDirectory=canopy-worker is not set on the worker unit, and every worker contract ' +
@@ -385,10 +404,12 @@ function commonWorkerConfig(
   | 'taskPollInterval'
   | 'gitSyncInterval'
   | 'authCacheRefreshInterval'
+  | 'archivedBranchRetentionDays'
 > {
   return {
     // Unset, CmsWorker detects it rather than assuming 'main'.
     baseBranch: env.CANOPYCMS_BASE_BRANCH || undefined,
+    archivedBranchRetentionDays: parseArchivedBranchRetentionDays(env),
     // deploymentName is deliberately NOT passed: CmsWorker resolves it through
     // resolveDeploymentName, which reads CANOPYCMS_DEPLOYMENT_NAME itself,
     // applies the same env > config > 'prod' precedence as the Lambda, and

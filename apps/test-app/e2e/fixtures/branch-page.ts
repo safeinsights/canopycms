@@ -230,6 +230,11 @@ export class BranchPage {
     return this.branchManager.locator(`[data-testid="branch-merged-badge-${branchName}"]`)
   }
 
+  /** Open the collapsed "Archived" section of the branch list. */
+  async expandArchivedBranches(): Promise<void> {
+    await this.branchManager.locator('[data-testid="archived-branches-toggle"]').click()
+  }
+
   /** The "Updated <relative time>" text rendered inside a branch row. */
   getBranchUpdatedText(branchName: string): Locator {
     return this.getBranchListItem(branchName).getByText(/^Updated /)
