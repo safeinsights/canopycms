@@ -223,6 +223,7 @@ function renderField(
   switch (field.type) {
     case 'string':
     case 'number':
+    case 'date':
     case 'datetime':
       return `${heading} ${label}${descriptionLine}\n\n${String(value)}`
 
@@ -332,6 +333,7 @@ function renderListField(
 const FLAT_CELL_TYPES = new Set([
   'string',
   'number',
+  'date',
   'datetime',
   'boolean',
   'select',

@@ -473,6 +473,12 @@ describe('createEntrySchemaRegistry: stampOnPublish', () => {
     )
   })
 
+  it('refuses it on a date, which is a day and not a moment', () => {
+    expect(register([stamp({ type: 'date' })])).toThrow(
+      `${where}, but it is type "date", not "datetime"`,
+    )
+  })
+
   it('refuses it on a list', () => {
     expect(register([stamp({ list: true })])).toThrow(`${where}, but it is list: true`)
   })
@@ -499,6 +505,48 @@ describe('createEntrySchemaRegistry: stampOnPublish', () => {
     expect(register([stamp({ stampOnPublish: 'yes' })])).toThrow(
       `${where}, which must be true or false`,
     )
+  })
+})
+
+describe('createEntrySchemaRegistry: date fields', () => {
+  const register = (schema: EntrySchema) => () => createEntrySchemaRegistry({ post: schema })
+  const list = { name: 'days', type: 'date', list: true } as const
+  const refusal =
+    'Entry schema registry entry "post": field "days" is a date with list: true; use an object list with a date field inside'
+
+  it('accepts one day, also in an object list, which is how a list of days is modelled', () => {
+    expect(
+      register([
+        { name: 'on', type: 'date' },
+        { name: 'rows', type: 'object', list: true, fields: [{ name: 'on', type: 'date' }] },
+      ]),
+    ).not.toThrow()
+  })
+
+  it('lets a day title the rows of an object list', () => {
+    expect(
+      register([
+        {
+          name: 'rows',
+          type: 'object',
+          list: true,
+          itemTitleField: 'on',
+          fields: [{ name: 'on', type: 'date' }],
+        },
+      ]),
+    ).not.toThrow()
+  })
+
+  it.each<[string, EntrySchema]>([
+    ['at the top level', [list]],
+    ['in a group', [{ name: 'meta', type: 'group', fields: [list] }]],
+    ['in an object', [{ name: 'meta', type: 'object', fields: [list] }]],
+    [
+      'in a block template',
+      [{ name: 'blocks', type: 'block', templates: [{ name: 'event', fields: [list] }] }],
+    ],
+  ])('refuses list: true %s', (_, schema) => {
+    expect(register(schema)).toThrow(refusal)
   })
 })
 

@@ -597,6 +597,37 @@ describe('findInvalidEntries', () => {
   })
 })
 
+describe('findInvalidEntries on a date field', () => {
+  const schema: EntrySchema = [
+    { name: 'on', type: 'date', required: true },
+    { name: 'rows', type: 'object', list: true, fields: [{ name: 'on', type: 'date' }] },
+  ]
+  const scan = (data: Record<string, unknown>) =>
+    findInvalidEntries([{ entryPath: 'content/events/launch' as never, schema, data }])
+
+  it('passes a day, and an unquoted YAML date at any depth', () => {
+    expect(scan({ on: '2026-11-05' })).toEqual([])
+    expect(
+      scan({
+        on: new Date('2024-05-01T00:00:00.000Z'),
+        rows: [{ on: new Date('2024-05-02T00:00:00.000Z') }],
+      }),
+    ).toEqual([])
+  })
+
+  it.each([
+    ['2026-02-30', '2026-02-30'],
+    ['a time of day', new Date('2024-05-01T12:00:00.000Z')],
+  ])('fails %s', (_, on) => {
+    expect(scan({ on })).toEqual([
+      {
+        entryPath: 'content/events/launch',
+        errors: [{ fieldPath: 'on', message: 'Expected a real date, written YYYY-MM-DD' }],
+      },
+    ])
+  })
+})
+
 describe('assertBuildEntriesValid', () => {
   const requiredTitleSchema: EntrySchema = [{ name: 'title', type: 'string', required: true }]
 

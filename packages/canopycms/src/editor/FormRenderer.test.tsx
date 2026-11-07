@@ -679,6 +679,62 @@ describe('FormRenderer', () => {
     })
   })
 
+  describe("'date' field type", () => {
+    const fields: FieldConfig[] = [{ name: 'eventDate', type: 'date', label: 'Event date' }]
+
+    it('renders a day picker, and a pick writes the day into the form', async () => {
+      render(<StatefulForm fields={fields} initialValue={{ eventDate: '2024-06-15' }} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Event date, 15 Jun 2024' }))
+      const dropdown = await waitFor(() => {
+        const el = document.querySelector<HTMLElement>('[data-dates-dropdown]')
+        if (!el) throw new Error('picker not open')
+        return el
+      })
+      expect(dropdown.querySelector('input[type="time"]')).toBeNull()
+      fireEvent.click(dropdown.querySelector('button[aria-label="17 June 2024"]')!)
+      const state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
+      expect(state.eventDate).toBe('2024-06-17')
+    })
+
+    it('says what a value of another type is, and lets it be removed', () => {
+      render(<StatefulForm fields={fields} initialValue={{ eventDate: 20240501 }} />)
+      expect(screen.getByRole('button', { name: 'Event date, invalid value' })).toBeTruthy()
+      expect(screen.getByText(/Stored as “20240501”/)).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: 'Remove date' }))
+      const state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
+      expect(state.eventDate).toBe('')
+    })
+
+    it.each([[undefined], [null]])('shows %s as not set', (eventDate) => {
+      render(<StatefulForm fields={fields} initialValue={{ eventDate }} />)
+      expect(screen.getByRole('button', { name: 'Event date, not set' })).toBeTruthy()
+      expect(screen.queryByRole('button', { name: 'Remove date' })).toBeNull()
+    })
+
+    it('tells the picker a required field cannot be emptied', () => {
+      render(
+        <StatefulForm
+          fields={[{ ...fields[0], required: true }]}
+          initialValue={{ eventDate: '2024-06-15' }}
+        />,
+      )
+      expect(screen.queryByRole('button', { name: 'Remove date' })).toBeNull()
+    })
+
+    it('customRenderers overrides the default control', () => {
+      render(
+        <StatefulForm
+          fields={fields}
+          initialValue={{ eventDate: '2024-06-15' }}
+          customRenderers={{
+            date: ({ value }) => <div data-testid="custom-date">{String(value)}</div>,
+          }}
+        />,
+      )
+      expect(screen.getByTestId('custom-date').textContent).toBe('2024-06-15')
+    })
+  })
+
   describe("'datetime' field type", () => {
     /** Picks 20 March 2024 at 14:05:09 local, from an empty field, through the picker's own UI. */
     const pickMarch20 = async (): Promise<number> => {
@@ -1090,6 +1146,11 @@ describe('FormRenderer', () => {
     it('number list', () => {
       renderFields(described({ name: 'scores', type: 'number', label: 'Scores', list: true }))
       expectDescribed('input')
+    })
+
+    it('date', () => {
+      renderFields(described({ name: 'eventDate', type: 'date', label: 'Event Date' }))
+      expect(expectDescribed('picker')).toBe(screen.getByLabelText('Event Date', { exact: false }))
     })
 
     it('datetime', () => {

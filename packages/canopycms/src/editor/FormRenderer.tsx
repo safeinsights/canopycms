@@ -27,6 +27,7 @@ import { TextField } from './fields/TextField'
 import { ToggleField } from './fields/ToggleField'
 import { NumberField } from './fields/NumberField'
 import { NumberListField } from './fields/NumberListField'
+import { DateField } from './fields/DateField'
 import { DateTimeField } from './fields/DateTimeField'
 import { BlockField, type BlockInstance } from './fields/BlockField'
 import { SelectField } from './fields/SelectField'
@@ -103,6 +104,10 @@ const normalizeOptions = (
 }
 
 const fieldKey = (path: Array<string | number>): string => formatCanopyPath(path)
+
+/** A value of another type as text, for `DateField` to quote: the form cannot save it. */
+const dateFieldText = (value: unknown): string =>
+  typeof value === 'string' ? value : value == null ? '' : JSON.stringify(value)
 
 /** An optional object's Clear, kept so its label row can offer Undo. */
 interface ClearedObject {
@@ -555,6 +560,20 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             onChange={(v) => update(v)}
             dataCanopyField={normalizeCanopyPath(path)}
             readOnly={readOnly}
+          />,
+        )
+      case 'date':
+        return wrapWithComments(
+          <DateField
+            key={fieldKey(path)}
+            id={fieldId}
+            label={label}
+            description={field.description}
+            value={dateFieldText(currentValue)}
+            onChange={(v) => update(v)}
+            dataCanopyField={normalizeCanopyPath(path)}
+            readOnly={readOnly}
+            required={field.required === true}
           />,
         )
       case 'datetime':

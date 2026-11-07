@@ -458,7 +458,23 @@ describe('EntryChangesDrawer marks', () => {
     expect(textOf(shown)).toContain('Line 250')
   })
 
-  it('shows dates in full, the changed part marked, then relative', async () => {
+  it('shows a day and no relative time, which means nothing for a day to come', async () => {
+    one({ eventDate: '2031-01-15' }, { eventDate: '2031-01-16' }, [
+      { name: 'eventDate', type: 'date', label: 'Event date' },
+    ])
+    const shown = await card()
+    expect(shown.querySelector('ins')).not.toBeNull()
+    expect(textOf(shown)).not.toMatch(/just now|ago/)
+  })
+
+  it('shows a date-time in full, then relative', async () => {
+    one({ publishedAt: '2026-01-02T10:00:00.000Z' }, { publishedAt: '2026-02-03T10:00:00.000Z' }, [
+      { name: 'publishedAt', type: 'datetime', label: 'Published' },
+    ])
+    expect(textOf(await card())).toMatch(/ago/)
+  })
+
+  it('shows dates in full, the changed part marked', async () => {
     one({ publishedAt: '2026-01-02' }, { publishedAt: '2026-01-03' }, [
       { name: 'publishedAt', type: 'datetime', label: 'Published' },
     ])

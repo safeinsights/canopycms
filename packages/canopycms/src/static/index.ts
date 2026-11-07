@@ -10,6 +10,7 @@ import {
   type EntryFieldError,
 } from '../validation/entry-validator'
 import { findBodyFieldName } from '../utils/body-field'
+import { withCalendarDays } from '../utils/calendar-day'
 import { isDataOnlyFormat } from '../utils/format'
 import { parseSlug } from '../paths'
 import { collectReferenceIds } from '../validation/field-traversal'
@@ -267,7 +268,9 @@ type BuildScanItem = Pick<ListEntriesItem, 'entryPath' | 'schema'> & {
  * gray-matter parses unquoted YAML dates in hand-authored frontmatter (`date: YYYY-MM-DD`) into
  * JS `Date` objects rather than strings. The shared validator's datetime check requires a string
  * (see `validateScalar` in entry-validator.ts), so a legitimate hand-authored or migrated entry
- * would otherwise fail this build guard. CMS-authored entries round-trip as quoted strings, so
+ * would otherwise fail this build guard. A bare date under a `date` field is read as the day
+ * written (`withCalendarDays`), and its ISO string is no day, so the scan does the same first.
+ * CMS-authored entries round-trip as quoted strings, so
  * this only affects pre-existing content — which is the primary path for adopters retrofitting
  * CanopyCMS onto an existing repo.
  *
@@ -310,7 +313,9 @@ export function findInvalidEntries(items: readonly BuildScanItem[]): InvalidBuil
   const invalid: InvalidBuildEntry[] = []
   for (const item of items) {
     if (!item.schema) continue
-    const data = normalizeDatesDeep(item.data) as Record<string, unknown>
+    const data = normalizeDatesDeep(
+      withCalendarDays(item.schema, item.data as Record<string, unknown>),
+    ) as Record<string, unknown>
     const errors = validateEntryData(item.schema, data)
     if (errors.length > 0) {
       invalid.push({ entryPath: item.entryPath, errors })

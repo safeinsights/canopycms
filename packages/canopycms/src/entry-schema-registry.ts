@@ -21,6 +21,7 @@ import {
   ensureNoGroupsInsideComplexFields,
   ensureMarkdownFieldOptions,
   ensureMaxItemsPlacement,
+  ensureSingleDateFields,
   ensureStampOnPublishPlacement,
 } from './config/validation'
 
@@ -138,6 +139,7 @@ export function createEntrySchemaRegistry<T extends Record<string, EntrySchema>>
     ensureMarkdownFieldOptions(schema)
     ensureStampOnPublishPlacement(schema, `Entry schema registry entry "${key}"`)
     ensureMaxItemsPlacement(schema, `Entry schema registry entry "${key}"`)
+    ensureSingleDateFields(schema, `Entry schema registry entry "${key}"`)
     ensureNoFlattenedFieldNameCollisions(schema, `entry schema "${key}"`)
   }
 

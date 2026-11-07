@@ -31,6 +31,7 @@ import { referenceValueId, resolveBlockItem, traverseFields } from './field-trav
 import { findBodyFieldName } from '../utils/body-field'
 import { flattenGroupFields } from '../utils/flatten-group-fields'
 import { isDataOnlyFormat } from '../utils/format'
+import { isCalendarDay } from '../utils/calendar-day'
 
 /**
  * One per-field validation error. `fieldPath` uses the canonical CanopyCMS
@@ -151,6 +152,11 @@ function validateScalar(field: FieldConfig, value: unknown, path: string): Entry
         return [{ fieldPath: path, message: 'Expected true or false' }]
       }
       return []
+    case 'date':
+      if (value !== '' && !isCalendarDay(value)) {
+        return [{ fieldPath: path, message: 'Expected a real date, written YYYY-MM-DD' }]
+      }
+      return []
     case 'datetime':
       if (typeof value !== 'string' || (value !== '' && Number.isNaN(Date.parse(value)))) {
         return [{ fieldPath: path, message: 'Expected a valid date/time string' }]
@@ -189,7 +195,7 @@ function isEmptyForRequired(field: FieldConfig, value: unknown): boolean {
   if (value === undefined || value === null) return true
   if (Array.isArray(value)) return value.length === 0
   if (typeof value === 'string') {
-    // Strings, selects, references, datetimes: empty string means "not filled in".
+    // Strings, selects, references, dates: empty string means "not filled in".
     return value.trim() === ''
   }
   return false

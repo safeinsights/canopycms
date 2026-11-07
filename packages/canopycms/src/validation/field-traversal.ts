@@ -72,7 +72,9 @@ export interface ResolvedBlockItem {
 
 /** A record of named fields: not null, and not an array, which spreading would index-key. */
 export function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
+  return (
+    typeof value === 'object' && value !== null && !Array.isArray(value) && !(value instanceof Date)
+  )
 }
 
 /**

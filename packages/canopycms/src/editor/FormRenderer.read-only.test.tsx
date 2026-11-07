@@ -163,6 +163,27 @@ describe('FormRenderer readOnly', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
+  it('date: the picker shows the value, is focusable but cannot be removed or opened, and writes nothing', async () => {
+    const { onChange } = renderReadOnly(
+      [{ name: 'eventDate', type: 'date', label: 'Event date' }],
+      {
+        eventDate: '2024-01-02',
+      },
+    )
+    const picker = screen.getByRole('button', { name: 'Event date, 2 Jan 2024' })
+    expect(picker.getAttribute('data-read-only')).toBe('true')
+    expect(picker.matches(':disabled')).toBe(false)
+    picker.focus()
+    expect(document.activeElement).toBe(picker)
+    expect(screen.queryByRole('button', { name: 'Remove date' })).toBeNull()
+
+    fireEvent.click(picker)
+    // Time for an opening transition to mount a dropdown it should not.
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(document.querySelector('[data-dates-dropdown]')).toBeNull()
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
   it('datetime: the read-only rule greys the picker trigger like every other input', () => {
     const { container } = renderReadOnly(
       [{ name: 'publishedAt', type: 'datetime', label: 'Published' }],

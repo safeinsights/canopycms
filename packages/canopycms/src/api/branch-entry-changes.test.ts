@@ -45,6 +45,7 @@ const postFields = [
 ]
 const noteFields = [
   { name: 'title', type: 'string' as const, isTitle: true },
+  { name: 'on', type: 'date' as const },
   { name: 'content', type: 'markdown' as const, isBody: true },
 ]
 const titleOnly = [{ name: 'title', type: 'string' as const, isTitle: true }]
@@ -70,6 +71,7 @@ const ID = {
   hello: 'zY9xW8vU7tS6',
   old: 'pQ2rS3tU4vW5',
   memo: 'Ab2Cd3Ef4Gh5',
+  dated: 'Rs2Tu3Vw4Xy5',
   item: 'Jk6Lm7Np8Qr9',
   secret: 'mN8bV7cX6zL5',
   fresh: 'Ff4Gg5Hh6Jj7',
@@ -85,6 +87,7 @@ const files = {
   hello: `content/${BLOG}/post.hello.${ID.hello}.json`,
   old: `content/${BLOG}/post.old-news.${ID.old}.json`,
   memo: `content/${NOTES}/note.memo.${ID.memo}.md`,
+  dated: `content/${NOTES}/note.dated.${ID.dated}.md`,
   item: `content/${DATA}/item.thing.${ID.item}.yaml`,
   secret: `content/${PRIVATE}/post.secret.${ID.secret}.json`,
 }
@@ -92,6 +95,7 @@ const seedText: Record<keyof typeof files, string> = {
   hello: JSON.stringify(helloPost),
   old: JSON.stringify({ title: 'Old news' }),
   memo: '---\ntitle: Memo\n---\nFirst line\nSecond line\n',
+  dated: '---\ntitle: Dated\non: 2024-05-01\n---\nBody\n',
   item: 'title: Thing\n',
   secret: JSON.stringify({ title: 'Secret' }),
 }
@@ -407,6 +411,13 @@ describe('GET /:branch/changes/...entryPath', () => {
       (side?.sections as Array<{ _key: string }>).map((s) => s._key)
     expect(keys(data.before?.data)).toEqual([...keys(data.after?.data)].reverse())
     expect(keys(data.before?.data).every((key) => /^h[1-9A-HJ-NP-Za-km-z]+$/.test(key))).toBe(true)
+  })
+
+  it('reads a bare date under a date field as the day on both sides', async () => {
+    await write(files.dated, '---\ntitle: Renamed\non: 2024-05-01\n---\nBody\n')
+    const data = await ok(createCtx(), 'content/notes/dated')
+    expect(data.before?.data).toEqual({ title: 'Dated', on: '2024-05-01' })
+    expect(data.after?.data).toEqual({ title: 'Renamed', on: '2024-05-01' })
   })
 
   it('splits a markdown entry’s body out of its frontmatter on both sides', async () => {

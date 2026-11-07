@@ -52,6 +52,7 @@ afterEach(() => {
 const fields: FieldConfig[] = [
   { name: 'title', type: 'string', label: 'Title' },
   { name: 'publishedAt', type: 'datetime' },
+  { name: 'eventDate', type: 'date' },
   { name: 'featured', type: 'boolean' },
   { name: 'author', type: 'reference', label: 'Author' },
   { name: 'cover', type: 'image' },
@@ -676,5 +677,69 @@ describe('computeEntryDiff, round 2', () => {
   it('says a line break added or removed at the very end, and nothing else', () => {
     expect(textDiff('a\nb', 'a\nb\n', true)).toEqual({ mode: 'endLineBreak', added: true })
     expect(textDiff('a\nb\n', 'a\nb', true)).toEqual({ mode: 'endLineBreak', added: false })
+  })
+})
+
+describe('computeEntryDiff on a date field', () => {
+  const zone = process.env.TZ
+  afterEach(() => {
+    if (zone === undefined) delete process.env.TZ
+    else process.env.TZ = zone
+  })
+
+  const long = (year: number, month: number, day: number) =>
+    new Date(year, month - 1, day).toLocaleDateString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    })
+
+  it.each(['America/Los_Angeles', 'Pacific/Auckland'])(
+    'shows a changed day as that day in %s',
+    (timeZone) => {
+      process.env.TZ = timeZone
+      const { changes } = computeEntryDiff({
+        fields,
+        before: side({ eventDate: '2026-11-05' }),
+        after: side({ eventDate: '2026-11-06' }),
+      })
+      expect(changes).toHaveLength(1)
+      expect(changes[0]).toMatchObject({
+        path: ['Event date'],
+        kind: 'changed',
+        before: { kind: 'date', iso: '2026-11-05', dateOnly: true, text: long(2026, 11, 5) },
+        after: { kind: 'date', iso: '2026-11-06', dateOnly: true, text: long(2026, 11, 6) },
+      })
+    },
+  )
+
+  it('keeps a year below 100, which the Date constructor reads as a 1900s year', () => {
+    const { changes } = computeEntryDiff({
+      fields,
+      before: side({}),
+      after: side({ eventDate: '0099-01-01' }),
+    })
+    const after = changes[0].after
+    expect(after?.kind === 'date' && after.text).toMatch(/\b0?0?99\b/)
+    expect(after?.kind === 'date' && after.text).not.toContain('1999')
+  })
+
+  it('shows a value that is no real day as the text it is', () => {
+    const { changes } = computeEntryDiff({
+      fields,
+      before: side({ eventDate: '2026-02-30' }),
+      after: side({ eventDate: '2026-03-01' }),
+    })
+    expect(changes[0].before).toEqual({ kind: 'text', text: '2026-02-30' })
+    expect(changes[0].after).toMatchObject({ kind: 'date', iso: '2026-03-01' })
+  })
+
+  it('counts a timestamp and a day as different, unlike a datetime field', () => {
+    const { changes } = computeEntryDiff({
+      fields,
+      before: side({ eventDate: '2026-11-05T00:00:00.000Z' }),
+      after: side({ eventDate: '2026-11-05' }),
+    })
+    expect(changes).toHaveLength(1)
   })
 })
