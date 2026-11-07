@@ -27,6 +27,7 @@ import { TextField } from './fields/TextField'
 import { ToggleField } from './fields/ToggleField'
 import { NumberField } from './fields/NumberField'
 import { NumberListField } from './fields/NumberListField'
+import { DateField } from './fields/DateField'
 import { DateTimeField } from './fields/DateTimeField'
 import { BlockField, type BlockInstance } from './fields/BlockField'
 import { SelectField } from './fields/SelectField'
@@ -552,6 +553,19 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             label={label}
             description={field.description}
             value={typeof currentValue === 'number' ? currentValue : undefined}
+            onChange={(v) => update(v)}
+            dataCanopyField={normalizeCanopyPath(path)}
+            readOnly={readOnly}
+          />,
+        )
+      case 'date':
+        return wrapWithComments(
+          <DateField
+            key={fieldKey(path)}
+            id={fieldId}
+            label={label}
+            description={field.description}
+            value={typeof currentValue === 'string' ? currentValue : ''}
             onChange={(v) => update(v)}
             dataCanopyField={normalizeCanopyPath(path)}
             readOnly={readOnly}

@@ -12,7 +12,7 @@ import type { EntryLinkUrlResolver } from '../entry-link-resolver'
 import type { CropRect } from '../assets/transform-directives'
 import type { SeoFieldLocation } from '../static/seo'
 
-const scalarFieldTypes = ['string', 'number', 'boolean', 'datetime', 'code'] as const
+const scalarFieldTypes = ['string', 'number', 'boolean', 'date', 'datetime', 'code'] as const
 
 export const markdownFieldTypes = ['markdown', 'mdx'] as const
 

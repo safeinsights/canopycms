@@ -12,6 +12,7 @@ import type { BlockFieldConfig, FieldConfig, ObjectFieldConfig, SelectFieldConfi
 import type { EntryChangeSide } from '../api/branch-entry-changes'
 import { ITEM_KEY } from '../item-keys'
 import { findBodyFieldName } from '../utils/body-field'
+import { isCalendarDay, localMidnight } from '../utils/calendar-day'
 import { flattenGroupFields } from '../utils/flatten-group-fields'
 import { isPlainRecord, resolveBlockItem } from '../validation/field-traversal'
 import { listItemHeading, listItemTitle } from './fields/list-item-title'
@@ -192,7 +193,7 @@ const formatDate = (
 ): string => {
   if (dateOnly) {
     const [year, month, day] = iso.split('-').map(Number)
-    return new Date(year, month - 1, day).toLocaleDateString(undefined, {
+    return localMidnight(year, month, day).toLocaleDateString(undefined, {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
@@ -298,6 +299,11 @@ class Walker {
         }
         break
       }
+      case 'date':
+        if (isCalendarDay(value)) {
+          return { kind: 'date', iso: value, text: formatDate(value, true), dateOnly: true }
+        }
+        break
       case 'datetime':
         if (typeof value === 'string' && !Number.isNaN(Date.parse(value))) {
           return DATE_ONLY.test(value)

@@ -28,7 +28,7 @@ import {
   withContentWriteLock,
 } from './utils/content-write-lock'
 import { findBodyFieldName, linkOnlyReferenceData } from './utils/body-field'
-import { withItemKeys } from './item-keys'
+import { entryAsRead } from './utils/calendar-day'
 import {
   buildMissingReference,
   buildResolvedReference,
@@ -1079,9 +1079,9 @@ export class ContentStore {
       }
     }
 
-    // Keys an item saved without one by its content, before references resolve into it, as the
-    // listing and the write path do (`item-keys.ts`).
-    doc.data = withItemKeys(fields, doc.data, 'content')
+    // Before references resolve into it. An item saved without a key is keyed by its content, as
+    // the listing and the write path do (`item-keys.ts`).
+    doc.data = entryAsRead(fields, doc.data)
 
     if (options.resolveReferences !== false) {
       doc.data = await this.resolveReferencesInData(
@@ -1360,7 +1360,13 @@ export class ContentStore {
           } else if (input.format === 'yaml') {
             content = serializeYaml(input.data ?? {}, existingRaw)
           } else {
-            content = serializeFrontmatter(input.body, input.data ?? {}, existingRaw, input.format)
+            content = serializeFrontmatter(
+              input.body,
+              input.data ?? {},
+              existingRaw,
+              input.format,
+              fields,
+            )
           }
 
           await atomicWriteFile(absolutePath, content)

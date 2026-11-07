@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { useState } from 'react'
 
+import { DateField } from './DateField'
 import { DateTimeField } from './DateTimeField'
 import { MarkdownField } from './MarkdownField'
 import { StringListField } from './StringListField'
@@ -38,6 +39,39 @@ export const Code: StoryObj = {
   render: () => {
     const [value, setValue] = useState('console.log("hello");')
     return <MarkdownField label="Code" value={value} onChange={setValue} />
+  },
+}
+
+export const DateOnly: StoryObj = {
+  render: () => {
+    const [value, setValue] = useState('2026-10-12')
+    return <DateField label="Event date" value={value} onChange={setValue} />
+  },
+}
+
+export const DateOnlyEmpty: StoryObj = {
+  render: () => {
+    const [value, setValue] = useState('')
+    return (
+      <DateField
+        label="Event date"
+        description="The day it runs."
+        value={value}
+        onChange={setValue}
+      />
+    )
+  },
+}
+
+export const DateOnlyReadOnly: StoryObj = {
+  render: () => <DateField label="Event date" value="2026-10-12" onChange={() => {}} readOnly />,
+}
+
+/** A stored value that is no real day shows as not set; Remove clears it. */
+export const DateOnlyImpossibleValue: StoryObj = {
+  render: () => {
+    const [value, setValue] = useState('2026-02-30')
+    return <DateField label="Event date" value={value} onChange={setValue} />
   },
 }
 

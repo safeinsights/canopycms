@@ -499,7 +499,7 @@ Afterwards, make sure the schema key you chose exists in your entry schema regis
 
 ### Field Types
 
-- `string` — single-line text; `number`, `boolean`, `datetime` — numeric value, toggle, date-and-time picker
+- `string` — single-line text; `number`, `boolean` — numeric value, toggle; `datetime` — date-and-time picker; `date` — a day picker, stored as a `YYYY-MM-DD` string with no time or zone
 - `markdown` / `mdx` — JSX-aware rich-text editor; bodies it would alter on save (e.g. text after a nested list) or that crash it open as source. See [MDX content cannot run code](#mdx-content-cannot-run-code)
 - `image` — image upload/selection; `code` — code editor with syntax highlighting
 - `select` — dropdown; takes `options: string[] | {label, value}[]`
@@ -529,6 +529,15 @@ On a `string` field, `list: true` renders a tag input: type a value and press En
 A cleared string-valued field (`string`, `select`, `code` and the like) is saved as `''`, not removed, so a site-side `?? 'default'` stops applying once an editor has touched it; use `|| 'default'` when blank should mean the default.
 
 A non-markdown field that throws while rendering (`customRenderers` too) shows its value read-only, unchanged on save; the rest still works.
+
+#### Dates: `date` or `datetime`
+
+`datetime` stores an instant, so a day picked in one zone can read as the day before in another. A `date` is the same day for every reader, typed `string`.
+
+- Saves and builds refuse anything but a real day, such as `2026-02-30` or `2026-5-1`; `''` means not set.
+- An unquoted `date: 2024-05-01` in md or mdx frontmatter is that day in every zone.
+- `list: true` is refused; use an object list holding a `date` field.
+- To move a `string` field holding `YYYY-MM-DD`, change its type to `date`. Values and the site's types stay as they are, and a build names any entry that isn't a real day.
 
 #### Stamping a publication date
 
