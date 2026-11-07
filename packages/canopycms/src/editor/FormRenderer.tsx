@@ -569,6 +569,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             onChange={(v) => update(v)}
             dataCanopyField={normalizeCanopyPath(path)}
             readOnly={readOnly}
+            required={field.required === true}
           />,
         )
       case 'datetime':

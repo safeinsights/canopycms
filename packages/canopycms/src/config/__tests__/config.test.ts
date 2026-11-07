@@ -899,10 +899,10 @@ describe('ensureItemTitleFieldsExist', () => {
     ]
     expect(() => ensureItemTitleFieldsExist(withChild('number'))).not.toThrow()
     expect(() => ensureItemTitleFieldsExist(withChild('reference'))).toThrow(
-      'must name a string or number field',
+      'must name a string, number or date field',
     )
     expect(() => ensureItemTitleFieldsExist(withChild('markdown'))).toThrow(
-      'must name a string or number field',
+      'must name a string, number or date field',
     )
   })
 

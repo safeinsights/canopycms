@@ -67,7 +67,14 @@ export const DateOnlyReadOnly: StoryObj = {
   render: () => <DateField label="Event date" value="2026-10-12" onChange={() => {}} readOnly />,
 }
 
-/** A stored value that is no real day shows as not set; Remove clears it. */
+export const DateOnlyRequired: StoryObj = {
+  render: () => {
+    const [value, setValue] = useState('2026-10-12')
+    return <DateField label="Event date" value={value} onChange={setValue} required />
+  },
+}
+
+/** A stored value that is no real day is quoted in an error; a pick or Remove replaces it. */
 export const DateOnlyImpossibleValue: StoryObj = {
   render: () => {
     const [value, setValue] = useState('2026-02-30')

@@ -701,6 +701,16 @@ describe('FormRenderer', () => {
       expect(screen.getByRole('button', { name: 'Event date, not set' })).toBeTruthy()
     })
 
+    it('tells the picker a required field cannot be emptied', () => {
+      render(
+        <StatefulForm
+          fields={[{ ...fields[0], required: true }]}
+          initialValue={{ eventDate: '2024-06-15' }}
+        />,
+      )
+      expect(screen.queryByRole('button', { name: 'Remove date' })).toBeNull()
+    })
+
     it('customRenderers overrides the default control', () => {
       render(
         <StatefulForm

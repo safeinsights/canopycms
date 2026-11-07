@@ -115,6 +115,31 @@ describe('withCalendarDays', () => {
     })
   })
 
+  it('reads a bare date in a block field that is itself named value, in both block shapes', () => {
+    const named: FieldConfig[] = [
+      {
+        name: 'blocks',
+        type: 'block',
+        templates: [{ name: 'stat', fields: [{ name: 'value', type: 'date' }] }],
+      },
+    ]
+    expect(
+      withCalendarDays(named, {
+        blocks: [
+          { template: 'stat', value: { value: bare('2024-05-01') } },
+          { template: 'stat', value: bare('2024-05-02') },
+          { _type: 'stat', value: bare('2024-05-03') },
+        ],
+      }),
+    ).toEqual({
+      blocks: [
+        { template: 'stat', value: { value: '2024-05-01' } },
+        { template: 'stat', value: '2024-05-02' },
+        { _type: 'stat', value: '2024-05-03' },
+      ],
+    })
+  })
+
   it('leaves a Date with a time of day, and a bare date before 1970 is still a day', () => {
     const noon = new Date('2024-05-01T12:00:00.000Z')
     expect(withCalendarDays(fields, { on: noon }).on).toBe(noon)

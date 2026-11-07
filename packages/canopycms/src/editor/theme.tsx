@@ -468,11 +468,15 @@ const CANOPY_STYLES = `
   box-shadow: inset 0 0 0 1px currentColor;
 }
 .mantine-DateTimePicker-day[data-selected],
-.mantine-DateTimePicker-pickerControl[data-selected] {
+.mantine-DateTimePicker-pickerControl[data-selected],
+.mantine-DatePickerInput-day[data-selected],
+.mantine-DatePickerInput-pickerControl[data-selected] {
   background-color: var(--canopy-primary-fill);
 }
 .mantine-DateTimePicker-day[data-selected]:hover,
-.mantine-DateTimePicker-pickerControl[data-selected]:hover {
+.mantine-DateTimePicker-pickerControl[data-selected]:hover,
+.mantine-DatePickerInput-day[data-selected]:hover,
+.mantine-DatePickerInput-pickerControl[data-selected]:hover {
   background-color: var(--canopy-primary-fill-hover);
 }
 input.mantine-TimeInput-input::-webkit-datetime-edit-hour-field:focus,
@@ -483,10 +487,12 @@ input.mantine-TimeInput-input::-webkit-datetime-edit-ampm-field:focus {
 }
 .mantine-Menu-item[aria-disabled='true'],
 .mantine-Combobox-empty,
-.mantine-DateTimePicker-day[data-outside] {
+.mantine-DateTimePicker-day[data-outside],
+.mantine-DatePickerInput-day[data-outside] {
   font-style: var(--canopy-dimmed-font-style);
 }
-.mantine-DateTimePicker-day[data-outside]:not([data-disabled]) {
+.mantine-DateTimePicker-day[data-outside]:not([data-disabled]),
+.mantine-DatePickerInput-day[data-outside]:not([data-disabled]) {
   opacity: 1;
 }
 `

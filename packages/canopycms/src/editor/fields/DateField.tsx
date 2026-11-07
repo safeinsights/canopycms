@@ -18,15 +18,23 @@ export interface DateFieldProps {
   dataCanopyField?: string
   /** Shows the value without accepting edits. */
   readOnly?: boolean
+  /** A required field has no Remove: a save needs a day in it. */
+  required?: boolean
 }
 
 const VALUE_FORMAT = 'D MMM YYYY'
 const REMOVE_LABEL = 'Remove date'
 
+/** What a stored value that is no real day says: it is the only clue to the day meant. */
+const notADay = (value: string, readOnly: boolean, required: boolean): string => {
+  const next = required ? 'Pick a date.' : 'Pick a date or remove it.'
+  return `Stored as “${value}”, which isn't a real date.${readOnly ? '' : ` ${next}`}`
+}
+
 /**
  * Editor for `type: 'date'` fields: a day, stored as `YYYY-MM-DD`, with no time and no zone. Only
- * a pick or Remove writes, so a loaded value saves back unchanged; Remove also clears a value that
- * is no real day, which shows as not set and which a save refuses.
+ * a pick or Remove writes, so a loaded value saves back unchanged, and a save refuses one that is
+ * no real day.
  */
 export const DateField: React.FC<DateFieldProps> = ({
   id,
@@ -36,11 +44,14 @@ export const DateField: React.FC<DateFieldProps> = ({
   onChange,
   dataCanopyField,
   readOnly = false,
+  required = false,
 }) => {
   const generatedId = useId()
   const inputId = id ?? generatedId
   const triggerRef = useRef<HTMLButtonElement>(null)
   const date = calendarDayToLocalDate(value)
+  const invalid = value !== '' && date === null
+  const shown = date ? dayjs(date).format(VALUE_FORMAT) : invalid ? 'invalid value' : 'not set'
 
   return (
     <LabelledInput label={label} inputId={inputId} canopyPath={dataCanopyField}>
@@ -48,8 +59,9 @@ export const DateField: React.FC<DateFieldProps> = ({
         ref={triggerRef}
         id={inputId}
         // The label alone would name the trigger; a screen reader also needs the value.
-        aria-label={`${label ?? 'Date'}, ${date ? dayjs(date).format(VALUE_FORMAT) : 'not set'}`}
+        aria-label={`${label ?? 'Date'}, ${shown}`}
         description={description}
+        error={invalid ? notADay(value, readOnly, required) : undefined}
         size="sm"
         value={date}
         onChange={(next) => {
@@ -58,10 +70,12 @@ export const DateField: React.FC<DateFieldProps> = ({
         valueFormat={VALUE_FORMAT}
         placeholder={readOnly ? undefined : 'Pick a date'}
         ariaLabels={CALENDAR_LABELS}
+        // Mantine leaves focus on the day it unmounts, which drops a keyboard user to the page.
+        popoverProps={{ returnFocus: true }}
         // Red is for errors here, so weekends look like other days.
         weekendDays={[]}
         rightSection={
-          value && !readOnly ? (
+          value && !readOnly && !required ? (
             <Tooltip label={REMOVE_LABEL}>
               <ActionIcon
                 variant="subtle"

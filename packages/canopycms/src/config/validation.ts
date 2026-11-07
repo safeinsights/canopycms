@@ -152,8 +152,8 @@ export const ensureItemTitleFieldsExist = (fields: unknown): void => {
         if (typeof f.itemTitleField !== 'string' || !child) {
           throw new Error(`${label}, which is not one of its child fields`)
         }
-        if (child.type !== 'string' && child.type !== 'number') {
-          throw new Error(`${label}, which must name a string or number field`)
+        if (child.type !== 'string' && child.type !== 'number' && child.type !== 'date') {
+          throw new Error(`${label}, which must name a string, number or date field`)
         }
       }
       ensureItemTitleFieldsExist(children)

@@ -18,8 +18,9 @@ const Harness: React.FC<{
   initial?: string
   onChange?: (v: string) => void
   readOnly?: boolean
+  required?: boolean
   description?: string
-}> = ({ initial = '', onChange, readOnly, description }) => {
+}> = ({ initial = '', onChange, readOnly, required, description }) => {
   const [value, setValue] = useState(initial)
   return (
     <CanopyCMSProvider>
@@ -33,6 +34,7 @@ const Harness: React.FC<{
         }}
         dataCanopyField="eventDate"
         readOnly={readOnly}
+        required={required}
       />
     </CanopyCMSProvider>
   )
@@ -143,6 +145,19 @@ describe('DateField', () => {
     await waitFor(() => expect(document.querySelector('[data-dates-dropdown]')).toBeNull())
   })
 
+  it('hands focus back to the trigger after a pick, not to the page', async () => {
+    render(<Harness initial="2024-06-15" />)
+    trigger().focus()
+    const dropdown = await openPicker()
+    pickDay(dropdown, '17 June 2024')
+    await waitFor(() => expect(document.activeElement).toBe(trigger()))
+  })
+
+  it('offers no Remove on a required field', () => {
+    render(<Harness initial="2024-05-01" required />)
+    expect(screen.queryByRole('button', REMOVE)).toBeNull()
+  })
+
   it('Remove writes the empty string, takes the control away and focuses the trigger', async () => {
     const changes: string[] = []
     render(<Harness initial="2024-05-01" onChange={(v) => changes.push(v)} />)
@@ -154,18 +169,50 @@ describe('DateField', () => {
     expect(document.querySelector('[data-dates-dropdown]')).toBeNull()
   })
 
-  it.each(['2026-02-30', '2026-5-1', '2026-05-01T05:00:00.000Z', 'next tuesday'])(
-    'shows %s, no real day, as not set, writes nothing, and Remove clears it',
-    (stored) => {
+  describe('a stored value that is no real day', () => {
+    const shownError = (stored: string, next: string) =>
+      `Stored as “${stored}”, which isn't a real date.${next}`
+
+    it.each(['2026-02-30', '2026-5-1', '2026-05-01T05:00:00.000Z', 'next tuesday'])(
+      'says what %s is, writes nothing, and Remove clears it',
+      (stored) => {
+        const changes: string[] = []
+        render(<Harness initial={stored} onChange={(v) => changes.push(v)} />)
+        expect(trigger().textContent).toBe('Pick a date')
+        expect(trigger().getAttribute('aria-label')).toBe('Event date, invalid value')
+        expect(trigger().getAttribute('aria-invalid')).toBe('true')
+        const error = screen.getByText(shownError(stored, ' Pick a date or remove it.'))
+        expect(trigger().getAttribute('aria-describedby')?.split(' ')).toContain(error.id)
+        expect(changes).toEqual([])
+        fireEvent.click(screen.getByRole('button', REMOVE))
+        expect(changes).toEqual([''])
+        expect(screen.queryByText(/isn't a real date/)).toBeNull()
+        expect(trigger().getAttribute('aria-label')).toBe('Event date, not set')
+      },
+    )
+
+    it('is replaced by a pick', async () => {
       const changes: string[] = []
-      render(<Harness initial={stored} onChange={(v) => changes.push(v)} />)
-      expect(trigger().textContent).toBe('Pick a date')
-      expect(trigger().getAttribute('aria-label')).toBe('Event date, not set')
-      expect(changes).toEqual([])
-      fireEvent.click(screen.getByRole('button', REMOVE))
-      expect(changes).toEqual([''])
-    },
-  )
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date(2026, 1, 15, 12, 0, 0))
+      render(<Harness initial="2026-02-30" onChange={(v) => changes.push(v)} />)
+      pickDay(await openPicker(), '20 February 2026')
+      expect(changes).toEqual(['2026-02-20'])
+      expect(screen.queryByText(/isn't a real date/)).toBeNull()
+    })
+
+    it('on a required field, says to pick one, and has no Remove', () => {
+      render(<Harness initial="2026-02-30" required />)
+      expect(screen.getByText(shownError('2026-02-30', ' Pick a date.'))).toBeTruthy()
+      expect(screen.queryByRole('button', REMOVE)).toBeNull()
+    })
+
+    it('read-only, says what it is and asks for nothing', () => {
+      render(<Harness initial="2026-02-30" readOnly />)
+      expect(screen.getByText(shownError('2026-02-30', ''))).toBeTruthy()
+      expect(screen.queryByRole('button', REMOVE)).toBeNull()
+    })
+  })
 
   it('keeps a year below 100 as written, not as a 1900s year', () => {
     render(<Harness initial="0099-01-01" />)

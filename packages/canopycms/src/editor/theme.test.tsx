@@ -889,12 +889,16 @@ describe('CanopyCMSProvider stylesheet', () => {
     const option = await waitFor(() => getByRole('option', { name: 'Posts' }))
     option.setAttribute('data-combobox-selected', 'true')
     expect(canopyRuleSets(option, '--mantine-primary-color-filled')).toBe(true)
-    const day = document.createElement('button')
-    day.className = 'mantine-DateTimePicker-day'
-    day.setAttribute('data-selected', 'true')
-    expect(canopyRuleSets(day, 'background-color')).toBe(true)
-    day.removeAttribute('data-selected')
-    expect(canopyRuleSets(day, 'background-color')).toBe(false)
+    for (const picker of ['DateTimePicker', 'DatePickerInput']) {
+      for (const part of ['day', 'pickerControl']) {
+        const control = document.createElement('button')
+        control.className = `mantine-${picker}-${part}`
+        control.setAttribute('data-selected', 'true')
+        expect(canopyRuleSets(control, 'background-color')).toBe(true)
+        control.removeAttribute('data-selected')
+        expect(canopyRuleSets(control, 'background-color')).toBe(false)
+      }
+    }
   })
 
   it('sets blocked menu items, empty comboboxes and outside days in the dimmed font style', () => {
@@ -904,13 +908,15 @@ describe('CanopyCMSProvider stylesheet', () => {
     expect(canopyRuleSets(item, 'font-style')).toBe(false)
     item.setAttribute('aria-disabled', 'true')
     expect(canopyRuleSets(item, 'font-style')).toBe(true)
-    const outside = document.createElement('button')
-    outside.className = 'mantine-DateTimePicker-day'
-    outside.setAttribute('data-outside', 'true')
-    expect(canopyRuleSets(outside, 'font-style')).toBe(true)
-    expect(canopyRuleSets(outside, 'opacity')).toBe(true)
-    outside.setAttribute('data-disabled', 'true')
-    expect(canopyRuleSets(outside, 'opacity')).toBe(false)
+    for (const picker of ['DateTimePicker', 'DatePickerInput']) {
+      const outside = document.createElement('button')
+      outside.className = `mantine-${picker}-day`
+      outside.setAttribute('data-outside', 'true')
+      expect(canopyRuleSets(outside, 'font-style')).toBe(true)
+      expect(canopyRuleSets(outside, 'opacity')).toBe(true)
+      outside.setAttribute('data-disabled', 'true')
+      expect(canopyRuleSets(outside, 'opacity')).toBe(false)
+    }
   })
 })
 

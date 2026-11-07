@@ -20,7 +20,10 @@ const fields: EntrySchema = [
   {
     name: 'blocks',
     type: 'block',
-    templates: [{ name: 'event', fields: [{ name: 'on', type: 'date' }] }],
+    templates: [
+      { name: 'event', fields: [{ name: 'on', type: 'date' }] },
+      { name: 'stat', fields: [{ name: 'value', type: 'date' }] },
+    ],
   },
 ]
 
@@ -141,6 +144,17 @@ describe('a hand-written bare date in an md entry', () => {
     expect(saved).toContain(`on: '2024-06-02'\n`)
     expect(saved).toContain('title: Launch # shown in the card\n')
     expect((await store.read(collection('md'), launch)).data.on).toBe('2024-06-02')
+  })
+
+  it('keeps a bare date in a block field named value through a read and a save', async () => {
+    const file = await handWrite(
+      '---\nblocks:\n  - _type: stat\n    value: 2024-05-01\n---\n\nBody.\n',
+    )
+    const doc = await store.read(collection('md'), launch)
+    expect(doc.data.blocks).toEqual([expect.objectContaining({ value: '2024-05-01' })])
+    expect(validateEntryData(fields, doc.data)).toEqual([])
+    await save('md', { ...doc.data, title: 'Launched' })
+    expect(await fs.readFile(file, 'utf8')).toContain('value: 2024-05-01\n')
   })
 
   it('leaves a bare date under a datetime field as it was: a timestamp', async () => {

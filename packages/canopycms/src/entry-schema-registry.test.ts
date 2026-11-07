@@ -523,6 +523,20 @@ describe('createEntrySchemaRegistry: date fields', () => {
     ).not.toThrow()
   })
 
+  it('lets a day title the rows of an object list', () => {
+    expect(
+      register([
+        {
+          name: 'rows',
+          type: 'object',
+          list: true,
+          itemTitleField: 'on',
+          fields: [{ name: 'on', type: 'date' }],
+        },
+      ]),
+    ).not.toThrow()
+  })
+
   it.each<[string, EntrySchema]>([
     ['at the top level', [list]],
     ['in a group', [{ name: 'meta', type: 'group', fields: [list] }]],

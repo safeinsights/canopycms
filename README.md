@@ -504,7 +504,7 @@ Afterwards, make sure the schema key you chose exists in your entry schema regis
 - `image` — image upload/selection; `code` — code editor with syntax highlighting
 - `select` — dropdown; takes `options: string[] | {label, value}[]`
 - `reference` — a UUID-based link to another entry; takes `collections?`, `entryTypes?`, `displayField?`, `optionSort?`, `resolvedSchema?`
-- `object` — nested object; takes `fields: FieldConfig[]`. With `list: true`, set `itemTitleField` to a `string` or `number` child to title each card with its value, and `itemLabel` ("team member") to name its items
+- `object` — nested object; takes `fields: FieldConfig[]`. With `list: true`, set `itemTitleField` to a `string`, `number` or `date` child to title each card with its value, and `itemLabel` ("team member") to name its items
 - `block` — page blocks / "flexible content"; takes `templates: BlockTemplate[]`, each from `defineBlockTemplate` (see [Page Blocks](#page-blocks-flexible-content))
 
 Common options on any field:
