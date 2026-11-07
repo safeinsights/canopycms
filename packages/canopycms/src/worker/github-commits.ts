@@ -39,8 +39,8 @@ import type { WorkerContext } from './worker-context'
  * `remote.git` to them, but branch clones never fetch their own branch, so without this step the
  * clone's next rebase or commit diverges from `remote.git` and every submit after that is refused.
  *
- * Runs once per cycle for every branch this deployment has published, in every status but
- * archived, under the provisioning and content-write locks the caller holds, ahead of the rebase.
+ * Brings them in once per cycle for every branch this deployment has published, in every status
+ * but archived, under the provisioning and content-write locks the caller holds, ahead of the rebase.
  * It never forces anything: a clone behind GitHub fast-forwards, and a clone with commits GitHub
  * lacks gets a real merge (branch-merge.ts), which keeps every commit on both sides.
  *
