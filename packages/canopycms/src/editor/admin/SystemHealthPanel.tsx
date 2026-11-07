@@ -1123,7 +1123,7 @@ function ArchivedBranchesCleanup({ health }: { health: UseSystemHealthReturn }) 
           )}
           {unpublished.length > 0 && (
             <Text size="xs" data-testid="delete-archived-unpublished">
-              Kept, as they may hold changes that never reached GitHub: {unpublished.join(', ')}.
+              Kept, as they may hold changes GitHub doesn't have: {unpublished.join(', ')}.
             </Text>
           )}
         </Stack>
@@ -1182,7 +1182,7 @@ function ArchivedBranchesCleanup({ health }: { health: UseSystemHealthReturn }) 
         <Text size="xs" c="dimmed" data-testid="archived-retention-note">
           {workerStatus.archivedBranchRetentionDays === undefined
             ? 'This deployment keeps archived branches until someone deletes them.'
-            : `This deployment deletes merged branches ${workerStatus.archivedBranchRetentionDays} days after archiving.`}
+            : `This deployment deletes merged branches ${dayCount(workerStatus.archivedBranchRetentionDays)} after archiving.`}
           {sweepTrouble(workerStatus.lastGitSync?.archivedSweep)}
         </Text>
       )}
@@ -1385,7 +1385,7 @@ function BranchHealthRow({
 }) {
   if (entry.kind === 'healthy' && entry.branch) {
     const b = entry.branch
-    // The worker looks at every branch but 'archived' (already merged): one in review is not
+    // The worker looks at every branch but 'archived' (finished): one in review is not
     // rebased, but commits from GitHub are still brought into it. An exclusion, not a list of
     // statuses, so a status added later still shows its failures by default.
     const showRebaseFailure = b.status !== 'archived' && !!b.rebaseFailure

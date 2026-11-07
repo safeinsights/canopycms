@@ -723,7 +723,7 @@ export async function updateBranchMetadata(
         // A pull request opened as the branch merged is not this branch's, whose record is the merge.
         const archived = existing.branch.status === 'archived'
         if (archived && result.prNumber) {
-          workerLogWarn(`Not recording pull request #${result.prNumber} on merged ${branch}`)
+          workerLogWarn(`Not recording pull request #${result.prNumber} on archived ${branch}`)
         }
         if (result.prUrl && !archived) updates.pullRequestUrl = result.prUrl
         if (result.prNumber && !archived) {
@@ -812,7 +812,7 @@ async function updateBranchMetadataOnFailure(
           // Nothing to submit means this submit left nothing out, so it flags nothing. A flag a
           // merge already set stands, for an admin to dismiss.
           if (options.unlock || task.action !== SUBMIT_ACTION) return { branch: failed }
-          // Merged while this ran: nothing is left to finish it, as buildMergedBranchUpdate records.
+          // Archived while this ran: nothing is left to finish it, as buildMergedBranchUpdate records.
           if (existing.branch.status === 'archived') {
             return { branch: { ...failed, unpublishedAtMerge: true } }
           }

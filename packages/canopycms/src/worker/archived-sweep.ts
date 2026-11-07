@@ -24,7 +24,7 @@ export type ArchivedSweepContext = Pick<
 
 /**
  * The most branches one cycle deletes, oldest first: turning retention on over a long backlog must
- * not hold up the cycle's next git sync. The rest wait for the next cycle.
+ * not stall the sync loop. The rest wait for the next cycle.
  * @internal Exported for tests.
  */
 export const MAX_ARCHIVED_SWEEP_PER_CYCLE = 25

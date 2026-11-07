@@ -1053,7 +1053,7 @@ async function rebaseOneBranch(
     // - submitted/approved: in review, so never rewrite history under an active
     //   PR -- but do poll GitHub for the PR's resolution, since nothing else
     //   tells the worker a merge/close happened;
-    // - archived: already merged, with no PR left to poll.
+    // - archived: finished, with no PR left to poll.
     if (metaFile !== null && (branchStatus === 'submitted' || branchStatus === 'approved')) {
       workerLog(`  Skipping ${branchDir} (${branchStatus})`)
       const outcome = await bringInCommitsForBranchInReview(

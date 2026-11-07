@@ -378,7 +378,9 @@ export function useSystemHealth(options: UseSystemHealthOptions): UseSystemHealt
         if (!result.ok) throw new Error(result.error || 'Failed to delete archived branches')
         const { deleted, skipped, failed, remaining, warnings } = result.data ?? EMPTY_DELETE
         const left = [
-          failed.length > 0 ? `${countBranches(failed.length)} not deleted, try again` : '',
+          failed.length > 0
+            ? `${countBranches(failed.length)} not deleted: busy, or changed since listed`
+            : '',
           remaining > 0 ? `${countBranches(remaining)} not reached, run this again` : '',
           skipped.notMerged.length > 0
             ? `${countBranches(skipped.notMerged.length)} kept: not merged`

@@ -221,7 +221,7 @@ export interface CreateBranchBody {
  * being avoided, so it has no read-only equivalent here.
  *
  * Shared by createBranchHandler (create-time collision check against the
- * mirror) and branchDeleteOptions (removing the deleted branch's stale local
+ * mirror) and remoteCopiesOf (removing the deleted branch's stale local
  * head from the mirror) -- the two halves of the same lifecycle: what create
  * checks, delete must clean up.
  */
@@ -574,7 +574,7 @@ export const createBranchHandler = async (
         // No collision: GitHub does not have this name. Clear any STALE local
         // head the mirror still carries for it, so this new branch's first
         // publish can't be rejected non-fast-forward against a leftover tip.
-        // branchDeleteOptions' cleanup (below) handles the common case, but
+        // remoteCopiesOf's cleanup (below) handles the common case, but
         // cannot cover every ordering: when the branch still existed on
         // GitHub at editor-delete time, the sync loop's reconcile re-creates
         // the local head from GitHub's branch within a cycle, and once the
