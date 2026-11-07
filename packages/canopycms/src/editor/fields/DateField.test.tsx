@@ -172,6 +172,21 @@ describe('DateField', () => {
     expect(screen.getByLabelText<HTMLInputElement>('Other field').value).toBe('abc')
   })
 
+  it('keeps focus in the calendar through a level change, so Esc still closes it', async () => {
+    render(<Harness initial="2024-06-15" />)
+    trigger().focus()
+    const dropdown = await openPicker()
+    const level = dropdown.querySelector<HTMLElement>('button[aria-label="Choose a month"]')
+    level?.focus()
+    fireEvent.click(level as HTMLElement)
+    // jsdom leaves focus on a removed node at the body, as a browser does.
+    await waitFor(() => expect(dropdown.contains(document.activeElement)).toBe(true))
+    expect(document.activeElement).not.toBe(level)
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'Escape' })
+    await waitFor(() => expect(document.querySelector('[data-dates-dropdown]')).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(trigger()))
+  })
+
   it('offers no Remove on a required field', () => {
     render(<Harness initial="2024-05-01" required />)
     expect(screen.queryByRole('button', REMOVE)).toBeNull()

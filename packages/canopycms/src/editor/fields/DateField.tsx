@@ -25,6 +25,17 @@ export interface DateFieldProps {
 const VALUE_FORMAT = 'D MMM YYYY'
 const REMOVE_LABEL = 'Remove date'
 
+/**
+ * A level change unmounts the control that made it, and Esc only closes the calendar from inside
+ * it, so focus moves to the new level's first control.
+ */
+const keepFocusInCalendar = (): void => {
+  requestAnimationFrame(() => {
+    if (document.activeElement !== document.body) return
+    document.querySelector<HTMLElement>('[data-dates-dropdown] button')?.focus()
+  })
+}
+
 /** What a stored value that is no real day says: it is the only clue to the day meant. */
 const notADay = (value: string, readOnly: boolean, required: boolean): string => {
   const next = required ? 'Pick a date.' : 'Pick a date or remove it.'
@@ -67,12 +78,13 @@ export const DateField: React.FC<DateFieldProps> = ({
         onChange={(next) => {
           if (readOnly || !next) return
           onChange(localDateToCalendarDay(next))
-          // The day unmounts under focus, which would drop a keyboard user to the page.
+          // The day is about to unmount under focus, which would drop a keyboard user to the page.
           triggerRef.current?.focus()
         }}
         valueFormat={VALUE_FORMAT}
         placeholder={readOnly ? undefined : 'Pick a date'}
         ariaLabels={CALENDAR_LABELS}
+        onLevelChange={keepFocusInCalendar}
         // Red is for errors here, so weekends look like other days.
         weekendDays={[]}
         rightSection={
