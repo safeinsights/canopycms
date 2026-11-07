@@ -1244,6 +1244,21 @@ describe('useBranchManager', () => {
       expect(body).not.toContain('Are you sure')
     })
 
+    it('asks to archive, and says deletion by age leaves the branch', async () => {
+      mockClient.workflow.archive.mockResolvedValueOnce({ ok: true, status: 200 })
+      const { result } = await loaded(mockBranches)
+
+      await act(async () => {
+        await result.current.handleArchive('feature')
+      })
+
+      const { options, body } = await lastDialog()
+      expect(options.title).toBe('Archive branch')
+      expect(options.labels).toEqual({ confirm: 'Archive branch', cancel: 'Cancel' })
+      expect(body).toContain('Archive “feature”?')
+      expect(body).toContain('automatic and bulk deletes only take merged branches')
+    })
+
     it('asks to delete the branch in sentence case', async () => {
       mockClient.branches.delete.mockResolvedValueOnce({ ok: true, status: 200 })
       const { result } = await loaded(mockBranches)

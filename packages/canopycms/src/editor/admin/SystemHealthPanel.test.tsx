@@ -15,11 +15,13 @@ import type { BranchHealthData } from '../../api/admin-branch-health'
 import type {
   BaseRefreshReport,
   BaseSchemaHold,
+  BranchMetadata,
   UnpublishableBranch,
   WorkerStatusReport,
 } from '../../types'
 import { unsafeAsContentId, unsafeAsPhysicalPath } from '../../paths/test-utils'
 import { formatRelativeTime } from '../relative-time'
+import { modals } from '@mantine/modals'
 
 // Mock the API client module (both useApiClient() and useSystemHealth() must
 // resolve to the same mock client instance) -- same pattern as
@@ -1280,6 +1282,111 @@ describe('SystemHealthPanel', () => {
       expect(screen.getAllByText('Corrupt metadata').length).toBeGreaterThanOrEqual(1)
       expect(screen.getByText('orphan-young')).toBeTruthy()
       expect(screen.getByText('orphan-old')).toBeTruthy()
+    })
+
+    describe('deleting archived branches', () => {
+      const generatedAt = '2026-06-01T00:00:00.000Z'
+      const healthy = (dirName: string, fields: Partial<BranchMetadata>): BranchHealthEntry => ({
+        dirName,
+        kind: 'healthy',
+        branch: {
+          name: dirName,
+          status: 'archived',
+          access: {},
+          createdBy: 'user-1',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-02T00:00:00.000Z',
+          ...fields,
+        },
+      })
+      const old = '2026-01-01T00:00:00.000Z'
+      const openBranches = async (entries: BranchHealthEntry[], status = makeStatus()) => {
+        mockClient.admin.status.mockResolvedValue(mockSuccess(status))
+        mockClient.admin.branchHealth.mockResolvedValue(mockSuccess({ entries, generatedAt }))
+        renderPanel()
+        await userEvent.click(screen.getByRole('tab', { name: 'Branches' }))
+        return screen.findByTestId('delete-archived-button')
+      }
+
+      it('deletes merged archived branches older than the days, after a confirm', async () => {
+        mockClient.admin.deleteArchivedBranches.mockResolvedValue(
+          mockSuccess({
+            deleted: ['old-merged'],
+            skipped: { notMerged: [], unpublished: [] },
+            failed: [],
+            remaining: 0,
+            warnings: [],
+          }),
+        )
+        const button = await openBranches([
+          healthy('old-merged', { mergedAt: old }),
+          healthy('new-merged', { mergedAt: '2026-05-30T00:00:00.000Z' }),
+          healthy('live', { status: 'editing' }),
+        ])
+        expect(button.textContent).toBe('Delete 1 archived branch')
+
+        await userEvent.click(button)
+
+        expect(modals.openConfirmModal).toHaveBeenCalledWith(
+          expect.objectContaining({ title: 'Delete archived branches' }),
+        )
+        expect(mockClient.admin.deleteArchivedBranches).toHaveBeenCalledWith({ olderThanDays: 90 })
+      })
+
+      it('counts neither an unmerged branch nor one holding unpublished changes', async () => {
+        const button = await openBranches([
+          healthy('abandoned', { archivedAt: old }),
+          healthy('unpublished', { mergedAt: old, unpublishedAtMerge: true }),
+        ])
+
+        expect(button.getAttribute('aria-disabled')).toBe('true')
+        await userEvent.click(button)
+        expect(mockClient.admin.deleteArchivedBranches).not.toHaveBeenCalled()
+      })
+
+      it('leaves the base branch out of the count', async () => {
+        const button = await openBranches([
+          { ...healthy('main', { mergedAt: old }), isBaseBranch: true },
+        ])
+        expect(button.getAttribute('aria-disabled')).toBe('true')
+      })
+
+      it.each([
+        [45, 'This deployment deletes merged branches 45 days after archiving.'],
+        [undefined, 'This deployment keeps archived branches until someone deletes them.'],
+      ])('says what retention of %s days means', async (days, note) => {
+        const status = makeStatusWithSync()
+        await openBranches([healthy('live', { status: 'editing' })], {
+          ...status,
+          workerStatus: { ...status.workerStatus!, archivedBranchRetentionDays: days },
+        })
+        expect((await screen.findByTestId('archived-retention-note')).textContent).toBe(note)
+      })
+
+      it('says nothing of retention before the worker has reported', async () => {
+        await openBranches([healthy('live', { status: 'editing' })])
+        expect(screen.queryByTestId('archived-retention-note')).toBeNull()
+      })
+
+      it('names a branch the last sweep could not delete', async () => {
+        const status = makeStatusWithSync()
+        const lastGitSync = {
+          ...status.workerStatus!.lastGitSync!,
+          archivedSweep: {
+            deleted: [],
+            skippedLocked: [],
+            failed: [{ branch: 'stuck', error: 'busy' }],
+            deferred: 0,
+          },
+        }
+        await openBranches([healthy('live', { status: 'editing' })], {
+          ...status,
+          workerStatus: { ...status.workerStatus!, lastGitSync },
+        })
+        expect((await screen.findByTestId('archived-retention-note')).textContent).toContain(
+          'could not delete stuck',
+        )
+      })
     })
 
     describe('duplicate content IDs', () => {

@@ -14,6 +14,17 @@ export type CanopyGroupId = string
  * semantics (worker rebase skip list, a set/unset endpoint, UI).
  */
 export type BranchStatus = 'editing' | 'submitted' | 'approved' | 'archived'
+
+/** One cycle of the worker's retention sweep (worker/archived-sweep.ts). */
+export interface ArchivedSweepReport {
+  /** Full names of the branches deleted. */
+  deleted: string[]
+  /** Due, but another process held the branch's provisioning lock; retried next cycle. */
+  skippedLocked: string[]
+  failed: { branch: string; error: string }[]
+  /** Due, beyond this cycle's cap; the next cycle takes the oldest of them. */
+  deferred: number
+}
 export type SyncStatus = 'synced' | 'pending-sync' | 'sync-failed'
 export type ConflictStatus = 'clean' | 'conflicts-detected'
 export type PullRequestState = 'open' | 'closed' | 'merged'
@@ -99,6 +110,11 @@ export interface BranchMetadata {
    * (worker auto-poll or markAsMerged). Absent for branches archived any other way.
    */
   mergedAt?: string
+  /**
+   * When the branch was archived, merged or not: the clock retention counts from. A branch
+   * archived before this field existed has only `mergedAt` (branch-archive.ts).
+   */
+  archivedAt?: string
   /**
    * Set by the worker when a rebase cycle fails for this branch; cleared on
    * the next successful cycle (and on submit). firstAt survives repeated
@@ -299,6 +315,8 @@ export interface WorkerStatusReport {
   updatedAt: string
   lastTaskCycleAt?: string
   lastGitSyncAt?: string
+  /** The deployment's `archivedBranchRetentionDays`; absent when retention is off. */
+  archivedBranchRetentionDays?: number
   lastGitSyncError?: { message: string; at: string }
   lastGitSync?: {
     durationMs: number
@@ -315,6 +333,8 @@ export interface WorkerStatusReport {
     failed: { branch: string; error: string }[]
     /** Optional for the same reason as `tracked` below. */
     baseRefresh?: BaseRefreshReport
+    /** The retention sweep's work this cycle; absent when it found nothing to do. */
+    archivedSweep?: ArchivedSweepReport
     /**
      * Outcome of reconciling remote.git's `refs/heads/*` against GitHub's fetched
      * tips, never moving a head the worker finds editor work in (worker/git-sync.ts's

@@ -318,6 +318,25 @@ const showDeleteConfirmation = (
   })
 }
 
+/** Archiving is a one-way status change on a branch whose review is over. */
+const showArchiveConfirmation = (
+  branchName: string,
+  onConfirm: () => Promise<void>,
+  onDismiss: () => void,
+) => {
+  openConfirm({
+    title: EDITOR_ACTIONS.archiveBranch,
+    children: (
+      <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
+        {`Archive “${branchName}”?\n\nIts pull request was closed without merging. This will:\n• Make the branch read-only and move it to “Archived”\n• Keep it marked as not merged\n\nAn archived branch can't go back to editing. This one stays until someone deletes it: automatic and bulk deletes only take merged branches. To keep working on it, use “${EDITOR_ACTIONS.withdrawFromReview}” instead.`}
+      </Text>
+    ),
+    labels: { confirm: EDITOR_ACTIONS.archiveBranch, cancel: 'Cancel' },
+    confirmProps: { color: 'orange', 'data-testid': 'confirm-archive-branch' },
+    ...confirmModalHandlers(onConfirm, onDismiss),
+  })
+}
+
 /**
  * How long a branch this session created stays overlaid on listings. Each warm
  * server container caches the shared filesystem separately, so for its
@@ -386,8 +405,11 @@ function reconcilePendingBranches(
 interface BranchSummary {
   name: string
   shortName?: string
+  title?: string
   status: string
   createdBy?: string
+  /** The creator's display name, when the listing carried it. */
+  ownerName?: string
   updatedAt?: string
   access: {
     users: string[] | undefined
@@ -495,6 +517,8 @@ export interface UseBranchManagerReturn {
     returnFocusTo?: () => HTMLElement | null,
   ) => Promise<void>
   handleDelete: (branchName: string) => Promise<void>
+  /** Admin only: confirms first, then archives a branch whose pull request closed unmerged. */
+  handleArchive: (branchName: string) => Promise<void>
   handleReloadBranchData: () => Promise<void>
   loadBranches: () => Promise<void>
 }
@@ -640,8 +664,10 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
       return {
         name: b.name,
         shortName: b.shortName,
+        title: b.title,
         status: b.status,
         createdBy: b.createdBy,
+        ownerName: branchesData?.ownerNames?.[b.createdBy],
         updatedAt: b.updatedAt,
         access: {
           users: b.access.allowedUsers,
@@ -769,7 +795,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
    * after the action succeeded.
    */
   const singleFlight = async (
-    action: 'submit' | 'withdraw' | 'approve' | 'request-changes' | 'delete',
+    action: 'submit' | 'withdraw' | 'approve' | 'request-changes' | 'delete' | 'archive',
     branch: string,
     run: () => Promise<void>,
   ): Promise<void> => {
@@ -1072,6 +1098,42 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     )
   }
 
+  const handleArchive = (requested: string) => {
+    const branchNameToArchive = listedName(requested)
+    return singleFlight(
+      'archive',
+      branchNameToArchive,
+      () =>
+        new Promise<void>((resolve, reject) => {
+          showArchiveConfirmation(
+            shownName(branchNameToArchive),
+            async () => {
+              options.setBusy(true)
+              try {
+                const result = await apiClient.workflow.archive({
+                  branch: sendName(branchNameToArchive),
+                })
+                if (!result.ok) throw actionError(result, 'Failed to archive branch')
+                notifications.show({ message: 'Branch archived', color: 'blue' })
+                await loadBranches()
+                resolve()
+              } catch (err) {
+                await reportActionFailure(
+                  err,
+                  'Failed to archive branch',
+                  EDITOR_ACTIONS.archiveBranch,
+                )
+                reject(err)
+              } finally {
+                options.setBusy(false)
+              }
+            },
+            () => resolve(),
+          )
+        }),
+    )
+  }
+
   const handleApprove = (requested: string, returnFocusTo?: () => HTMLElement | null) => {
     const branchNameToApprove = listedName(requested)
     return singleFlight(
@@ -1340,6 +1402,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     handleApprove,
     handleRequestChanges,
     handleDelete,
+    handleArchive,
     handleReloadBranchData,
     loadBranches,
   }

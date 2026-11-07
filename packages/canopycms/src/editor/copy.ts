@@ -14,6 +14,7 @@ export const EDITOR_ACTIONS = {
   requestChanges: 'Request changes',
   switchBranch: 'Switch branch',
   newBranch: 'New branch',
+  archiveBranch: 'Archive branch',
   remove: 'Remove',
   restore: 'Restore',
   clear: 'Clear',

@@ -174,6 +174,11 @@ export interface CmsWorkerConfig extends GitHubAuthConfig {
   gitSyncInterval?: number
   /** Auth cache refresh interval in ms (default: 15 * 60 * 1000) */
   authCacheRefreshInterval?: number
+  /**
+   * Delete a merged branch this many days after it was archived, with its workspace, metadata and
+   * comments (worker/archived-sweep.ts). A positive integer; unset keeps archived branches.
+   */
+  archivedBranchRetentionDays?: number
   /** Base branch name (default: detected at start(); see `resolveBaseBranch`) */
   baseBranch?: string
   /**
@@ -507,6 +512,7 @@ export class CmsWorker {
   private maxTasksPerCycle: number
   private taskTimeoutMs: number
   private gitSyncIntervalMs: number
+  private readonly archivedBranchRetentionDays: number | undefined
   private maxRetries: number
   private lockFilePath: string
   private lockStaleMs: number
@@ -549,6 +555,13 @@ export class CmsWorker {
     this.maxTasksPerCycle = config.maxTasksPerCycle ?? 10
     this.taskTimeoutMs = config.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT
     this.gitSyncIntervalMs = config.gitSyncInterval ?? 5 * 60_000
+    const retentionDays = config.archivedBranchRetentionDays
+    if (retentionDays !== undefined && !(Number.isInteger(retentionDays) && retentionDays > 0)) {
+      throw new Error(
+        `archivedBranchRetentionDays must be a positive whole number of days, not ${retentionDays}`,
+      )
+    }
+    this.archivedBranchRetentionDays = retentionDays
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES
     this.lockFilePath = path.join(config.workspacePath, '.tasks', '.worker-lock')
     this.lockStaleMs = config.lockStaleMs ?? DEFAULT_LOCK_STALE_MS
@@ -625,6 +638,7 @@ export class CmsWorker {
       contentBranchesPath: this.contentBranchesPath,
       contentRoot: this.contentRoot,
       schemaHoldMaxMs: this.schemaHoldMaxMs,
+      archivedBranchRetentionDays: this.archivedBranchRetentionDays,
       taskTimeoutMs: this.taskTimeoutMs,
       gitSyncIntervalMs: this.gitSyncIntervalMs,
       maxTasksPerCycle: this.maxTasksPerCycle,

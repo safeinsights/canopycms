@@ -118,6 +118,7 @@ Route handlers, one file per endpoint namespace:
 - `branch.ts` — `/branches`: create, list, delete; `toBranchListItem` shapes branch responses, with server-computed `isProtected` / `readOnly`
 - `branch-status.ts` — `/branch-status`: status and submit (`SubmitBranchResponse`)
 - `branch-withdraw.ts` — `/branch-withdraw`: withdraw a PR
+- `archived-branches.ts` — `POST /:branch/archive`, `POST /admin/archived-branches/delete`
 - `branch-review.ts` — `/branch-review`: approve, request changes
 - `branch-changes.ts` — `GET /:branch/changes`
 - `branch-entry-changes.ts` — `GET /:branch/changes/...entryPath`
@@ -238,6 +239,7 @@ direction, and every invariant.
 - `task-runner.ts` — the task-queue cluster below `processTaskQueue`, including `PermanentTaskError`
 - `git-sync.ts` — the git-sync cluster below `syncGit`: tracking, settings push, base refresh (`BaseRefreshReport`), trash sweep, `repairBranchDirResidue`, `unpublishable-branches.ts` (`readCarriedGatewayPolicy`)
 - `remote-git-maintenance.ts` — `maintainRemoteGit`: the logged repack of `remote.git` (rule: `git-manager.ts` `repackBareRemoteIfNeeded`)
+- `archived-sweep.ts` — the retention sweep
 - `sparse-cone.ts` — `reapplySparseCones`: re-cones sparse clones after a content-root change
 - `schema-gate.ts` — `decideBaseAdvance`: holds the base branch while incoming content names a schema the serving editor lacks
 - `stale-mirror.ts` — `settleStaleMirror`: a `remote.git` head without editor work follows GitHub
@@ -698,6 +700,8 @@ All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 
 - `git-manager.ts` — the `simple-git` wrapper: `cloneRepo` / `cloneWorkspace` (`CloneRepoOptions`), `resolveCloneRemoteUrl`, `setSparseCone`, `repoExistsAt`, `gitChildEnv`, `addAllExceptCanopyState()`, `listBaseFiles`, `mergeBaseWithBase`, `diffNameStatusAgainst`, `bareRemoteBranchesInside`, `detectBaseBranch`, `resolveWorkspaceBaseBranch`
 - `branch-registry.ts` — branch tracking and listing over a generation-token snapshot cache, `getByKey`; quarantines a dir whose metadata will not load
+- `branch-archive.ts` — `deletableByAge`: the one age-based deletion rule, client-safe
+- `branch-delete.ts` — `deleteBranchWorkspace`: the one delete path (API, admin bulk, worker sweep)
 - `branch-param.ts` — `resolveBranchParam` (the exact form first), `shortNameOf`
 - `branch-metadata.ts` — `branch.json` persistence under layered concurrency; `baseBranch` immutable; `buildMergedBranchUpdate`, `buildInitialBranchMetadata`; `update` (a computed save), `recordEditor`, `markEditorsCommitted`, `recordBranchEditor`
 - `branch-metadata-file.ts` — schema-checked `branch.json` reads; a deliberate leaf module

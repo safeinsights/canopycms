@@ -357,6 +357,40 @@ export const CurrentBranchAndMenu: Story = {
   },
 }
 
+/**
+ * An admin with enough branches for the filter box. Live branches lead, newest first, and the
+ * archived ones wait in the collapsed "Archived" section. The closed pull request's "…" menu
+ * holds "Archive branch".
+ */
+export const ManyBranchesWithArchived: Story = {
+  args: {
+    ...logged,
+    branches: [
+      ...reviewBranches,
+      ...Array.from({ length: 8 }, (_, i) => ({
+        name: `feature/update-${i + 1}`,
+        status: 'editing',
+        updatedAt: ago((i + 2) * DAY),
+        createdBy: 'bob',
+        access: { users: ['bob'] },
+        submitBlocked: false,
+      })),
+      {
+        name: 'release/2026-02',
+        status: 'archived',
+        updatedAt: ago(100 * DAY),
+        createdBy: 'alice',
+        access: { users: ['alice'] },
+        pullRequestNumber: 21,
+        pullRequestState: 'closed',
+        submitBlocked: true,
+      },
+    ],
+    currentBranchName: 'feature/landing',
+    user: { userId: 'admin', groups: [RESERVED_GROUPS.ADMINS] },
+  },
+}
+
 /** The server blocks submitting the open branch for a permitted user: the primary action stays, with its reason on hover or focus. */
 export const CurrentBranchBlocked: Story = {
   args: {

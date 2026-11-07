@@ -29,6 +29,17 @@ import { BRANCHES_KEY } from '../hooks/useBranchesData'
 
 const POLL_INTERVAL_MS = 30_000
 
+const EMPTY_DELETE = {
+  deleted: [],
+  skipped: { notMerged: [], unpublished: [] },
+  failed: [],
+  remaining: 0,
+  warnings: [],
+}
+
+const countBranches = (count: number): string =>
+  `${count} archived ${count === 1 ? 'branch' : 'branches'}`
+
 /**
  * Crash-loop rider window: a worker that fatally exits and restarts
  * repeatedly can flap between 'absent' and 'alive' and never sit still long
@@ -90,6 +101,8 @@ export interface UseSystemHealthReturn {
   purgeDir: (dirName: string) => Promise<void>
   repairDir: (dirName: string) => Promise<void>
   markMerged: (branchName: string) => Promise<void>
+  /** Deletes archived branches older than `olderThanDays`, then says what it could not. */
+  deleteArchivedBranches: (olderThanDays: number) => Promise<void>
   /** Stops listing a branch merged with an unfinished submit, a warning that doesn't come back. */
   dismissUnpublished: (dirName: string) => Promise<void>
 }
@@ -353,6 +366,39 @@ export function useSystemHealth(options: UseSystemHealthOptions): UseSystemHealt
     [apiClient, refresh],
   )
 
+  const deleteArchivedBranches = useCallback(
+    async (olderThanDays: number) => {
+      try {
+        const result = await apiClient.admin.deleteArchivedBranches({ olderThanDays })
+        if (!result.ok) throw new Error(result.error || 'Failed to delete archived branches')
+        const { deleted, skipped, failed, remaining, warnings } = result.data ?? EMPTY_DELETE
+        const left = [
+          failed.length > 0 ? `${countBranches(failed.length)} busy, try again` : '',
+          remaining > 0 ? `${countBranches(remaining)} not reached, run this again` : '',
+          skipped.notMerged.length > 0
+            ? `${countBranches(skipped.notMerged.length)} kept: not merged`
+            : '',
+          skipped.unpublished.length > 0
+            ? `${countBranches(skipped.unpublished.length)} kept: may hold unpublished changes`
+            : '',
+          ...warnings,
+        ].filter(Boolean)
+        const message = `Deleted ${countBranches(deleted.length)}`
+        notifications.show(
+          left.length > 0
+            ? { message: `${message}. ${left.join('. ')}.`, color: 'yellow', autoClose: false }
+            : { message, color: 'green' },
+        )
+        await mutate(BRANCHES_KEY)
+        await refresh()
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to delete archived branches'
+        notifications.show({ message, color: 'red' })
+      }
+    },
+    [apiClient, mutate, refresh],
+  )
+
   return {
     status,
     statusLoading,
@@ -375,6 +421,7 @@ export function useSystemHealth(options: UseSystemHealthOptions): UseSystemHealt
     purgeDir,
     repairDir,
     markMerged,
+    deleteArchivedBranches,
     dismissUnpublished,
   }
 }

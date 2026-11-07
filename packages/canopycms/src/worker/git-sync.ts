@@ -29,6 +29,7 @@ import {
   splitByUpstreamTracking,
   untrackInIndex,
 } from './canopy-state'
+import { sweepArchivedBranches } from './archived-sweep'
 import { hasPendingHistoryRewrite, recordSeenOnGitHub } from './history-rewrite'
 import { runRebaseCycle, type RebaseContext } from './rebase'
 import { describeMove, type GitHubGatewayHealth } from './github-gateway'
@@ -71,8 +72,8 @@ import type { WorkerContext } from './worker-context'
  * says the serving editor lacks a schema the incoming content names), push this
  * deployment's own settings
  * branch, fast-forward the base branch's workspace, ask the gateway for its branch policy,
- * rebase every branch that is behind it (rebase.ts), then sweep old tasks and expired trashed
- * branch directories.
+ * rebase every branch that is behind it (rebase.ts), then sweep old tasks, expired trashed
+ * branch directories and, where retention is on, expired archived branches.
  *
  * One ordering is load-bearing and nothing enforces it: `runRebaseCycle` MUST
  * follow `reconcileTrackedBranches`. Branch clones fetch the base tip from
@@ -81,7 +82,7 @@ import type { WorkerContext } from './worker-context'
  * reorder them and every branch rebases onto the PREVIOUS cycle's
  * base tip -- not corrupting, but silently a cycle behind.
  * (`pushSettingsBranches` consuming the fetch's tips is a DATA dependency its
- * signature already enforces; `refreshBaseBranchWorkspace` and the two sweeps
+ * signature already enforces; `refreshBaseBranchWorkspace` and the sweeps
  * are order-independent.)
  *
  * The whole cycle is wrapped so both outcomes record a worker-status.json
@@ -94,6 +95,7 @@ export type GitSyncContext = Pick<
   | 'contentBranchesPath'
   | 'remoteGitPath'
   | 'schemaHoldMaxMs'
+  | 'archivedBranchRetentionDays'
   | 'taskDir'
   | 'taskTimeoutMs'
   | 'log'
@@ -742,6 +744,8 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
       workerLog(`Removed ${trashRemoved} expired trashed branch dir(s)`)
     }
 
+    const archivedSweep = await sweepArchivedBranches(ctx)
+
     const report = ctx.ensureStatusReport()
     report.lastGitSyncAt = new Date().toISOString()
     delete report.lastGitSyncError
@@ -749,9 +753,11 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     if (needsOperator !== null) {
       report.lastGitSyncError = { message: needsOperator, at: report.lastGitSyncAt }
     }
+    report.archivedBranchRetentionDays = ctx.archivedBranchRetentionDays
     report.lastGitSync = {
       durationMs: Date.now() - cycleStartedAt,
       rebased: rebaseSummary.rebased,
+      ...(archivedSweep && { archivedSweep }),
       skippedDirty:
         baseRefresh.outcome === 'skipped-dirty'
           ? [ctx.sanitizedBaseBranch, ...rebaseSummary.skippedDirty]

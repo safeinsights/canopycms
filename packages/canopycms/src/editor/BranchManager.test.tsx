@@ -3,7 +3,12 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event'
 import { SWRConfig } from 'swr'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { BranchManager, getBranchPermissions } from './BranchManager'
+import {
+  arrangeBranches,
+  BranchManager,
+  getBranchPermissions,
+  matchesBranchFilter,
+} from './BranchManager'
 import { HOLD_BADGE, SYNC_FAILED_IN_REVIEW_NOTE, syncFailedFallback } from './branch-status'
 import type { BranchSummary } from './BranchManager'
 import { CanopyCMSProvider } from './theme'
@@ -476,18 +481,18 @@ describe('BranchManager', () => {
     expect(screen.getByText(/3 comments/)).toBeDefined()
   })
 
-  it('shows closed styling on the PR badge when pullRequestState is closed', () => {
+  it('badges a branch whose PR closed without merging "PR closed", and keeps it live', () => {
+    const name = baseBranches[1].name
     const branches: BranchSummary[] = [
-      {
-        ...baseBranches[1],
-        pullRequestState: 'closed',
-      },
+      { ...baseBranches[1], status: 'submitted', pullRequestState: 'closed' },
     ]
     renderBranchManager({ branches, mode: 'prod' })
-    expect(screen.getByText(/PR #1 \(closed\)/)).toBeDefined()
+    expect(screen.getByTestId(`pr-closed-badge-${name}`).textContent).toBe('PR closed')
+    expect(screen.queryByTestId('archived-branches')).toBeNull()
+    expect(screen.getByTestId(`branch-list-item-${name}`)).toBeDefined()
   })
 
-  it('does not append (closed) to the PR badge when pullRequestState is open', () => {
+  it('shows the PR number while the PR is open, with no closed badge', () => {
     const branches: BranchSummary[] = [
       {
         ...baseBranches[1],
@@ -496,6 +501,7 @@ describe('BranchManager', () => {
     ]
     renderBranchManager({ branches, mode: 'prod' })
     expect(screen.getByText('PR #1')).toBeDefined()
+    expect(screen.queryByText('PR closed')).toBeNull()
   })
 
   it('shows a Merged badge for archived branches with mergedAt', () => {
@@ -507,7 +513,7 @@ describe('BranchManager', () => {
         mergedAt: '2024-02-01T00:00:00.000Z',
       },
     ]
-    renderBranchManager({ branches, mode: 'prod' })
+    renderBranchManager({ branches, mode: 'prod', currentBranchName: 'feature/done' })
     expect(screen.getByText('Merged')).toBeDefined()
   })
 
@@ -519,7 +525,7 @@ describe('BranchManager', () => {
         createdBy: 'user1',
       },
     ]
-    renderBranchManager({ branches, mode: 'prod' })
+    renderBranchManager({ branches, mode: 'prod', currentBranchName: 'feature/manually-archived' })
     expect(screen.queryByText('Merged')).toBeNull()
   })
 
@@ -557,7 +563,7 @@ describe('BranchManager', () => {
     const branches: BranchSummary[] = [
       { ...baseBranches[0], status: 'archived', syncStatus: 'sync-failed' },
     ]
-    renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
+    renderBranchManager({ branches, user: creatorUser, mode: 'prod', currentBranchName: 'main' })
     expect(screen.getByTestId('sync-failed-reason-main').textContent).toBe('GitHub sync failed.')
   })
 
@@ -1357,7 +1363,13 @@ describe('BranchManager', () => {
         hold: { kind: 'unpublished-at-merge' },
       },
     ]
-    renderBranchManager({ branches, onDelete, user: creatorUser, mode: 'prod' })
+    renderBranchManager({
+      branches,
+      onDelete,
+      user: creatorUser,
+      mode: 'prod',
+      currentBranchName: 'main',
+    })
 
     await openMenu('main')
     const item = screen.getByTestId('delete-branch-button-main')
@@ -1366,7 +1378,13 @@ describe('BranchManager', () => {
     expect(onDelete).not.toHaveBeenCalled()
     cleanup()
 
-    renderBranchManager({ branches, onDelete, user: adminUser, mode: 'prod' })
+    renderBranchManager({
+      branches,
+      onDelete,
+      user: adminUser,
+      mode: 'prod',
+      currentBranchName: 'main',
+    })
     await openMenu('main')
     await userEvent.click(screen.getByTestId('delete-branch-button-main'))
     expect(onDelete).toHaveBeenCalledWith('main')
@@ -1413,10 +1431,10 @@ describe('BranchManager', () => {
       expect(screen.getByTestId('switch-to-branch-button-main').textContent).toBe('Open')
     })
 
-    it('keeps the given order when no branch is current', () => {
+    it('lists the most recently updated first when no branch is current', () => {
       renderBranchManager({ branches: baseBranches, mode: 'prod' })
 
-      expect(cardNames()).toEqual(['main', 'feature/test'])
+      expect(cardNames()).toEqual(['feature/test', 'main'])
       expect(screen.queryByTestId('branch-current-badge-main')).toBeNull()
       expect(screen.getByTestId('switch-to-branch-button-main')).toBeTruthy()
     })
@@ -2017,6 +2035,207 @@ describe('BranchManager', () => {
 
       expect(await screen.findByText('Access: Name of known, team-a and 4 others')).toBeDefined()
       expect(screen.queryByText('Name unavailable')).toBeNull()
+    })
+  })
+})
+
+describe('the list order and the Archived section', () => {
+  const live = (name: string, updatedAt: string): BranchSummary => ({
+    name,
+    status: 'editing',
+    createdBy: 'user-1',
+    updatedAt,
+  })
+  const archived = (name: string, updatedAt: string): BranchSummary => ({
+    ...live(name, updatedAt),
+    status: 'archived',
+    mergedAt: updatedAt,
+  })
+  const branches = [
+    archived('old-archived', '2026-01-01T00:00:00.000Z'),
+    live('older', '2026-02-01T00:00:00.000Z'),
+    archived('new-archived', '2026-03-01T00:00:00.000Z'),
+    live('newer', '2026-04-01T00:00:00.000Z'),
+    live('current', '2026-01-15T00:00:00.000Z'),
+  ]
+  const cardNames = () =>
+    screen
+      .getAllByTestId(/^branch-list-item-/)
+      .map((card) => card.getAttribute('data-testid')?.replace('branch-list-item-', ''))
+
+  it('puts the current branch first, then live branches newest first, archived last', () => {
+    expect(arrangeBranches(branches, 'current')).toEqual({
+      live: [branches[4], branches[3], branches[1]],
+      archived: [branches[2], branches[0]],
+    })
+  })
+
+  it('keeps an archived current branch first, outside the section', () => {
+    const { live: first, archived: rest } = arrangeBranches(branches, 'new-archived')
+    expect(first[0].name).toBe('new-archived')
+    expect(rest.map((b) => b.name)).toEqual(['old-archived'])
+  })
+
+  it('does not reorder the list it is given', () => {
+    const given = [...branches]
+    arrangeBranches(given, 'current')
+    expect(given).toEqual(branches)
+  })
+
+  it.each([
+    ['an editor', []],
+    ['a reviewer', [RESERVED_GROUPS.REVIEWERS]],
+    ['an admin', [RESERVED_GROUPS.ADMINS]],
+  ])('collapses archived branches for %s, and counts them', (_label, groups) => {
+    renderBranchManager({
+      branches,
+      mode: 'prod',
+      currentBranchName: 'current',
+      user: { userId: 'user-1', groups },
+    })
+
+    expect(cardNames()).toEqual(['current', 'newer', 'older'])
+    const toggle = screen.getByTestId('archived-branches-toggle')
+    expect(toggle.textContent).toBe('Archived (2)')
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('opens and closes the section by keyboard-reachable button', async () => {
+    renderBranchManager({ branches, mode: 'prod', currentBranchName: 'current' })
+    const toggle = screen.getByRole('button', { name: 'Archived (2)' })
+
+    await userEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(cardNames()).toEqual(['current', 'newer', 'older', 'new-archived', 'old-archived'])
+
+    await userEvent.click(toggle)
+    expect(cardNames()).toEqual(['current', 'newer', 'older'])
+  })
+
+  it('shows no section without archived branches', () => {
+    renderBranchManager({ branches: branches.slice(1, 2), mode: 'prod' })
+    expect(screen.queryByTestId('archived-branches')).toBeNull()
+  })
+
+  describe('the filter', () => {
+    const many = (count: number) =>
+      Array.from({ length: count }, (_, i) =>
+        live(`branch-${i}`, `2026-01-${String(i + 1).padStart(2, '0')}T00:00:00.000Z`),
+      )
+
+    it('is absent at 10 branches and present at 11', () => {
+      const { unmount } = renderBranchManager({ branches: many(10), mode: 'prod' })
+      expect(screen.queryByTestId('branch-filter-input')).toBeNull()
+      unmount()
+
+      renderBranchManager({ branches: many(11), mode: 'prod' })
+      expect(screen.getByRole('textbox', { name: 'Filter branches' })).toBeDefined()
+    })
+
+    it('searches the name, short name, title and owner, ignoring case', () => {
+      const branch: BranchSummary = {
+        name: 'canopycms/prod/spring',
+        shortName: 'spring',
+        title: 'Hero refresh',
+        ownerName: 'Pat Example',
+        status: 'editing',
+      }
+      expect(matchesBranchFilter(branch, 'CANOPYCMS/PROD')).toBe(true)
+      expect(matchesBranchFilter(branch, 'Spring')).toBe(true)
+      expect(matchesBranchFilter(branch, 'hero')).toBe(true)
+      expect(matchesBranchFilter(branch, ' pat ')).toBe(true)
+      expect(matchesBranchFilter(branch, 'nothing')).toBe(false)
+    })
+
+    it('narrows the list, and shows a match inside Archived with the section open', async () => {
+      renderBranchManager({
+        branches: [...many(11), archived('needle', '2026-01-01T00:00:00.000Z')],
+        mode: 'prod',
+      })
+
+      await userEvent.type(screen.getByTestId('branch-filter-input'), 'needle')
+
+      expect(cardNames()).toEqual(['needle'])
+      expect(screen.getByTestId('archived-branches-toggle').textContent).toBe('Archived (1)')
+    })
+
+    it('says so when nothing matches', async () => {
+      renderBranchManager({ branches: many(11), mode: 'prod' })
+
+      await userEvent.type(screen.getByTestId('branch-filter-input'), 'zzz')
+
+      expect(screen.queryByTestId(/^branch-list-item-/)).toBeNull()
+      expect(screen.getByRole('status').textContent).toBe('No branches match “zzz”.')
+    })
+
+    it('stops filtering once the list shrinks below the threshold', async () => {
+      const props = { mode: 'prod' as const }
+      const wrap = (list: BranchSummary[]) => (
+        <SWRConfig value={{ provider: () => new Map() }}>
+          <CanopyCMSProvider>
+            <BranchManager {...props} branches={list} />
+          </CanopyCMSProvider>
+        </SWRConfig>
+      )
+      const { rerender } = render(wrap(many(11)))
+      await userEvent.type(screen.getByTestId('branch-filter-input'), 'zzz')
+
+      rerender(wrap(many(3)))
+
+      expect(cardNames()).toHaveLength(3)
+    })
+  })
+
+  describe('archiving a branch whose pull request closed', () => {
+    const closed: BranchSummary = {
+      name: 'abandoned',
+      status: 'submitted',
+      createdBy: 'user-1',
+      pullRequestNumber: 3,
+      pullRequestState: 'closed',
+    }
+    const adminUser = { userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] }
+    const openMenu = async () =>
+      userEvent.click(screen.getByTestId('branch-actions-menu-abandoned'))
+
+    it('offers an admin "Archive branch"', async () => {
+      const onArchive = vi.fn()
+      renderBranchManager({ branches: [closed], mode: 'prod', user: adminUser, onArchive })
+
+      await openMenu()
+      await userEvent.click(await screen.findByTestId('archive-branch-button-abandoned'))
+
+      expect(onArchive).toHaveBeenCalledWith('abandoned')
+    })
+
+    it('offers nobody else it', async () => {
+      renderBranchManager({
+        branches: [closed],
+        mode: 'prod',
+        user: { userId: 'reviewer-1', groups: [RESERVED_GROUPS.REVIEWERS] },
+        onArchive: vi.fn(),
+      })
+
+      await openMenu()
+      await screen.findByTestId('view-pull-request-abandoned').catch(() => undefined)
+      expect(screen.queryByTestId('archive-branch-button-abandoned')).toBeNull()
+    })
+
+    it.each([
+      ['an open pull request', { pullRequestState: 'open' as const }],
+      ['a branch already archived', { status: 'archived' }],
+    ])('does not offer it for %s', async (_label, fields) => {
+      renderBranchManager({
+        branches: [{ ...closed, ...fields, pullRequestUrl: 'https://example.com/pr/3' }],
+        mode: 'prod',
+        user: adminUser,
+        currentBranchName: 'abandoned',
+        onArchive: vi.fn(),
+      })
+
+      await openMenu()
+      await screen.findByTestId('view-pull-request-abandoned')
+      expect(screen.queryByTestId('archive-branch-button-abandoned')).toBeNull()
     })
   })
 })

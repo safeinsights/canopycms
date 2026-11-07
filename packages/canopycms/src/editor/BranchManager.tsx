@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState, type ReactNode } from 'react'
 
 import {
   ActionIcon,
@@ -17,8 +17,9 @@ import {
   Textarea,
   Collapse,
   Tooltip,
+  UnstyledButton,
 } from '@mantine/core'
-import { IconDots, IconExternalLink } from '@tabler/icons-react'
+import { IconChevronDown, IconChevronRight, IconDots, IconExternalLink } from '@tabler/icons-react'
 import type { OperatingMode } from '../operating-mode'
 import type { BranchHold, ConflictStatus, PullRequestState, SyncStatus } from '../types'
 import type { CommentThread } from '../comment-store'
@@ -59,8 +60,11 @@ export interface BranchSummary {
   name: string
   /** What the card shows for the branch (`displayBranchName`); the full `name` keys it. */
   shortName?: string
+  title?: string
   status: string
   createdBy?: string
+  /** The creator's display name, which the filter searches. */
+  ownerName?: string
   updatedAt?: string
   access?: {
     users?: string[]
@@ -237,6 +241,8 @@ export interface BranchManagerProps {
   onWithdraw?: (name: string) => void
   onApprove?: (name: string) => void
   onRequestChanges?: (name: string) => void
+  /** Archives a branch whose pull request closed without merging; offered to admins only. */
+  onArchive?: (name: string) => void
   onClose?: () => void
   comments?: CommentThread[]
   currentUserId?: string
@@ -335,6 +341,7 @@ interface BranchCardProps {
   onWithdraw?: (name: string) => void
   onApprove?: (name: string) => void
   onRequestChanges?: (name: string) => void
+  onArchive?: (name: string) => void
   onDelete?: (name: string) => void
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
   onGetOwnerMetadata?: (userId: string) => Promise<UserSearchResult | null>
@@ -361,6 +368,7 @@ const BranchCard: React.FC<BranchCardProps> = ({
   onWithdraw,
   onApprove,
   onRequestChanges,
+  onArchive,
   onDelete,
   onGetUserMetadata,
   onGetOwnerMetadata = onGetUserMetadata,
@@ -420,7 +428,17 @@ const BranchCard: React.FC<BranchCardProps> = ({
   // the title.
   const actionRow =
     !!secondary || primary?.label === EDITOR_ACTIONS.withdrawFromReview || (!!primary && !!b.hold)
-  const menuActions = [approve, requestChanges, workflow].filter(
+  const archive: BranchWorkflowAction | undefined = heldBack(
+    userIsAdmin && b.status !== 'archived' && b.pullRequestState === 'closed'
+      ? {
+          label: EDITOR_ACTIONS.archiveBranch,
+          color: 'orange',
+          testId: `archive-branch-button-${b.name}`,
+          run: () => onArchive?.(b.name),
+        }
+      : undefined,
+  )
+  const menuActions = [approve, requestChanges, workflow, archive].filter(
     (a): a is BranchWorkflowAction => !!a && a !== primary && a !== secondary,
   )
   const showViewPullRequest = !!b.pullRequestUrl
@@ -475,21 +493,16 @@ const BranchCard: React.FC<BranchCardProps> = ({
                 Merged
               </Badge>
             )}
-            {b.pullRequestNumber && (
-              <Badge
-                color={
-                  b.pullRequestState === 'closed'
-                    ? 'red'
-                    : b.pullRequestState === 'merged'
-                      ? 'violet'
-                      : 'blue'
-                }
-                variant="light"
-              >
-                PR #{b.pullRequestNumber}
-                {b.pullRequestState === 'closed' ? ' (closed)' : ''}
-              </Badge>
-            )}
+            {b.pullRequestNumber &&
+              (b.pullRequestState === 'closed' ? (
+                <Badge color="red" variant="light" data-testid={`pr-closed-badge-${b.name}`}>
+                  PR closed
+                </Badge>
+              ) : (
+                <Badge color={b.pullRequestState === 'merged' ? 'violet' : 'blue'} variant="light">
+                  PR #{b.pullRequestNumber}
+                </Badge>
+              ))}
             {b.commentCount !== undefined && b.commentCount > 0 && (
               <Badge color="grape" variant="light">
                 {b.commentCount} {b.commentCount === 1 ? 'comment' : 'comments'}
@@ -699,6 +712,77 @@ const CardActionButton: React.FC<{ action: BranchWorkflowAction }> = ({ action }
   </Tooltip>
 )
 
+/** The filter box appears once the list has more branches than this. */
+const BRANCH_FILTER_THRESHOLD = 10
+
+const newestFirst = (a: BranchSummary, b: BranchSummary): number =>
+  (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '')
+
+/**
+ * The list's two parts: the current branch, whatever its status, then live branches newest first;
+ * and the other archived branches newest first.
+ * @internal Exported for tests.
+ */
+export const arrangeBranches = (
+  branches: readonly BranchSummary[],
+  currentBranchName: string | undefined,
+): { live: BranchSummary[]; archived: BranchSummary[] } => {
+  const others = branches.filter((b) => b.name !== currentBranchName).sort(newestFirst)
+  return {
+    live: [
+      ...branches.filter((b) => b.name === currentBranchName),
+      ...others.filter((b) => b.status !== 'archived'),
+    ],
+    archived: others.filter((b) => b.status === 'archived'),
+  }
+}
+
+/**
+ * Whether `query` appears in the branch's name, title or owner's name, ignoring case.
+ * @internal Exported for tests.
+ */
+export const matchesBranchFilter = (branch: BranchSummary, query: string): boolean => {
+  const needle = query.trim().toLowerCase()
+  return [branch.name, branch.shortName, branch.title, branch.ownerName].some((text) =>
+    text?.toLowerCase().includes(needle),
+  )
+}
+
+/** The "Archived (n)" heading and what it reveals. */
+const ArchivedSection: React.FC<{
+  count: number
+  open: boolean
+  onToggle: () => void
+  /** A filter's matches stay in view, with nothing to collapse. */
+  forcedOpen: boolean
+  children: ReactNode
+}> = ({ count, open, onToggle, forcedOpen, children }) => {
+  const Chevron = open ? IconChevronDown : IconChevronRight
+  return (
+    <Stack gap="sm" data-testid="archived-branches">
+      {forcedOpen ? (
+        <Text size="sm" fw={600} data-testid="archived-branches-toggle">
+          Archived ({count})
+        </Text>
+      ) : (
+        <UnstyledButton
+          onClick={onToggle}
+          aria-expanded={open}
+          data-testid="archived-branches-toggle"
+        >
+          <Group gap={4} wrap="nowrap">
+            <Chevron size={16} aria-hidden />
+            <Text size="sm" fw={600}>
+              Archived ({count})
+            </Text>
+          </Group>
+        </UnstyledButton>
+      )}
+      {open && children}
+    </Stack>
+  )
+}
+
 export const BranchManager: React.FC<BranchManagerProps> = ({
   branches,
   mode,
@@ -714,6 +798,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   onWithdraw,
   onApprove,
   onRequestChanges,
+  onArchive,
   onClose: _,
   comments = [],
   currentUserId,
@@ -783,12 +868,42 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
     }
   }
 
-  const orderedBranches = currentBranchName
-    ? [
-        ...branches.filter((b) => b.name === currentBranchName),
-        ...branches.filter((b) => b.name !== currentBranchName),
-      ]
-    : branches
+  const [filter, setFilter] = useState('')
+  const [archivedOpen, setArchivedOpen] = useState(false)
+  // Read through this, so a list shrinking past the threshold can't leave a filter no box shows.
+  const showFilter = branches.length > BRANCH_FILTER_THRESHOLD
+  const query = showFilter ? filter.trim() : ''
+  const { live, archived } = arrangeBranches(
+    query ? branches.filter((b) => matchesBranchFilter(b, query)) : branches,
+    currentBranchName,
+  )
+
+  const renderCard = (b: BranchSummary) => {
+    // The editor resolves a shadowed outside branch's full name to the namespace branch whose
+    // short name it is, so a card's actions name its branch by `branchAddress`.
+    const address = branchAddress(branches, b)
+    const act = (run?: (name: string) => void) => run && (() => run(address))
+    return (
+      <BranchCard
+        key={b.name}
+        branch={b}
+        isCurrent={b.name === currentBranchName}
+        workflowBlockedReason={
+          b.name === currentBranchName ? currentWorkflowBlockedReason : undefined
+        }
+        user={user}
+        onSelect={act(onSelect)}
+        onSubmit={act(onSubmit)}
+        onWithdraw={act(onWithdraw)}
+        onApprove={act(onApprove)}
+        onRequestChanges={act(onRequestChanges)}
+        onArchive={act(onArchive)}
+        onDelete={act(onDelete)}
+        onGetUserMetadata={onGetUserMetadata}
+        onGetOwnerMetadata={onGetOwnerMetadata}
+      />
+    )
+  }
 
   const hasBranchThreads = comments.some((t) => t.type === 'branch')
 
@@ -887,38 +1002,40 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
         </Stack>
       )}
 
-      <ScrollArea style={{ flex: 1 }} pb="md">
+      {showFilter && (
+        <TextInput
+          pt="sm"
+          aria-label="Filter branches"
+          placeholder="Filter by name, title or owner"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          data-testid="branch-filter-input"
+        />
+      )}
+
+      <ScrollArea style={{ flex: 1 }} pt="sm" pb="md">
         {branches.length === 0 ? (
           <Text size="sm" c="dimmed" py="md">
             {!supportsBranching ? 'Branch management is not available.' : 'No branches available.'}
           </Text>
         ) : (
           <Stack gap="sm">
-            {orderedBranches.map((b) => {
-              // The editor resolves a shadowed outside branch's full name to the namespace branch
-              // whose short name it is, so a card's actions name its branch by `branchAddress`.
-              const address = branchAddress(branches, b)
-              const act = (run?: (name: string) => void) => run && (() => run(address))
-              return (
-                <BranchCard
-                  key={b.name}
-                  branch={b}
-                  isCurrent={b.name === currentBranchName}
-                  workflowBlockedReason={
-                    b.name === currentBranchName ? currentWorkflowBlockedReason : undefined
-                  }
-                  user={user}
-                  onSelect={act(onSelect)}
-                  onSubmit={act(onSubmit)}
-                  onWithdraw={act(onWithdraw)}
-                  onApprove={act(onApprove)}
-                  onRequestChanges={act(onRequestChanges)}
-                  onDelete={act(onDelete)}
-                  onGetUserMetadata={onGetUserMetadata}
-                  onGetOwnerMetadata={onGetOwnerMetadata}
-                />
-              )
-            })}
+            {live.map(renderCard)}
+            {archived.length > 0 && (
+              <ArchivedSection
+                count={archived.length}
+                open={archivedOpen || !!query}
+                onToggle={() => setArchivedOpen(!archivedOpen)}
+                forcedOpen={!!query}
+              >
+                {archived.map(renderCard)}
+              </ArchivedSection>
+            )}
+            {live.length === 0 && archived.length === 0 && (
+              <Text size="sm" c="dimmed" py="md" role="status">
+                No branches match “{query}”.
+              </Text>
+            )}
           </Stack>
         )}
       </ScrollArea>

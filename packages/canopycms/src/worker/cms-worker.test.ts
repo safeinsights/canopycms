@@ -2861,18 +2861,55 @@ describe('CmsWorker.syncGit() worker-status.json bookkeeping', () => {
     await seedGit.push('origin', 'main')
   }
 
-  const makeSyncWorker = () => {
+  const makeSyncWorker = (archivedBranchRetentionDays?: number) => {
     const worker = new CmsWorker({
       workspacePath,
       githubOwner: 'test-owner',
       githubRepo: 'test-repo',
       githubToken: 'fake-token',
       baseBranch: 'main',
+      archivedBranchRetentionDays,
     })
     useLocalGitHubGateway(worker, { remoteUrl: () => fixtureRemote })
     ;(worker as unknown as { running: boolean }).running = true
     return worker
   }
+
+  const archiveLongAgo = async (branchName: string) => {
+    const { branchPath } = await createSyncBranch(branchName)
+    const longAgo = new Date(Date.now() - 400 * 24 * 60 * 60_000).toISOString()
+    await getBranchMetadataFileManager(
+      branchPath,
+      path.join(workspacePath, 'content-branches'),
+    ).save({ branch: { status: 'archived', archivedAt: longAgo, mergedAt: longAgo } })
+    return branchPath
+  }
+
+  it('sweeps expired archived branches in the cycle and records the setting and the outcome', async () => {
+    const branchPath = await archiveLongAgo('long-merged')
+
+    await makeSyncWorker(30).syncGit()
+
+    const status = await readStatus()
+    expect(status.archivedBranchRetentionDays).toBe(30)
+    expect(status.lastGitSync?.archivedSweep?.deleted).toEqual(['long-merged'])
+    await expect(fs.access(branchPath)).rejects.toThrow()
+  })
+
+  it('leaves archived branches alone by default', async () => {
+    const branchPath = await archiveLongAgo('long-merged')
+
+    await makeSyncWorker().syncGit()
+
+    const status = await readStatus()
+    expect(status.archivedBranchRetentionDays).toBeUndefined()
+    expect(status.lastGitSync?.archivedSweep).toBeUndefined()
+    await expect(fs.access(branchPath)).resolves.toBeUndefined()
+  })
+
+  it.each([0, -1, 1.5])('refuses a retention of %s days at construction', (days) => {
+    expect(() => makeSyncWorker(days)).toThrow(/archivedBranchRetentionDays must be a positive/)
+  })
 
   it('records lastGitSyncAt and a rebase summary after a successful cycle, including a per-branch rebase failure', async () => {
     // Behind, no conflicts -> should complete and land in lastGitSync.rebased.

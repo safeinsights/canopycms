@@ -379,12 +379,23 @@ export function buildMergedBranchUpdate(
     status: 'archived',
     pullRequestState: 'merged',
     mergedAt: now.toISOString(),
+    archivedAt: now.toISOString(),
     // The merge settled every conflict the record named.
     conflictStatus: 'clean',
     conflictFiles: [],
     submitUnfinished: undefined,
     ...(owesSubmit(branch) ? { unpublishedAtMerge: true } : {}),
   }
+}
+
+/**
+ * The metadata update for archiving a branch whose PR closed without merging. Records no merge:
+ * `mergedAt` is what tells the two apart, and `pullRequestState` stays `closed`.
+ */
+export function buildUnmergedArchiveUpdate(
+  now: Date = new Date(),
+): NonNullable<BranchMetadataUpdate['branch']> {
+  return { status: 'archived', archivedAt: now.toISOString(), submitUnfinished: undefined }
 }
 
 /** {@link BranchMetadataFileManager.get} as a function. */
