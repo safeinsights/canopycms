@@ -709,7 +709,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         submitBlocked: b.submitBlocked ?? true,
       }
     })
-  }, [branches, currentBranchName, options.comments])
+  }, [branches, branchesData?.ownerNames, currentBranchName, options.comments])
 
   // Explicit reload: always issues a fresh, independent fetch (raw call, not
   // SWR's `mutate()` revalidate path) so callers requesting a reload right

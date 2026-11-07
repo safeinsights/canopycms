@@ -1123,7 +1123,7 @@ function ArchivedBranchesCleanup({ health }: { health: UseSystemHealthReturn }) 
           )}
           {unpublished.length > 0 && (
             <Text size="xs" data-testid="delete-archived-unpublished">
-              Kept, as they may hold changes GitHub doesn't have: {unpublished.join(', ')}.
+              Kept, as they may hold changes missing from GitHub: {unpublished.join(', ')}.
             </Text>
           )}
         </Stack>
