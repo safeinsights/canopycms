@@ -105,6 +105,10 @@ const normalizeOptions = (
 
 const fieldKey = (path: Array<string | number>): string => formatCanopyPath(path)
 
+/** A value of another type as text, for `DateField` to quote: the form cannot save it. */
+const dateFieldText = (value: unknown): string =>
+  typeof value === 'string' ? value : value == null ? '' : JSON.stringify(value)
+
 /** An optional object's Clear, kept so its label row can offer Undo. */
 interface ClearedObject {
   removal: FieldRemoval
@@ -565,7 +569,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             id={fieldId}
             label={label}
             description={field.description}
-            value={typeof currentValue === 'string' ? currentValue : ''}
+            value={dateFieldText(currentValue)}
             onChange={(v) => update(v)}
             dataCanopyField={normalizeCanopyPath(path)}
             readOnly={readOnly}

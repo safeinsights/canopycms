@@ -375,6 +375,7 @@ const canopyCssVariablesResolver: CSSVariablesResolver = (theme) => ({
     '--mantine-color-placeholder':
       'color-mix(in srgb, var(--mantine-color-gray-6) 60%, var(--mantine-color-gray-7))',
     '--canopy-danger-text': 'var(--mantine-color-red-9)',
+    '--mantine-color-error': 'var(--canopy-danger-text)',
     '--canopy-input-border':
       'color-mix(in srgb, var(--mantine-color-gray-6) 80%, var(--mantine-color-gray-7))',
     '--canopy-surface-subtle': 'var(--mantine-color-gray-0)',
@@ -390,6 +391,7 @@ const canopyCssVariablesResolver: CSSVariablesResolver = (theme) => ({
     '--mantine-color-placeholder':
       'color-mix(in srgb, var(--mantine-color-dark-2) 60%, var(--mantine-color-dark-1))',
     '--canopy-danger-text': 'var(--mantine-color-red-3)',
+    '--mantine-color-error': 'var(--canopy-danger-text)',
     '--canopy-input-border':
       'color-mix(in srgb, var(--mantine-color-dark-2) 80%, var(--mantine-color-dark-1))',
     '--canopy-surface-subtle': 'var(--mantine-color-dark-6)',

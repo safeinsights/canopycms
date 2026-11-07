@@ -568,6 +568,8 @@ describe('CanopyCMSProvider colour and contrast', () => {
   it('draws danger text at red.9 in light mode and red.3 in dark, 4.5:1 wherever it sits', () => {
     expect(light['--canopy-danger-text']).toBe('var(--mantine-color-red-9)')
     expect(darkVars['--canopy-danger-text']).toBe('var(--mantine-color-red-3)')
+    expect(light['--mantine-color-error']).toBe('var(--canopy-danger-text)')
+    expect(darkVars['--mantine-color-error']).toBe('var(--canopy-danger-text)')
     const lightPs = getPrimaryShade(canopyTheme, 'light')
     const darkPs = getPrimaryShade(canopyTheme, 'dark')
     const lightRatios = [white, gray[0], gray[1], composite(red[lightPs], 0.12, white)].map((bg) =>

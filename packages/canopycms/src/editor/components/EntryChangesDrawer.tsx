@@ -594,7 +594,8 @@ const Value: React.FC<{ value: DisplayValue; alt?: { text: TextDiff; side: Side 
 
 /**
  * A date in full, in the viewer's time zone: a comparison needs the value, so this is the one
- * place the editor shows a date absolute first and relative after.
+ * place the editor shows a date absolute first and relative after. A day has no relative form: it
+ * may be a future event, and a past one is not hours ago.
  */
 const DateValue: React.FC<{
   value: Extract<DisplayValue, { kind: 'date' }>
@@ -604,9 +605,11 @@ const DateValue: React.FC<{
     <Text size="sm" style={TEXT_STYLE}>
       {text ?? value.text}
     </Text>
-    <Text size="xs" c="dimmed">
-      {formatRelativeTime(value.dateOnly ? `${value.iso}T00:00:00` : value.iso)}
-    </Text>
+    {!value.dateOnly && (
+      <Text size="xs" c="dimmed">
+        {formatRelativeTime(value.iso)}
+      </Text>
+    )}
   </Stack>
 )
 

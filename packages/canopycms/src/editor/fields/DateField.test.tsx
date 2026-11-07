@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { CanopyCMSProvider } from '../theme'
@@ -151,6 +152,24 @@ describe('DateField', () => {
     const dropdown = await openPicker()
     pickDay(dropdown, '17 June 2024')
     await waitFor(() => expect(document.activeElement).toBe(trigger()))
+  })
+
+  it('leaves focus where a click away from the open picker put it', async () => {
+    render(
+      <>
+        <Harness initial="2024-06-15" />
+        <input aria-label="Other field" />
+      </>,
+    )
+    const user = userEvent.setup()
+    trigger().focus()
+    await openPicker()
+    await user.click(screen.getByLabelText('Other field'))
+    await waitFor(() => expect(document.querySelector('[data-dates-dropdown]')).toBeNull())
+    // Past Mantine's focus-return timer, which is what would take it back.
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    await user.keyboard('abc')
+    expect(screen.getByLabelText<HTMLInputElement>('Other field').value).toBe('abc')
   })
 
   it('offers no Remove on a required field', () => {

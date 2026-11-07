@@ -65,13 +65,14 @@ export const DateField: React.FC<DateFieldProps> = ({
         size="sm"
         value={date}
         onChange={(next) => {
-          if (!readOnly && next) onChange(localDateToCalendarDay(next))
+          if (readOnly || !next) return
+          onChange(localDateToCalendarDay(next))
+          // The day unmounts under focus, which would drop a keyboard user to the page.
+          triggerRef.current?.focus()
         }}
         valueFormat={VALUE_FORMAT}
         placeholder={readOnly ? undefined : 'Pick a date'}
         ariaLabels={CALENDAR_LABELS}
-        // Mantine leaves focus on the day it unmounts, which drops a keyboard user to the page.
-        popoverProps={{ returnFocus: true }}
         // Red is for errors here, so weekends look like other days.
         weekendDays={[]}
         rightSection={

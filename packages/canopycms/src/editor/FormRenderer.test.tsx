@@ -696,9 +696,19 @@ describe('FormRenderer', () => {
       expect(state.eventDate).toBe('2024-06-17')
     })
 
-    it('shows a value of another type as not set', () => {
-      render(<StatefulForm fields={fields} initialValue={{ eventDate: 5 }} />)
+    it('says what a value of another type is, and lets it be removed', () => {
+      render(<StatefulForm fields={fields} initialValue={{ eventDate: 20240501 }} />)
+      expect(screen.getByRole('button', { name: 'Event date, invalid value' })).toBeTruthy()
+      expect(screen.getByText(/Stored as “20240501”/)).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: 'Remove date' }))
+      const state = JSON.parse(screen.getByTestId('form-state').textContent ?? '{}')
+      expect(state.eventDate).toBe('')
+    })
+
+    it.each([[undefined], [null]])('shows %s as not set', (eventDate) => {
+      render(<StatefulForm fields={fields} initialValue={{ eventDate }} />)
       expect(screen.getByRole('button', { name: 'Event date, not set' })).toBeTruthy()
+      expect(screen.queryByRole('button', { name: 'Remove date' })).toBeNull()
     })
 
     it('tells the picker a required field cannot be emptied', () => {
