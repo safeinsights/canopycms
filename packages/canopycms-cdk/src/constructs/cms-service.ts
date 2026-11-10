@@ -1198,6 +1198,15 @@ export interface CanopyCmsServiceProps {
   protectedBranches?: string[]
 
   /**
+   * Delete a merged branch's editor copy this many days after it was archived: its workspace,
+   * metadata and comments, never its GitHub branch (default: unset, which keeps archived branches).
+   * A positive whole number, validated at synth. A branch archived without merging, or that may
+   * hold commits a merge left out, is left for a person to delete. The worker sweeps once per git
+   * sync. Stamped into the worker's `CANOPYCMS_ARCHIVED_BRANCH_RETENTION_DAYS`.
+   */
+  archivedBranchRetentionDays?: number
+
+  /**
    * The prefix of every branch editors create, which the GitHub gateway confines its writes to
    * (default: `canopycms/{deployment}/`). A template in which `{deployment}` is this stack's
    * deployment name (`deploymentName`, including an `environment.CANOPYCMS_DEPLOYMENT_NAME`
@@ -1524,6 +1533,12 @@ export class CanopyCmsService extends Construct {
         : undefined
 
     const protectedBranches = assertValidProtectedBranches(props.protectedBranches ?? [])
+    const retentionDays = props.archivedBranchRetentionDays
+    if (retentionDays !== undefined && !(Number.isInteger(retentionDays) && retentionDays > 0)) {
+      throw new Error(
+        `CanopyCmsService: archivedBranchRetentionDays must be a positive whole number of days, not ${retentionDays}.`,
+      )
+    }
     // The construct stamps the namespace into both halves; an override in `environment` would reach
     // the Lambda alone and be replaced there, so it is refused rather than silently ignored.
     if (props.environment?.['CANOPYCMS_BRANCH_NAMESPACE'] !== undefined) {
@@ -2224,6 +2239,9 @@ export class CanopyCmsService extends Construct {
     if (legacyBranches.length > 0) {
       // Only the gateway enforces it, and a split worker refuses it.
       envEntries.push(['CANOPYCMS_LEGACY_BRANCHES', legacyBranches.join(','), 'gateway'])
+    }
+    if (retentionDays !== undefined) {
+      envEntries.push(['CANOPYCMS_ARCHIVED_BRANCH_RETENTION_DAYS', String(retentionDays), 'worker'])
     }
     const envFile = (readers: readonly EnvReader[]) =>
       envEntries

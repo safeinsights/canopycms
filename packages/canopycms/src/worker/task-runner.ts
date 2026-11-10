@@ -8,6 +8,7 @@ import {
   retryTask,
 } from '../task-queue/cms-task-queue'
 import type { Task, TaskAction } from '../task-queue/cms-task-queue'
+import { filePathExists } from '../utils/fs'
 import { isNoCommitsBetweenError, isRefAlreadyGoneError } from '../github-service'
 import {
   BranchMetadataCorruptError,
@@ -610,10 +611,12 @@ async function isSupersededSubmit(
   const { submittedAt, requeuedFrom } = task.payload
   if (typeof submittedAt !== 'string') return false
   const live = await BranchMetadataFileManager.loadOnly(ctx.branchWorkspacePath(branch))
-  if (live === null) return false
+  const firstRun = !task.retryCount && requeuedFrom === undefined
+  // A retry with no workspace at all: its branch was deleted since. A first run proceeds, since a
+  // quarantine's rename can hide a live workspace for a moment.
+  if (live === null) return !firstRun && !(await filePathExists(ctx.branchWorkspacePath(branch)))
   const { status, submittedAt: recorded } = live.branch
   if (status === 'archived') return true
-  const firstRun = !task.retryCount && requeuedFrom === undefined
   if (firstRun && (recorded === undefined || recorded < submittedAt)) return false
   return (status !== 'submitted' && status !== 'approved') || recorded !== submittedAt
 }
@@ -721,7 +724,7 @@ export async function updateBranchMetadata(
         // A pull request opened as the branch merged is not this branch's, whose record is the merge.
         const archived = existing.branch.status === 'archived'
         if (archived && result.prNumber) {
-          workerLogWarn(`Not recording pull request #${result.prNumber} on merged ${branch}`)
+          workerLogWarn(`Not recording pull request #${result.prNumber} on archived ${branch}`)
         }
         if (result.prUrl && !archived) updates.pullRequestUrl = result.prUrl
         if (result.prNumber && !archived) {
@@ -810,7 +813,7 @@ async function updateBranchMetadataOnFailure(
           // Nothing to submit means this submit left nothing out, so it flags nothing. A flag a
           // merge already set stands, for an admin to dismiss.
           if (options.unlock || task.action !== SUBMIT_ACTION) return { branch: failed }
-          // Merged while this ran: nothing is left to finish it, as buildMergedBranchUpdate records.
+          // Archived while this ran: nothing is left to finish it, as buildMergedBranchUpdate records.
           if (existing.branch.status === 'archived') {
             return { branch: { ...failed, unpublishedAtMerge: true } }
           }

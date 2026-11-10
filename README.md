@@ -1880,6 +1880,8 @@ Navigate to your editor URL (e.g. `/edit`), sign in, and select or create a bran
 
 **Switching branches:** click the branch pill, then "Switch branch…". The base branch is marked with a "Protected" badge. The Branches drawer also shows `syncing`, `sync-failed` and `conflict` badges alongside `Merged` and `PR closed`.
 
+**Archived branches:** the drawer lists live branches newest first, then a collapsed "Archived (n)" section; a filter (name, title, owner) appears past 10 branches. A branch whose PR closed unmerged shows "PR closed" and stays live; admins can "Archive branch", recording no merge. Setting `CanopyCmsService`'s `archivedBranchRetentionDays` (positive whole days; off by default) has the worker delete merged branches' workspaces and comments that long after archiving; System health has a bulk "Delete merged archived branches older than N days". Neither deletes GitHub branches, nor touches unmerged archives or branches that may hold unpublished commits.
+
 **Deleting a branch** also deletes its GitHub branch if the CMS pushed it there, which closes any open PR.
 
 ### Editing Content

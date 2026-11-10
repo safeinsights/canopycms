@@ -43,7 +43,7 @@ const withdrawBranchHandler = async (
   // non-'editing' status blocks content writes, and a raw workflow.submit would
   // discard the approval, which the submit status gate refuses (api/branch-status.ts).
   //
-  // 'archived' stays refused: the PR is merged and there is nothing to return to.
+  // 'archived' stays refused: an archive is the end of the branch, merged or not.
   const status = branchContext.branch.status
   if (status !== 'submitted' && status !== 'approved') {
     return {

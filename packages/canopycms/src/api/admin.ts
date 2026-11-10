@@ -28,6 +28,7 @@ import { getErrorMessage, isNotFoundError, redactCredentials } from '../utils/er
 import { getBuildIdentity } from '../build-identity'
 import { loadSharp } from '../assets/sharp-loader'
 import { ADMIN_BRANCH_HEALTH_ROUTES } from './admin-branch-health'
+import { ADMIN_ARCHIVED_BRANCH_ROUTES } from './archived-branches'
 import { baseBranchOf } from '../utils/base-branch'
 // generate-client.ts resolves a route's response/body type module purely
 // from its `namespace` field (see typeNameToModule/namespaceToModule in
@@ -35,6 +36,10 @@ import { baseBranchOf } from '../utils/base-branch'
 // actually live in admin-branch-health.ts, so client.ts's generated import
 // expects them here. Re-export rather than teaching the generator a second
 // file per namespace.
+export type {
+  DeleteArchivedBranchesBody,
+  DeleteArchivedBranchesResponse,
+} from './archived-branches'
 export type {
   BranchHealthResponse,
   DismissUnpublishedResponse,
@@ -505,4 +510,5 @@ export const ADMIN_ROUTES = {
   retryTask,
   deleteTask,
   ...ADMIN_BRANCH_HEALTH_ROUTES,
+  ...ADMIN_ARCHIVED_BRANCH_ROUTES,
 } as const

@@ -10,7 +10,7 @@
  * re-check that itself, same as GroupManager and PermissionManager.
  */
 
-import { useRef, type RefObject } from 'react'
+import { useRef, useState, type RefObject } from 'react'
 import {
   Alert,
   Badge,
@@ -19,6 +19,7 @@ import {
   Group,
   Loader,
   Modal,
+  NumberInput,
   Paper,
   SegmentedControl,
   SimpleGrid,
@@ -35,6 +36,7 @@ import { openConfirm } from '../utils/confirm-modal'
 import { focusReturnProps } from '../utils/focus-return'
 import { formatRelativeTime } from '../relative-time'
 import { EDITOR_ACTIONS } from '../copy'
+import type { AgeDeletionHold } from '../../branch-archive'
 import {
   useSystemHealth,
   type UseSystemHealthReturn,
@@ -46,10 +48,18 @@ import type { DuplicateContentId } from '../../content-id-index'
 import type { OperatingMode } from '../../operating-mode'
 import type { Task, CorruptTaskFile } from '../../task-queue'
 import type { BranchHealthEntry, DuplicateIdScan } from '../../branch-health'
+import {
+  ageDeletionHold,
+  archivedBefore,
+  archivedCutoff,
+  deletableByAge,
+} from '../../branch-archive'
 import type {
+  ArchivedSweepReport,
   BaseRefreshReport,
   BaseSchemaHold,
   BranchHold,
+  BranchMetadata,
   UnpublishableBranch,
   UnpublishableBranchesReport,
 } from '../../types'
@@ -508,6 +518,8 @@ function duplicateScanSummary(
   if (parts.length === 0) return { text: 'No duplicate content IDs found.', color: 'dimmed' }
   return { text: parts.join(' '), color: 'orange' }
 }
+
+const DEFAULT_CLEANUP_DAYS = 90
 
 const PURGE_CONFIRM_TEXT =
   'The directory is moved to a hidden trash name and kept for 30 days, then deleted. Any git work inside was never pushed and will be lost when the trash is swept.'
@@ -1049,6 +1061,138 @@ function TasksTab({ health }: { health: UseSystemHealthReturn }) {
   )
 }
 
+/** What `lastGitSync.archivedSweep` left undone, or nothing when it finished clean. */
+const sweepTrouble = ({ failed = [], warnings = [] }: Partial<ArchivedSweepReport> = {}): string =>
+  [
+    failed.length === 0
+      ? ''
+      : ` The last sweep could not delete ${failed.map((f) => f.branch).join(', ')} and tries again next sync.`,
+    ...warnings.map((warning) => ` ${endSentence(warning)}`),
+  ].join('')
+
+const dayCount = (days: number): string => `${days} ${days === 1 ? 'day' : 'days'}`
+
+/** The deployment's retention, and the admin's own delete by the same rule. */
+function ArchivedBranchesCleanup({ health }: { health: UseSystemHealthReturn }) {
+  const [days, setDays] = useState<string | number>(DEFAULT_CLEANUP_DAYS)
+  const workerStatus = health.status?.workerStatus
+  const generatedAt = health.branchHealth?.generatedAt
+  const olderThanDays = typeof days === 'number' && Number.isInteger(days) && days > 0 ? days : null
+  // The scan's own clock, which keeps this render pure and matches the listing it counts.
+  const cutoff =
+    olderThanDays !== null && generatedAt
+      ? archivedCutoff(olderThanDays, Date.parse(generatedAt))
+      : null
+  const candidates = (health.branchHealth?.entries ?? []).filter((e) => !e.isBaseBranch)
+  const branchesMatching = (matches: (branch: BranchMetadata, cutoff: number) => boolean) =>
+    cutoff === null
+      ? []
+      : candidates.flatMap((e) => (e.branch && matches(e.branch, cutoff) ? [e.branch] : []))
+  const due = branchesMatching(deletableByAge)
+  const old = branchesMatching(archivedBefore)
+  const heldFor = (hold: AgeDeletionHold) =>
+    old.filter((branch) => ageDeletionHold(branch) === hold).map((branch) => branch.name)
+  const notMerged = heldFor('not-merged')
+  const unpublished = heldFor('unpublished')
+  const anyDeletable = candidates.some(
+    (e) => e.branch && deletableByAge(e.branch, Number.POSITIVE_INFINITY),
+  )
+  const dueLabel = `${due.length} archived ${due.length === 1 ? 'branch' : 'branches'}`
+
+  const blockedReason =
+    olderThanDays === null
+      ? 'Enter a whole number of days.'
+      : due.length === 0
+        ? `No merged archived branches are older than ${dayCount(olderThanDays)}.${olderThanDays > 1 && anyDeletable ? ' Lower the number of days to include newer ones.' : ''}${old.length > 0 ? ' Older branches kept from this delete go one at a time, from the "Branches" drawer.' : ''}`
+        : undefined
+
+  const handleDeleteClick = () => {
+    if (blockedReason || olderThanDays === null) return
+    openConfirm({
+      title: 'Delete archived branches',
+      children: (
+        <Stack gap="xs">
+          <Text size="sm">
+            Delete {dueLabel} and their comments from the editor? Their GitHub branches stay. This
+            cannot be undone.
+          </Text>
+          <Text size="xs" data-testid="delete-archived-names">
+            {due.map((branch) => branch.name).join(', ')}
+          </Text>
+          {notMerged.length > 0 && (
+            <Text size="xs" data-testid="delete-archived-not-merged">
+              Kept, as they were not merged: {notMerged.join(', ')}.
+            </Text>
+          )}
+          {unpublished.length > 0 && (
+            <Text size="xs" data-testid="delete-archived-unpublished">
+              Kept, as they may hold changes missing from GitHub: {unpublished.join(', ')}.
+            </Text>
+          )}
+        </Stack>
+      ),
+      labels: { confirm: 'Delete branches', cancel: 'Cancel' },
+      confirmProps: { color: 'red', 'data-testid': 'confirm-delete-archived' },
+      onConfirm: () =>
+        health.deleteArchivedBranches(
+          olderThanDays,
+          due.map((branch) => branch.name),
+        ),
+    })
+  }
+
+  return (
+    <Stack gap={4} mb="sm" data-testid="archived-branches-cleanup">
+      <Text size="sm" fw={600}>
+        Archived branches
+      </Text>
+      <Group align="flex-end" gap="xs">
+        <NumberInput
+          label="Delete merged archived branches older than"
+          suffix={days === 1 ? ' day' : ' days'}
+          size="xs"
+          w={280}
+          min={1}
+          allowDecimal={false}
+          allowNegative={false}
+          value={days}
+          onChange={setDays}
+          data-testid="archived-days-input"
+        />
+        <Tooltip
+          label={blockedReason}
+          disabled={!blockedReason}
+          multiline
+          maw={280}
+          position="top-end"
+        >
+          <Button
+            size="xs"
+            variant="light"
+            color="red"
+            onClick={handleDeleteClick}
+            loading={health.deletingArchivedBranches}
+            data-disabled={blockedReason ? true : undefined}
+            aria-disabled={blockedReason ? true : undefined}
+            data-testid="delete-archived-button"
+          >
+            Delete {blockedReason ? 'archived branches' : dueLabel}
+          </Button>
+        </Tooltip>
+      </Group>
+      {/* A record with no sync can be a failed boot's, which doesn't know the setting. */}
+      {workerStatus?.lastGitSync && (
+        <Text size="xs" c="dimmed" data-testid="archived-retention-note">
+          {workerStatus.archivedBranchRetentionDays === undefined
+            ? 'This deployment keeps archived branches until someone deletes them.'
+            : `This deployment deletes merged branches ${dayCount(workerStatus.archivedBranchRetentionDays)} after archiving.`}
+          {sweepTrouble(workerStatus.lastGitSync?.archivedSweep)}
+        </Text>
+      )}
+    </Stack>
+  )
+}
+
 function BranchesTab({ health }: { health: UseSystemHealthReturn }) {
   const { branchHealth, branchHealthLoading } = health
   const entries = branchHealth?.entries ?? []
@@ -1121,6 +1265,7 @@ function BranchesTab({ health }: { health: UseSystemHealthReturn }) {
 
   return (
     <Stack gap="xs">
+      <ArchivedBranchesCleanup health={health} />
       <Group justify="space-between" align="center" wrap="nowrap">
         <Text size="xs" c={duplicateSummary.color} data-testid="duplicate-id-summary">
           {duplicateSummary.text}
@@ -1243,7 +1388,7 @@ function BranchHealthRow({
 }) {
   if (entry.kind === 'healthy' && entry.branch) {
     const b = entry.branch
-    // The worker looks at every branch but 'archived' (already merged): one in review is not
+    // The worker looks at every branch but 'archived' (finished): one in review is not
     // rebased, but commits from GitHub are still brought into it. An exclusion, not a list of
     // statuses, so a status added later still shows its failures by default.
     const showRebaseFailure = b.status !== 'archived' && !!b.rebaseFailure
@@ -1254,7 +1399,9 @@ function BranchHealthRow({
         : !inReview
           ? b.unpublishedAtMerge
             ? { kind: 'unpublished-at-merge' }
-            : undefined
+            : b.status === 'archived' && b.rewrittenOnGitHub !== undefined
+              ? { kind: 'rewritten-at-merge', commit: b.rewrittenOnGitHub }
+              : undefined
           : b.submitUnfinished
             ? {
                 kind: 'submit-unfinished',
@@ -1263,7 +1410,9 @@ function BranchHealthRow({
               }
             : b.pullRequestHold
     const canMarkMerged =
-      (b.status === 'submitted' || b.status === 'approved') && !!b.pullRequestNumber
+      (b.status === 'submitted' || b.status === 'approved') &&
+      !!b.pullRequestNumber &&
+      b.pullRequestState !== 'closed'
 
     return (
       <Table.Tr>

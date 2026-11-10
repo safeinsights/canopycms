@@ -173,7 +173,7 @@ Content flows in one direction: the git repository is the source of truth, a bra
 
 Opening a branch resolves its workspace or creates a git clone for it, built under a staging name and renamed into place complete, so a crash never leaves a half-made branch; a content branch's clone checks out only the content root, `.canopy-meta` and root-level files (branch-provisioning.ts, branch-sparse.ts). Each branch has its own working directory, so users on different branches never interfere, and a crash or bad edit on one cannot affect another.
 
-A branch's lifecycle states are **editing** (the only status from which content can be written or the branch submitted), **submitted** (locked for review, awaiting merge), **approved** (ready to merge), and **archived** (merged, preserved for audit). There is deliberately no separate `locked` state: `submitted` already means locked for review.
+A branch's lifecycle states are **editing** (the only status from which content can be written or the branch submitted), **submitted** (locked for review, awaiting merge), **approved** (ready to merge), and **archived** (finished, merged or not, read-only and kept until deleted). There is deliberately no separate `locked` state: `submitted` already means locked for review.
 
 In dev mode users normally work directly on the base branch — that is the expected local flow and nothing prevents it. In prod the base branch is read-only in the editor (see [Protected Base Branch](#protected-base-branch)); real edits require a separate branch that goes through submit/review/merge.
 
@@ -495,9 +495,11 @@ A branch can be approved, or have changes requested — which returns it to `edi
 
 Merge detection is automatic. Once a branch is `submitted` or `approved` and has a recorded PR, the worker's sync cycle polls GitHub for that PR's resolution on every pass: when the PR is merged, outside CanopyCMS by someone with merge permissions, the worker archives the branch itself — status `archived`, `pullRequestState` stamped `merged`, `mergedAt` recorded — and the site rebuild and deploy happen in other processes, typically CI/CD.
 
-If the PR is **closed without merging**, the worker records `pullRequestState: 'closed'` and leaves the branch's status untouched: a closed PR is not necessarily terminal, since it can be reopened, so an admin decides rather than the worker guessing. The editor shows a red "closed" badge and disables approve and request-changes, which assume an open, convertible-to-draft PR; withdraw stays available as the path back to `editing`.
+If the PR is **closed without merging**, the worker records `pullRequestState: 'closed'` and leaves the branch's status untouched: a closed PR is not necessarily terminal, since it can be reopened, so an admin decides rather than the worker guessing. The editor shows a red "PR closed" badge, keeps the branch in the live list, and disables approve and request-changes, which assume an open, convertible-to-draft PR; withdraw stays available as the path back to `editing`, and an admin's Archive branch (`POST /:branch/archive`) ends it instead, recording `archivedAt` and no merge, so `mergedAt` still tells the two kinds of archived branch apart.
 
-A `markAsMerged` endpoint remains as a manual fallback for when the worker isn't running, or an admin wants to force-resolve immediately. It accepts `submitted` or `approved`, matching the automatic path, so it can reach anything a poll could — including a PR merged and then deleted from GitHub before a cycle ran. It verifies the merge through the GitHub API and builds its update through the same shared helper, so both paths produce identical archived metadata.
+**Only merged branches leave by age.** `archivedBranchRetentionDays`, per deployment and off by default, has the worker delete them after that many days; System Health's bulk delete does so on request. Both select with `branch-archive.ts`'s `deletableByAge` and delete through `branch-delete.ts`, as a single delete does, but take only the editor's copy: a GitHub branch can hold commits pushed after its merge. A branch archived unmerged, merged with an unfinished submit, or rewritten on GitHub may hold the only copy of its work, so only a person deletes it.
+
+A `markAsMerged` endpoint remains as a manual fallback for when the worker isn't running, or an admin wants to force-resolve immediately. It accepts `submitted` or `approved`, matching the automatic path, so it can reach anything a poll could — including a PR merged and then deleted from GitHub before a cycle ran. It verifies the merge through the GitHub API where it can, refuses a PR recorded closed unless that verified, and builds its update through the same shared helper, so both paths produce identical archived metadata.
 
 ### Publish State Is Branch-Only
 
@@ -530,7 +532,7 @@ Each worker cycle starts with upkeep — provisioning residue, a changed sparse 
 
 - **The base branch's own workspace**: kept current by the fast-forward step, since routing it through the `--theirs` resolution below could rewrite its history.
 - **In review** (`submitted` or `approved`): rebasing would rewrite commit history under a PR someone is actively reading. They are left alone until they return to `editing` — but the same cycle still polls their PR's resolution, since nothing else tells the worker a merge or close happened.
-- **Archived**: already merged, with no open PR left to poll.
+- **Archived**: finished, with no open PR left to poll.
 - **Dirty working tree**: saved edits stay uncommitted until submit, and rebasing would fail or destroy them, so a branch with saved edits does not follow base until it is submitted. Withdrawing a submitted branch whose PR conflicts lets the next cycle rebase it. canopycms's own untracked `.canopy-meta/` state never counts as dirty, but git refuses to rebase over any modified _tracked_ file, so tracked canopycms state an adopter committed blocks the rebase, recorded as a rebase failure naming the fix.
 
 When nothing conflicts, the rebase applies cleanly and records nothing new.

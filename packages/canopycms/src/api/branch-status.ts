@@ -8,6 +8,7 @@ import { getBranchMetadataFileManager } from '../branch-metadata'
 import { withdrawBranch } from './branch-withdraw'
 import { requestChanges, approveBranch } from './branch-review'
 import { markAsMerged } from './branch-merge'
+import { ARCHIVE_BRANCH_ROUTES } from './archived-branches'
 import { defineEndpoint } from './route-builder'
 import { canPerformWorkflowAction, getBranchProtection, isAdmin } from '../authorization'
 import { syncSubmitPr } from './github-sync'
@@ -340,4 +341,5 @@ export const WORKFLOW_ROUTES = {
   requestChanges: requestChanges,
   approve: approveBranch,
   markMerged: markAsMerged,
+  ...ARCHIVE_BRANCH_ROUTES,
 } as const

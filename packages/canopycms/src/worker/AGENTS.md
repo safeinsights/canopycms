@@ -25,6 +25,7 @@ Each of the four disjoint call trees under `start()` is its own module, reached 
 | `sparse-cone.ts`                                   | Re-applying a changed sparse cone                                                                                                                                     |
 | `schema-gate.ts`                                   | Holding base for an editor deploy                                                                                                                                     |
 | `unpublishable-branches.ts`                        | Branches the gateway will not publish                                                                                                                                 |
+| `archived-sweep.ts`                                | Retention's delete of merged branches                                                                                                                                 |
 | `stale-mirror.ts`                                  | Moving or deleting a `remote.git` head that holds no editor work                                                                                                      |
 | `log.ts`                                           | `workerLog`/`workerLogWarn`/`workerLogError`                                                                                                                          |
 | `github-gateway.ts`                                | `GitHubGateway`, the only user of the credential and Octokit, and its in-process implementation                                                                       |
@@ -42,7 +43,7 @@ Each of the four disjoint call trees under `start()` is its own module, reached 
 | `shared-repo-git.ts`                               | The worker's git in `remote.git` and the clones: the pins, pinned pack commands, the config allowlist check                                                           |
 
 Imports run one way only — `cms-worker` → {`task-runner`, `git-sync`} → `rebase` → `github-commits` →
-`history-rewrite` → `worker-context`, with `canopy-state`, `provisioned-workspace`, `sparse-cone`, `schema-gate`, `stale-mirror`, `unpublishable-branches` and `remote-git-maintenance` leaves under `git-sync` and `rebase` (`cms-worker` also imports `schema-gate` and `unpublishable-branches`). `github-gateway` sits outside that chain: `cms-worker` creates the instance, clusters reach it
+`history-rewrite` → `worker-context`, with `canopy-state`, `provisioned-workspace`, `sparse-cone`, `schema-gate`, `stale-mirror`, `unpublishable-branches`, `archived-sweep` and `remote-git-maintenance` leaves under `git-sync` and `rebase` (`cms-worker` also imports `schema-gate` and `unpublishable-branches`). `github-gateway` sits outside that chain: `cms-worker` creates the instance, clusters reach it
 via `ctx.github()`, and `github-auth`, `github-mirror` and `shared-repo-git` sit below it. `github-transfer` sits between the clusters and the gateway. `pnpm lint:cycles` keeps the graph acyclic, which is weaker: a `rebase.ts` →
 `task-runner.ts` edge passes it and breaks the layering. Keep the direction by review.
 

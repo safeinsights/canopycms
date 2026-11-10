@@ -2003,8 +2003,10 @@ describe('toBranchListItem', () => {
     expect(item.submitBlocked).toBe(true)
   })
 
-  it('says nothing of a rewrite on an archived branch, which nothing clears', () => {
-    expect(listed({ status: 'archived', rewrittenOnGitHub: 'a'.repeat(40) }).hold).toBeUndefined()
+  it('says a rewrite on an archived branch may have left commits only here, before any delete', () => {
+    expect(listed({ status: 'archived', rewrittenOnGitHub: 'a'.repeat(40) }).hold).toEqual({
+      kind: 'rewritten-at-merge',
+    })
   })
 
   it('ignores a hold written into the file by hand', () => {
