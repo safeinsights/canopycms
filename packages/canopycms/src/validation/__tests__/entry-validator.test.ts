@@ -44,6 +44,46 @@ const validData = {
   author: '5NVkkrB1MJUv',
 }
 
+describe('date fields', () => {
+  const dates: EntrySchema = [
+    { name: 'on', type: 'date' },
+    { name: 'must', type: 'date', required: true },
+  ]
+  const errorsFor = (on: unknown) => validateEntryData(dates, { on, must: '2024-01-01' })
+
+  it.each(['2024-02-29', '2026-11-05', ''])('accepts %j', (on) => {
+    expect(errorsFor(on)).toEqual([])
+  })
+
+  it.each([
+    '2026-02-30',
+    '2026-13-01',
+    '2026-5-1',
+    '2026-02-29',
+    '2026-05-01T00:00:00.000Z',
+    'May 1',
+    20260501,
+    true,
+    { day: 1 },
+  ])('refuses %j', (on) => {
+    expect(errorsFor(on)).toEqual([
+      { fieldPath: 'on', message: 'Expected a real date, written YYYY-MM-DD' },
+    ])
+  })
+
+  it('needs a value when required', () => {
+    expect(validateEntryData(dates, { must: '' })).toEqual([
+      { fieldPath: 'must', message: 'This field is required' },
+    ])
+  })
+
+  it('leaves datetime as it was: Date.parse decides', () => {
+    const datetime: EntrySchema = [{ name: 'at', type: 'datetime' }]
+    expect(validateEntryData(datetime, { at: '2026-05-01' })).toEqual([])
+    expect(validateEntryData(datetime, { at: '2026-02-30' })).toEqual([])
+  })
+})
+
 describe('validateEntryData', () => {
   it('accepts valid data', () => {
     expect(validateEntryData(schema, validData)).toEqual([])

@@ -122,6 +122,35 @@ describe('entryToMarkdown', () => {
       expect(md).toContain('No')
     })
 
+    it('renders date fields as the day stored', () => {
+      const entry = makeEntry({
+        fields: [{ name: 'eventDate', type: 'date', label: 'Event Date' }],
+        data: { eventDate: '2026-11-05' },
+      })
+      expect(entryToMarkdown(entry)).toContain('## Event Date\n\n2026-11-05')
+    })
+
+    it('renders date fields in an object list as a table cell', () => {
+      const entry = makeEntry({
+        fields: [
+          {
+            name: 'events',
+            type: 'object',
+            list: true,
+            label: 'Events',
+            fields: [
+              { name: 'name', type: 'string', label: 'Name' },
+              { name: 'on', type: 'date', label: 'On' },
+            ],
+          },
+        ],
+        data: { events: [{ name: 'Launch', on: '2026-11-05' }] },
+      })
+      const md = entryToMarkdown(entry)
+      expect(md).toContain('| Name | On |')
+      expect(md).toContain('| Launch | 2026-11-05 |')
+    })
+
     it('renders datetime fields', () => {
       const entry = makeEntry({
         fields: [{ name: 'createdAt', type: 'datetime', label: 'Created At' }],

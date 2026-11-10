@@ -578,7 +578,7 @@ Manager hooks, in `editor/hooks/` — see
 
 Field components, in `editor/fields/`:
 
-- `TextField.tsx`, `NumberField.tsx`, `ToggleField.tsx`, `DateTimeField.tsx`, `SelectField.tsx` — scalar inputs
+- `TextField.tsx`, `NumberField.tsx`, `ToggleField.tsx`, `DateField.tsx`, `DateTimeField.tsx`, `SelectField.tsx` — scalars
 - `StringListField.tsx` / `NumberListField.tsx` — list inputs; the string one, `TagsInput` without comma splitting
 - `MarkdownField.tsx` — MDXEditor-backed markdown and MDX
 - `rich-text-failures.ts` — markdown that failed rich text, reopened as source
@@ -870,6 +870,7 @@ in `server.ts` and `client.ts`. See
 - `format.ts` — content format helpers: `getFormatExtension`, `isDataOnlyFormat`
 - `atomic-write.ts` — atomic writes via temp file plus rename, for NFS and EFS
 - `content-serialize.ts` — `serializeYaml` / `serializeFrontmatter`, source-preserving writes
+- `calendar-day.ts` — `date` values
 - `markdown-body-splice.ts` — `preserveMarkdownSource`, its body half
 - `markdown-restyle.ts` — `restyleMarkdown`: edited blocks to Prettier's markers, in place
 - `yaml-source-splice.ts` — `spliceSource`, its YAML half

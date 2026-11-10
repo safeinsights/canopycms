@@ -35,7 +35,8 @@ const textFields = (fields: readonly FieldConfig[]): FieldConfig[] =>
 
 /**
  * Which field titles an object-list item, and its text: its `itemTitleField` value when that is
- * a non-blank string or a number, else its first non-blank single-line string field.
+ * a non-blank string, which a `date` holds too, or a number, else its first non-blank single-line
+ * string field.
  */
 const titleSource = (
   record: Record<string, unknown>,
