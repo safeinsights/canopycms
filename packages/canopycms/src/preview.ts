@@ -12,6 +12,7 @@ export {
   CANOPY_PREVIEW_HIGHLIGHT,
   CANOPY_PREVIEW_MESSAGE,
   CANOPY_PREVIEW_READY,
+  CANOPY_PREVIEW_REVEAL,
   isTrustedEditorMessage,
   resolveMessageOrigin,
   useCanopyPreview,
@@ -19,6 +20,7 @@ export {
   usePreviewData,
   usePreviewFocusEmitter,
   usePreviewHighlight,
+  usePreviewReveal,
 } from './editor/preview-bridge'
 export type {
   DraftUpdateMessage,
@@ -26,5 +28,6 @@ export type {
   PreviewErrorMessage,
   PreviewFocusMessage,
   PreviewLoadingState,
+  PreviewRevealMessage,
 } from './editor/preview-bridge'
 export type { CanopyPathSegment } from './editor/canopy-path'

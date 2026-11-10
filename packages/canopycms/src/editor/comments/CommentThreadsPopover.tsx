@@ -67,6 +67,8 @@ export interface CommentThreadsPopoverProps {
    * Shown before anyone types; the box stays usable, so a draft survives until it can be posted.
    */
   composeBlockedReason?: string
+  /** Called each time the popover opens, by any route. */
+  onOpened?: () => void
   testId: string
 }
 
@@ -106,6 +108,7 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
   highlightThreadId,
   threadFieldLabel,
   composeBlockedReason,
+  onOpened,
   testId,
 }) => {
   const [opened, setOpened] = useState(false)
@@ -223,6 +226,14 @@ export const CommentThreadsPopover: React.FC<CommentThreadsPopoverProps> = ({
       if (opener.standIn) target?.scrollIntoView?.({ block: 'nearest' })
     }, 20)
     return () => window.clearTimeout(timer)
+  }, [opened])
+
+  const onOpenedRef = useRef(onOpened)
+  useEffect(() => {
+    onOpenedRef.current = onOpened
+  })
+  useEffect(() => {
+    if (opened) onOpenedRef.current?.()
   }, [opened])
 
   useEffect(() => {

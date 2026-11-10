@@ -18,9 +18,15 @@ import { useClipboard, useElementSize, useWindowEvent } from '@mantine/hooks'
 import { IconCheck, IconExternalLink, IconRefresh } from '@tabler/icons-react'
 
 import type { PreviewWidth } from './hooks/useEditorLayout'
-import { PreviewFrame, type PreviewMarks, type SiteChromeSupport } from './PreviewFrame'
+import {
+  PreviewFrame,
+  type PreviewMarks,
+  type PreviewReveal,
+  type SiteChromeSupport,
+} from './PreviewFrame'
 import type { InexactMark } from './preview-marks'
 import {
+  FollowFormToggle,
   HighlightToggle,
   MaximizeToggle,
   SiteChromeToggle,
@@ -103,6 +109,11 @@ export interface PreviewPaneProps {
   onSiteChromeChange?: (siteChrome: boolean) => void
   /** Called with the absolute URL of a link clicked in the preview; see `PreviewFrame`. */
   onNavigate?: (href: string) => void
+  /** The field the form is on, for the preview to bring into view; see `usePreviewFollow`. */
+  reveal?: PreviewReveal
+  /** With `onPreviewFollowsFormChange`, the toolbar shows the follow toggle. */
+  previewFollowsForm?: boolean
+  onPreviewFollowsFormChange?: (follows: boolean) => void
 }
 
 /** What the viewport frames: the open entry's page, or the one before it while that loads. */
@@ -139,6 +150,9 @@ export const PreviewPane = ({
   resizing = false,
   siteChrome = false,
   onSiteChromeChange,
+  previewFollowsForm = false,
+  onPreviewFollowsFormChange,
+  reveal,
   data,
   isLoading,
   onMarks,
@@ -349,6 +363,7 @@ export const PreviewPane = ({
           </Text>
         )}
         {(onHighlightToggle ||
+          onPreviewFollowsFormChange ||
           showChromeToggle ||
           (showMarkDiagnostics && inexactMarks.length > 0)) && (
           <Group gap={6} wrap="nowrap">
@@ -360,6 +375,12 @@ export const PreviewPane = ({
                   setChromeFallback('off')
                   onSiteChromeChange(!siteChrome)
                 }}
+              />
+            )}
+            {onPreviewFollowsFormChange && (
+              <FollowFormToggle
+                enabled={previewFollowsForm}
+                onToggle={() => onPreviewFollowsFormChange(!previewFollowsForm)}
               />
             )}
             {onHighlightToggle && (
@@ -420,6 +441,7 @@ export const PreviewPane = ({
             data={pending ? undefined : data}
             isLoading={pending ? undefined : isLoading}
             onMarks={pending ? undefined : onMarks}
+            reveal={pending ? undefined : reveal}
             onPreviewError={pending ? undefined : frameProps.onPreviewError}
             busy={pending}
             onSiteChrome={onSiteChrome}

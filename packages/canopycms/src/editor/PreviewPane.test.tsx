@@ -10,6 +10,7 @@ import {
   CANOPY_PREVIEW_MARKS,
   CANOPY_PREVIEW_MESSAGE,
   CANOPY_PREVIEW_READY,
+  CANOPY_PREVIEW_REVEAL,
 } from './preview-bridge'
 import { PreviewPane, type PreviewPaneProps } from './PreviewPane'
 import { CanopyCMSProvider } from './theme'
@@ -400,6 +401,21 @@ describe('PreviewPane', () => {
       expect(sentDrafts(firstPost)).toEqual([])
     })
 
+    it('sends the page it holds no reveal, which names a field of another entry', () => {
+      const { rerender } = render(pane({}), { wrapper: Wrapper })
+      const first = iframe()
+      const firstPost = vi.spyOn(first.contentWindow as Window, 'postMessage')
+      rerender(
+        pane({ src: nextSrc, data: undefined, pending: true, reveal: { path: 'title', id: 1 } }),
+      )
+      ready(first)
+      expect(
+        firstPost.mock.calls.filter(
+          ([m]) => (m as { type?: string }).type === CANOPY_PREVIEW_REVEAL,
+        ),
+      ).toEqual([])
+    })
+
     it('reports no marks from the page it holds', () => {
       const onMarks = vi.fn()
       const { rerender } = render(pane({ onMarks }), { wrapper: Wrapper })
@@ -660,5 +676,26 @@ describe('PreviewPane', () => {
         expect(cue()).toBeNull()
       })
     })
+  })
+})
+
+describe('the follow toggle', () => {
+  const name = "Scroll the preview to the field you're on"
+
+  it('shows only with a handler, pressed as the preference stands, and reports a change', () => {
+    const onChange = vi.fn()
+    const base = {
+      src,
+      data: { title: 'Draft' },
+      previewWidth: 'fit' as const,
+      onPreviewWidthChange: vi.fn(),
+    }
+    const { rerender } = render(<PreviewPane {...base} />, { wrapper: Wrapper })
+    expect(screen.queryByRole('button', { name })).toBeNull()
+    rerender(<PreviewPane {...base} previewFollowsForm onPreviewFollowsFormChange={onChange} />)
+    const toggle = screen.getByRole('button', { name })
+    expect(toggle.getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(toggle)
+    expect(onChange).toHaveBeenCalledWith(false)
   })
 })

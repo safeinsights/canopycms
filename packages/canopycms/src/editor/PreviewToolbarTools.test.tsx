@@ -2,7 +2,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { userEvent } from '@testing-library/user-event'
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
-import { HighlightToggle, MaximizeToggle, UnmappedMarksChip } from './PreviewToolbarTools'
+import {
+  FollowFormToggle,
+  HighlightToggle,
+  MaximizeToggle,
+  UnmappedMarksChip,
+} from './PreviewToolbarTools'
 import { CanopyCMSProvider } from './theme'
 
 const Wrapper = ({ children }: { children: React.ReactNode }) => (
@@ -180,5 +185,22 @@ describe('MaximizeToggle', () => {
     expect(restore.getAttribute('aria-keyshortcuts')).toBe('Escape')
     fireEvent.click(restore)
     expect(onChange).toHaveBeenLastCalledWith(false)
+  })
+})
+
+describe('FollowFormToggle', () => {
+  const name = "Scroll the preview to the field you're on"
+
+  it('reports its state as pressed, names what it does, and toggles', () => {
+    const onToggle = vi.fn()
+    const { rerender } = render(<FollowFormToggle enabled onToggle={onToggle} />, {
+      wrapper: Wrapper,
+    })
+    const button = screen.getByRole('button', { name })
+    expect(button.getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(button)
+    expect(onToggle).toHaveBeenCalledTimes(1)
+    rerender(<FollowFormToggle enabled={false} onToggle={onToggle} />)
+    expect(screen.getByRole('button', { name }).getAttribute('aria-pressed')).toBe('false')
   })
 })

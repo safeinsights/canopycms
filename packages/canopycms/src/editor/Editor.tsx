@@ -145,6 +145,7 @@ import {
   NEW_ITEM_COMMENT_MESSAGE,
 } from './comments/item-anchor-copy'
 import { findFieldTarget, focusFieldTarget } from './field-target'
+import { PreviewFollowContext, usePreviewFollow } from './hooks/usePreviewFollow'
 import { UndoToastMessage } from './components/UndoToastMessage'
 import { getNotificationDuration } from './utils/env'
 import { MayHaveLandedError } from './unanswered'
@@ -380,6 +381,8 @@ const EditorContent: React.FC<EditorProps> = ({
     setLayout,
     highlightEnabled,
     setHighlightEnabled,
+    previewFollowsForm,
+    setPreviewFollowsForm,
     sideSplitPercent,
     stackedSplitPercent,
     setSplitPercent,
@@ -1943,6 +1946,11 @@ const EditorContent: React.FC<EditorProps> = ({
     data: displayValue,
   })
 
+  const { reveal: previewReveal, follow: followInPreview } = usePreviewFollow({
+    enabled: previewFollowsForm,
+    entryKey: currentEntry?.contentId,
+  })
+
   // Only the default preview has the toolbar that maximizes and restores it. It stays maximized
   // while an entry loads. With no value after a failed load and no draft, the form shows instead,
   // and the choice reapplies once a value arrives.
@@ -2042,6 +2050,9 @@ const EditorContent: React.FC<EditorProps> = ({
         resizing={paneResizing}
         siteChrome={siteChrome}
         onSiteChromeChange={setSiteChrome}
+        reveal={previewReveal}
+        previewFollowsForm={previewFollowsForm}
+        onPreviewFollowsFormChange={setPreviewFollowsForm}
         onNavigate={openPreviewLink}
         notice={
           previewError && (
@@ -2527,64 +2538,66 @@ const EditorContent: React.FC<EditorProps> = ({
                     ) : schema.length > 0 && displayValue ? (
                       <EntryLinkContext.Provider value={entryLinkContextValue}>
                         <SiteMdxAllowContext.Provider value={mdxAllow}>
-                          <FormRenderer
-                            notice={
-                              hiddenDraftNotice && (
-                                <ReadOnlyDraftNotice
-                                  permanentlyReadOnly={
-                                    (currentBranch?.isProtected ?? true) ||
-                                    currentBranch?.status === 'archived'
-                                  }
-                                  // A hidden draft's discard changes nothing on screen, so it says so.
-                                  onDiscard={() =>
-                                    handleDiscardFileDraft(() => navigatorToggleRef.current, {
-                                      announce: true,
-                                    })
-                                  }
-                                />
-                              )
-                            }
-                            fields={schema}
-                            value={displayValue}
-                            readOnly={contentReadOnly}
-                            onRemoved={handleFieldRemoved}
-                            savedValue={loadedValue}
-                            commentBlockedReason={commentBlockedReason}
-                            removedItemFieldLabel={commentFieldLabel}
-                            onGetUserMetadata={getCommentUserMetadata}
-                            header={{
-                              title: currentEntry.label,
-                              typeLabel: entryTypeLabel(activeCollections, currentEntry),
-                            }}
-                            // The one writer of drafts. Read-only content gets none, whatever a
-                            // field emits (MDXEditor's mount-time normalisation included).
-                            onChange={(next) => {
-                              const contentId = currentEntry?.contentId
-                              if (contentId && !contentReadOnlyRef.current) {
-                                // Every list item keeps a key, whatever field made it.
-                                const keyed = withItemKeys(schema, next, 'random')
-                                setDrafts((prev) => ({ ...prev, [contentId]: keyed }))
+                          <PreviewFollowContext.Provider value={followInPreview ?? null}>
+                            <FormRenderer
+                              notice={
+                                hiddenDraftNotice && (
+                                  <ReadOnlyDraftNotice
+                                    permanentlyReadOnly={
+                                      (currentBranch?.isProtected ?? true) ||
+                                      currentBranch?.status === 'archived'
+                                    }
+                                    // A hidden draft's discard changes nothing on screen, so it says so.
+                                    onDiscard={() =>
+                                      handleDiscardFileDraft(() => navigatorToggleRef.current, {
+                                        announce: true,
+                                      })
+                                    }
+                                  />
+                                )
                               }
-                            }}
-                            customRenderers={customRenderers}
-                            branch={branchNameState}
-                            comments={displayComments}
-                            currentEntryPath={selectedPath}
-                            currentUserId={commentUserId}
-                            canResolve={canResolveAnyComment}
-                            focusedFieldPath={focusedFieldPath}
-                            highlightThreadId={highlightThreadId}
-                            onAddComment={handleAddDisplayedComment}
-                            onResolveThread={handleResolveThread}
-                            fieldErrors={fieldErrors}
-                            format={currentEntry.format}
-                            conflictNotice={
-                              !!(
-                                currentEntry?.contentId &&
-                                currentBranch?.conflictFiles?.includes(currentEntry.contentId)
-                              )
-                            }
-                          />
+                              fields={schema}
+                              value={displayValue}
+                              readOnly={contentReadOnly}
+                              onRemoved={handleFieldRemoved}
+                              savedValue={loadedValue}
+                              commentBlockedReason={commentBlockedReason}
+                              removedItemFieldLabel={commentFieldLabel}
+                              onGetUserMetadata={getCommentUserMetadata}
+                              header={{
+                                title: currentEntry.label,
+                                typeLabel: entryTypeLabel(activeCollections, currentEntry),
+                              }}
+                              // The one writer of drafts. Read-only content gets none, whatever a
+                              // field emits (MDXEditor's mount-time normalisation included).
+                              onChange={(next) => {
+                                const contentId = currentEntry?.contentId
+                                if (contentId && !contentReadOnlyRef.current) {
+                                  // Every list item keeps a key, whatever field made it.
+                                  const keyed = withItemKeys(schema, next, 'random')
+                                  setDrafts((prev) => ({ ...prev, [contentId]: keyed }))
+                                }
+                              }}
+                              customRenderers={customRenderers}
+                              branch={branchNameState}
+                              comments={displayComments}
+                              currentEntryPath={selectedPath}
+                              currentUserId={commentUserId}
+                              canResolve={canResolveAnyComment}
+                              focusedFieldPath={focusedFieldPath}
+                              highlightThreadId={highlightThreadId}
+                              onAddComment={handleAddDisplayedComment}
+                              onResolveThread={handleResolveThread}
+                              fieldErrors={fieldErrors}
+                              format={currentEntry.format}
+                              conflictNotice={
+                                !!(
+                                  currentEntry?.contentId &&
+                                  currentBranch?.conflictFiles?.includes(currentEntry.contentId)
+                                )
+                              }
+                            />
+                          </PreviewFollowContext.Provider>
                         </SiteMdxAllowContext.Provider>
                       </EntryLinkContext.Provider>
                     ) : schema.length === 0 ? (

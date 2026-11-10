@@ -17,6 +17,7 @@ import {
 import {
   IconArrowsMaximize,
   IconArrowsMinimize,
+  IconFocusCentered,
   IconLayoutNavbar,
   IconMarquee,
 } from '@tabler/icons-react'
@@ -63,6 +64,32 @@ export function HighlightToggle({ enabled, onToggle, marksNothing = false }: Hig
         </Tooltip>
       )}
     </Group>
+  )
+}
+
+const FOLLOW_FORM_LABEL = "Scroll the preview to the field you're on"
+
+export interface FollowFormToggleProps {
+  enabled: boolean
+  onToggle: () => void
+}
+
+/** Turns on and off the preview following the form to the field it is on. */
+export function FollowFormToggle({ enabled, onToggle }: FollowFormToggleProps) {
+  return (
+    <Tooltip label={FOLLOW_FORM_LABEL}>
+      <ActionIcon
+        variant={enabled ? 'filled' : 'subtle'}
+        color={enabled ? 'brand' : 'gray'}
+        size="md"
+        aria-pressed={enabled}
+        aria-label={FOLLOW_FORM_LABEL}
+        data-testid="toggle-follow-form-button"
+        onClick={onToggle}
+      >
+        <IconFocusCentered size={16} />
+      </ActionIcon>
+    </Tooltip>
   )
 }
 

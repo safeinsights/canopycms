@@ -8,6 +8,7 @@ import { CommentThreadsPopover, type OpenRequest } from './CommentThreadsPopover
 import { FieldCommentContext } from './field-comment-context'
 import { useFormComments } from './form-comments'
 import { whenRevealed } from '../field-target'
+import { usePreviewFollowRequest } from '../hooks/usePreviewFollow'
 
 export interface FieldWrapperProps {
   /** Child form field element */
@@ -86,6 +87,7 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
   const highlightHere = !!highlightThreadId && threads.some((t) => t.id === highlightThreadId)
   const [openRequest, setOpenRequest] = useState<OpenRequest | undefined>(undefined)
   const formComments = useFormComments()
+  const followInPreview = usePreviewFollowRequest()
 
   useEffect(
     () =>
@@ -137,6 +139,7 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
       onGetUserMetadata={onGetUserMetadata}
       highlightThreadId={highlightThreadId}
       composeBlockedReason={commentBlockedReason}
+      onOpened={() => followInPreview?.(canopyPath)}
       testId={`field-comment-${canopyPath}`}
     />
   )
