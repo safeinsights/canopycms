@@ -9,7 +9,11 @@ import { Editor } from './Editor'
 import { ApiClientProvider } from './context'
 import { notifications } from '@mantine/notifications'
 
-import { CANOPY_PREVIEW_READY, CANOPY_PREVIEW_REVEAL } from './preview-bridge'
+import {
+  CANOPY_PREVIEW_NAVIGATE,
+  CANOPY_PREVIEW_READY,
+  CANOPY_PREVIEW_REVEAL,
+} from './preview-bridge'
 import { PREVIEW_FOLLOW_DELAY_MS } from './hooks/usePreviewFollow'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../paths/test-utils'
 
@@ -99,7 +103,10 @@ const world: EditorEntry = {
 }
 const helloSrc = '/preview/posts/hello?branch=main'
 
-const stubApi = ({ helloEditable = true } = {}) => {
+const stubApi = ({
+  helloEditable = true,
+  worldContent,
+}: { helloEditable?: boolean; worldContent?: Promise<void> } = {}) => {
   const branch = (name: string) => ({
     name,
     status: 'editing',
@@ -187,9 +194,10 @@ const stubApi = ({ helloEditable = true } = {}) => {
       }
       if (url.includes('/content/content/posts/') && (init?.method ?? 'GET') === 'GET') {
         const slug = url.slice(url.lastIndexOf('/') + 1)
-        return Promise.resolve(
-          okJson({ ok: true, status: 200, data: { title: `${slug} title`, version: 1 } }),
-        )
+        const answer = () =>
+          okJson({ ok: true, status: 200, data: { title: `${slug} title`, version: 1 } })
+        if (slug === 'world' && worldContent) return worldContent.then(answer)
+        return Promise.resolve(answer())
       }
       return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))
     }),
@@ -295,5 +303,31 @@ describe('the preview follows the form', () => {
     await screen.findByRole('button', { name: 'Highlight fields in the preview' })
     await screen.findByText(/permission/i)
     expect(screen.queryByRole('button', { name: FOLLOW_LABEL })).toBeNull()
+  })
+
+  it('keeps its toggle in the toolbar while the next entry loads', async () => {
+    let release = () => {}
+    stubApi({ worldContent: new Promise<void>((resolve) => (release = resolve)) })
+    renderEditor()
+    await waitFor(() => expect(iframe()?.getAttribute('src')).toBe(helloSrc))
+    sayReady()
+    await screen.findByRole('button', { name: FOLLOW_LABEL })
+    const frame = iframe() as HTMLIFrameElement
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: CANOPY_PREVIEW_NAVIGATE, href: `${origin}/posts/world` },
+          origin,
+          source: frame.contentWindow,
+        }),
+      )
+    })
+    await screen.findByRole('progressbar', { name: 'Loading the entry' })
+    expect(screen.getByRole('button', { name: FOLLOW_LABEL })).toBeTruthy()
+    await act(async () => release())
+    await waitFor(() =>
+      expect(screen.queryByRole('progressbar', { name: 'Loading the entry' })).toBeNull(),
+    )
+    expect(screen.getByRole('button', { name: FOLLOW_LABEL })).toBeTruthy()
   })
 })

@@ -384,13 +384,15 @@ const REVEALED_ATTR = 'data-canopy-revealed'
 const REVEAL_MARK_MS = 1500
 /** A field just opened may render after its reveal arrives, so a miss is tried once more. */
 const REVEAL_RETRY_MS = 300
+/** How long the page's scrolling must pause before a smooth scroll counts as arrived. */
+const REVEAL_SCROLL_SETTLE_MS = 150
 /** The longest a smooth scroll is waited for before the mark's time starts anyway. */
-const REVEAL_SCROLL_WAIT_MS = 1000
+const REVEAL_SCROLL_WAIT_MS = 3000
 
 /**
- * The rendered elements marked for `path`, else for its nearest marked ancestor (a list item, then
- * its list or block), else for anything inside it, such as a list marked only item by item.
- * Compares values, never builds a selector: the path is untrusted.
+ * The rendered elements marked for `path`, else those inside it in page order, such as a list
+ * marked item by item, else those for its nearest marked ancestor: a list item, then its list or
+ * block. Compares values, never builds a selector: the path is untrusted.
  * @internal Exported for tests.
  */
 export const findRevealTargets = (path: string, root: ParentNode = document): HTMLElement[] => {
@@ -401,21 +403,25 @@ export const findRevealTargets = (path: string, root: ParentNode = document): HT
     byPath.set(key, [...(byPath.get(key) ?? []), element])
   }
   const segments = parseCanopyPath(path)
-  for (let length = segments.length; length > 0; length--) {
-    const found = byPath.get(formatCanopyPath(segments.slice(0, length)))
-    if (found) return found
-  }
   const field = formatCanopyPath(segments)
   if (!field) return []
-  return [...byPath]
+  const exact = byPath.get(field)
+  if (exact) return exact
+  const inside = [...byPath]
     .filter(([key]) => key.startsWith(`${field}.`) || key.startsWith(`${field}[`))
     .flatMap(([, elements]) => elements)
     .sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1))
+  if (inside.length > 0) return inside
+  for (let length = segments.length - 1; length > 0; length--) {
+    const found = byPath.get(formatCanopyPath(segments.slice(0, length)))
+    if (found) return found
+  }
+  return []
 }
 
 const CLIPPING = new Set(['hidden', 'clip', 'auto', 'scroll'])
 
-/** The part of the page `element` can show at most, and the part it shows: the window, clipped by every scrolling ancestor. */
+/** Where `element` can show: the window, clipped by each ancestor whose overflow clips. */
 const shownRect = (
   element: HTMLElement,
 ): { top: number; bottom: number; left: number; right: number } => {
@@ -437,6 +443,8 @@ const shownRect = (
 const isInView = (element: HTMLElement): boolean => {
   const rect = element.getBoundingClientRect()
   const room = shownRect(element)
+  // A clipping box off the page has no room at all, so nothing in it shows.
+  if (room.bottom <= room.top || room.right <= room.left) return false
   const tall = Math.min(rect.bottom, room.bottom) - Math.max(rect.top, room.top)
   const wide = Math.min(rect.right, room.right) - Math.max(rect.left, room.left)
   return (
@@ -458,22 +466,33 @@ export const usePreviewReveal = (opts?: { editorOrigin?: string }) => {
     if (!document.getElementById(styleId)) {
       const styleEl = document.createElement('style')
       styleEl.id = styleId
-      // Two attributes, so it outranks the highlight outline; the white ring keeps it 3:1 on any page.
-      styleEl.textContent = `[data-canopy-path][${REVEALED_ATTR}] { outline: 3px solid #4338ca; outline-offset: 3px; box-shadow: 0 0 0 9px #fff; }`
+      // Two attributes, so it outranks the highlight outline.
+      styleEl.textContent = `[data-canopy-path][${REVEALED_ATTR}] { outline: 3px solid #4338ca; outline-offset: 3px; }`
       document.head.appendChild(styleEl)
     }
-    let marked: HTMLElement | undefined
+    let marked: { element: HTMLElement; boxShadow: string } | undefined
     let unmarkTimer: ReturnType<typeof setTimeout> | undefined
     let retryTimer: ReturnType<typeof setTimeout> | undefined
     let stopWaiting: (() => void) | undefined
     const unmark = () => {
       stopWaiting?.()
       clearTimeout(unmarkTimer)
-      marked?.removeAttribute(REVEALED_ATTR)
+      if (marked) {
+        marked.element.removeAttribute(REVEALED_ATTR)
+        marked.element.style.boxShadow = marked.boxShadow
+      }
       marked = undefined
     }
-    // The mark's time starts once the page has arrived, so a slow smooth scroll can't use it up.
-    const unmarkAfterScroll = (smooth: boolean) => {
+    // A white ring keeps the outline 3:1 on any page, added to the element's own shadows.
+    const mark = (element: HTMLElement) => {
+      const own = getComputedStyle(element).boxShadow
+      marked = { element, boxShadow: element.style.boxShadow }
+      element.setAttribute(REVEALED_ATTR, '')
+      element.style.boxShadow = `0 0 0 9px #fff${own && own !== 'none' ? `, ${own}` : ''}`
+    }
+    // The mark's time starts once the scrolling that holds `target` pauses, so a slow smooth
+    // scroll can't use it up; another scroller on the page, such as a carousel, doesn't count.
+    const unmarkAfterScroll = (target: HTMLElement, smooth: boolean) => {
       if (!smooth) {
         unmarkTimer = setTimeout(unmark, REVEAL_MARK_MS)
         return
@@ -482,18 +501,27 @@ export const usePreviewReveal = (opts?: { editorOrigin?: string }) => {
         stopWaiting?.()
         unmarkTimer = setTimeout(unmark, REVEAL_MARK_MS)
       }
-      const fallback = setTimeout(arrived, REVEAL_SCROLL_WAIT_MS)
-      document.addEventListener('scrollend', arrived, true)
+      let settle = setTimeout(arrived, REVEAL_SCROLL_SETTLE_MS)
+      const cap = setTimeout(arrived, REVEAL_SCROLL_WAIT_MS)
+      const onScroll = (event: Event) => {
+        const from = event.target
+        if (from !== document && !(from instanceof Node && from.contains(target))) return
+        clearTimeout(settle)
+        settle = setTimeout(arrived, REVEAL_SCROLL_SETTLE_MS)
+      }
+      document.addEventListener('scroll', onScroll, true)
       stopWaiting = () => {
-        clearTimeout(fallback)
-        document.removeEventListener('scrollend', arrived, true)
+        clearTimeout(settle)
+        clearTimeout(cap)
+        document.removeEventListener('scroll', onScroll, true)
         stopWaiting = undefined
       }
     }
     const reveal = (path: string): boolean => {
       const targets = findRevealTargets(path)
       if (targets.length === 0) return false
-      if (targets.some(isInView)) return true
+      // Mid-scroll, a mark passed on the way only looks in view.
+      if (!stopWaiting && targets.some(isInView)) return true
       const target = targets[0]
       const smooth = !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
       target.scrollIntoView({
@@ -504,9 +532,8 @@ export const usePreviewReveal = (opts?: { editorOrigin?: string }) => {
         behavior: smooth ? 'smooth' : 'instant',
       })
       unmark()
-      marked = target
-      target.setAttribute(REVEALED_ATTR, '')
-      unmarkAfterScroll(smooth)
+      mark(target)
+      unmarkAfterScroll(target, smooth)
       return true
     }
     const handler = (event: MessageEvent) => {

@@ -2064,7 +2064,8 @@ const EditorContent: React.FC<EditorProps> = ({
           !currentEntryUnavailable &&
           currentEntry?.canEdit !== false &&
           schema.length > 0 &&
-          displayValue
+          // Kept while the next entry loads, so the toolbar never changes under a switch.
+          (displayValue || previewPending)
             ? setPreviewFollowsForm
             : undefined
         }

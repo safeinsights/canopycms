@@ -82,25 +82,80 @@ describe('a reveal from the editor', () => {
 
     expect(scroll).toHaveBeenCalledWith({ block: 'center', inline: 'nearest', behavior: 'smooth' })
     expect(getByTestId('hero').hasAttribute('data-canopy-revealed')).toBe(true)
-    // The mark's time starts once the scroll ends.
-    act(() => vi.advanceTimersByTime(800))
-    act(() => {
-      document.dispatchEvent(new Event('scrollend'))
-    })
-    act(() => vi.advanceTimersByTime(1499))
+    // The mark's time starts once the page's scrolling pauses for 150 ms.
+    for (let ms = 0; ms < 800; ms += 100) {
+      act(() => {
+        document.dispatchEvent(new Event('scroll'))
+        vi.advanceTimersByTime(100)
+      })
+    }
+    // The last scroll was 100 ms ago, so the pause completes 50 ms on.
+    act(() => vi.advanceTimersByTime(50 + 1499))
     expect(getByTestId('hero').hasAttribute('data-canopy-revealed')).toBe(true)
     act(() => vi.advanceTimersByTime(1))
     expect(getByTestId('hero').hasAttribute('data-canopy-revealed')).toBe(false)
   })
 
-  it('starts the mark time anyway when no scroll end comes within a second', () => {
+  it('times the mark from the scrolling that holds it, not another scroller on the page', () => {
+    const { getByTestId, parentWin } = renderPage(
+      <>
+        <div data-testid="carousel" />
+        {marked('a', 'a')}
+      </>,
+    )
+    place(getByTestId('a'), 2000)
+    send(reveal('a'), parentWin)
+    for (let ms = 0; ms < 1600; ms += 100) {
+      act(() => {
+        getByTestId('carousel').dispatchEvent(new Event('scroll'))
+        vi.advanceTimersByTime(100)
+      })
+    }
+    act(() => vi.advanceTimersByTime(100))
+    expect(getByTestId('a').hasAttribute('data-canopy-revealed')).toBe(false)
+  })
+
+  it('starts the mark time after 3 s of scrolling that never pauses', () => {
     const { getByTestId, parentWin } = renderPage(marked('a', 'a'))
     place(getByTestId('a'), 2000)
     send(reveal('a'), parentWin)
-    act(() => vi.advanceTimersByTime(1000 + 1499))
-    expect(getByTestId('a').hasAttribute('data-canopy-revealed')).toBe(true)
+    for (let ms = 0; ms < 3000 + 1499; ms += 100) {
+      act(() => {
+        document.dispatchEvent(new Event('scroll'))
+        vi.advanceTimersByTime(100)
+      })
+    }
     act(() => vi.advanceTimersByTime(1))
     expect(getByTestId('a').hasAttribute('data-canopy-revealed')).toBe(false)
+  })
+
+  it('judges a reveal sent mid-scroll by where the page is going, not where it is passing', () => {
+    const { getByTestId, parentWin } = renderPage(
+      <>
+        {marked('far', 'far')}
+        {marked('mid', 'mid')}
+      </>,
+    )
+    place(getByTestId('far'), 5000)
+    const midScroll = place(getByTestId('mid'), 300)
+    send(reveal('far'), parentWin)
+    act(() => vi.advanceTimersByTime(100))
+    send(reveal('mid'), parentWin)
+    expect(midScroll).toHaveBeenCalledTimes(1)
+    expect(getByTestId('far').hasAttribute('data-canopy-revealed')).toBe(false)
+    expect(getByTestId('mid').hasAttribute('data-canopy-revealed')).toBe(true)
+  })
+
+  it("adds its white ring to the element's own shadow, and gives it back", () => {
+    const { getByTestId, parentWin } = renderPage(marked('a', 'a'))
+    const element = getByTestId('a')
+    element.style.boxShadow = 'inset 0 0 0 2px black'
+    place(element, 2000)
+    send(reveal('a'), parentWin)
+    expect(element.style.boxShadow).toContain('0 0 0 9px')
+    expect(element.style.boxShadow).toContain('inset 0 0 0 2px black')
+    act(() => vi.advanceTimersByTime(150 + 1500))
+    expect(element.style.boxShadow).toBe('inset 0 0 0 2px black')
   })
 
   it('outlines the mark whether or not highlighting is on', () => {
@@ -124,6 +179,36 @@ describe('a reveal from the editor', () => {
     const { getByTestId, parentWin } = renderPage(marked('item', 'items.2.label'))
     const scroll = place(getByTestId('item'), 1500)
     send(reveal('items[2].label'), parentWin)
+    expect(scroll).toHaveBeenCalledTimes(1)
+  })
+
+  it('prefers the marks inside a list item to a mark for the whole list', () => {
+    const { getByTestId, parentWin } = renderPage(
+      <>
+        {marked('list', 'features')}
+        {marked('item', 'features[7].title')}
+      </>,
+    )
+    const listScroll = place(getByTestId('list'), 900, 3000)
+    const itemScroll = place(getByTestId('item'), 1400)
+    send(reveal('features[7]'), parentWin)
+    expect(itemScroll).toHaveBeenCalledTimes(1)
+    expect(listScroll).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['below', 2500],
+    ['above', -2800],
+  ])('scrolls to a mark flush with a clipping box %s the page', (_, boxTop) => {
+    const { getByTestId, parentWin } = renderPage(
+      <div data-testid="card" style={{ overflow: 'hidden' }}>
+        {marked('image', 'card.image')}
+      </div>,
+    )
+    getByTestId('card').getBoundingClientRect = () =>
+      DOMRect.fromRect({ x: 0, y: boxTop, width: 400, height: 300 })
+    const scroll = place(getByTestId('image'), boxTop, 200)
+    send(reveal('card.image'), parentWin)
     expect(scroll).toHaveBeenCalledTimes(1)
   })
 
