@@ -1637,7 +1637,7 @@ Admins get a "System health" panel for observing the CMS's operational state, ri
 
 The editor previews your actual site pages in an iframe, updated as you type. Clicking a preview element focuses its form field, and the highlight toggle outlines them, for elements the view marks with its `fieldProps`: `fieldProps('title')`, `fieldProps(['blocks', i, 'body'])`. A list item focuses its list, a block its own card.
 
-Focusing a form field, or opening its comments, scrolls the preview to that field's mark, else its nearest marked ancestor's, and outlines it briefly; the toolbar's follow toggle turns this off. A page on an older `canopycms/preview` ignores it, and one wiring the hooks itself adds `usePreviewReveal`.
+Focusing a form field, or opening its comments, scrolls the preview to that field's mark, else the first mark inside it, else its nearest marked ancestor's, and outlines it briefly; the toolbar's follow toggle turns this off. A page on an older `canopycms/preview` ignores it, and one wiring the hooks itself adds `usePreviewReveal`.
 
 Pages take `useCanopyPreview` from `canopycms/preview` and `withCanopyPreview` from `canopycms-next/preview`, which carry no editor code or CSS, so pages preview in their own styles.
 

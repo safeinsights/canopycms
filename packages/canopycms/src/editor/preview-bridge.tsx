@@ -126,8 +126,9 @@ export interface PreviewMarksMessage {
 }
 
 /**
- * Editor → preview: bring the element marked for this field into view, or its nearest marked
- * ancestor's. A bridge older than the message ignores it.
+ * Editor → preview: bring the element marked for this field into view, else the marks inside it,
+ * else its nearest marked ancestor's (`findRevealTargets`). A bridge older than the message
+ * ignores it.
  */
 export interface PreviewRevealMessage {
   type: typeof CANOPY_PREVIEW_REVEAL
