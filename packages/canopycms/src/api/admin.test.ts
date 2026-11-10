@@ -407,6 +407,8 @@ describe('admin api', () => {
         taskId: 'x',
         fileName: 'x.json',
         dirName: 'x',
+        olderThanDays: 1,
+        branches: [],
       }
 
       for (const route of Object.values(ADMIN_ROUTES)) {

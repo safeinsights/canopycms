@@ -429,6 +429,7 @@ const EditorContent: React.FC<EditorProps> = ({
     handleApprove,
     handleRequestChanges,
     handleDelete,
+    handleArchive,
     handleReloadBranchData,
     loadBranches,
   } = useBranchManager({
@@ -2670,6 +2671,10 @@ const EditorContent: React.FC<EditorProps> = ({
                   }}
                   onDelete={(name) => {
                     handleDelete(name).catch((err) => console.error(err))
+                  }}
+                  onArchive={(name) => {
+                    if (namesBranch(name, branchNameState) && isSaveAllRunning()) return
+                    handleArchive(name).catch((err) => console.error(err))
                   }}
                   onClose={() => setBranchManagerOpen(false)}
                   comments={comments}

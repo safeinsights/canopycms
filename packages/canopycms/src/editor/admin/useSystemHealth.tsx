@@ -26,8 +26,20 @@ import type {
 import type { BranchHealthData } from '../../api/admin-branch-health'
 import type { DuplicateIdScan } from '../../branch-health'
 import { BRANCHES_KEY } from '../hooks/useBranchesData'
+import { isGatewayFailure, isUnanswered, UnansweredError } from '../unanswered'
 
 const POLL_INTERVAL_MS = 30_000
+
+const EMPTY_DELETE = {
+  deleted: [],
+  skipped: { notMerged: [], unpublished: [] },
+  failed: [],
+  remaining: 0,
+  warnings: [],
+}
+
+const countBranches = (count: number): string =>
+  `${count} archived ${count === 1 ? 'branch' : 'branches'}`
 
 /**
  * Crash-loop rider window: a worker that fatally exits and restarts
@@ -90,6 +102,9 @@ export interface UseSystemHealthReturn {
   purgeDir: (dirName: string) => Promise<void>
   repairDir: (dirName: string) => Promise<void>
   markMerged: (branchName: string) => Promise<void>
+  /** Deletes those of `branches` still past `olderThanDays`, then says what it could not. */
+  deleteArchivedBranches: (olderThanDays: number, branches: string[]) => Promise<void>
+  deletingArchivedBranches: boolean
   /** Stops listing a branch merged with an unfinished submit, a warning that doesn't come back. */
   dismissUnpublished: (dirName: string) => Promise<void>
 }
@@ -108,6 +123,7 @@ export function useSystemHealth(options: UseSystemHealthOptions): UseSystemHealt
   const [duplicateIdScan, setDuplicateIdScan] = useState<DuplicateIdScanResult | null>(null)
   const [duplicateIdScanLoading, setDuplicateIdScanLoading] = useState(false)
   const [duplicateIdScanError, setDuplicateIdScanError] = useState<string | null>(null)
+  const [deletingArchivedBranches, setDeletingArchivedBranches] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // refresh() has no status argument, so it needs the CURRENT taskStatus
@@ -353,6 +369,56 @@ export function useSystemHealth(options: UseSystemHealthOptions): UseSystemHealt
     [apiClient, refresh],
   )
 
+  const deleteArchivedBranches = useCallback(
+    async (olderThanDays: number, branches: string[]) => {
+      setDeletingArchivedBranches(true)
+      try {
+        const result = await apiClient.admin.deleteArchivedBranches({ olderThanDays, branches })
+        if (isGatewayFailure(result)) throw new UnansweredError()
+        if (!result.ok) throw new Error(result.error || 'Failed to delete archived branches')
+        const { deleted, skipped, failed, remaining, warnings } = result.data ?? EMPTY_DELETE
+        const left = [
+          failed.length > 0
+            ? `${countBranches(failed.length)} not deleted: busy, or changed since listed`
+            : '',
+          remaining > 0 ? `${countBranches(remaining)} not reached, run this again` : '',
+          skipped.notMerged.length > 0
+            ? `${countBranches(skipped.notMerged.length)} kept: not merged`
+            : '',
+          skipped.unpublished.length > 0
+            ? `${countBranches(skipped.unpublished.length)} kept: may hold unpublished changes`
+            : '',
+          ...warnings,
+        ].filter(Boolean)
+        const message = `Deleted ${countBranches(deleted.length)}`
+        notifications.show(
+          left.length > 0
+            ? { message: `${message}. ${left.join('. ')}.`, color: 'yellow', autoClose: false }
+            : { message, color: 'green' },
+        )
+        await mutate(BRANCHES_KEY)
+        await refresh()
+      } catch (err) {
+        if (isUnanswered(err)) {
+          notifications.show({
+            message:
+              'Deleting archived branches may have gone through even though the server didn\'t answer. Check the "Branches" tab.',
+            color: 'yellow',
+            autoClose: false,
+          })
+          await mutate(BRANCHES_KEY)
+          await refresh()
+          return
+        }
+        const message = err instanceof Error ? err.message : 'Failed to delete archived branches'
+        notifications.show({ message, color: 'red', autoClose: false })
+      } finally {
+        setDeletingArchivedBranches(false)
+      }
+    },
+    [apiClient, mutate, refresh],
+  )
+
   return {
     status,
     statusLoading,
@@ -375,6 +441,8 @@ export function useSystemHealth(options: UseSystemHealthOptions): UseSystemHealt
     purgeDir,
     repairDir,
     markMerged,
+    deleteArchivedBranches,
+    deletingArchivedBranches,
     dismissUnpublished,
   }
 }

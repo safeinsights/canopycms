@@ -1,31 +1,21 @@
-import fs from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
 
 import type { BranchAccessControl, BranchContext, BranchHold, BranchMetadata } from '../types'
 import { BranchWorkspaceManager, type ProvisionOutcome } from '../branch-workspace'
-import {
-  BranchDirOccupiedError,
-  BranchProvisioningBusyError,
-  deletingDirName,
-  removeLeftoverDir,
-} from '../branch-provisioning'
+import { BranchDirOccupiedError, BranchProvisioningBusyError } from '../branch-provisioning'
+import { deleteBranchWorkspace, type DeleteBranchWorkspaceOptions } from '../branch-delete'
 import { getBranchMetadataFileManager } from '../branch-metadata'
-import { withOccFileLock } from '../utils/occ-json-write'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { isCreatorsRecentBranch } from './branch-create-window'
 import { defineEndpoint } from './route-builder'
 import { createDebugLogger } from '../utils/debug'
 import { clientOperatingStrategy } from '../operating-mode'
-import { isNotFoundError, getErrorMessage, sanitizeErrorMessage } from '../utils/error'
+import { DELETE_NEEDS_ADMIN_REASON } from '../editor/copy'
+import { getErrorMessage } from '../utils/error'
 import { filePathExists } from '../utils/fs'
 import { isNetworkRemoteUrl } from '../utils/git'
-import {
-  parseCreatedBranchName,
-  sanitizeBranchName,
-  RESERVED_SETTINGS_BRANCH_PREFIX,
-  isSettingsBranchName,
-} from '../paths'
+import { parseCreatedBranchName, sanitizeBranchName, isSettingsBranchName } from '../paths'
 import { GitManager } from '../git-manager'
 import { syncDeleteRemoteBranch } from './github-sync'
 import { branchNameSchema, branchParamSchema } from './validators'
@@ -232,7 +222,7 @@ export interface CreateBranchBody {
  * being avoided, so it has no read-only equivalent here.
  *
  * Shared by createBranchHandler (create-time collision check against the
- * mirror) and deleteBranchHandler (removing the deleted branch's stale local
+ * mirror) and remoteCopiesOf (removing the deleted branch's stale local
  * head from the mirror) -- the two halves of the same lifecycle: what create
  * checks, delete must clean up.
  */
@@ -307,7 +297,9 @@ export const toBranchListItem = (
     : !inReview
       ? branch.unpublishedAtMerge
         ? { kind: 'unpublished-at-merge' }
-        : undefined
+        : branch.status === 'archived' && branch.rewrittenOnGitHub !== undefined
+          ? { kind: 'rewritten-at-merge' }
+          : undefined
       : branch.submitUnfinished
         ? {
             kind: 'submit-unfinished',
@@ -585,7 +577,7 @@ export const createBranchHandler = async (
         // No collision: GitHub does not have this name. Clear any STALE local
         // head the mirror still carries for it, so this new branch's first
         // publish can't be rejected non-fast-forward against a leftover tip.
-        // deleteBranchHandler's cleanup (below) handles the common case, but
+        // remoteCopiesOf's cleanup (below) handles the common case, but
         // cannot cover every ordering: when the branch still existed on
         // GitHub at editor-delete time, the sync loop's reconcile re-creates
         // the local head from GitHub's branch within a cycle, and once the
@@ -783,6 +775,11 @@ const branchListResponse = async (
   }
 }
 
+/** A person's delete, as deletion by age never does, can take commits only the branch still has. */
+const mayHoldLostCommits = (branch: BranchMetadata): boolean =>
+  branch.unpublishedAtMerge === true ||
+  (branch.status === 'archived' && branch.rewrittenOnGitHub !== undefined)
+
 /** @internal Exported for tests. */
 export const canDeleteBranch = (
   user: CanopyUser,
@@ -868,117 +865,10 @@ export const deleteBranchHandler = async (
 
   // It may hold the only copy of commits the merge left out, and deleting it would drop the alert
   // that says so.
-  if (branchContext.branch.unpublishedAtMerge && !isAdmin(req.user.groups)) {
-    return {
-      ok: false,
-      status: 409,
-      error:
-        'This branch may hold changes that never reached GitHub. Ask an admin to check it before deleting it.',
-    }
+  if (mayHoldLostCommits(branchContext.branch) && !isAdmin(req.user.groups)) {
+    return { ok: false, status: 409, error: DELETE_NEEDS_ADMIN_REASON }
   }
 
-  // The branch directory leaves its name by one rename, under the same
-  // server-enforced lockfile branch-metadata saves hold (see
-  // utils/occ-json-write.ts), so a save() that reaches that lock after the
-  // rename fails rather than recreating the tree, and a process killed during
-  // the `rm` leaves
-  // only a `.deleting-*` directory the worker sweeps, never residue under a
-  // name that may be created again.
-  const metadataFile = path.join(branchContext.branchRoot, '.canopy-meta', 'branch.json')
-  let cleanupWarning: string | undefined
-  let deletingPath: string | undefined
-  try {
-    await withOccFileLock(metadataFile, async () => {
-      if (branchContext.branchRoot === branchContext.baseRoot) {
-        await fs.unlink(metadataFile).catch((err: unknown) => {
-          if (!isNotFoundError(err)) throw err
-        })
-        return
-      }
-      const target = path.join(
-        branchContext.baseRoot,
-        deletingDirName(path.basename(branchContext.branchRoot)),
-      )
-      try {
-        await fs.rename(branchContext.branchRoot, target)
-        deletingPath = target
-      } catch (err: unknown) {
-        if (isNotFoundError(err)) return
-        // Still deleted logically: without branch.json the branch is unlisted,
-        // and the worker quarantines what is left.
-        await fs.unlink(metadataFile).catch(() => {})
-        // [REDACT] Returned to the browser; the console line keeps the path.
-        cleanupWarning = `Failed to remove branch directory: ${sanitizeErrorMessage(getErrorMessage(err))}`
-        console.error(
-          `CanopyCMS: Failed to move branch directory for ${branchName} aside:`,
-          getErrorMessage(err),
-        )
-      }
-    })
-  } catch (err: unknown) {
-    // Lock acquisition failed (e.g. contention past the retry budget) —
-    // surface as an error rather than silently skipping the delete.
-    return {
-      ok: false,
-      status: 409,
-      error: `Branch is busy, try again: ${getErrorMessage(err)}`,
-    }
-  }
-  if (deletingPath) await removeLeftoverDir(deletingPath)
-
-  // Also delete the branch's local head from the remote.git mirror (the
-  // deployment's local origin). The sync loop's reconcileTrackedBranches
-  // removes a head only once GitHub no longer has its branch, so while GitHub
-  // does, THIS is the path that removes it -- without this, the head outlives
-  // the branch, and reusing the name after the GitHub side is gone (e.g. a
-  // squash-merged PR with auto-delete) has the reused branch's first publish
-  // rejected non-fast-forward against the stale old tip: a permanent,
-  // misleading 409 -- and a retried submit would then ship the STALE head to
-  // GitHub as an apparent success (see GitManager.deleteBareRemoteHead's doc
-  // comment for the full trace). The tracking ref is deliberately left
-  // alone: while the branch still exists on GitHub, the create-time
-  // collision check SHOULD keep matching it.
-  //
-  // Best-effort, same as the directory removal above: the branch is already
-  // logically deleted; a mirror we can't reach/write just leaves today's
-  // status quo behind (with a warning), it must not fail the delete.
-  const strategy = operatingStrategy(operatingMode)
-  const mirrorPath = resolveReadOnlyMirrorPath(ctx, strategy)
-  const sanitizedDeleted = sanitizeBranchName(branchContext.branch.name)
-  // Defense-in-depth only -- isProtected above already rejects the base
-  // branch, and settings branches never resolve through getBranchContext.
-  const sanitizedBase = sanitizeBranchName(
-    branchContext.branch.baseBranch ?? baseBranchOf(ctx.services.config),
-  )
-  const deletableHead =
-    sanitizedDeleted !== sanitizedBase &&
-    !sanitizedDeleted.startsWith(RESERVED_SETTINGS_BRANCH_PREFIX)
-  if (
-    deletableHead &&
-    mirrorPath &&
-    !isNetworkRemoteUrl(mirrorPath) &&
-    (await filePathExists(mirrorPath))
-  ) {
-    try {
-      await GitManager.deleteBareRemoteHead(mirrorPath, branchContext.branch.name)
-    } catch (err: unknown) {
-      // Client-facing copy is sanitized (API-H2 — no absolute EFS paths);
-      // the console line keeps the raw detail for server logs.
-      const warning = `Failed to remove the deleted branch's head from the local mirror: ${sanitizeErrorMessage(getErrorMessage(err))}`
-      cleanupWarning = cleanupWarning ? `${cleanupWarning}; ${warning}` : warning
-      console.warn(
-        `CanopyCMS: failed to remove deleted branch's mirror head (branch ${branchContext.branch.name}, mirror ${mirrorPath}): ${getErrorMessage(err)}`,
-      )
-    }
-  }
-
-  // `branchContext` was read before the delete, so it still carries the PR number this gates on.
-  if (deletableHead) {
-    const warning = await syncDeleteRemoteBranch(ctx, branchContext)
-    if (warning) cleanupWarning = cleanupWarning ? `${cleanupWarning}; ${warning}` : warning
-  }
-
-  // Invalidate registry cache so next list() will regenerate without this branch
   if (!ctx.services.registry) {
     return {
       ok: false,
@@ -986,14 +876,49 @@ export const deleteBranchHandler = async (
       error: 'Branch registry not initialized — ensure the workspace has been initialized',
     }
   }
-  await ctx.services.registry.invalidate()
 
+  const outcome = await deleteBranchWorkspace({
+    context: branchContext,
+    registry: ctx.services.registry,
+    remoteCopies: remoteCopiesOf(ctx, branchContext),
+  })
+  if (outcome.kind !== 'deleted') {
+    const detail = outcome.kind === 'busy' ? outcome.error : 'it is already being deleted'
+    return { ok: false, status: 409, error: `Branch is busy, try again: ${detail}` }
+  }
+
+  const { cleanupWarning } = outcome
   return {
     ok: true,
     status: 200,
     data: { deleted: true, ...(cleanupWarning && { cleanupWarning }) },
   }
 }
+
+/**
+ * A person's delete also takes the branch off GitHub and the mirror: the sync loop's
+ * reconcileTrackedBranches removes a head only once GitHub no longer has its branch, so while
+ * GitHub does, this is the path that removes it. Without it the head outlives the branch, and
+ * reusing the name after the GitHub side is gone has the reused branch's first publish rejected
+ * non-fast-forward against the stale tip, and a retried submit ship that stale head to GitHub as
+ * an apparent success (see GitManager.deleteBareRemoteHead). The tracking ref stays: while the
+ * branch still exists on GitHub, the create-time collision check should keep matching it.
+ * `branchContext` was read before the delete, so it still carries the PR number GitHub's delete
+ * gates on.
+ */
+const remoteCopiesOf = (
+  ctx: ApiContext,
+  branchContext: BranchContext,
+): DeleteBranchWorkspaceOptions['remoteCopies'] => ({
+  baseBranch: branchContext.branch.baseBranch ?? baseBranchOf(ctx.services.config),
+  deleteMirrorHead: async () => {
+    const mirrorPath = resolveReadOnlyMirrorPath(ctx, operatingStrategy(ctx.services.config.mode))
+    if (mirrorPath && !isNetworkRemoteUrl(mirrorPath) && (await filePathExists(mirrorPath))) {
+      await GitManager.deleteBareRemoteHead(mirrorPath, branchContext.branch.name)
+    }
+  },
+  deleteOnGitHub: () => syncDeleteRemoteBranch(ctx, branchContext),
+})
 
 export interface UpdateBranchAccessBody {
   allowedUsers?: string[]

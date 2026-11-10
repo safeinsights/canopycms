@@ -18,6 +18,7 @@ import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, 
 import type { BranchChangesResponse } from './branch-changes'
 import type { BranchEntryChangeResponse } from './branch-entry-changes'
 import type { BranchMergeResponse, RequestChangesBody, SubmitBranchBody, SubmitBranchResponse } from './branch-status'
+import type { AdminDeleteTaskResponse, AdminRetryTaskResponse, AdminStatusResponse, AdminTasksResponse, BranchHealthResponse, DeleteArchivedBranchesBody, DeleteArchivedBranchesResponse, DismissUnpublishedResponse, PurgeBranchDirResponse, RepairBranchDirResponse, RepairContentDuplicatesResponse } from './admin'
 import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from './comments'
 import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse, RenameEntryBody, RenameEntryResponse, ValidateReferencesBody, WriteContentBody } from './content'
 import type { ReferenceOptionsResponse } from './reference-options'
@@ -29,7 +30,6 @@ import type { ExternalGroupsResponse, InternalGroupsResponse, UpdateInternalGrou
 import type { UserInfoResponse } from './user'
 import type { AddEntryTypeApiResponse, CreateCollectionApiResponse, DeleteCollectionApiResponse, GetCollectionApiResponse, GetSchemaApiResponse, InvalidateSchemaCacheApiResponse, RemoveEntryTypeApiResponse, UpdateCollectionApiResponse, UpdateEntryTypeApiResponse, UpdateOrderApiResponse, UpdateOrderBody } from './schema'
 import type { CreateCollectionInput, CreateEntryTypeInput, UpdateCollectionInput, UpdateEntryTypeInput } from './../schema/schema-store-types'
-import type { AdminDeleteTaskResponse, AdminRetryTaskResponse, AdminStatusResponse, AdminTasksResponse, BranchHealthResponse, DismissUnpublishedResponse, PurgeBranchDirResponse, RepairBranchDirResponse, RepairContentDuplicatesResponse } from './admin'
 
 /** Options for {@link createApiClient}. */
 export interface ApiClientOptions {
@@ -145,6 +145,11 @@ export class CanopyApiClient {
       return this.request('POST', this.buildPath('/:branch/mark-merged', params), undefined, 'standard', options)
     },
 
+    /** POST /:branch/archive */
+    archive: (params: Record<string, string>, options?: RequestOptions): Promise<BranchMergeResponse> => {
+      return this.request('POST', this.buildPath('/:branch/archive', params), undefined, 'standard', options)
+    },
+
     /** GET /:branch/status */
     getStatus: (params: Record<string, string>, options?: RequestOptions): Promise<BranchListItemResponse> => {
       return this.request('GET', this.buildPath('/:branch/status', params), undefined, 'standard', options)
@@ -153,6 +158,58 @@ export class CanopyApiClient {
     /** POST /:branch/submit */
     submit: (params: Record<string, string>, body: SubmitBranchBody, options?: RequestOptions): Promise<SubmitBranchResponse> => {
       return this.request('POST', this.buildPath('/:branch/submit', params), body, 'long', options)
+    },
+  }
+
+  readonly admin = {
+    /** POST /admin/archived-branches/delete */
+    deleteArchivedBranches: (body: DeleteArchivedBranchesBody, options?: RequestOptions): Promise<DeleteArchivedBranchesResponse> => {
+      return this.request('POST', '/admin/archived-branches/delete', body, 'long', options)
+    },
+
+    /** GET /admin/branch-health */
+    branchHealth: (params: Record<string, string>, options?: RequestOptions): Promise<BranchHealthResponse> => {
+      return this.request('GET', this.buildPath('/admin/branch-health', params), undefined, 'long', options)
+    },
+
+    /** POST /admin/branch-dirs/:dirName/purge */
+    purgeBranchDir: (params: Record<string, string>, options?: RequestOptions): Promise<PurgeBranchDirResponse> => {
+      return this.request('POST', this.buildPath('/admin/branch-dirs/:dirName/purge', params), undefined, 'long', options)
+    },
+
+    /** POST /admin/branch-dirs/:dirName/repair-metadata */
+    repairBranchDir: (params: Record<string, string>, options?: RequestOptions): Promise<RepairBranchDirResponse> => {
+      return this.request('POST', this.buildPath('/admin/branch-dirs/:dirName/repair-metadata', params), undefined, 'long', options)
+    },
+
+    /** POST /admin/branch-dirs/:dirName/dismiss-unpublished */
+    dismissUnpublished: (params: Record<string, string>, options?: RequestOptions): Promise<DismissUnpublishedResponse> => {
+      return this.request('POST', this.buildPath('/admin/branch-dirs/:dirName/dismiss-unpublished', params), undefined, 'standard', options)
+    },
+
+    /** POST /admin/branch-dirs/:dirName/repair-content-duplicates */
+    repairContentDuplicates: (params: Record<string, string>, options?: RequestOptions): Promise<RepairContentDuplicatesResponse> => {
+      return this.request('POST', this.buildPath('/admin/branch-dirs/:dirName/repair-content-duplicates', params), undefined, 'long', options)
+    },
+
+    /** GET /admin/status */
+    status: (options?: RequestOptions): Promise<AdminStatusResponse> => {
+      return this.request('GET', '/admin/status', undefined, 'standard', options)
+    },
+
+    /** GET /admin/tasks/:status */
+    listTasks: (params: Record<string, string>, options?: RequestOptions): Promise<AdminTasksResponse> => {
+      return this.request('GET', this.buildPath('/admin/tasks/:status', params), undefined, 'standard', options)
+    },
+
+    /** POST /admin/tasks/:taskId/retry */
+    retryTask: (params: Record<string, string>, options?: RequestOptions): Promise<AdminRetryTaskResponse> => {
+      return this.request('POST', this.buildPath('/admin/tasks/:taskId/retry', params), undefined, 'standard', options)
+    },
+
+    /** DELETE /admin/tasks/:status/:fileName */
+    deleteTask: (params: Record<string, string>, options?: RequestOptions): Promise<AdminDeleteTaskResponse> => {
+      return this.request('DELETE', this.buildPath('/admin/tasks/:status/:fileName', params), undefined, 'standard', options)
     },
   }
 
@@ -359,53 +416,6 @@ export class CanopyApiClient {
     /** POST /:branch/schema/invalidate-cache */
     invalidateSchemaCache: (params: Record<string, string>, options?: RequestOptions): Promise<InvalidateSchemaCacheApiResponse> => {
       return this.request('POST', this.buildPath('/:branch/schema/invalidate-cache', params), undefined, 'standard', options)
-    },
-  }
-
-  readonly admin = {
-    /** GET /admin/branch-health */
-    branchHealth: (params: Record<string, string>, options?: RequestOptions): Promise<BranchHealthResponse> => {
-      return this.request('GET', this.buildPath('/admin/branch-health', params), undefined, 'long', options)
-    },
-
-    /** POST /admin/branch-dirs/:dirName/purge */
-    purgeBranchDir: (params: Record<string, string>, options?: RequestOptions): Promise<PurgeBranchDirResponse> => {
-      return this.request('POST', this.buildPath('/admin/branch-dirs/:dirName/purge', params), undefined, 'long', options)
-    },
-
-    /** POST /admin/branch-dirs/:dirName/repair-metadata */
-    repairBranchDir: (params: Record<string, string>, options?: RequestOptions): Promise<RepairBranchDirResponse> => {
-      return this.request('POST', this.buildPath('/admin/branch-dirs/:dirName/repair-metadata', params), undefined, 'long', options)
-    },
-
-    /** POST /admin/branch-dirs/:dirName/dismiss-unpublished */
-    dismissUnpublished: (params: Record<string, string>, options?: RequestOptions): Promise<DismissUnpublishedResponse> => {
-      return this.request('POST', this.buildPath('/admin/branch-dirs/:dirName/dismiss-unpublished', params), undefined, 'standard', options)
-    },
-
-    /** POST /admin/branch-dirs/:dirName/repair-content-duplicates */
-    repairContentDuplicates: (params: Record<string, string>, options?: RequestOptions): Promise<RepairContentDuplicatesResponse> => {
-      return this.request('POST', this.buildPath('/admin/branch-dirs/:dirName/repair-content-duplicates', params), undefined, 'long', options)
-    },
-
-    /** GET /admin/status */
-    status: (options?: RequestOptions): Promise<AdminStatusResponse> => {
-      return this.request('GET', '/admin/status', undefined, 'standard', options)
-    },
-
-    /** GET /admin/tasks/:status */
-    listTasks: (params: Record<string, string>, options?: RequestOptions): Promise<AdminTasksResponse> => {
-      return this.request('GET', this.buildPath('/admin/tasks/:status', params), undefined, 'standard', options)
-    },
-
-    /** POST /admin/tasks/:taskId/retry */
-    retryTask: (params: Record<string, string>, options?: RequestOptions): Promise<AdminRetryTaskResponse> => {
-      return this.request('POST', this.buildPath('/admin/tasks/:taskId/retry', params), undefined, 'standard', options)
-    },
-
-    /** DELETE /admin/tasks/:status/:fileName */
-    deleteTask: (params: Record<string, string>, options?: RequestOptions): Promise<AdminDeleteTaskResponse> => {
-      return this.request('DELETE', this.buildPath('/admin/tasks/:status/:fileName', params), undefined, 'standard', options)
     },
   }
 

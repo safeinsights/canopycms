@@ -51,6 +51,8 @@ export interface WorkerContext {
   readonly contentRoot: string
   /** Longest the schema gate holds the base branch before advancing anyway (worker/schema-gate.ts). */
   readonly schemaHoldMaxMs: number
+  /** Days after archiving that the sync loop deletes a merged branch; undefined leaves them all. */
+  readonly archivedBranchRetentionDays: number | undefined
   /** Per-task timeout in ms; also simple-git's inactivity block timeout. */
   readonly taskTimeoutMs: number
   /** How long the sync loop rests between cycles, in ms. */

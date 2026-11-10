@@ -69,7 +69,7 @@
     "ARCHITECTURE.md": {
       "historyMarkers": 0,
       "maxSectionWords": 2901,
-      "words": 24741
+      "words": 24880
     },
     "CHANGELOG.md": {
       "historyMarkers": null,
@@ -78,7 +78,7 @@
     "CODEBASE_GUIDE.md": {
       "historyMarkers": 0,
       "maxSectionWords": 834,
-      "words": 4489
+      "words": 4547
     },
     "DEVELOPING.md": {
       "historyMarkers": 0,
@@ -88,26 +88,26 @@
     "README.md": {
       "historyMarkers": 0,
       "maxSectionWords": 4969,
-      "words": 17043
+      "words": 17109
     },
     "docs/concurrency.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 1459,
-      "words": 5985
+      "maxSectionWords": 1505,
+      "words": 6041
     },
     "docs/deploying-to-aws.md": {
       "historyMarkers": 0,
       "maxSectionWords": 1820,
-      "words": 12436
+      "words": 12514
     },
     "docs/ux-guidelines.md": {
       "historyMarkers": 0,
       "maxSectionWords": 298,
-      "words": 2211
+      "words": 2260
     },
     "packages/canopycms/src/AGENTS.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 857,
+      "maxSectionWords": 876,
       "words": 921
     },
     "packages/canopycms/src/ai/AGENTS.md": {
@@ -177,8 +177,8 @@
     },
     "packages/canopycms/src/worker/AGENTS.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 335,
-      "words": 789
+      "maxSectionWords": 350,
+      "words": 809
     }
   }
 }

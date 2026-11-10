@@ -23,6 +23,7 @@ One word per idea, everywhere. New UI takes the verbs from `EDITOR_ACTIONS` in
 | **Remove**                | Taking an item out of a list or field; unlisting an entry type | Clear, Delete                               |
 | **Clear**                 | Resetting an optional object field to unset                    | Remove                                      |
 | **Delete**                | Destroying a stored entry, collection, branch or group         | Remove                                      |
+| **Archive branch**        | Ending a branch whose pull request closed unmerged             | Close                                       |
 | **Discard changes**       | Throwing away unsaved edits                                    | Discard drafts, Revert                      |
 | **Unsaved**               | Not yet saved                                                  | Changed, Dirty                              |
 | **Changed**               | Different from the base branch                                 | Modified, Diff                              |

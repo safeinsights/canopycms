@@ -1046,19 +1046,22 @@ describe('useBranchManager', () => {
       expect(card?.approveBlocked).toBe(true)
     })
 
-    it('warns of what deleting a flagged branch removes', async () => {
-      const flagged = mockBranches.map((b) =>
-        b.name === 'feature' ? { ...b, hold: { kind: 'unpublished-at-merge' as const } } : b,
-      )
-      mockClient.branches.delete.mockResolvedValueOnce({ ok: true, status: 200 })
-      const { result } = await loaded(flagged as BranchMetadata[])
+    it.each(['unpublished-at-merge', 'rewritten-at-merge'] as const)(
+      'warns of what deleting a branch flagged %s removes',
+      async (kind) => {
+        const flagged = mockBranches.map((b) =>
+          b.name === 'feature' ? { ...b, hold: { kind } } : b,
+        )
+        mockClient.branches.delete.mockResolvedValueOnce({ ok: true, status: 200 })
+        const { result } = await loaded(flagged as BranchMetadata[])
 
-      await act(async () => {
-        await result.current.handleDelete('feature')
-      })
+        await act(async () => {
+          await result.current.handleDelete('feature')
+        })
 
-      expect((await lastDialog()).body).toContain('never reached GitHub')
-    })
+        expect((await lastDialog()).body).toContain('missing from GitHub')
+      },
+    )
 
     const lastDialog = async () => {
       const { modals } = await import('@mantine/modals')
@@ -1244,6 +1247,58 @@ describe('useBranchManager', () => {
       expect(body).not.toContain('Are you sure')
     })
 
+    it('asks to archive, and says deletion by age leaves the branch', async () => {
+      mockClient.workflow.archive.mockResolvedValueOnce({ ok: true, status: 200 })
+      const { result } = await loaded(
+        mockBranches.map((b) => (b.name === 'feature' ? { ...b, status: 'editing' } : b)),
+      )
+
+      await act(async () => {
+        await result.current.handleArchive('feature')
+      })
+
+      const { options, body } = await lastDialog()
+      expect(options.title).toBe('Archive branch')
+      expect(options.labels).toEqual({ confirm: 'Archive branch', cancel: 'Cancel' })
+      expect(body).toContain('Archive “feature”?')
+      expect(body).toContain('automatic and bulk deletes only take merged branches')
+      expect(body).not.toContain('Withdraw from review')
+    })
+
+    it('offers Withdraw instead only for a branch in review', async () => {
+      mockClient.workflow.archive.mockResolvedValueOnce({ ok: true, status: 200 })
+      const { result } = await loaded(
+        mockBranches.map((b) => (b.name === 'feature' ? { ...b, status: 'submitted' } : b)),
+      )
+
+      await act(async () => {
+        await result.current.handleArchive('feature')
+      })
+
+      const { body } = await lastDialog()
+      expect(body).toContain('use “Withdraw from review” instead')
+    })
+
+    it('reloads the list when an archive is refused, which is what says why', async () => {
+      mockClient.workflow.archive.mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        error: 'Only a closed branch.',
+      })
+      const { result } = await loaded(mockBranches)
+      const listings = mockClient.branches.list.mock.calls.length
+
+      await act(async () => {
+        await result.current.handleArchive('feature')
+      })
+
+      expect(mockClient.branches.list.mock.calls.length).toBeGreaterThan(listings)
+      const { notifications } = await import('@mantine/notifications')
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'Only a closed branch.', color: 'yellow' }),
+      )
+    })
+
     it('asks to delete the branch in sentence case', async () => {
       mockClient.branches.delete.mockResolvedValueOnce({ ok: true, status: 200 })
       const { result } = await loaded(mockBranches)
@@ -1253,7 +1308,7 @@ describe('useBranchManager', () => {
       })
 
       const { options, body } = await lastDialog()
-      expect(body).not.toContain('never reached GitHub')
+      expect(body).not.toContain('missing from GitHub')
       expect(options.title).toBe('Delete branch')
       expect(options.labels).toEqual({ confirm: 'Delete branch', cancel: 'Cancel' })
       expect(body).toContain('Delete “feature”?')

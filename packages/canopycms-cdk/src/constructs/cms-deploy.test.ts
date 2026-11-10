@@ -2624,6 +2624,25 @@ describe('CanopyCmsService: names the GitHub gateway refuses', () => {
   })
 })
 
+describe('CanopyCmsService: archivedBranchRetentionDays', () => {
+  it('stamps the days into the worker .env', () => {
+    const all = workerUserDataBlobs(synth(false, { archivedBranchRetentionDays: 90 }))
+    expect(all).toContain('CANOPYCMS_ARCHIVED_BRANCH_RETENTION_DAYS=90')
+  })
+
+  it('stamps nothing when unset, which leaves retention off', () => {
+    expect(workerUserDataBlobs(synth(false))).not.toContain(
+      'CANOPYCMS_ARCHIVED_BRANCH_RETENTION_DAYS',
+    )
+  })
+
+  it.each([0, -1, 1.5, Number.NaN])('refuses %s at synth', (days) => {
+    expect(() => synth(false, { archivedBranchRetentionDays: days })).toThrow(
+      /archivedBranchRetentionDays must be a positive whole number of days/,
+    )
+  })
+})
+
 describe('CanopyCmsService: protectedBranches', () => {
   it('stamps the entries, comma-separated, into the worker .env', () => {
     const all = workerUserDataBlobs(

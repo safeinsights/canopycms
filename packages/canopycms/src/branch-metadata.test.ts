@@ -608,10 +608,17 @@ describe('BranchMetadataFileManager', () => {
         status: 'archived',
         pullRequestState: 'merged',
         mergedAt: '2026-01-01T12:00:00.000Z',
+        archivedAt: expect.any(String),
         conflictStatus: 'clean',
         conflictFiles: [],
         submitUnfinished: undefined,
       })
+    })
+
+    it('starts the archive clock now, however long ago the merge was', () => {
+      const update = buildMergedBranchUpdate(merging, new Date('2020-01-01T00:00:00.000Z'))
+
+      expect(Date.now() - Date.parse(update.archivedAt ?? '')).toBeLessThan(60_000)
     })
 
     it.each(['submitted', 'approved'] as const)(

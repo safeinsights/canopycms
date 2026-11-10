@@ -15,11 +15,16 @@ import type { BranchHealthData } from '../../api/admin-branch-health'
 import type {
   BaseRefreshReport,
   BaseSchemaHold,
+  BranchMetadata,
   UnpublishableBranch,
   WorkerStatusReport,
 } from '../../types'
 import { unsafeAsContentId, unsafeAsPhysicalPath } from '../../paths/test-utils'
 import { formatRelativeTime } from '../relative-time'
+import { ApiTimeoutError } from '../../api/request-deadline'
+import { HOLD_BADGE } from '../branch-status'
+import { modals } from '@mantine/modals'
+import { notifications } from '@mantine/notifications'
 
 // Mock the API client module (both useApiClient() and useSystemHealth() must
 // resolve to the same mock client instance) -- same pattern as
@@ -1282,6 +1287,227 @@ describe('SystemHealthPanel', () => {
       expect(screen.getByText('orphan-old')).toBeTruthy()
     })
 
+    describe('deleting archived branches', () => {
+      const generatedAt = '2026-06-01T00:00:00.000Z'
+      const healthy = (dirName: string, fields: Partial<BranchMetadata>): BranchHealthEntry => ({
+        dirName,
+        kind: 'healthy',
+        branch: {
+          name: dirName,
+          status: 'archived',
+          access: {},
+          createdBy: 'user-1',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-02T00:00:00.000Z',
+          ...fields,
+        },
+      })
+      const old = '2026-01-01T00:00:00.000Z'
+      const openBranches = async (entries: BranchHealthEntry[], status = makeStatus()) => {
+        mockClient.admin.status.mockResolvedValue(mockSuccess(status))
+        mockClient.admin.branchHealth.mockResolvedValue(mockSuccess({ entries, generatedAt }))
+        renderPanel()
+        await userEvent.click(screen.getByRole('tab', { name: 'Branches' }))
+        return screen.findByTestId('delete-archived-button')
+      }
+
+      it('deletes merged archived branches older than the days, after a confirm', async () => {
+        mockClient.admin.deleteArchivedBranches.mockResolvedValue(
+          mockSuccess({
+            deleted: ['old-merged'],
+            skipped: { notMerged: [], unpublished: [] },
+            failed: [],
+            remaining: 0,
+            warnings: [],
+          }),
+        )
+        const button = await openBranches([
+          healthy('old-merged', { mergedAt: old }),
+          healthy('new-merged', { mergedAt: '2026-05-30T00:00:00.000Z' }),
+          healthy('live', { status: 'editing' }),
+        ])
+        expect(button.textContent).toBe('Delete 1 archived branch')
+
+        await userEvent.click(button)
+
+        expect(modals.openConfirmModal).toHaveBeenCalledWith(
+          expect.objectContaining({ title: 'Delete archived branches' }),
+        )
+        expect(mockClient.admin.deleteArchivedBranches).toHaveBeenCalledWith({
+          olderThanDays: 90,
+          branches: ['old-merged'],
+        })
+      })
+
+      it('warns and re-reads when the delete gets no answer', async () => {
+        const show = vi.spyOn(notifications, 'show')
+        mockClient.admin.deleteArchivedBranches.mockRejectedValue(
+          new ApiTimeoutError('POST', '/x', 1),
+        )
+        const button = await openBranches([healthy('old-merged', { mergedAt: old })])
+        const scansBefore = mockClient.admin.branchHealth.mock.calls.length
+
+        await userEvent.click(button)
+
+        await waitFor(() =>
+          expect(show).toHaveBeenCalledWith(
+            expect.objectContaining({
+              color: 'yellow',
+              message: expect.stringContaining('may have gone through'),
+            }),
+          ),
+        )
+        await waitFor(() =>
+          expect(mockClient.admin.branchHealth.mock.calls.length).toBeGreaterThan(scansBefore),
+        )
+      })
+
+      it('offers no "Mark merged" for a pull request closed unmerged', async () => {
+        await openBranches([
+          healthy('closed', {
+            status: 'submitted',
+            pullRequestNumber: 5,
+            pullRequestState: 'closed',
+          }),
+        ])
+
+        expect(screen.queryByRole('button', { name: /mark merged/i })).toBeNull()
+      })
+
+      it('counts neither an unmerged branch nor one holding unpublished changes', async () => {
+        const button = await openBranches([
+          healthy('abandoned', { archivedAt: old }),
+          healthy('unpublished', { mergedAt: old, unpublishedAtMerge: true }),
+        ])
+
+        expect(button.getAttribute('aria-disabled')).toBe('true')
+        await userEvent.click(button)
+        expect(mockClient.admin.deleteArchivedBranches).not.toHaveBeenCalled()
+      })
+
+      it('names the unit in the singular at 1', async () => {
+        await openBranches([healthy('live', { status: 'editing' })])
+        const input = screen.getByTestId('archived-days-input') as HTMLInputElement
+
+        await userEvent.clear(input)
+        await userEvent.type(input, '1')
+
+        expect(input.value).toBe('1 day')
+      })
+
+      it('offers lowering the days when newer merged branches exist', async () => {
+        const button = await openBranches([
+          healthy('new-merged', { mergedAt: '2026-05-30T00:00:00.000Z' }),
+        ])
+
+        await userEvent.hover(button)
+
+        expect((await screen.findByRole('tooltip')).textContent).toContain('Lower the number')
+      })
+
+      it('offers no lowering at 1 day, the least it takes', async () => {
+        const button = await openBranches([
+          healthy('new-merged', { mergedAt: '2026-05-31T12:00:00.000Z' }),
+        ])
+        const input = screen.getByTestId('archived-days-input')
+        await userEvent.clear(input)
+        await userEvent.type(input, '1')
+
+        await userEvent.hover(button)
+
+        const tooltip = await screen.findByRole('tooltip')
+        expect(tooltip.textContent).toContain('older than 1 day.')
+        expect(tooltip.textContent).not.toContain('Lower the number')
+      })
+
+      it('shows the hold on an archived branch rewritten on GitHub, naming the commit', async () => {
+        await openBranches([healthy('rewritten', { mergedAt: old, rewrittenOnGitHub: 'abc123' })])
+
+        await userEvent.hover(screen.getByText(HOLD_BADGE.label))
+
+        expect((await screen.findByRole('tooltip')).textContent).toContain(
+          'GitHub no longer contains commit abc123.',
+        )
+      })
+
+      it('offers no lowering with a merged branch that is only held', async () => {
+        const button = await openBranches([
+          healthy('unpublished', { mergedAt: old, unpublishedAtMerge: true }),
+        ])
+
+        await userEvent.hover(button)
+
+        expect((await screen.findByRole('tooltip')).textContent).not.toContain('Lower the number')
+      })
+
+      it('offers no lowering with no merged archived branch at all', async () => {
+        const button = await openBranches([healthy('abandoned', { archivedAt: old })])
+
+        await userEvent.hover(button)
+        const tooltip = await screen.findByRole('tooltip')
+
+        expect(tooltip.textContent).not.toContain('Lower the number')
+        expect(tooltip.textContent).toContain('"Branches" drawer')
+      })
+
+      it('leaves the base branch out of the count', async () => {
+        const button = await openBranches([
+          { ...healthy('main', { mergedAt: old }), isBaseBranch: true },
+        ])
+        expect(button.getAttribute('aria-disabled')).toBe('true')
+      })
+
+      it.each([
+        [45, 'This deployment deletes merged branches 45 days after archiving.'],
+        [undefined, 'This deployment keeps archived branches until someone deletes them.'],
+      ])('says what retention of %s days means', async (days, note) => {
+        const status = makeStatusWithSync()
+        await openBranches([healthy('live', { status: 'editing' })], {
+          ...status,
+          workerStatus: { ...status.workerStatus!, archivedBranchRetentionDays: days },
+        })
+        expect((await screen.findByTestId('archived-retention-note')).textContent).toBe(note)
+      })
+
+      it('says nothing of retention before the worker has reported', async () => {
+        await openBranches([healthy('live', { status: 'editing' })])
+        expect(screen.queryByTestId('archived-retention-note')).toBeNull()
+      })
+
+      it('says nothing of retention on a record with no sync, as a failed boot leaves', async () => {
+        const status = makeStatusWithSync()
+        await openBranches([healthy('live', { status: 'editing' })], {
+          ...status,
+          workerStatus: { ...status.workerStatus!, lastGitSync: undefined },
+        })
+        expect(screen.queryByTestId('archived-retention-note')).toBeNull()
+      })
+
+      it('names a branch the last sweep could not delete', async () => {
+        const status = makeStatusWithSync()
+        const lastGitSync = {
+          ...status.workerStatus!.lastGitSync!,
+          archivedSweep: {
+            deleted: [],
+            skippedLocked: [],
+            failed: [{ branch: 'stuck', error: 'busy' }],
+            deferred: 0,
+            warnings: ['stuck: could not reach GitHub'],
+          },
+        }
+        await openBranches([healthy('live', { status: 'editing' })], {
+          ...status,
+          workerStatus: { ...status.workerStatus!, lastGitSync },
+        })
+        expect((await screen.findByTestId('archived-retention-note')).textContent).toContain(
+          'could not delete stuck',
+        )
+        expect(screen.getByTestId('archived-retention-note').textContent).toContain(
+          'stuck: could not reach GitHub.',
+        )
+      })
+    })
+
     describe('duplicate content IDs', () => {
       /**
        * Answers the plain request with `entries` and the `duplicates=1` scan
@@ -1500,7 +1726,7 @@ describe('SystemHealthPanel', () => {
       expect(detail?.textContent).toContain("its pull request wasn't opened")
     })
 
-    it('marks no rewrite on an archived branch, which nothing can act on', async () => {
+    it('marks a rewrite on an archived branch too, which a delete would lose', async () => {
       mockClient.admin.branchHealth.mockResolvedValue(
         mockSuccess({
           entries: [rewritten('live', 'editing'), rewritten('gone', 'archived')],
@@ -1512,7 +1738,7 @@ describe('SystemHealthPanel', () => {
       await waitFor(() => expect(screen.getByText('gone')).toBeTruthy())
 
       expect(screen.getByTestId('held-pr-live')).toBeTruthy()
-      expect(screen.queryByTestId('held-pr-gone')).toBeNull()
+      expect(screen.getByTestId('held-pr-gone')).toBeTruthy()
     })
 
     it('gives a rewritten branch the fix itself, not a pointer back to this tab', async () => {

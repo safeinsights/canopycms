@@ -297,7 +297,7 @@ const showDeleteConfirmation = (
       : undefined,
     'Discard any unsaved or unmerged changes',
     mayHoldUnpublished
-      ? 'Remove the only copy of any changes that never reached GitHub, and the warning about them'
+      ? 'Remove the only copy of any changes missing from GitHub, and the warning about them'
       : undefined,
   ].filter((b): b is string => b !== undefined)
   openConfirm({
@@ -314,6 +314,26 @@ const showDeleteConfirmation = (
     // [data-testid="confirm-delete-branch"] when it appears. Without this the
     // modal opens, nothing dismisses it, and the branch never disappears.
     confirmProps: { color: 'red', 'data-testid': 'confirm-delete-branch' },
+    ...confirmModalHandlers(onConfirm, onDismiss),
+  })
+}
+
+/** Archiving is a one-way status change on a branch whose review is over. */
+const showArchiveConfirmation = (
+  branchName: string,
+  inReview: boolean,
+  onConfirm: () => Promise<void>,
+  onDismiss: () => void,
+) => {
+  openConfirm({
+    title: EDITOR_ACTIONS.archiveBranch,
+    children: (
+      <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
+        {`Archive “${branchName}”?\n\nIts pull request was closed without merging. This will:\n• Make the branch read-only and move it to “Archived”\n• Keep it marked as not merged\n\nAn archived branch can't go back to editing. This one stays until someone deletes it: automatic and bulk deletes only take merged branches.${inReview ? ` To keep working on it, use “${EDITOR_ACTIONS.withdrawFromReview}” instead.` : ''}`}
+      </Text>
+    ),
+    labels: { confirm: EDITOR_ACTIONS.archiveBranch, cancel: 'Cancel' },
+    confirmProps: { color: 'orange', 'data-testid': 'confirm-archive-branch' },
     ...confirmModalHandlers(onConfirm, onDismiss),
   })
 }
@@ -386,8 +406,11 @@ function reconcilePendingBranches(
 interface BranchSummary {
   name: string
   shortName?: string
+  title?: string
   status: string
   createdBy?: string
+  /** The creator's display name, when the listing carried it. */
+  ownerName?: string
   updatedAt?: string
   access: {
     users: string[] | undefined
@@ -495,6 +518,8 @@ export interface UseBranchManagerReturn {
     returnFocusTo?: () => HTMLElement | null,
   ) => Promise<void>
   handleDelete: (branchName: string) => Promise<void>
+  /** Admin only: confirms first, then archives a branch whose pull request closed unmerged. */
+  handleArchive: (branchName: string) => Promise<void>
   handleReloadBranchData: () => Promise<void>
   loadBranches: () => Promise<void>
 }
@@ -640,8 +665,10 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
       return {
         name: b.name,
         shortName: b.shortName,
+        title: b.title,
         status: b.status,
         createdBy: b.createdBy,
+        ownerName: branchesData?.ownerNames?.[b.createdBy],
         updatedAt: b.updatedAt,
         access: {
           users: b.access.allowedUsers,
@@ -682,7 +709,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         submitBlocked: b.submitBlocked ?? true,
       }
     })
-  }, [branches, currentBranchName, options.comments])
+  }, [branches, branchesData?.ownerNames, currentBranchName, options.comments])
 
   // Explicit reload: always issues a fresh, independent fetch (raw call, not
   // SWR's `mutate()` revalidate path) so callers requesting a reload right
@@ -769,7 +796,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
    * after the action succeeded.
    */
   const singleFlight = async (
-    action: 'submit' | 'withdraw' | 'approve' | 'request-changes' | 'delete',
+    action: 'submit' | 'withdraw' | 'approve' | 'request-changes' | 'delete' | 'archive',
     branch: string,
     run: () => Promise<void>,
   ): Promise<void> => {
@@ -1072,6 +1099,57 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     )
   }
 
+  const handleArchive = (requested: string) => {
+    const branchNameToArchive = listedName(requested)
+    return singleFlight(
+      'archive',
+      branchNameToArchive,
+      () =>
+        new Promise<void>((resolve, reject) => {
+          const status = latest.current.branches.find((b) => b.name === branchNameToArchive)?.status
+          showArchiveConfirmation(
+            shownName(branchNameToArchive),
+            status === 'submitted' || status === 'approved',
+            async () => {
+              options.setBusy(true)
+              try {
+                const result = await apiClient.workflow.archive({
+                  branch: sendName(branchNameToArchive),
+                })
+                if (!result.ok) throw actionError(result, 'Failed to archive branch')
+                notifications.show({ message: 'Branch archived', color: 'blue' })
+                forgetCreatedBranch(branchNameToArchive)
+                await loadBranches()
+                resolve()
+              } catch (err) {
+                if (err instanceof RefusedError && err.status === 409) {
+                  // Nothing is lost, and the list says what changed.
+                  notifications.show({
+                    message: err.message,
+                    color: 'yellow',
+                    autoClose: false,
+                    withCloseButton: true,
+                  })
+                  await reloadBranches()
+                  resolve()
+                  return
+                }
+                await reportActionFailure(
+                  err,
+                  'Failed to archive branch',
+                  EDITOR_ACTIONS.archiveBranch,
+                )
+                reject(err)
+              } finally {
+                options.setBusy(false)
+              }
+            },
+            () => resolve(),
+          )
+        }),
+    )
+  }
+
   const handleApprove = (requested: string, returnFocusTo?: () => HTMLElement | null) => {
     const branchNameToApprove = listedName(requested)
     return singleFlight(
@@ -1214,8 +1292,9 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
           showDeleteConfirmation(
             shownName(branchNameToDelete),
             pullRequestOf(branchNameToDelete),
-            listedBefore.find((b) => b.name === branchNameToDelete)?.hold?.kind ===
-              'unpublished-at-merge',
+            ['unpublished-at-merge', 'rewritten-at-merge'].includes(
+              listedBefore.find((b) => b.name === branchNameToDelete)?.hold?.kind ?? '',
+            ),
             async () => {
               options.setBusy(true)
               try {
@@ -1340,6 +1419,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     handleApprove,
     handleRequestChanges,
     handleDelete,
+    handleArchive,
     handleReloadBranchData,
     loadBranches,
   }

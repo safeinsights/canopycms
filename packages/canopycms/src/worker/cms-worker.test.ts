@@ -1668,6 +1668,7 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
       live: Record<string, unknown>,
       requeuedFrom?: string,
       gateway?: (seam: GitHubGateway) => void,
+      noWorkspace = false,
     ) => {
       await seedBranchInRemoteGit(branch, 'hello')
       await fs.mkdir(dir(), { recursive: true })
@@ -1675,6 +1676,7 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
         branch: { name: branch, pullRequestNumber: 12, ...live },
       })
       seededAt = seeded.branch.updatedAt
+      if (noWorkspace) await fs.rm(dir(), { recursive: true })
       const worker = makePushWorker()
       ;(worker as unknown as { running: boolean }).running = true
       gateway?.((worker as unknown as { github(): GitHubGateway }).github())
@@ -1697,6 +1699,38 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
       await worker.processTaskQueue()
       return getTask(taskDir, id)
     }
+
+    it('still runs a first run whose workspace is out of sight for a moment', async () => {
+      await seedBranchInRemoteGit(branch, 'hello')
+      await fs.mkdir(dir(), { recursive: true })
+      await getBranchMetadataFileManager(dir(), contentBranchesPath).save({
+        branch: { name: branch, status: 'submitted', submittedAt, syncStatus: 'pending-sync' },
+      })
+      await fs.rename(dir(), `${dir()}.aside`)
+      const worker = makePushWorker()
+      ;(worker as unknown as { running: boolean }).running = true
+      const id = await enqueueTask(taskDir, {
+        action: 'push-and-create-or-update-pr',
+        payload: { branch, title: 't', body: '', baseBranch: 'main', submittedAt },
+      })
+
+      await worker.processTaskQueue()
+      await fs.rename(`${dir()}.aside`, dir())
+
+      expect((await getTask(taskDir, id))?.result).not.toEqual({ superseded: true })
+    })
+
+    it('does nothing for a branch deleted since', async () => {
+      const task = await retrySubmit(
+        { status: 'submitted', submittedAt },
+        undefined,
+        undefined,
+        true,
+      )
+
+      expect(task?.status).toBe('completed')
+      await expect(shaOf(githubFixture, `refs/heads/${branch}`)).rejects.toThrow()
+    })
 
     it('does nothing for a branch withdrawn since, which would ready its PR again', async () => {
       const task = await retrySubmit({ status: 'editing', submittedAt, syncStatus: 'sync-failed' })
@@ -2861,18 +2895,55 @@ describe('CmsWorker.syncGit() worker-status.json bookkeeping', () => {
     await seedGit.push('origin', 'main')
   }
 
-  const makeSyncWorker = () => {
+  const makeSyncWorker = (archivedBranchRetentionDays?: number) => {
     const worker = new CmsWorker({
       workspacePath,
       githubOwner: 'test-owner',
       githubRepo: 'test-repo',
       githubToken: 'fake-token',
       baseBranch: 'main',
+      archivedBranchRetentionDays,
     })
     useLocalGitHubGateway(worker, { remoteUrl: () => fixtureRemote })
     ;(worker as unknown as { running: boolean }).running = true
     return worker
   }
+
+  const archiveLongAgo = async (branchName: string) => {
+    const { branchPath } = await createSyncBranch(branchName)
+    const longAgo = new Date(Date.now() - 400 * 24 * 60 * 60_000).toISOString()
+    await getBranchMetadataFileManager(
+      branchPath,
+      path.join(workspacePath, 'content-branches'),
+    ).save({ branch: { status: 'archived', archivedAt: longAgo, mergedAt: longAgo } })
+    return branchPath
+  }
+
+  it('sweeps expired archived branches in the cycle and records the setting and the outcome', async () => {
+    const branchPath = await archiveLongAgo('long-merged')
+
+    await makeSyncWorker(30).syncGit()
+
+    const status = await readStatus()
+    expect(status.archivedBranchRetentionDays).toBe(30)
+    expect(status.lastGitSync?.archivedSweep?.deleted).toEqual(['long-merged'])
+    await expect(fs.access(branchPath)).rejects.toThrow()
+  })
+
+  it('leaves archived branches alone by default', async () => {
+    const branchPath = await archiveLongAgo('long-merged')
+
+    await makeSyncWorker().syncGit()
+
+    const status = await readStatus()
+    expect(status.archivedBranchRetentionDays).toBeUndefined()
+    expect(status.lastGitSync?.archivedSweep).toBeUndefined()
+    await expect(fs.access(branchPath)).resolves.toBeUndefined()
+  })
+
+  it.each([0, -1, 1.5])('refuses a retention of %s days at construction', (days) => {
+    expect(() => makeSyncWorker(days)).toThrow(/archivedBranchRetentionDays must be a positive/)
+  })
 
   it('records lastGitSyncAt and a rebase summary after a successful cycle, including a per-branch rebase failure', async () => {
     // Behind, no conflicts -> should complete and land in lastGitSync.rebased.
