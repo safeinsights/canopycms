@@ -64,9 +64,17 @@ export type DisplayValue =
   /** A value of a shape the schema doesn't describe, as JSON. */
   | { kind: 'raw'; text: string }
 
+/**
+ * One step into a form value: a record's member, a list item by its item key, or a block item's
+ * data, which is its `value` record or, in the inline `_type` shape, the item itself.
+ */
+export type DataPathSegment = { field: string } | { item: string } | { blockData: true }
+
 export interface EntryChange {
   /** Stable among one diff's changes: its data path, list items named by key. */
   key: string
+  /** Where the change is in the form value; absent for the entry type, which no field holds. */
+  dataPath?: DataPathSegment[]
   /** Human labels from the entry down to the change: "Page sections › Hero › Heading". */
   path: string[]
   kind: 'added' | 'removed' | 'changed' | 'moved'
@@ -100,6 +108,7 @@ export interface EntryDiffInput {
 interface At {
   path: string[]
   key: string
+  segments?: DataPathSegment[]
 }
 
 /** Text at most this long, on one line, gets a word diff; longer text a line diff. */
@@ -153,15 +162,21 @@ const normalized = (value: unknown): unknown => {
 const sameValue = (a: unknown, b: unknown): boolean =>
   (isEmpty(a) && isEmpty(b)) || equal(normalized(a), normalized(b))
 
-const at = (parent: At, label: string, key: string): At => ({
+const at = (parent: At, label: string, key: string, segment?: DataPathSegment): At => ({
   path: [...parent.path, label],
   key: parent.key ? `${parent.key}.${key}` : key,
+  ...(parent.segments && segment && { segments: [...parent.segments, segment] }),
 })
+
+/** `where`'s data path as a change carries it. */
+const dataPathOf = (where: At): Pick<EntryChange, 'dataPath'> =>
+  where.segments ? { dataPath: where.segments } : {}
 
 /** A member the schema doesn't name, under an "Other fields" crumb. */
 const otherAt = (parent: At, name: string): At => ({
   path: [...parent.path, OTHER_FIELDS_LABEL, humanizeName(name)],
   key: `${parent.key}?${name}`,
+  ...(parent.segments && { segments: [...parent.segments, { field: name }] }),
 })
 
 /** The file name of an image `src`, its query and fragment dropped. */
@@ -362,7 +377,7 @@ class Walker {
         field,
         before?.[field.name],
         after?.[field.name],
-        at(where, schemaLabel(field), field.name),
+        at(where, schemaLabel(field), field.name, { field: field.name }),
       )
     }
     const others = new Set([...Object.keys(before ?? {}), ...Object.keys(after ?? {})])
@@ -405,7 +420,7 @@ class Walker {
   value(field: FieldConfig | undefined, before: unknown, after: unknown, where: At): void {
     if (sameValue(before, after) || sameInstant(field, before, after)) return
     const kind = isEmpty(before) ? 'added' : isEmpty(after) ? 'removed' : 'changed'
-    const change: EntryChange = { key: where.key, path: where.path, kind }
+    const change: EntryChange = { key: where.key, ...dataPathOf(where), path: where.path, kind }
     if (kind !== 'added') change.before = this.display(field, before)
     if (kind !== 'removed') change.after = this.display(field, after)
     // Text and dates only: a reference's id is a value, shown whole.
@@ -469,12 +484,14 @@ class Walker {
     const sameTemplate =
       isPlainRecord(before) && isPlainRecord(after) && before.template === after.template
     if (b && a && sameTemplate) {
-      this.fields(a.fields, b.data, a.data, where)
+      const data = where.segments && { segments: [...where.segments, { blockData: true as const }] }
+      this.fields(a.fields, b.data, a.data, { ...where, ...data })
       return
     }
     if (sameValue(before, after)) return
     this.changes.push({
       key: where.key,
+      ...dataPathOf(where),
       path: where.path,
       kind: 'changed',
       before: this.blockRecord(field, before),
@@ -523,10 +540,12 @@ class Walker {
         where,
         from === undefined ? item.heading(value, index) : item.heading(bItems[from], from),
         key,
+        { item: key },
       )
       if (from === undefined) {
         this.changes.push({
           key: itemAt.key,
+          ...dataPathOf(itemAt),
           path: itemAt.path,
           kind: 'added',
           item: true,
@@ -537,6 +556,7 @@ class Walker {
       if (!stayed.has(key)) {
         this.changes.push({
           key: `${itemAt.key}#moved`,
+          ...dataPathOf(itemAt),
           path: itemAt.path,
           kind: 'moved',
           item: true,
@@ -549,9 +569,10 @@ class Walker {
     bItems.forEach((value, index) => {
       const key = bKeys[index]
       if (aSet.has(key)) return
-      const itemAt = at(where, item.heading(value, index), key)
+      const itemAt = at(where, item.heading(value, index), key, { item: key })
       this.changes.push({
         key: itemAt.key,
+        ...dataPathOf(itemAt),
         path: itemAt.path,
         kind: 'removed',
         item: true,
@@ -767,7 +788,7 @@ export function computeEntryDiff({
     started + DIFF_TIMEOUT_MS,
     started + SHORT_DIFF_TIMEOUT_MS,
   )
-  const root: At = { path: [], key: '' }
+  const root: At = { path: [], key: '', segments: [] }
   if (before && after && before.entryType !== after.entryType) {
     walker.value(
       undefined,

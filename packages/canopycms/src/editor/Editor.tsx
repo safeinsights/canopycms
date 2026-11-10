@@ -82,7 +82,7 @@ import {
 import { useBranchActions } from './hooks/useBranchActions'
 import { branchAddress, displayBranchName } from './branch-names'
 import { useBranchChangesData, useEntryChangeData } from './hooks/useBranchChangesData'
-import type { EntryChangesSubject } from './components/EntryChangesDrawer'
+import type { EntryChangesSubject, EntryChangesUndo } from './components/EntryChangesDrawer'
 import { LazyEntryChangesDrawer } from './components/LazyEntryChangesDrawer'
 import type { BranchChangeEntry } from '../api/branch-changes'
 import type { UnsavedSummary } from './hooks/useDraftManager'
@@ -97,6 +97,7 @@ import { useEntryLinkResolution } from './hooks/useEntryLinkResolution'
 import { useReferenceResolution } from './hooks/useReferenceResolution'
 import { usePreviewMarks } from './hooks/usePreviewMarks'
 import { branchBarStatus, describeBranchLock } from './branch-lock'
+import { NO_EDIT_ACCESS_REASON } from './copy'
 import { EditorHeader, EditorRail, EntryHeader } from './components'
 import { showSaveAllResult } from './components/SaveAllResult'
 import { RenameEntryModal } from './components/RenameEntryModal'
@@ -1818,6 +1819,53 @@ const EditorContent: React.FC<EditorProps> = ({
   const changesPullRequestUrl = isReviewer(userContext?.groups)
     ? currentBranch?.pullRequestUrl
     : undefined
+  // The drawer's undo, delete and restore follow the form's rules: hidden without edit access,
+  // disabled with the branch lock's reason while the branch takes no writes. Undo writes the open
+  // entry's draft, through the functional update the remove-Undo uses, so it is an unsaved edit.
+  const changesSubjectOpen =
+    !!changesSubject &&
+    !!currentEntry &&
+    changesSubject.status !== 'deleted' &&
+    changesSubject.logicalPath === currentEntry.path &&
+    (changesSubject.contentId === undefined || changesSubject.contentId === currentEntry.contentId)
+  const changesLockReason = branchContentLocked
+    ? describeBranchLock({
+        branchStatus: currentBranch?.status,
+        branchReadOnly: currentBranch?.readOnly,
+        branchWriteBlocked: true,
+        branchPending,
+        branchMissing,
+        reviewing: branchReviewing,
+        pullRequestClosed: branchPullRequestClosed,
+        approveBlocked: currentBranch?.approveBlocked,
+      })
+    : undefined
+  const changesUndo: EntryChangesUndo | undefined =
+    changesSubjectOpen && currentEntry && effectiveValue
+      ? {
+          value: effectiveValue,
+          saved: loadedValues[currentEntry.contentId],
+          update: (update) => {
+            if (contentReadOnlyRef.current) return
+            const contentId = currentEntry.contentId
+            setDrafts((prev) => {
+              const value = prev[contentId] ?? loadedValuesRef.current[contentId]
+              if (!value) return prev
+              const next = update(value)
+              return next === value ? prev : { ...prev, [contentId]: next }
+            })
+          },
+          threadsWithin: (path) => openThreadsWithin(displayComments, currentEntry.path, path),
+        }
+      : undefined
+  const changesDeleteEntry =
+    changesSubjectOpen && changesSubject?.status === 'added'
+      ? () => {
+          // A confirm never opens over the drawer.
+          setChangesOpen(false)
+          handleDeleteEntry(changesSubject.logicalPath as LogicalPath)
+        }
+      : undefined
   const runSaveAll = () => {
     void handleSaveAll()
       .then((result) => {
@@ -2733,6 +2781,14 @@ const EditorContent: React.FC<EditorProps> = ({
                   referenceTitle={referenceTitle}
                   onOpenEntry={changesOpenEntry}
                   pullRequestUrl={changesPullRequestUrl}
+                  undo={changesUndo}
+                  noEditReason={
+                    changesSubjectOpen && currentEntry?.canEdit === false
+                      ? NO_EDIT_ACCESS_REASON
+                      : undefined
+                  }
+                  lockedReason={changesLockReason}
+                  onDeleteEntry={changesDeleteEntry}
                 />
               )}
               {branchNameState && (

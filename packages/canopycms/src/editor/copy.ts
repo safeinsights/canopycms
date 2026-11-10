@@ -22,6 +22,12 @@ export const EDITOR_ACTIONS = {
   changeUrl: 'Change URL',
   changeSlug: 'Change slug',
   showChanges: 'Show changes',
+  undoChange: 'Undo change',
+  redoChange: 'Redo change',
+  undoAllChanges: 'Undo all changes',
+  redoAllChanges: 'Redo all changes',
+  restoreEntry: 'Restore entry',
+  deleteEntry: 'Delete entry',
 } as const
 
 /**
@@ -43,6 +49,10 @@ export const rewrittenSubmitReason = (isAdmin: boolean): string =>
  */
 export const UNFINISHED_SUBMIT_APPROVE_REASON =
   'The last submit didn\'t finish, so this branch can\'t be approved yet. Use "Request changes" to send it back to its editor.'
+
+/** Why an entry's form, and every control that would change the entry, can't act for this user. */
+export const NO_EDIT_ACCESS_REASON =
+  "You don't have edit access to this entry. Ask a CanopyCMS admin to grant it."
 
 /** Why only an admin may delete a branch that may hold commits nothing else has. */
 export const DELETE_NEEDS_ADMIN_REASON =

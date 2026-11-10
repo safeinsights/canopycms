@@ -1,0 +1,281 @@
+import React, { useState } from 'react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import type { BranchEntryChangeData } from '../../api/branch-entry-changes'
+import type { FieldConfig } from '../../config'
+import { CanopyCMSProvider } from '../theme'
+import {
+  EntryChangesDrawer,
+  type EntryChangesDrawerProps,
+  type EntryChangesSubject,
+} from './EntryChangesDrawer'
+
+afterEach(() => cleanup())
+
+const fields: FieldConfig[] = [
+  { name: 'title', type: 'string', label: 'Title' },
+  { name: 'summary', type: 'string', label: 'Summary' },
+  {
+    name: 'links',
+    type: 'object',
+    list: true,
+    label: 'Links',
+    fields: [{ name: 'label', type: 'string', label: 'Label' }],
+  },
+] as FieldConfig[]
+const subject: EntryChangesSubject = {
+  logicalPath: 'content/blog/hello',
+  status: 'modified',
+  title: 'Hello',
+  fields,
+}
+const side = (data: Record<string, unknown>) => ({
+  format: 'json' as const,
+  entryType: 'post',
+  data,
+})
+const before = {
+  title: 'Hello',
+  summary: 'Short',
+  links: [{ _key: 'a', label: 'One' }],
+}
+const after = {
+  title: 'Hello there',
+  summary: 'Longer',
+  links: [
+    { _key: 'a', label: 'One' },
+    { _key: 'b', label: 'Two' },
+  ],
+}
+const data = (b: Record<string, unknown> | null, a: Record<string, unknown> | null) =>
+  ({
+    before: b && side(b),
+    after: a && side(a),
+    mergeBaseSha: 'a'.repeat(40),
+  }) satisfies BranchEntryChangeData
+
+/** The drawer over a form value it changes, as the editor's draft would be changed. */
+const Harness: React.FC<
+  Partial<EntryChangesDrawerProps> & {
+    initial?: Record<string, unknown>
+    onValue?: (value: Record<string, unknown>) => void
+    threads?: number
+  }
+> = ({ initial = after, onValue, threads, ...props }) => {
+  const [value, setValue] = useState(initial)
+  return (
+    <CanopyCMSProvider>
+      <EntryChangesDrawer
+        opened
+        onClose={() => {}}
+        base="main"
+        subject={subject}
+        state={{
+          data: data(before, after),
+          error: undefined,
+          isValidating: false,
+          reload: vi.fn(),
+        }}
+        undo={{
+          value,
+          update: (update) =>
+            setValue((current) => {
+              const next = update(current)
+              onValue?.(next)
+              return next
+            }),
+          ...(threads !== undefined && { threadsWithin: () => threads }),
+        }}
+        {...props}
+      />
+    </CanopyCMSProvider>
+  )
+}
+
+const dialog = () => waitFor(() => screen.getByRole('dialog', { name: 'Changes to Hello' }))
+const card = async (heading: string) => {
+  const cards = within(await dialog()).getAllByTestId('entry-change-card')
+  const found = cards.find(
+    (c) => within(c).getByRole('heading', { level: 3 }).textContent === heading,
+  )
+  if (!found) throw new Error(`no card ${heading}`)
+  return found
+}
+
+describe('EntryChangesDrawer undo', () => {
+  it('undoes one field in the form, says so, and redoes it', async () => {
+    const values: Array<Record<string, unknown>> = []
+    render(<Harness onValue={(v) => values.push(v)} />)
+    const title = await card('Title')
+    const button = within(title).getByRole('button', { name: 'Undo change to Title' })
+    await userEvent.click(button)
+    expect(values.at(-1)).toMatchObject({ title: 'Hello', summary: 'Longer' })
+    expect(within(title).getByTestId('entry-change-undone').textContent).toBe(
+      'Undone in the form. Save to keep it.',
+    )
+    // The same button, so focus stays on it.
+    expect(button.textContent).toBe('Redo change')
+    expect(document.activeElement).toBe(button)
+    await userEvent.click(button)
+    expect(values.at(-1)).toMatchObject({ title: 'Hello there' })
+    expect(within(title).getByTestId('entry-change-undone').textContent).toBe('')
+  })
+
+  it('takes out an added item and says where its threads went', async () => {
+    const values: Array<Record<string, unknown>> = []
+    render(<Harness onValue={(v) => values.push(v)} threads={2} />)
+    const item = await card('Links › Two')
+    await userEvent.click(within(item).getByRole('button', { name: /^Undo change/ }))
+    expect(values.at(-1)?.links).toEqual(before.links)
+    expect(within(item).getByTestId('entry-change-undone').textContent).toBe(
+      'Undone in the form. Save to keep it. Its 2 comment threads moved to "Comment on this entry".',
+    )
+  })
+
+  it('undoes and redoes every change at once', async () => {
+    const values: Array<Record<string, unknown>> = []
+    render(<Harness onValue={(v) => values.push(v)} />)
+    const all = within(await dialog()).getByTestId('entry-changes-undo-all')
+    expect(all.textContent).toBe('Undo all changes')
+    await userEvent.click(all)
+    expect(values.at(-1)).toEqual(before)
+    expect(all.textContent).toBe('Redo all changes')
+    expect(within(await dialog()).getByTestId('entry-changes-all-undone').textContent).toBe(
+      'All changes undone in the form. Save to keep them.',
+    )
+    await userEvent.click(all)
+    expect(values.at(-1)).toEqual(after)
+  })
+
+  it('shows a change the form already undid as undone', async () => {
+    render(<Harness initial={{ ...after, summary: 'Short' }} />)
+    const summary = await card('Summary')
+    expect(within(summary).getByRole('button', { name: 'Redo change to Summary' })).toBeTruthy()
+  })
+
+  it('keeps the controls on a locked branch, disabled, with the reason', async () => {
+    const onValue = vi.fn()
+    const reason = 'This branch is in review. Withdraw it to make changes.'
+    render(<Harness onValue={onValue} lockedReason={reason} />)
+    const button = within(await card('Title')).getByRole('button', { name: 'Undo change to Title' })
+    expect(button.getAttribute('aria-disabled')).toBe('true')
+    await userEvent.hover(button)
+    expect((await screen.findByRole('tooltip')).textContent).toBe(reason)
+    await userEvent.click(button)
+    await userEvent.click(within(await dialog()).getByTestId('entry-changes-undo-all'))
+    expect(onValue).not.toHaveBeenCalled()
+  })
+
+  it('hides every control without edit access, saying why once', async () => {
+    render(<Harness noEditReason="You don't have edit access to this entry." />)
+    const view = await dialog()
+    expect(within(view).queryByTestId('entry-change-undo')).toBeNull()
+    expect(within(view).queryByTestId('entry-changes-undo-all')).toBeNull()
+    expect(within(view).getByTestId('entry-changes-no-edit').textContent).toBe(
+      "You don't have edit access to this entry.",
+    )
+  })
+
+  it('refuses a change inside an item the form no longer has, saying why', async () => {
+    const changedItem = { ...after, links: [{ _key: 'a', label: 'First' }, after.links[1]] }
+    const onValue = vi.fn()
+    render(
+      <Harness
+        initial={{ ...changedItem, links: [after.links[1]] }}
+        onValue={onValue}
+        state={{
+          data: data(before, changedItem),
+          error: undefined,
+          isValidating: false,
+          reload: vi.fn(),
+        }}
+      />,
+    )
+    const button = within(await card('Links › One › Label')).getByTestId('entry-change-undo')
+    expect(button.getAttribute('aria-disabled')).toBe('true')
+    await userEvent.click(button)
+    expect(onValue).not.toHaveBeenCalled()
+  })
+
+  it('offers no undo for an entry type change', async () => {
+    render(
+      <Harness
+        state={{
+          data: { ...data(before, after), after: { ...side(after), entryType: 'page' } },
+          error: undefined,
+          isValidating: false,
+          reload: vi.fn(),
+        }}
+      />,
+    )
+    const view = await dialog()
+    expect(within(view).queryByTestId('entry-change-undo')).toBeNull()
+    expect(within(view).getByTestId('entry-changes-type-changed')).toBeTruthy()
+  })
+
+  it('says undo leaves a moved entry where it is, and how to move it back', async () => {
+    const { unmount } = render(
+      <Harness subject={{ ...subject, from: 'content/blog/hi', movedFromLabel: 'Blog › hi' }} />,
+    )
+    expect(within(await dialog()).getByTestId('entry-changes-move-hint').textContent).toBe(
+      'Undoing changes doesn’t move the entry back. To move it back, use "Change URL…".',
+    )
+    unmount()
+    render(
+      <Harness subject={{ ...subject, from: 'content/news/hi', movedFromLabel: 'News › hi' }} />,
+    )
+    expect(within(await dialog()).getByTestId('entry-changes-move-hint').textContent).toBe(
+      'Undoing changes doesn’t move the entry back.',
+    )
+  })
+
+  it('offers "Delete entry" for an entry added on the branch', async () => {
+    const onDeleteEntry = vi.fn()
+    render(
+      <Harness
+        subject={{ ...subject, status: 'added' }}
+        onDeleteEntry={onDeleteEntry}
+        state={{ data: data(null, after), error: undefined, isValidating: false, reload: vi.fn() }}
+      />,
+    )
+    const view = await dialog()
+    expect(within(view).queryByTestId('entry-change-undo')).toBeNull()
+    await userEvent.click(within(view).getByRole('button', { name: 'Delete entry' }))
+    expect(onDeleteEntry).toHaveBeenCalledOnce()
+  })
+
+  it('hides "Delete entry" without edit access', async () => {
+    render(
+      <Harness
+        subject={{ ...subject, status: 'added' }}
+        onDeleteEntry={vi.fn()}
+        noEditReason="No access."
+        state={{ data: data(null, after), error: undefined, isValidating: false, reload: vi.fn() }}
+      />,
+    )
+    expect(within(await dialog()).queryByRole('button', { name: 'Delete entry' })).toBeNull()
+  })
+
+  it('offers no controls without an open entry to undo in', async () => {
+    render(
+      <CanopyCMSProvider>
+        <EntryChangesDrawer
+          opened
+          onClose={() => {}}
+          base="main"
+          subject={subject}
+          state={{
+            data: data(before, after),
+            error: undefined,
+            isValidating: false,
+            reload: vi.fn(),
+          }}
+        />
+      </CanopyCMSProvider>,
+    )
+    const view = await dialog()
+    expect(within(view).queryByRole('button', { name: /Undo/ })).toBeNull()
+  })
+})

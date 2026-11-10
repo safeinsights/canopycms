@@ -1,9 +1,11 @@
 import type { Meta, StoryObj } from '@storybook/react'
+import React, { useState } from 'react'
 
 import type { BranchEntryChangeData, EntryChangeSide } from '../../api/branch-entry-changes'
 import type { FieldConfig } from '../../config'
 import { withItemKeys } from '../../item-keys'
 import { EntryChangesDrawer, type EntryChangesDrawerProps } from './EntryChangesDrawer'
+import { formValueOfSide } from '../undo-change'
 
 const noop = () => {}
 
@@ -277,5 +279,45 @@ export const Narrow: Story = {
       viewports: { phone: { name: 'Phone', styles: { width: '390px', height: '844px' } } },
       defaultViewport: 'phone',
     },
+  },
+}
+
+/** The drawer over a form value its undo changes, as the editor's draft. */
+const UndoDrawer: React.FC<EntryChangesDrawerProps> = (props) => {
+  const [value, setValue] = useState(() => formValueOfSide(after))
+  return (
+    <EntryChangesDrawer
+      {...props}
+      undo={{ value, update: (update) => setValue(update), threadsWithin: () => 1 }}
+    />
+  )
+}
+
+/** "Undo change" on each card and "Undo all changes" for the open entry. */
+export const Undo: Story = { render: (args) => <UndoDrawer {...args} /> }
+
+export const UndoDark: Story = { ...Undo, globals: { colorScheme: 'dark' } }
+
+/** A locked branch: the controls stay, disabled, with the lock's reason. */
+export const UndoLocked: Story = {
+  ...Undo,
+  args: { lockedReason: 'This branch is in review. Withdraw it to make changes.' },
+}
+
+/** No edit access: no controls, one line saying why. */
+export const UndoNoAccess: Story = {
+  ...Undo,
+  args: {
+    noEditReason: "You don't have edit access to this entry. Ask a CanopyCMS admin to grant it.",
+  },
+}
+
+/** An entry added on the branch offers the delete confirm. */
+export const NewEntryDelete: Story = {
+  ...Undo,
+  args: {
+    subject: { ...meta.args!.subject!, status: 'added' },
+    state: answer({ before: null }),
+    onDeleteEntry: noop,
   },
 }

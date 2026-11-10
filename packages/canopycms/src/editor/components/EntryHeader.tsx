@@ -18,7 +18,7 @@ import type { EditorEntry } from '../Editor'
 import type { BreadcrumbSegment } from '../editor-utils'
 import { SHELL_HEADER_HEIGHT, SHELL_REGION_BORDER } from '../shell/EditorShell'
 import { describeBranchLock } from '../branch-lock'
-import { EDITOR_ACTIONS } from '../copy'
+import { EDITOR_ACTIONS, NO_EDIT_ACCESS_REASON } from '../copy'
 import { EntryBreadcrumb } from './EntryBreadcrumb'
 import { EntrySaveButton } from './EntrySaveButton'
 
@@ -193,9 +193,7 @@ export function EntryHeader({
     pullRequestClosed: branchPullRequestClosed,
     approveBlocked: branchApproveBlocked,
   })
-  const entryLockReason = entryReadOnly
-    ? "You don't have edit access to this entry. Ask a CanopyCMS admin to grant it."
-    : undefined
+  const entryLockReason = entryReadOnly ? NO_EDIT_ACCESS_REASON : undefined
   // The Tooltip hides it while the editor is busy.
   const saveBlockedReason =
     branchLockReason ??

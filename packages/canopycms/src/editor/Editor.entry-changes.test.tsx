@@ -23,7 +23,10 @@ afterEach(() => {
   window.history.replaceState({}, '', '/')
 })
 
-const schema: EntrySchema = [{ name: 'title', type: 'string', label: 'Title' }]
+const schema: EntrySchema = [
+  { name: 'title', type: 'string', label: 'Title' },
+  { name: 'author', type: 'reference', label: 'Author', collections: ['posts'] },
+]
 const hello: EditorEntry = {
   path: unsafeAsLogicalPath('content/posts/hello'),
   contentId: unsafeAsContentId('def456ABC123'),
@@ -44,7 +47,11 @@ const okJson = (data: unknown) =>
   })
 
 /** The API for a branch `main` (not protected) whose changes list `changed`. */
-const stubApi = (changed: string[], entryChange?: { status: number; error: string }) => {
+const stubApi = (
+  changed: string[],
+  entryChange?: { status: number; error: string },
+  options: { branch?: Record<string, unknown>; added?: boolean } = {},
+) => {
   const threads: unknown[] = []
   const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url =
@@ -57,7 +64,7 @@ const stubApi = (changed: string[], entryChange?: { status: number; error: strin
         okJson({
           base: 'main',
           entries: changed.map((logicalPath) => ({
-            status: 'modified',
+            status: options.added ? 'added' : 'modified',
             logicalPath,
             contentId: hello.contentId,
             collectionPath: 'content/posts',
@@ -79,8 +86,18 @@ const stubApi = (changed: string[], entryChange?: { status: number; error: strin
     if (path.includes('/main/changes/')) {
       return Promise.resolve(
         okJson({
-          before: { format: 'json', entryType: 'post', data: { title: 'Old title' } },
-          after: { format: 'json', entryType: 'post', data: { title: 'Loaded title' } },
+          before: options.added
+            ? null
+            : {
+                format: 'json',
+                entryType: 'post',
+                data: { title: 'Old title', author: 'aaaaaaaaaaaa' },
+              },
+          after: {
+            format: 'json',
+            entryType: 'post',
+            data: { title: 'Loaded title', author: 'bbbbbbbbbbbb' },
+          },
           mergeBaseSha: 'a'.repeat(40),
         }),
       )
@@ -100,6 +117,7 @@ const stubApi = (changed: string[], entryChange?: { status: number; error: strin
               readOnly: false,
               writeBlocked: false,
               submitBlocked: false,
+              ...options.branch,
             },
           ],
           defaultBranch: 'main',
@@ -155,7 +173,14 @@ const stubApi = (changed: string[], entryChange?: { status: number; error: strin
       )
     }
     if (path.includes('/content/content/posts/') && (!init?.method || init.method === 'GET')) {
-      return Promise.resolve(okJson({ title: 'Loaded title', version: 100 }))
+      // The form's read resolves references; the comparison's sides hold their ids.
+      return Promise.resolve(
+        okJson({
+          title: 'Loaded title',
+          author: { id: 'bbbbbbbbbbbb', title: 'Grace' },
+          version: 100,
+        }),
+      )
     }
     if (path.includes('/content/content/posts/') && init?.method === 'PUT') {
       return Promise.resolve(okJson({ format: 'json', data: { title: 'Saved' }, version: 101 }))
@@ -202,7 +227,7 @@ describe('Show changes', () => {
     await userEvent.click(button)
     // The drawer replaces the skeleton drawer shown while its chunk loads.
     const summary = await screen.findByTestId('entry-changes-summary')
-    await waitFor(() => expect(summary.textContent).toBe('1 field changed since main'))
+    await waitFor(() => expect(summary.textContent).toBe('2 fields changed since main'))
     const dialog = screen.getByRole('dialog', { name: 'Changes to Hello' })
     expect(requested(fetch, `/~main/changes/content/posts/hello?id=${hello.contentId}`)).toBe(true)
     expect(within(dialog).queryByTestId('entry-changes-unsaved')).toBeNull()
@@ -304,6 +329,65 @@ describe('Show changes', () => {
     await waitFor(() =>
       expect(document.activeElement).toBe(screen.getByTestId('content-panel-toggle')),
     )
+  })
+
+  it('undoes a change into the form, as an unsaved edit', async () => {
+    stubApi(['content/posts/hello'])
+    renderEditor()
+    await waitFor(() => expect(titleInput().value).toBe('Loaded title'))
+    await userEvent.click(await screen.findByTestId('entry-show-changes'))
+    const undo = await screen.findByRole('button', { name: 'Undo change to Title' })
+    await userEvent.click(undo)
+    await waitFor(() => expect(undo.textContent).toBe('Redo change'))
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(titleInput().value).toBe('Old title')
+    expect(screen.getByTestId('save-button').getAttribute('aria-disabled')).toBeNull()
+  })
+
+  it('leaves nothing unsaved after a redo, its references as the form read them', async () => {
+    stubApi(['content/posts/hello'])
+    renderEditor()
+    await waitFor(() => expect(titleInput().value).toBe('Loaded title'))
+    await userEvent.click(await screen.findByTestId('entry-show-changes'))
+    const undo = await screen.findByTestId('entry-changes-undo-all')
+    await userEvent.click(undo)
+    await waitFor(() => expect(undo.textContent).toBe('Redo all changes'))
+    await userEvent.click(undo)
+    await waitFor(() => expect(undo.textContent).toBe('Undo all changes'))
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(titleInput().value).toBe('Loaded title')
+    expect(screen.getByTestId('save-button').getAttribute('aria-disabled')).toBe('true')
+  })
+
+  it('keeps undo disabled on a locked branch, giving the lock’s reason', async () => {
+    stubApi(['content/posts/hello'], undefined, {
+      branch: { status: 'submitted', writeBlocked: true },
+    })
+    renderEditor()
+    await waitFor(() => expect(titleInput().value).toBe('Loaded title'))
+    await userEvent.click(await screen.findByTestId('entry-show-changes'))
+    const undo = await screen.findByRole('button', { name: 'Undo change to Title' })
+    expect(undo.getAttribute('aria-disabled')).toBe('true')
+    await userEvent.hover(undo)
+    expect((await screen.findByRole('tooltip')).textContent).toBe(
+      'This branch is in review. Withdraw it to make changes.',
+    )
+    await userEvent.click(undo)
+    expect(undo.textContent).toBe('Undo change')
+  })
+
+  it('closes the drawer before the delete confirm for an entry added on the branch', async () => {
+    stubApi(['content/posts/hello'], undefined, { added: true })
+    renderEditor()
+    await waitFor(() => expect(titleInput().value).toBe('Loaded title'))
+    await userEvent.click(await screen.findByTestId('entry-show-changes'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete entry' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Changes to Hello' })).toBeNull(),
+    )
+    expect(await screen.findByRole('dialog', { name: 'Delete entry' })).toBeTruthy()
   })
 
   it('isn’t offered on an entry the branch hasn’t changed', async () => {
