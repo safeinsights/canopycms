@@ -850,20 +850,20 @@ describe('CommentsPanel', () => {
       )
     })
 
-    it('shows Resolve to a reviewer on any thread, and to others on their own threads only', () => {
+    it('enables Resolve for a reviewer on any thread, and for others on their own threads only', () => {
       const comments = [
         fieldThread('mine', { authorId: 'alice' }),
         fieldThread('theirs', { authorId: 'bob' }),
       ]
+      const resolveDisabled = (id: string) =>
+        within(card(id)).getByTestId('resolve-thread-button').getAttribute('aria-disabled')
       const { unmount } = renderPanel({ comments, canResolve: false })
-      expect(within(card('mine')).getByTestId('resolve-thread-button')).toBeTruthy()
-      expect(within(card('theirs')).queryByTestId('resolve-thread-button')).toBeNull()
-      // A card with a Reply button is present, so the missing Resolve is not a missing card.
-      expect(within(card('theirs')).getByTestId('reply-thread-button')).toBeTruthy()
+      expect(resolveDisabled('mine')).toBeNull()
+      expect(resolveDisabled('theirs')).toBe('true')
       unmount()
 
       renderPanel({ comments, canResolve: true })
-      expect(within(card('theirs')).getByTestId('resolve-thread-button')).toBeTruthy()
+      expect(resolveDisabled('theirs')).toBeNull()
     })
   })
 

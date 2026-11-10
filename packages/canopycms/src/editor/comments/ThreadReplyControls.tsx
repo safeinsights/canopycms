@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useEffect, useRef, useState } from 'react'
-import { Button, Group, Stack, Textarea } from '@mantine/core'
+import { Button, Group, Stack, Textarea, Tooltip } from '@mantine/core'
 import type { CommentThread } from '../../comment-store'
 import { moveFocusIfUnmoved } from './move-focus-if-unmoved'
 import {
@@ -28,6 +28,9 @@ export interface ThreadReplyControlsProps {
   replyText?: string
   onReplyTextChange?: (text: string) => void
 }
+
+const RESOLVE_BLOCKED_REASON =
+  "Only the person who started this thread or a reviewer can resolve it. Reply to let them know it's done."
 
 /** Refocuses `box` when a submit settles: the busy button disabled itself and dropped focus. */
 export const useRefocusAfterSubmit = (
@@ -130,7 +133,9 @@ export const ThreadReplyControls: React.FC<ThreadReplyControlsProps> = ({
   }
 
   const mayResolve = canResolve || thread.authorId === currentUserId
-  const resolveButton = mayResolve && (
+  // Shown disabled with its reason rather than hidden: the same user may resolve threads they start.
+  // `aria-disabled` keeps it focusable so the Tooltip opens on focus and touch.
+  const resolveButton = mayResolve ? (
     <Button
       variant="light"
       color="green"
@@ -141,6 +146,24 @@ export const ThreadReplyControls: React.FC<ThreadReplyControlsProps> = ({
     >
       {hasDraft ? 'Reply and resolve' : 'Resolve'}
     </Button>
+  ) : (
+    <Tooltip
+      label={RESOLVE_BLOCKED_REASON}
+      multiline
+      maw={280}
+      events={{ hover: true, focus: true, touch: true }}
+    >
+      <Button
+        variant="light"
+        color="green"
+        data-disabled
+        aria-disabled
+        onClick={(e) => e.preventDefault()}
+        data-testid="resolve-thread-button"
+      >
+        Resolve
+      </Button>
+    </Tooltip>
   )
 
   return (
