@@ -10,6 +10,7 @@ import {
   CANOPY_PREVIEW_MESSAGE,
   CANOPY_PREVIEW_NAVIGATE,
   CANOPY_PREVIEW_READY,
+  CANOPY_PREVIEW_REVEAL,
   type DraftUpdateMessage,
   type HighlightMessage,
   isOpaqueOrigin,
@@ -18,6 +19,7 @@ import {
   type PreviewMarksMessage,
   type PreviewNavigateMessage,
   type PreviewReadyMessage,
+  type PreviewRevealMessage,
   resolveMessageOrigin,
 } from './preview-bridge'
 
@@ -25,6 +27,12 @@ import {
 export interface PreviewMarks {
   count: number
   paths?: string[]
+}
+
+/** A field to bring into view in the preview; a new `id` asks again for the same field. */
+export interface PreviewReveal {
+  path: string
+  id: number
 }
 
 /**
@@ -113,6 +121,7 @@ export const PreviewFrame = ({
   onReload,
   onSiteChrome,
   onNavigate,
+  reveal,
   busy = false,
 }: {
   src: string
@@ -144,6 +153,8 @@ export const PreviewFrame = ({
   onNavigate?: (href: string) => void
   /** The editor is loading the next page's data: this page stays in view, dimmed and inert. */
   busy?: boolean
+  /** Sent once the page connects, and each time its `id` changes. */
+  reveal?: PreviewReveal
 }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   // Pin the preview origin from the src prop: outbound messages target it (never '*'),
@@ -272,6 +283,18 @@ export const PreviewFrame = ({
     postHighlight()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- postHighlight is tracked via ref
   }, [highlightEnabled])
+
+  // Each frame, a retry's or a new page's, gets the latest reveal once it connects.
+  const revealSent = useRef<{ frame: string; id: number } | undefined>(undefined)
+  useEffect(() => {
+    const contentWindow = iframeRef.current?.contentWindow
+    if (!reveal || handshake !== 'ready' || !contentWindow || isOpaqueOrigin(previewOrigin)) return
+    const frame = `${retries}:${src}`
+    if (revealSent.current?.frame === frame && revealSent.current.id === reveal.id) return
+    revealSent.current = { frame, id: reveal.id }
+    const msg: PreviewRevealMessage = { type: CANOPY_PREVIEW_REVEAL, path: reveal.path }
+    contentWindow.postMessage(msg, previewOrigin)
+  }, [reveal, handshake, previewOrigin, retries, src])
 
   // When the preview page's React effects have run and its message listener is ready,
   // it sends CANOPY_PREVIEW_READY. We respond with the current data so the preview

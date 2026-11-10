@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import type { ResolvedReferenceMeta } from '../entry-schema'
+import { formatCanopyPath, normalizeCanopyPath, parseCanopyPath } from './canopy-path'
 import { createFieldProps } from './field-props'
 import { setPreviewAssetBase } from './preview-asset-base'
 import { isSamePreviewPath } from './preview-path'
@@ -21,6 +22,7 @@ export const CANOPY_PREVIEW_READY = 'canopycms:preview:ready'
 export const CANOPY_PREVIEW_ERROR = 'canopycms:preview:error'
 export const CANOPY_PREVIEW_MARKS = 'canopycms:preview:marks'
 export const CANOPY_PREVIEW_NAVIGATE = 'canopycms:preview:navigate'
+export const CANOPY_PREVIEW_REVEAL = 'canopycms:preview:reveal'
 
 /**
  * The shape of the preview's `isLoading` for data of type `T`: a `boolean` at each reference
@@ -123,6 +125,16 @@ export interface PreviewMarksMessage {
   paths?: string[]
 }
 
+/**
+ * Editor → preview: bring the element marked for this field into view, else the marks inside it,
+ * else its nearest marked ancestor's (`findRevealTargets`). A bridge older than the message
+ * ignores it.
+ */
+export interface PreviewRevealMessage {
+  type: typeof CANOPY_PREVIEW_REVEAL
+  path: string
+}
+
 /** Preview → editor: a plain click on a link to another page of this origin, left unfollowed. */
 export interface PreviewNavigateMessage {
   type: typeof CANOPY_PREVIEW_NAVIGATE
@@ -170,6 +182,7 @@ export const useCanopyPreview = <T,>(opts: {
   })
   const highlightEnabled = usePreviewHighlight(bridgeOpts)
   usePreviewFocusEmitter(resolvedPath, bridgeOpts)
+  usePreviewReveal(bridgeOpts)
   usePreviewLinkNavigation({ editorOrigin, highlighting: highlightEnabled })
 
   const fieldProps = createFieldProps<T>()
@@ -365,6 +378,173 @@ export const usePreviewHighlight = (opts?: { editorOrigin?: string }) => {
   }, [enabled, editorOrigin])
 
   return enabled
+}
+
+const REVEALED_ATTR = 'data-canopy-revealed'
+/** How long a revealed element stays marked. */
+const REVEAL_MARK_MS = 1500
+/** A field just opened may render after its reveal arrives, so a miss is tried once more. */
+const REVEAL_RETRY_MS = 300
+/** How long the page's scrolling must pause before a smooth scroll counts as arrived. */
+const REVEAL_SCROLL_SETTLE_MS = 150
+/** The longest a smooth scroll is waited for before the mark's time starts anyway. */
+const REVEAL_SCROLL_WAIT_MS = 3000
+
+/**
+ * The rendered elements marked for `path`, else those inside it in page order, such as a list
+ * marked item by item, else those for its nearest marked ancestor: a list item, then its list or
+ * block. Compares values, never builds a selector: the path is untrusted.
+ * @internal Exported for tests.
+ */
+export const findRevealTargets = (path: string, root: ParentNode = document): HTMLElement[] => {
+  const byPath = new Map<string, HTMLElement[]>()
+  for (const element of root.querySelectorAll<HTMLElement>('[data-canopy-path]')) {
+    if (element.getClientRects().length === 0) continue
+    const key = normalizeCanopyPath(element.getAttribute('data-canopy-path') ?? '')
+    byPath.set(key, [...(byPath.get(key) ?? []), element])
+  }
+  const segments = parseCanopyPath(path)
+  const field = formatCanopyPath(segments)
+  if (!field) return []
+  const exact = byPath.get(field)
+  if (exact) return exact
+  const inside = [...byPath]
+    .filter(([key]) => key.startsWith(`${field}.`) || key.startsWith(`${field}[`))
+    .flatMap(([, elements]) => elements)
+    .sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1))
+  if (inside.length > 0) return inside
+  for (let length = segments.length - 1; length > 0; length--) {
+    const found = byPath.get(formatCanopyPath(segments.slice(0, length)))
+    if (found) return found
+  }
+  return []
+}
+
+const CLIPPING = new Set(['hidden', 'clip', 'auto', 'scroll'])
+
+/** Where `element` can show: the window, clipped by each ancestor whose overflow clips. */
+const shownRect = (
+  element: HTMLElement,
+): { top: number; bottom: number; left: number; right: number } => {
+  const shown = { top: 0, bottom: window.innerHeight, left: 0, right: window.innerWidth }
+  for (let at = element.parentElement; at && at !== document.body; at = at.parentElement) {
+    const style = getComputedStyle(at)
+    const overflow = [style.overflowX, style.overflowY, ...style.overflow.split(' ')]
+    if (!overflow.some((value) => CLIPPING.has(value))) continue
+    const clip = at.getBoundingClientRect()
+    shown.top = Math.max(shown.top, clip.top)
+    shown.bottom = Math.min(shown.bottom, clip.bottom)
+    shown.left = Math.max(shown.left, clip.left)
+    shown.right = Math.min(shown.right, clip.right)
+  }
+  return shown
+}
+
+/** As much of `element` shows as can: all of it, or all the room there is for a larger one. */
+const isInView = (element: HTMLElement): boolean => {
+  const rect = element.getBoundingClientRect()
+  const room = shownRect(element)
+  // A clipping box off the page has no room at all, so nothing in it shows.
+  if (room.bottom <= room.top || room.right <= room.left) return false
+  const tall = Math.min(rect.bottom, room.bottom) - Math.max(rect.top, room.top)
+  const wide = Math.min(rect.right, room.right) - Math.max(rect.left, room.left)
+  return (
+    tall >= Math.min(rect.height, room.bottom - room.top) - 1 &&
+    wide >= Math.min(rect.width, room.right - room.left) - 1
+  )
+}
+
+/**
+ * Hook for preview pages to bring the element the editor's form is on into view and mark it
+ * briefly, whether or not highlighting is on. It leaves focus where it is, and an element already
+ * as much in view as it can be where it is.
+ */
+export const usePreviewReveal = (opts?: { editorOrigin?: string }) => {
+  const editorOrigin = opts?.editorOrigin
+  useEffect(() => {
+    if (window.parent === window) return
+    const styleId = 'canopycms-preview-reveal-style'
+    if (!document.getElementById(styleId)) {
+      const styleEl = document.createElement('style')
+      styleEl.id = styleId
+      // Two attributes, so it outranks the highlight outline.
+      styleEl.textContent = `[data-canopy-path][${REVEALED_ATTR}] { outline: 3px solid #4338ca; outline-offset: 3px; }`
+      document.head.appendChild(styleEl)
+    }
+    let marked: HTMLElement | undefined
+    let unmarkTimer: ReturnType<typeof setTimeout> | undefined
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
+    let stopWaiting: (() => void) | undefined
+    const unmark = () => {
+      stopWaiting?.()
+      clearTimeout(unmarkTimer)
+      marked?.removeAttribute(REVEALED_ATTR)
+      marked = undefined
+    }
+    // The mark's time starts once the scrolling that holds `target` pauses, so a slow smooth
+    // scroll can't use it up; another scroller on the page, such as a carousel, doesn't count.
+    const unmarkAfterScroll = (target: HTMLElement, smooth: boolean) => {
+      if (!smooth) {
+        unmarkTimer = setTimeout(unmark, REVEAL_MARK_MS)
+        return
+      }
+      const arrived = () => {
+        stopWaiting?.()
+        unmarkTimer = setTimeout(unmark, REVEAL_MARK_MS)
+      }
+      let settle = setTimeout(arrived, REVEAL_SCROLL_SETTLE_MS)
+      const cap = setTimeout(arrived, REVEAL_SCROLL_WAIT_MS)
+      const onScroll = (event: Event) => {
+        const from = event.target
+        if (from !== document && !(from instanceof Node && from.contains(target))) return
+        clearTimeout(settle)
+        settle = setTimeout(arrived, REVEAL_SCROLL_SETTLE_MS)
+      }
+      document.addEventListener('scroll', onScroll, true)
+      stopWaiting = () => {
+        clearTimeout(settle)
+        clearTimeout(cap)
+        document.removeEventListener('scroll', onScroll, true)
+        stopWaiting = undefined
+      }
+    }
+    const reveal = (path: string): boolean => {
+      const targets = findRevealTargets(path)
+      if (targets.length === 0) return false
+      // Mid-scroll, a mark passed on the way only looks in view.
+      if (!stopWaiting && targets.some(isInView)) return true
+      const target = targets[0]
+      const smooth = !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+      target.scrollIntoView({
+        // One taller than the page shows its top.
+        block: target.getBoundingClientRect().height > window.innerHeight ? 'start' : 'center',
+        inline: 'nearest',
+        // `instant`, not `auto`, which a page's `scroll-behavior: smooth` animates.
+        behavior: smooth ? 'smooth' : 'instant',
+      })
+      unmark()
+      // An attribute and a stylesheet only: the page's own styles are never written to.
+      marked = target
+      target.setAttribute(REVEALED_ATTR, '')
+      unmarkAfterScroll(target, smooth)
+      return true
+    }
+    const handler = (event: MessageEvent) => {
+      if (!isTrustedEditorMessage(event, editorOrigin)) return
+      const msg = event.data as Partial<PreviewRevealMessage> | null
+      if (msg?.type !== CANOPY_PREVIEW_REVEAL) return
+      const path = msg.path
+      if (typeof path !== 'string' || path.length > MARK_REPORT_LIMITS.pathLength) return
+      clearTimeout(retryTimer)
+      if (!reveal(path)) retryTimer = setTimeout(() => reveal(path), REVEAL_RETRY_MS)
+    }
+    window.addEventListener('message', handler)
+    return () => {
+      window.removeEventListener('message', handler)
+      clearTimeout(retryTimer)
+      unmark()
+    }
+  }, [editorOrigin])
 }
 
 /**

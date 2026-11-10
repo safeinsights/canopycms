@@ -23,6 +23,8 @@ interface EditorLayoutPrefs {
   /** Unset until the user picks one, so it follows `defaultLayout`; JSON drops it while unset. */
   layout?: PaneArrangement
   highlightEnabled: boolean
+  /** The preview scrolls to the field the form is on; see `usePreviewFollow`. */
+  previewFollowsForm: boolean
   sideSplitPercent: number
   stackedSplitPercent: number
   previewWidth: PreviewWidth
@@ -38,6 +40,7 @@ interface EditorLayoutPrefs {
  */
 export const DEFAULT_EDITOR_LAYOUT_PREFS: EditorLayoutPrefs = {
   highlightEnabled: false,
+  previewFollowsForm: true,
   sideSplitPercent: DEFAULT_SIDE_SPLIT_PERCENT,
   stackedSplitPercent: DEFAULT_STACKED_SPLIT_PERCENT,
   previewWidth: 'fit',
@@ -88,6 +91,7 @@ export function parseEditorLayoutPrefs(raw: string | undefined): EditorLayoutPre
   return {
     layout: PANE_LAYOUTS.find((layout) => layout === parsed.layout),
     highlightEnabled: boolOr(parsed.highlightEnabled, defaults.highlightEnabled),
+    previewFollowsForm: boolOr(parsed.previewFollowsForm, defaults.previewFollowsForm),
     sideSplitPercent: numberOr(
       parsed.sideSplitPercent,
       defaults.sideSplitPercent,
@@ -123,6 +127,8 @@ export interface UseEditorLayoutReturn {
   setLayout: (layout: PaneArrangement) => void
   highlightEnabled: boolean
   setHighlightEnabled: (enabled: boolean) => void
+  previewFollowsForm: boolean
+  setPreviewFollowsForm: (follows: boolean) => void
   sideSplitPercent: number
   stackedSplitPercent: number
   /** Stores the clamped primary-pane size for one layout; a non-finite percent is ignored. */
@@ -159,6 +165,10 @@ export function useEditorLayout(options?: UseEditorLayoutOptions): UseEditorLayo
   )
   const setHighlightEnabled = useCallback(
     (highlightEnabled: boolean) => setPrefs((prev) => ({ ...prev, highlightEnabled })),
+    [setPrefs],
+  )
+  const setPreviewFollowsForm = useCallback(
+    (previewFollowsForm: boolean) => setPrefs((prev) => ({ ...prev, previewFollowsForm })),
     [setPrefs],
   )
   const setSplitPercent = useCallback(
@@ -200,6 +210,8 @@ export function useEditorLayout(options?: UseEditorLayoutOptions): UseEditorLayo
     setLayout,
     highlightEnabled: prefs.highlightEnabled,
     setHighlightEnabled,
+    previewFollowsForm: prefs.previewFollowsForm,
+    setPreviewFollowsForm,
     sideSplitPercent: prefs.sideSplitPercent,
     stackedSplitPercent: prefs.stackedSplitPercent,
     setSplitPercent,

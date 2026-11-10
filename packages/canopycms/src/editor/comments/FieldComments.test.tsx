@@ -16,6 +16,7 @@ import { FieldCommentContext } from './field-comment-context'
 import { DEFAULT_THEME, defaultCssVariablesResolver } from '@mantine/core'
 import { CanopyCMSProvider } from '../theme'
 import { MayHaveLandedError } from '../unanswered'
+import { PreviewFollowContext } from '../hooks/usePreviewFollow'
 
 // ImageField and ReferenceField reach the API client through context; one mocked factory keeps
 // createApiClientWrapper's provider and the hooks' own createApiClient() on the same instance.
@@ -328,6 +329,49 @@ describe('field comment control', () => {
     renderForm({ comments: [thread('t1', 'title')], highlightThreadId: 't1' })
     const popover = await screen.findByTestId('field-comment-title-popover')
     expect(within(popover).getByText('Comment in t1')).toBeTruthy()
+  })
+})
+
+describe('a field comment opening', () => {
+  const renderFollowed = (props: Partial<FormRendererProps> = {}) => {
+    const follow = vi.fn()
+    render(
+      <CanopyCMSProvider>
+        <PreviewFollowContext.Provider value={follow}>
+          <FormRenderer
+            fields={fields}
+            value={{ title: 'Hello', meta: { summary: 'S' }, links: [{ href: '/a' }] }}
+            onChange={() => {}}
+            currentEntryPath={ENTRY}
+            currentUserId="alice"
+            canResolve
+            onAddComment={vi.fn(async () => {})}
+            onResolveThread={vi.fn(async () => {})}
+            {...props}
+          />
+        </PreviewFollowContext.Provider>
+      </CanopyCMSProvider>,
+    )
+    return follow
+  }
+
+  it('has the preview follow to its field, opened from the control', async () => {
+    const user = userEvent.setup()
+    const follow = renderFollowed()
+    await user.click(control('meta.summary'))
+    await screen.findByTestId('field-comment-meta.summary-popover')
+    expect(follow).toHaveBeenLastCalledWith('meta.summary')
+  })
+
+  it('has the preview follow to its field, opened on a highlighted thread', async () => {
+    const follow = renderFollowed({ comments: [thread('t1', 'title')], highlightThreadId: 't1' })
+    await screen.findByTestId('field-comment-title-popover')
+    expect(follow).toHaveBeenCalledWith('title')
+  })
+
+  it('asks nothing while closed', () => {
+    const follow = renderFollowed({ comments: [thread('t1', 'title')] })
+    expect(follow).not.toHaveBeenCalled()
   })
 })
 

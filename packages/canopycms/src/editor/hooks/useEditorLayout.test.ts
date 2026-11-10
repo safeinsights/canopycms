@@ -156,6 +156,7 @@ describe('useEditorLayout persistence', () => {
     expect(stored()).toEqual({
       layout: 'stacked',
       highlightEnabled: true,
+      previewFollowsForm: true,
       sideSplitPercent: 33,
       stackedSplitPercent: 66,
       previewWidth: 'mobile',
@@ -317,6 +318,7 @@ describe('parseEditorLayoutPrefs', () => {
     ).toEqual({
       layout: 'stacked',
       highlightEnabled: false,
+      previewFollowsForm: true,
       sideSplitPercent: 85,
       stackedSplitPercent: 58,
       previewWidth: 'fit',
@@ -330,5 +332,40 @@ describe('parseEditorLayoutPrefs', () => {
     expect(parseEditorLayoutPrefs('{"__proto__":{"layout":"stacked"},"extra":1}')).toEqual(
       DEFAULT_EDITOR_LAYOUT_PREFS,
     )
+  })
+})
+
+describe('previewFollowsForm', () => {
+  beforeEach(() => {
+    window.localStorage.clear()
+  })
+
+  it('is on until the user turns it off, and stays off', () => {
+    const { result } = renderHook(() => useEditorLayout())
+    expect(result.current.previewFollowsForm).toBe(true)
+    act(() => result.current.setPreviewFollowsForm(false))
+    expect(result.current.previewFollowsForm).toBe(false)
+    expect(
+      JSON.parse(window.localStorage.getItem(editorLayoutStorageKey()) ?? '{}').previewFollowsForm,
+    ).toBe(false)
+    const { result: next } = renderHook(() => useEditorLayout())
+    expect(next.current.previewFollowsForm).toBe(false)
+  })
+
+  it.each([
+    ['missing, as preferences stored before it were', {}],
+    ['not a boolean', { previewFollowsForm: 'no' }],
+  ])('is on when %s', (_, stored) => {
+    expect(parseEditorLayoutPrefs(JSON.stringify(stored)).previewFollowsForm).toBe(true)
+  })
+
+  it('keeps a stored false', () => {
+    expect(
+      parseEditorLayoutPrefs(JSON.stringify({ previewFollowsForm: false })).previewFollowsForm,
+    ).toBe(false)
+  })
+
+  it('defaults on', () => {
+    expect(DEFAULT_EDITOR_LAYOUT_PREFS.previewFollowsForm).toBe(true)
   })
 })

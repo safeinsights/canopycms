@@ -29,6 +29,28 @@ vi.mock('@mantine/notifications', async (importOriginal) => {
   return { ...actual, notifications: { show: vi.fn(), hide: vi.fn(), update: vi.fn() } }
 })
 
+// Records every field the preview is asked to follow, around the real hook.
+const followed = vi.hoisted(() => vi.fn())
+vi.mock('./hooks/usePreviewFollow', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./hooks/usePreviewFollow')>()
+  return {
+    ...actual,
+    usePreviewFollow: (options: Parameters<typeof actual.usePreviewFollow>[0]) => {
+      const result = actual.usePreviewFollow(options)
+      const follow = result.follow
+      return {
+        ...result,
+        follow: follow
+          ? (path: string) => {
+              followed(path)
+              follow(path)
+            }
+          : undefined,
+      }
+    },
+  }
+})
+
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
@@ -863,6 +885,28 @@ describe('jumping to a thread on another entry', () => {
       )
     expect(outlined('blocks[1].headline')).toBe(true)
     expect(outlined('blocks[0].headline')).toBe(false)
+  })
+
+  it('has the preview follow the field on every jump, its comments open or not', async () => {
+    const stale = fieldThread('t-two', page, 'blocks[0].headline', ['k-b2'], 'Check Two')
+    stubApi([stale], { hello: teamData, landing: pageData })
+    renderEditor(team)
+    await loaded()
+    const jump = async () => {
+      fireEvent.click(screen.getByTestId('comments-button'))
+      fireEvent.click(await screen.findByRole('button', { name: /^Jump to field/ }))
+    }
+    const followsOf = () => followed.mock.calls.filter(([path]) => path === 'blocks[1].headline')
+
+    await jump()
+    await screen.findByTestId('field-comment-blocks[1].headline-popover')
+    await waitFor(() => expect(followsOf().length).toBeGreaterThan(0))
+    const afterFirst = followsOf().length
+
+    // Its popover is still open, so only the jump itself can ask.
+    await jump()
+    await waitFor(() => expect(followsOf().length).toBe(afterFirst + 1))
+    expect(screen.getByTestId('field-comment-blocks[1].headline-popover')).toBeTruthy()
   })
 
   it('opens the entry popover, not the field at its stored index, when its item is gone', async () => {
