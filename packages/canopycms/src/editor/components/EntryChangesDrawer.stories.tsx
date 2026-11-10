@@ -312,6 +312,19 @@ export const UndoNoAccess: Story = {
   },
 }
 
+/** An entry deleted on the branch offers "Restore entry"; this one is refused. */
+export const DeletedEntryRestore: Story = {
+  args: {
+    subject: { ...meta.args!.subject!, status: 'deleted' },
+    state: answer({ after: null }),
+    onRestoreEntry: async () => ({
+      tone: 'warning',
+      message:
+        "Another entry now has this entry's URL. Change that entry's URL, then restore this one.",
+    }),
+  },
+}
+
 /** An entry added on the branch offers the delete confirm. */
 export const NewEntryDelete: Story = {
   ...Undo,

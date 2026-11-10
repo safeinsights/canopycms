@@ -145,6 +145,13 @@ export class ContentStoreError extends Error {
  * Thrown when `expectedVersion` on a write doesn't match the file's current mtime.
  * Indicates a cross-process concurrent write — the caller should reload and retry.
  */
+/** Why a restore refuses: another entry took the slug after this one was deleted. */
+export const RESTORE_SLUG_TAKEN_MESSAGE =
+  "Another entry now has this entry's URL. Change that entry's URL, then restore this one."
+/** Why a restore refuses: the entry is still on the branch, under another path. */
+export const RESTORE_ID_TAKEN_MESSAGE =
+  'This entry is still on the branch under another URL, so there is nothing to restore.'
+
 export class ContentConflictError extends Error {
   constructor(message = 'Content was modified by another editor') {
     super(message)
@@ -1630,6 +1637,79 @@ export class ContentStore {
       // reload and retry.
       throw new ContentConflictError()
     })
+  }
+
+  /**
+   * Puts back an entry deleted on this branch: `raw`, its file as the base holds it, verbatim,
+   * under its old slug, entry type and content ID, so references and comment threads find it
+   * again and the branch no longer differs from the base there.
+   *
+   * A create under write()'s locks and create-only guards that never replaces or relocates
+   * anything. It refuses with `ContentConflictError` while a file holds the slug, or the index
+   * or the target directory holds the ID: unlike write(), it has no index repair, so an ID
+   * found elsewhere is a moved entry, not a deleted one, and is left alone. An ID moved on
+   * another host since the index last read its marker is the one miss; the restore then leaves
+   * a duplicate ID, which the index quarantines ([F1]), never an unlinked file.
+   */
+  async restore(
+    collectionPath: LogicalPath,
+    slug: Slug,
+    entry: { id: ContentId; entryTypeName: string; raw: string },
+  ): Promise<{ relativePath: PhysicalPath }> {
+    await this.idIndex()
+    const collection = this.assertCollection(collectionPath)
+    if (!collection.entries?.some((e) => e.name === entry.entryTypeName)) {
+      throw new ContentStoreError(
+        `Entry type '${entry.entryTypeName}' not found in collection`,
+        'NO_SCHEMA_ITEM',
+      )
+    }
+    this.assertEntryTypeAvailable(collection, entry.entryTypeName)
+    return this.withContentWriteExclusion(() =>
+      withLock(this.createLockKey(collection, slug), async () => {
+        if ((await this.buildPaths(collection, slug)).existed) {
+          throw new ContentConflictError(RESTORE_SLUG_TAKEN_MESSAGE)
+        }
+        const target = await this.buildPaths(collection, slug, {
+          existingId: entry.id,
+          entryTypeName: entry.entryTypeName,
+        })
+        const dir = path.dirname(target.absolutePath)
+        const liveIndex = this._idIndex
+        if (
+          liveIndex.findById(entry.id) ||
+          liveIndex.getDuplicateFor(entry.id) ||
+          (await this.findEntryPathsById(dir, entry.id)).length > 0
+        ) {
+          throw new ContentConflictError(RESTORE_ID_TAKEN_MESSAGE)
+        }
+        // [SLUG] and [URL], as write() checks a create.
+        const routable = parseSlug(target.slug)
+        if (!routable.ok) {
+          throw new ContentStoreError(
+            `Cannot restore entry "${target.slug}": ${routable.error}.`,
+            'VALIDATION',
+          )
+        }
+        await this.assertUrlPathAvailable(dir, target.slug)
+
+        await fs.mkdir(dir, { recursive: true })
+        await atomicWriteFile(target.absolutePath, entry.raw)
+        // The live index, looked up and changed with no await between: a rebuild since the check
+        // above may have swapped in one that already scanned the restored file.
+        const index = this._idIndex
+        if (!index.findById(entry.id)) {
+          index.add({
+            type: 'entry',
+            relativePath: target.relativePath,
+            collection: collectionPath,
+            slug,
+          })
+        }
+        await this.recordOwnMutation(index)
+        return { relativePath: target.relativePath }
+      }),
+    )
   }
 
   /**

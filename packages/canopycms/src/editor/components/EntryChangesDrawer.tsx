@@ -117,6 +117,14 @@ export interface EntryChangesDrawerProps {
   lockedReason?: string
   /** Opens the confirm that deletes an entry added on the branch, closing the drawer first. */
   onDeleteEntry?: () => void
+  /** Puts back an entry deleted on the branch; resolves with why it couldn't, when it couldn't. */
+  onRestoreEntry?: () => Promise<RestoreRefusal | undefined>
+}
+
+/** Why "Restore entry" didn't: `warning` where nothing is lost, or the outcome is unknown. */
+export interface RestoreRefusal {
+  message: string
+  tone: 'warning' | 'error'
 }
 
 /** The open entry's form value, and the way to change its draft; see `undo-change.ts`. */
@@ -690,6 +698,7 @@ const ReasonedButton: React.FC<{
   onClick: () => void
   children: React.ReactNode
   danger?: boolean
+  loading?: boolean
   'aria-label'?: string
   'data-testid'?: string
 }> = ({ reason, onClick, danger, ...props }) => (
@@ -841,6 +850,7 @@ export const EntryChangesView: React.FC<
   noEditReason,
   lockedReason,
   onDeleteEntry,
+  onRestoreEntry,
 }) => {
   const { data, error } = state
   const diff = useMemo(
@@ -868,7 +878,12 @@ export const EntryChangesView: React.FC<
   }, [formValue, data, subject.fields])
   // What taking out an item did to its threads, said beside its undo until it is redone.
   const [notes, setNotes] = useState<Record<string, string>>({})
-  useEffect(() => setNotes({}), [subject.logicalPath])
+  const [restoring, setRestoring] = useState(false)
+  const [restoreRefusal, setRestoreRefusal] = useState<RestoreRefusal>()
+  useEffect(() => {
+    setNotes({})
+    setRestoreRefusal(undefined)
+  }, [subject.logicalPath])
 
   // A refusal no retry passes: its reason, and the ways the entry can still be looked at.
   const refusal =
@@ -1002,7 +1017,18 @@ export const EntryChangesView: React.FC<
     subject.from.slice(0, subject.from.lastIndexOf('/')) ===
       subject.logicalPath.slice(0, subject.logicalPath.lastIndexOf('/'))
   const editable = !noEditReason
-  const entryControls = editable && (undoable || (!data.before && onDeleteEntry))
+  const restorable = !!data.before && !data.after && !!onRestoreEntry
+  const entryControls = editable && (undoable || (!data.before && onDeleteEntry) || restorable)
+  const restore = async () => {
+    if (!onRestoreEntry || restoring) return
+    setRestoring(true)
+    setRestoreRefusal(undefined)
+    try {
+      setRestoreRefusal(await onRestoreEntry())
+    } finally {
+      setRestoring(false)
+    }
+  }
 
   return (
     <Stack gap="sm">
@@ -1075,7 +1101,33 @@ export const EntryChangesView: React.FC<
               {EDITOR_ACTIONS.deleteEntry}
             </ReasonedButton>
           )}
+          {restorable && (
+            <ReasonedButton
+              reason={lockedReason}
+              onClick={() => void restore()}
+              loading={restoring}
+              data-testid="entry-changes-restore"
+            >
+              {EDITOR_ACTIONS.restoreEntry}
+            </ReasonedButton>
+          )}
         </Group>
+      )}
+      {editable && restoreRefusal && (
+        <Alert
+          variant="light"
+          color={restoreRefusal.tone === 'warning' ? 'yellow' : 'red'}
+          icon={
+            restoreRefusal.tone === 'warning' ? (
+              <IconAlertTriangle size={16} />
+            ) : (
+              <IconAlertCircle size={16} />
+            )
+          }
+          data-testid="entry-changes-restore-refused"
+        >
+          <Text size="sm">{restoreRefusal.message}</Text>
+        </Alert>
       )}
       {count > 0 && (
         <Stack component="ul" gap="sm" p={0} m={0} style={{ listStyle: 'none' }}>

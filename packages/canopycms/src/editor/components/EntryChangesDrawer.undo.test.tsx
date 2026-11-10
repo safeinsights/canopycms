@@ -278,4 +278,57 @@ describe('EntryChangesDrawer undo', () => {
     const view = await dialog()
     expect(within(view).queryByRole('button', { name: /Undo/ })).toBeNull()
   })
+
+  describe('"Restore entry"', () => {
+    const deleted = (props: Partial<EntryChangesDrawerProps>) => (
+      <Harness
+        subject={{ ...subject, status: 'deleted' }}
+        state={{ data: data(before, null), error: undefined, isValidating: false, reload: vi.fn() }}
+        {...props}
+      />
+    )
+
+    it('restores an entry the branch deleted', async () => {
+      const onRestoreEntry = vi.fn().mockResolvedValue(undefined)
+      render(deleted({ onRestoreEntry }))
+      const view = await dialog()
+      expect(within(view).queryByTestId('entry-change-undo')).toBeNull()
+      await userEvent.click(within(view).getByRole('button', { name: 'Restore entry' }))
+      expect(onRestoreEntry).toHaveBeenCalledOnce()
+      expect(within(view).queryByTestId('entry-changes-restore-refused')).toBeNull()
+    })
+
+    it('says why it couldn’t, yellow where nothing is lost, and lets it be tried again', async () => {
+      let settle: (refusal: undefined) => void = () => {}
+      const onRestoreEntry = vi
+        .fn()
+        .mockResolvedValueOnce({ tone: 'warning', message: 'Another entry now has this URL.' })
+        .mockReturnValueOnce(new Promise((resolve) => (settle = resolve)))
+      render(deleted({ onRestoreEntry }))
+      const view = await dialog()
+      const button = within(view).getByRole('button', { name: 'Restore entry' })
+      await userEvent.click(button)
+      const refused = await within(view).findByTestId('entry-changes-restore-refused')
+      expect(refused.textContent).toBe('Another entry now has this URL.')
+      expect(refused.getAttribute('style')).toContain('yellow')
+      // The old reason goes as the retry starts, not when it ends.
+      await userEvent.click(button)
+      await waitFor(() =>
+        expect(within(view).queryByTestId('entry-changes-restore-refused')).toBeNull(),
+      )
+      settle(undefined)
+    })
+
+    it('stays, disabled, on a locked branch, and hides without edit access', async () => {
+      const onRestoreEntry = vi.fn()
+      const { unmount } = render(deleted({ onRestoreEntry, lockedReason: 'Locked.' }))
+      const button = within(await dialog()).getByRole('button', { name: 'Restore entry' })
+      expect(button.getAttribute('aria-disabled')).toBe('true')
+      await userEvent.click(button)
+      expect(onRestoreEntry).not.toHaveBeenCalled()
+      unmount()
+      render(deleted({ onRestoreEntry, noEditReason: 'No access.' }))
+      expect(within(await dialog()).queryByRole('button', { name: 'Restore entry' })).toBeNull()
+    })
+  })
 })

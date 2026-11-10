@@ -12,17 +12,23 @@ import {
   parseEntryParts,
   type CollectionSchemaItem,
 } from '../content-listing'
-import { ContentStore, ContentStoreError } from '../content-store'
+import {
+  BranchSyncingError,
+  ContentConflictError,
+  ContentStore,
+  ContentStoreError,
+} from '../content-store'
 import { resolveCollectionPath } from '../content-id-index'
 import { BaseBranchMissingError } from '../git-manager'
 import { getBranchProtection } from '../authorization/protected-branch'
+import { SchemaUnavailableError } from '../schema/schema-unavailable-error'
 import { baseBranchOf } from '../utils/base-branch'
 import { findBodyFieldName } from '../utils/body-field'
 import { entryAsRead } from '../utils/calendar-day'
-import { isNodeError, isNotFoundError } from '../utils/error'
+import { isNodeError, isNotFoundError, sanitizeErrorMessage } from '../utils/error'
 import { getFormatExtension } from '../utils/format'
 import { entryLogicalPath } from '../paths'
-import type { LogicalPath, Slug } from '../paths/types'
+import type { ContentId, LogicalPath, Slug } from '../paths/types'
 import { defineEndpoint } from './route-builder'
 import { branchNameSchema, contentIdSchema, logicalPathSchema } from './validators'
 import {
@@ -173,22 +179,30 @@ const readAfter = async (
   }
 }
 
+type BaseGit = ReturnType<ApiContext['services']['createGitManagerFor']>
+
+/** An entry's file in the base tree, and the entry it maps to. */
+interface BaseFile {
+  path: string
+  size: number
+  ref: Extract<ReturnType<typeof entryRefFromRepoPathShape>, { kind: 'entry' }>
+}
+
 /**
- * The entry at `logicalPath` in `mergeBase`'s tree, matched by `contentId` when there is one.
- * Looked for under the collection's directory first, then the whole content root when that
- * directory isn't in the base tree (a collection renamed or deleted on the branch). Files map
- * to entries as GET /:branch/changes maps them, so the entry it lists resolves to the same
- * file here. A base file whose collection or entry type the schema no longer has is keyed with
- * `afterFields`, the saved side's, so its unchanged items carry the keys the saved side's do.
+ * The file of the entry at `logicalPath` in `mergeBase`'s tree, matched by `contentId` when
+ * there is one. Looked for under the collection's directory first, then the whole content root
+ * when that directory isn't in the base tree (a collection renamed or deleted on the branch).
+ * Files map to entries as GET /:branch/changes maps them, so the entry it lists resolves to the
+ * same file here.
  */
-const readBefore = async (
-  git: ReturnType<ApiContext['services']['createGitManagerFor']>,
+const findBaseFile = async (
+  git: BaseGit,
   mergeBase: string,
   logicalPath: LogicalPath,
-  match: { contentId?: string; afterFields?: EntrySchema },
+  contentId: string | undefined,
   branchContext: BranchContextWithSchema,
   contentRoot: string,
-): Promise<SideRead> => {
+): Promise<BaseFile | undefined> => {
   const { flatSchema, branchRoot } = branchContext
   const collectionPath = logicalPath.slice(0, logicalPath.lastIndexOf('/')) as LogicalPath
   const collectionDir = await resolveCollectionPath(branchRoot, collectionPath)
@@ -203,36 +217,61 @@ const readBefore = async (
       const ref =
         placed.kind === 'other' ? entryRefFromRepoPathShape(file.path, contentRoot) : placed
       if (ref?.kind !== 'entry' || ref.logicalPath !== logicalPath) continue
-      if (match.contentId !== undefined && ref.contentId !== match.contentId) continue
-      if (file.size > MAX_SIDE_BYTES) return 'too-large'
-      const entryType = entryTypeIn(flatSchema, ref.collectionPath, ref.entryType)
-      const fields = entryType?.schema ?? match.afterFields ?? []
-      // An entry type the schema no longer has is parsed by its extension.
-      const format =
-        entryType?.format ?? FORMATS.find((f) => file.path.endsWith(getFormatExtension(f)))
-      if (!format) return 'unreadable'
-      const raw = await git.showFile(mergeBase, file.path)
-      if (raw === undefined) return undefined
-      let parsed: ReturnType<typeof parseEntryParts>
-      try {
-        parsed = parseEntryParts(raw, format)
-      } catch {
-        return 'unreadable'
-      }
-      return {
-        format,
-        entryType: ref.entryType,
-        data: entryAsRead(fields, parsed.data),
-        ...(parsed.body !== undefined && {
-          body: parsed.body,
-          bodyFieldName: findBodyFieldName(fields),
-        }),
-      }
+      if (contentId !== undefined && ref.contentId !== contentId) continue
+      return { path: file.path, size: file.size, ref }
     }
     // The collection's directory is in the base tree, so an entry not in it is new.
     if (files.length > 0) return undefined
   }
   return undefined
+}
+
+/**
+ * The entry at `logicalPath` in `mergeBase`'s tree (`findBaseFile`), read as the editor reads
+ * one. A base file whose collection or entry type the schema no longer has is keyed with
+ * `afterFields`, the saved side's, so its unchanged items carry the keys the saved side's do.
+ */
+const readBefore = async (
+  git: BaseGit,
+  mergeBase: string,
+  logicalPath: LogicalPath,
+  match: { contentId?: string; afterFields?: EntrySchema },
+  branchContext: BranchContextWithSchema,
+  contentRoot: string,
+): Promise<SideRead> => {
+  const file = await findBaseFile(
+    git,
+    mergeBase,
+    logicalPath,
+    match.contentId,
+    branchContext,
+    contentRoot,
+  )
+  if (!file) return undefined
+  const { ref } = file
+  if (file.size > MAX_SIDE_BYTES) return 'too-large'
+  const entryType = entryTypeIn(branchContext.flatSchema, ref.collectionPath, ref.entryType)
+  const fields = entryType?.schema ?? match.afterFields ?? []
+  // An entry type the schema no longer has is parsed by its extension.
+  const format = entryType?.format ?? FORMATS.find((f) => file.path.endsWith(getFormatExtension(f)))
+  if (!format) return 'unreadable'
+  const raw = await git.showFile(mergeBase, file.path)
+  if (raw === undefined) return undefined
+  let parsed: ReturnType<typeof parseEntryParts>
+  try {
+    parsed = parseEntryParts(raw, format)
+  } catch {
+    return 'unreadable'
+  }
+  return {
+    format,
+    entryType: ref.entryType,
+    data: entryAsRead(fields, parsed.data),
+    ...(parsed.body !== undefined && {
+      body: parsed.body,
+      bodyFieldName: findBodyFieldName(fields),
+    }),
+  }
 }
 
 const entryChangeHandler = async (
@@ -340,6 +379,136 @@ export const readBranchEntryChange = defineEndpoint({
   handler: entryChangeHandler,
 })
 
+const restoreParamsSchema = z.object({
+  branch: branchNameSchema,
+  entryPath: logicalPathSchema,
+})
+
+const restoreBodySchema = z.object({
+  /** The deleted entry's content id, which the base file must carry and the restore keeps. */
+  id: contentIdSchema,
+})
+
+interface RestoreEntryData {
+  logicalPath: string
+  contentId: string
+}
+export type RestoreEntryResponse = ApiResponse<RestoreEntryData>
+
+const NOT_RESTORABLE_ERROR = "This entry isn't on the base branch, so it can't be restored."
+
+const restoreEntryHandler = async (
+  gc: { branchContext: BranchContextWithSchema },
+  ctx: ApiContext,
+  req: ApiRequest,
+  params: z.infer<typeof restoreParamsSchema>,
+  body: z.infer<typeof restoreBodySchema>,
+): Promise<RestoreEntryResponse> => {
+  const { branchContext } = gc
+  const { config } = ctx.services
+  const base = branchContext.branch.baseBranch ?? baseBranchOf(config)
+  const contentRoot = config.contentRoot || 'content'
+  const store = new ContentStore(branchContext.branchRoot, branchContext.flatSchema, {
+    contentRootName: contentRoot,
+  })
+  const target = canonicalPath(store, underContentRoot(params.entryPath, contentRoot))
+  const notRestorable: RestoreEntryResponse = {
+    ok: false,
+    status: 404,
+    error: NOT_RESTORABLE_ERROR,
+  }
+  if (!target.stored) return notRestorable
+  const checkAccess = await ctx.services.createContentAccessChecker(
+    branchContext,
+    branchContext.branchRoot,
+    req.user,
+  )
+  if (!checkAccess(target.logicalPath, 'edit').allowed) {
+    return { ok: false, status: 403, error: 'Forbidden' }
+  }
+
+  const git = ctx.services.createGitManagerFor(branchContext.branchRoot, {
+    baseBranch: branchContext.branch.baseBranch,
+  })
+  let read: SteadyRead<{ raw: string; entryType: string } | 'too-large' | undefined>
+  try {
+    read = await readWhileSteady(branchContext.branchRoot, git, async () => {
+      const mergeBase = await git.mergeBaseWithBase()
+      if (!mergeBase) return undefined
+      const file = await findBaseFile(
+        git,
+        mergeBase,
+        target.logicalPath,
+        body.id,
+        branchContext,
+        contentRoot,
+      )
+      if (!file) return undefined
+      if (file.size > MAX_SIDE_BYTES) return 'too-large'
+      const raw = await git.showFile(mergeBase, file.path)
+      return raw === undefined ? undefined : { raw, entryType: file.ref.entryType }
+    })
+  } catch (err) {
+    if (err instanceof BaseBranchMissingError) return notRestorable
+    return branchReadFailedResponse(branchContext.branch.name, base, err)
+  }
+  if (!read.steady) return unsteadyReadResponse(read.reason, base)
+  if (read.value === 'too-large') return { ok: false, status: 413, error: TOO_LARGE_ERROR }
+  if (!read.value) return notRestorable
+
+  const { collectionPath, slug } = target.stored
+  try {
+    await store.restore(collectionPath, slug, {
+      id: body.id as ContentId,
+      entryTypeName: read.value.entryType,
+      raw: read.value.raw,
+    })
+  } catch (err) {
+    if (err instanceof BranchSyncingError) {
+      return {
+        ok: false,
+        status: 409,
+        error: err.message,
+        code: err.outcome === 'unknown' ? 'WRITE_OUTCOME_UNKNOWN' : 'BRANCH_SYNCING',
+      }
+    }
+    // A refusal the editor can act on: the slug or the id is taken, or a URL is contested.
+    if (err instanceof ContentConflictError) return { ok: false, status: 409, error: err.message }
+    if (err instanceof SchemaUnavailableError) {
+      return { ok: false, status: 409, error: sanitizeErrorMessage(err.message) }
+    }
+    if (err instanceof ContentStoreError) {
+      return { ok: false, status: 400, error: sanitizeErrorMessage(err.message) }
+    }
+    throw err
+  }
+  return { ok: true, status: 200, data: { logicalPath: target.logicalPath, contentId: body.id } }
+}
+
+/**
+ * Puts back an entry deleted on the branch, as the commit the branch forked from holds it, with
+ * its content id (`ContentStore.restore`).
+ * POST /:branch/restore-entry/...entryPath
+ * @internal Exported for tests.
+ */
+export const restoreBranchEntry = defineEndpoint({
+  namespace: 'changes',
+  name: 'restore',
+  method: 'POST',
+  path: '/:branch/restore-entry/...entryPath',
+  params: restoreParamsSchema,
+  body: restoreBodySchema,
+  bodyType: 'RestoreEntryBody',
+  responseType: 'RestoreEntryResponse',
+  response: {} as RestoreEntryResponse,
+  defaultMockData: { logicalPath: '', contentId: '' },
+  guards: ['schema', 'writableBranch'] as const,
+  handler: restoreEntryHandler,
+})
+
+export type RestoreEntryBody = z.infer<typeof restoreBodySchema>
+
 export const BRANCH_ENTRY_CHANGE_ROUTES = {
   entry: readBranchEntryChange,
+  restore: restoreBranchEntry,
 } as const

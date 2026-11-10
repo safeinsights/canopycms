@@ -82,7 +82,11 @@ import {
 import { useBranchActions } from './hooks/useBranchActions'
 import { branchAddress, displayBranchName } from './branch-names'
 import { useBranchChangesData, useEntryChangeData } from './hooks/useBranchChangesData'
-import type { EntryChangesSubject, EntryChangesUndo } from './components/EntryChangesDrawer'
+import type {
+  EntryChangesSubject,
+  EntryChangesUndo,
+  RestoreRefusal,
+} from './components/EntryChangesDrawer'
 import { LazyEntryChangesDrawer } from './components/LazyEntryChangesDrawer'
 import type { BranchChangeEntry } from '../api/branch-changes'
 import type { UnsavedSummary } from './hooks/useDraftManager'
@@ -149,7 +153,7 @@ import { findFieldTarget, focusFieldTarget } from './field-target'
 import { PreviewFollowContext, usePreviewFollow } from './hooks/usePreviewFollow'
 import { UndoToastMessage } from './components/UndoToastMessage'
 import { getNotificationDuration } from './utils/env'
-import { MayHaveLandedError } from './unanswered'
+import { MayHaveLandedError, isGatewayFailure, isUnanswered } from './unanswered'
 
 export interface EditorEntry {
   path: LogicalPath // Logical path (no IDs/extensions)
@@ -200,6 +204,20 @@ export interface EditorCollection {
   children?: EditorCollection[]
   /** False when this user's path permissions refuse a new entry here (the entries listing). */
   canAddEntry?: boolean
+}
+
+/** The collection at `path` in a collection tree. */
+const findCollection = (
+  cols: EditorCollection[] | undefined,
+  path: string,
+): EditorCollection | undefined => {
+  if (!cols) return undefined
+  for (const col of cols) {
+    if (col.path === path) return col
+    const found = findCollection(col.children, path)
+    if (found) return found
+  }
+  return undefined
 }
 
 export interface EditorProps {
@@ -1449,18 +1467,6 @@ const EditorContent: React.FC<EditorProps> = ({
     contentId: string,
     direction: 'up' | 'down',
   ) => {
-    const findCollection = (
-      cols: EditorCollection[] | undefined,
-      path: string,
-    ): EditorCollection | undefined => {
-      if (!cols) return undefined
-      for (const col of cols) {
-        if (col.path === path) return col
-        const found = findCollection(col.children, path)
-        if (found) return found
-      }
-      return undefined
-    }
     // Resolve against `collectionsFromApi`, NOT `activeCollections`: the latter
     // falls back to the build-time `collections` prop whenever the fetch is
     // still empty -- exactly the state mid-branch-switch. A write resolved
@@ -1856,6 +1862,51 @@ const EditorContent: React.FC<EditorProps> = ({
             })
           },
           threadsWithin: (path) => openThreadsWithin(displayComments, currentEntry.path, path),
+        }
+      : undefined
+  // An entry the branch deleted has no row to carry `canEdit`; its collection's `canAddEntry`
+  // stands in, and the server judges the entry's own path.
+  const deletedSubjectCollection =
+    changesSubject?.status === 'deleted'
+      ? changesSubject.logicalPath.slice(0, changesSubject.logicalPath.lastIndexOf('/'))
+      : undefined
+  const restoreRefusedByPath =
+    deletedSubjectCollection !== undefined &&
+    findCollection(collectionsFromApi, deletedSubjectCollection)?.canAddEntry === false
+  const changesRestoreEntry =
+    changesSubject?.status === 'deleted' && changesSubject.contentId
+      ? async (): Promise<RestoreRefusal | undefined> => {
+          const { logicalPath, contentId, title } = changesSubject
+          const branch = branchNameState
+          let answer: Awaited<ReturnType<typeof apiClient.changes.restore>> | undefined
+          try {
+            answer = await apiClient.changes.restore(
+              { branch, entryPath: logicalPath },
+              { id: contentId as ContentId },
+            )
+          } catch (err) {
+            if (!isUnanswered(err)) {
+              return { tone: 'error', message: 'Couldn’t restore this entry. Try again.' }
+            }
+          }
+          if (answer && !answer.ok && !isGatewayFailure(answer)) {
+            return {
+              tone: answer.status === 409 ? 'warning' : 'error',
+              message: answer.error ?? 'Couldn’t restore this entry. Try again.',
+            }
+          }
+          // Answered or not, the entry list now says whether it is back.
+          const entries = await refreshEntries(branch).catch(() => undefined)
+          void branchChanges.reload()
+          if (!entries?.some((e) => e.path === logicalPath)) {
+            return {
+              tone: 'warning',
+              message: `Restoring "${title}" may have gone through even though the server didn’t answer. Check the "Content" panel for it before trying again.`,
+            }
+          }
+          setChangesOpen(false)
+          openEntry(logicalPath)
+          return undefined
         }
       : undefined
   const changesDeleteEntry =
@@ -2783,12 +2834,13 @@ const EditorContent: React.FC<EditorProps> = ({
                   pullRequestUrl={changesPullRequestUrl}
                   undo={changesUndo}
                   noEditReason={
-                    changesSubjectOpen && currentEntry?.canEdit === false
+                    (changesSubjectOpen && currentEntry?.canEdit === false) || restoreRefusedByPath
                       ? NO_EDIT_ACCESS_REASON
                       : undefined
                   }
                   lockedReason={changesLockReason}
                   onDeleteEntry={changesDeleteEntry}
+                  onRestoreEntry={changesRestoreEntry}
                 />
               )}
               {branchNameState && (

@@ -313,7 +313,7 @@ branch + contentId, the same key as its drafts, and `saveEntry` refuses a save i
 token for (api/content.ts, editor/hooks/useEntryManager.ts).
 
 **Who takes it:** everything that mutates a branch working tree a rebase could revert —
-`ContentStore` `write`/`delete`/`renameEntry`; the admin repair-content-duplicates action;
+`ContentStore` `write`/`delete`/`renameEntry`/`restore`; the admin repair-content-duplicates action;
 schema mutations (`SchemaOps`, and CLI migrate in a branch clone, via `withBranchSchemaLock`);
 `submitBranch` from checkout through push, since a commit made while the rebase is stopped
 on a conflict lands on the branch and its `--abort` resets the branch past it; `commitFiles`;

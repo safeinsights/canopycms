@@ -30,7 +30,12 @@ import { mockConsole } from '../test-utils/console-spy'
 import { matchRoute } from '../http/router'
 import { buildCanopyRoutes } from './routes'
 import type { ApiContext, ApiRequest } from './types'
-import { readBranchEntryChange, type BranchEntryChangeResponse } from './branch-entry-changes'
+import {
+  readBranchEntryChange,
+  restoreBranchEntry,
+  type BranchEntryChangeResponse,
+  type RestoreEntryResponse,
+} from './branch-entry-changes'
 
 const postFields = [
   { name: 'title', type: 'string' as const, isTitle: true },
@@ -142,6 +147,8 @@ const createCtx = (
     git?: (repoPath: string) => GitManager
     /** The schema now, for a branch that changed it. */
     currentSchema?: RootCollectionConfig
+    /** The branch's workflow status, for a write a locked branch refuses. */
+    status?: 'submitted'
   } = {},
 ): ApiContext => {
   const config = defineCanopyTestConfig({ defaultBranchAccess: 'allow', schema })
@@ -160,6 +167,7 @@ const createCtx = (
     createdBy: 'creator',
   })
   branchContext.branch.baseBranch = 'main'
+  if (options.status) branchContext.branch.status = options.status
   return createMockApiContext({
     services: {
       config,
@@ -512,5 +520,158 @@ describe('GET /:branch/changes/...entryPath: reads that race or fail', () => {
       error: "Couldn't read this branch's changes right now. Try again in a moment.",
     })
     expect(consoleSpy).toHaveWarned(/could not read what feature changes against main/)
+  })
+})
+
+describe('POST /:branch/restore-entry/...entryPath', () => {
+  const restore = (ctx: ApiContext, entryPath: string, id: string): Promise<RestoreEntryResponse> =>
+    restoreBranchEntry.handler(
+      ctx,
+      { user },
+      { branch: unsafeAsBranchName('feature'), entryPath: unsafeAsLogicalPath(entryPath) },
+      { id: unsafeAsContentId(id) },
+    )
+  const read = (file: string) => fs.readFile(path.join(branchRoot, file), 'utf8')
+
+  it('puts a deleted entry back as the base has it, same file and content id', async () => {
+    await fs.rm(path.join(branchRoot, files.old))
+    expect(await restore(createCtx(), 'content/blog/old-news', ID.old)).toEqual({
+      ok: true,
+      status: 200,
+      data: { logicalPath: 'content/blog/old-news', contentId: ID.old },
+    })
+    expect(await read(files.old)).toBe(seedText.old)
+    // Nothing differs from the base but the store's own index marker.
+    const changed = (await clone.status()).files.filter((f) => !f.path.startsWith('.canopy-meta/'))
+    expect(changed).toEqual([])
+    const store = new ContentStore(branchRoot, flattenSchema(schema, 'content'))
+    expect(
+      await store.getIdForEntry(unsafeAsLogicalPath('content/blog'), unsafeAsSlug('old-news')),
+    ).toBe(ID.old)
+  })
+
+  it('puts back a markdown entry byte for byte', async () => {
+    await fs.rm(path.join(branchRoot, files.memo))
+    expect(await restore(createCtx(), 'content/notes/memo', ID.memo)).toMatchObject({ ok: true })
+    expect(await read(files.memo)).toBe(seedText.memo)
+  })
+
+  it('refuses with 409 while another entry holds the slug, leaving it alone', async () => {
+    await fs.rm(path.join(branchRoot, files.old))
+    const taker = `content/${BLOG}/post.old-news.${ID.fresh}.json`
+    await write(taker, JSON.stringify({ title: 'New' }))
+    expect(await restore(createCtx(), 'content/blog/old-news', ID.old)).toEqual({
+      ok: false,
+      status: 409,
+      error:
+        "Another entry now has this entry's URL. Change that entry's URL, then restore this one.",
+    })
+    expect(await read(taker)).toBe(JSON.stringify({ title: 'New' }))
+    await expect(fs.access(path.join(branchRoot, files.old))).rejects.toThrow()
+  })
+
+  it('refuses with 409 for an entry still on the branch under another slug, leaving it alone', async () => {
+    const moved = `content/${BLOG}/post.hello-again.${ID.hello}.json`
+    await fs.rename(path.join(branchRoot, files.hello), path.join(branchRoot, moved))
+    expect(await restore(createCtx(), 'content/blog/hello', ID.hello)).toEqual({
+      ok: false,
+      status: 409,
+      error: 'This entry is still on the branch under another URL, so there is nothing to restore.',
+    })
+    expect(await read(moved)).toBe(seedText.hello)
+    await expect(fs.access(path.join(branchRoot, files.hello))).rejects.toThrow()
+  })
+
+  it('refuses with 409 for an entry moved to another collection, leaving it alone', async () => {
+    const moved = `content/${PRIVATE}/post.hello.${ID.hello}.json`
+    await fs.rename(path.join(branchRoot, files.hello), path.join(branchRoot, moved))
+    expect(await restore(createCtx(), 'content/blog/hello', ID.hello)).toMatchObject({
+      ok: false,
+      status: 409,
+    })
+    expect(await read(moved)).toBe(seedText.hello)
+    await expect(fs.access(path.join(branchRoot, files.hello))).rejects.toThrow()
+  })
+
+  it('refuses an id its directory holds that a stale index missed', async () => {
+    await fs.rm(path.join(branchRoot, files.hello))
+    const store = new ContentStore(branchRoot, flattenSchema(schema, 'content'))
+    await store.restore(unsafeAsLogicalPath('content/blog'), unsafeAsSlug('nothing'), {
+      id: unsafeAsContentId(ID.fresh),
+      entryTypeName: 'post',
+      raw: '{}',
+    })
+    // Another host puts the entry back under another slug without telling this store's index.
+    const elsewhere = `content/${BLOG}/post.hello-again.${ID.hello}.json`
+    await write(elsewhere, seedText.hello)
+    await expect(
+      store.restore(unsafeAsLogicalPath('content/blog'), unsafeAsSlug('hello'), {
+        id: unsafeAsContentId(ID.hello),
+        entryTypeName: 'post',
+        raw: seedText.hello,
+      }),
+    ).rejects.toThrow('This entry is still on the branch under another URL')
+    await expect(fs.access(path.join(branchRoot, files.hello))).rejects.toThrow()
+  })
+
+  it('refuses with 403 where the user can’t edit, writing nothing', async () => {
+    await fs.rm(path.join(branchRoot, files.old))
+    const ctx = createCtx({
+      rules: [
+        { path: unsafeAsPermissionPath('content/blog/**'), edit: { allowedGroups: ['bloggers'] } },
+      ],
+    })
+    expect(await restore(ctx, 'content/blog/old-news', ID.old)).toEqual({
+      ok: false,
+      status: 403,
+      error: 'Forbidden',
+    })
+    await expect(fs.access(path.join(branchRoot, files.old))).rejects.toThrow()
+  })
+
+  it('answers 404 for an id the base doesn’t hold at the path', async () => {
+    await fs.rm(path.join(branchRoot, files.old))
+    expect(await restore(createCtx(), 'content/blog/old-news', ID.fresh)).toEqual({
+      ok: false,
+      status: 404,
+      error: "This entry isn't on the base branch, so it can't be restored.",
+    })
+  })
+
+  it('refuses with 409 mid-rebase, writing nothing', async () => {
+    await fs.rm(path.join(branchRoot, files.old))
+    await fs.mkdir(path.join(branchRoot, '.git', 'rebase-merge'))
+    expect(await restore(createCtx(), 'content/blog/old-news', ID.old)).toMatchObject({
+      ok: false,
+      status: 409,
+    })
+    await expect(fs.access(path.join(branchRoot, files.old))).rejects.toThrow()
+  })
+
+  it('refuses on a branch in review, writing nothing', async () => {
+    await fs.rm(path.join(branchRoot, files.old))
+    expect(
+      await restore(createCtx({ status: 'submitted' }), 'content/blog/old-news', ID.old),
+    ).toMatchObject({
+      ok: false,
+      status: 403,
+      error: expect.stringContaining('submitted for review'),
+    })
+    await expect(fs.access(path.join(branchRoot, files.old))).rejects.toThrow()
+  })
+
+  it('is routed', () => {
+    expect(
+      matchRoute(buildCanopyRoutes(), 'POST', [
+        'feature',
+        'restore-entry',
+        'content',
+        'blog',
+        'old-news',
+      ]),
+    ).toMatchObject({
+      pattern: [':branch', 'restore-entry', '...entryPath'],
+      params: { branch: 'feature', entryPath: 'content/blog/old-news' },
+    })
   })
 })

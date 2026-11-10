@@ -390,6 +390,156 @@ describe('Show changes', () => {
     expect(await screen.findByRole('dialog', { name: 'Delete entry' })).toBeTruthy()
   })
 
+  describe('"Restore entry"', () => {
+    /** The API with `gone` deleted on the branch, answering its restore with `restored`. */
+    const stubDeleted = (
+      restored: { status: number; body: unknown } | 'timeout' | 'lost',
+      options: { noAdd?: boolean } = {},
+    ) => {
+      const fetch = stubApi([])
+      const answered = fetch.getMockImplementation()!
+      let back = false
+      fetch.mockImplementation((input, init) => {
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+        const path = plainBranchPath(new URL(url, 'http://localhost').pathname)
+        if (path.endsWith('main/changes')) {
+          return Promise.resolve(
+            okJson({
+              base: 'main',
+              entries: back
+                ? []
+                : [
+                    {
+                      status: 'deleted',
+                      logicalPath: 'content/posts/gone',
+                      contentId: 'zzz999ZZZ999',
+                      collectionPath: 'content/posts',
+                      entryType: 'post',
+                      title: 'Gone',
+                    },
+                  ],
+              collections: [],
+              hiddenChanges: false,
+            }),
+          )
+        }
+        if (path.includes('/main/changes/')) {
+          return Promise.resolve(
+            okJson({
+              before: { format: 'json', entryType: 'post', data: { title: 'Gone' } },
+              after: null,
+              mergeBaseSha: 'a'.repeat(40),
+            }),
+          )
+        }
+        if (path.includes('/restore-entry/')) {
+          if (restored === 'timeout' || restored === 'lost') {
+            back = restored === 'timeout'
+            return Promise.resolve(new Response('<html>Bad gateway</html>', { status: 502 }))
+          }
+          if (restored.status === 200) back = true
+          return Promise.resolve(
+            new Response(JSON.stringify(restored.body), {
+              status: restored.status,
+              headers: { 'Content-Type': 'application/json' },
+            }),
+          )
+        }
+        if (path.includes('/entries') && options.noAdd) {
+          return answered(input, init).then(async (res) => {
+            const body = await res.json()
+            return okJson({
+              ...body.data,
+              collectionAccess: [{ logicalPath: 'content/posts', canAddEntry: false }],
+            })
+          })
+        }
+        if (path.includes('/entries') && back) {
+          return answered(input, init).then(async (res) => {
+            const body = await res.json()
+            body.data.entries.push({
+              ...body.data.entries[0],
+              logicalPath: 'content/posts/gone',
+              contentId: 'zzz999ZZZ999',
+              slug: 'gone',
+              title: 'Gone',
+              physicalPath: '/content/posts.abc123XYZ789/post.gone.zzz999ZZZ999.json',
+            })
+            return okJson(body.data)
+          })
+        }
+        return answered(input, init)
+      })
+      return fetch
+    }
+    const openDeleted = async () => {
+      renderEditor({ dedupingInterval: 0, focusThrottleInterval: 0 })
+      await waitFor(() => expect(titleInput().value).toBe('Loaded title'))
+      const toggle = await screen.findByTestId('content-panel-toggle')
+      if (toggle.getAttribute('aria-expanded') !== 'true') await userEvent.click(toggle)
+      await userEvent.click(await screen.findByRole('radio', { name: /^Changed/ }))
+      await userEvent.click(await screen.findByTestId('entry-nav-deleted-entry'))
+      return screen.findByRole('dialog', { name: 'Changes to Gone' })
+    }
+
+    it('puts the entry back, closes the drawer and opens it', async () => {
+      const fetch = stubDeleted({
+        status: 200,
+        body: {
+          ok: true,
+          status: 200,
+          data: { logicalPath: 'content/posts/gone', contentId: 'zzz999ZZZ999' },
+        },
+      })
+      const dialog = await openDeleted()
+      await userEvent.click(await within(dialog).findByRole('button', { name: 'Restore entry' }))
+      await waitFor(() => expect(dialog.isConnected).toBe(false))
+      const call = fetch.mock.calls.find(([input]) => String(input).includes('/restore-entry/'))
+      expect(String(call?.[0])).toContain('/~main/restore-entry/content/posts/gone')
+      expect(JSON.parse(String(call?.[1]?.body))).toEqual({ id: 'zzz999ZZZ999' })
+      await waitFor(() => expect(screen.getByTestId('entry-header').textContent).toContain('Gone'))
+    })
+
+    it('keeps the drawer and says why when the server refuses', async () => {
+      stubDeleted({
+        status: 409,
+        body: { ok: false, status: 409, error: "Another entry now has this entry's URL." },
+      })
+      const dialog = await openDeleted()
+      await userEvent.click(await within(dialog).findByRole('button', { name: 'Restore entry' }))
+      const refused = await within(dialog).findByTestId('entry-changes-restore-refused')
+      expect(refused.textContent).toBe("Another entry now has this entry's URL.")
+      // A 409 loses nothing, so it is yellow.
+      expect(refused.getAttribute('style')).toContain('yellow')
+    })
+
+    it('warns that an unanswered restore may have gone through while the entry isn’t listed', async () => {
+      stubDeleted('lost')
+      const dialog = await openDeleted()
+      await userEvent.click(await within(dialog).findByRole('button', { name: 'Restore entry' }))
+      const refused = await within(dialog).findByTestId('entry-changes-restore-refused')
+      expect(refused.textContent).toBe(
+        'Restoring "Gone" may have gone through even though the server didn’t answer. Check the "Content" panel for it before trying again.',
+      )
+      expect(refused.getAttribute('style')).toContain('yellow')
+    })
+
+    it('isn’t offered where the user can’t add entries, saying why', async () => {
+      stubDeleted({ status: 200, body: {} }, { noAdd: true })
+      const dialog = await openDeleted()
+      expect(await within(dialog).findByTestId('entry-changes-no-edit')).toBeTruthy()
+      expect(within(dialog).queryByRole('button', { name: 'Restore entry' })).toBeNull()
+    })
+
+    it('treats an unanswered restore as done once the entry is listed', async () => {
+      stubDeleted('timeout')
+      const dialog = await openDeleted()
+      await userEvent.click(await within(dialog).findByRole('button', { name: 'Restore entry' }))
+      await waitFor(() => expect(dialog.isConnected).toBe(false))
+    })
+  })
+
   it('isn’t offered on an entry the branch hasn’t changed', async () => {
     const fetch = stubApi([])
     renderEditor()

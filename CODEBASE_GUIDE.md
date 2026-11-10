@@ -121,7 +121,7 @@ Route handlers, one file per endpoint namespace:
 - `archived-branches.ts` — `POST /:branch/archive`, `POST /admin/archived-branches/delete`
 - `branch-review.ts` — `/branch-review`: approve, request changes
 - `branch-changes.ts` — `GET /:branch/changes`
-- `branch-entry-changes.ts` — `GET /:branch/changes/...entryPath`
+- `branch-entry-changes.ts` — `GET /:branch/changes/...entryPath`; `POST /:branch/restore-entry/...entryPath` (`ContentStore.restore`)
 - `branch-merge.ts` — `/branch-merge`: merge and clean up
 - `content.ts` — `/content`: read and write; runs entry-link and adopter `validateEntry` validation on write
 - `entries.ts` — `/entries`: entry management; cursor-paginated listing
@@ -406,7 +406,7 @@ Rendered Asset URLs](ARCHITECTURE.md#stored-vs-rendered-asset-urls); adopter con
 
 **Location**: `packages/canopycms/src/`
 
-- `content-store.ts` — content persistence: `read`, `write`, `delete`, `renameEntry`, `fillEmptyFieldWhileHoldingWriteLock`, `resolveReferences`, `resolveReferenceTarget` (denied → `RestrictedReference`, missing → `MissingReference`), `assertEntryAvailable`, the typed `ContentStoreError` codes, and the conflict errors
+- `content-store.ts` — content persistence: `read`, `write`, `delete`, `restore`, `renameEntry`, `fillEmptyFieldWhileHoldingWriteLock`, `resolveReferences`, `resolveReferenceTarget` (denied → `RestrictedReference`, missing → `MissingReference`), `assertEntryAvailable`, the typed `ContentStoreError` codes, and the conflict errors
 - `stamp-on-publish.ts` — `stampNewEntries`: fills a new entry's empty `stampOnPublish` fields at submit
 - `content-reader.ts` — content reading; resolves `entry:ID` body links at read time, opt-out via `resolveEntryLinks: false`
 - `content-id-index.ts` — ContentId indexing, tree and global lookups, and the duplicate-ID quarantine
@@ -527,8 +527,9 @@ Top-level components and helpers:
 - `canopy-path.ts` — field-path spelling (`normalizeCanopyPath`) and `isPathFieldName`
 - `field-breadcrumb.ts` / `field-target.ts` — a field path's label breadcrumb; `findFieldTarget`, `focusFieldTarget`, `revealField`
 - `entry-diff.ts` — `computeEntryDiff`
+- `undo-change.ts` — "Undo change"
 - `schema-label.ts` — `schemaLabel`: a field's, group's or template's label, else its humanised name
-- `undo-removal.ts` — `FieldRemoval`, `restoreRemoval`, `openThreadsWithin` — undo for a form Remove or Clear
+- `undo-removal.ts` — `FieldRemoval`, `restoreRemoval`, `openThreadsWithin` — a form Remove or Clear undone
 - `user-display.ts` — `SYSTEM_USER_LABEL`, `userIdLabel`
 - `field-props.ts` — typed `FieldProps`, `fieldAttrs`, `scopeFieldProps`, from root `canopycms`
 - `preview-marks.ts` — `findInexactMarks`, for `hooks/usePreviewMarks.ts`
