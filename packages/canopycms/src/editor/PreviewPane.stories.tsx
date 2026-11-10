@@ -83,6 +83,7 @@ const Pane = ({
   const [src] = useState(() => URL.createObjectURL(new Blob([page(script)], { type: 'text/html' })))
   const [previewWidth, setPreviewWidth] = useState(initialWidth)
   const [highlight, setHighlight] = useState(initialHighlight)
+  const [followsForm, setFollowsForm] = useState(true)
   const [maximized, setMaximized] = useState(initialMaximized)
   const [pending, setPending] = useState(loading === 'first')
   useEffect(() => {
@@ -94,6 +95,8 @@ const Pane = ({
     ? {
         highlightEnabled: highlight,
         onHighlightToggle: () => setHighlight((on) => !on),
+        previewFollowsForm: followsForm,
+        onPreviewFollowsFormChange: setFollowsForm,
         marksNothing,
         inexactMarks,
         showMarkDiagnostics,

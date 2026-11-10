@@ -24,22 +24,27 @@ export interface UsePreviewFollowReturn {
 }
 
 /**
- * The preview follows the form: a form field taking focus, or `follow` for one, asks the preview to
- * bring that field's element into view, once the form has rested on it for
- * `PREVIEW_FOLLOW_DELAY_MS`. A reveal belongs to one entry's page, so a change of entry drops it.
+ * The preview follows the form: focus moving to another form field, or `follow` for one, asks the
+ * preview to bring that field's element into view, once the form has rested on it for
+ * `PREVIEW_FOLLOW_DELAY_MS`. A reveal belongs to one page, which the branch names too, so a change
+ * of either drops it.
  */
 export function usePreviewFollow({
   enabled,
-  entryKey,
+  branch,
+  entryId,
 }: {
   enabled: boolean
-  entryKey: string | undefined
+  branch: string
+  entryId: string | undefined
 }): UsePreviewFollowReturn {
   const [reveal, setReveal] = useState<PreviewReveal | undefined>(undefined)
   const timer = useRef<number | undefined>(undefined)
   const lastId = useRef(0)
+  const lastPath = useRef<string | undefined>(undefined)
 
   const follow = useCallback((canopyPath: string) => {
+    lastPath.current = normalizeCanopyPath(canopyPath)
     window.clearTimeout(timer.current)
     timer.current = window.setTimeout(() => {
       lastId.current += 1
@@ -49,8 +54,9 @@ export function usePreviewFollow({
 
   useEffect(() => {
     window.clearTimeout(timer.current)
+    lastPath.current = undefined
     setReveal(undefined)
-  }, [entryKey, enabled])
+  }, [branch, entryId, enabled])
 
   useEffect(() => {
     if (!enabled) return
@@ -58,7 +64,9 @@ export function usePreviewFollow({
       const target = event.target
       if (!(target instanceof Element) || !target.closest(`#${FORM_PANE_ID}`)) return
       const path = target.closest('[data-canopy-field]')?.getAttribute('data-canopy-field')
-      if (path) follow(path)
+      // Focus coming back to the field, after a popover or the window, leaves the preview as the
+      // user scrolled it; a comment opening still asks, through `follow`.
+      if (path && normalizeCanopyPath(path) !== lastPath.current) follow(path)
     }
     document.addEventListener('focusin', onFocusIn)
     return () => document.removeEventListener('focusin', onFocusIn)

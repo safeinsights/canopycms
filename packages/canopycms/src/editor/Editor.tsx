@@ -763,6 +763,12 @@ const EditorContent: React.FC<EditorProps> = ({
     if (branch === branchNameState) void loadComments(branchNameState)
   }
 
+  const { reveal: previewReveal, follow: followInPreview } = usePreviewFollow({
+    enabled: previewFollowsForm,
+    branch: branchNameState,
+    entryId: currentEntry?.contentId,
+  })
+
   const {
     groupsData,
     groupsLoading,
@@ -949,9 +955,14 @@ const EditorContent: React.FC<EditorProps> = ({
     canopyPath: string
     threadId: string
   } | null>(null)
+  // A field whose comments are already open is still followed in the preview.
+  const jumpToField = (entryPath: string, canopyPath: string, threadId: string) => {
+    handleJumpToField(entryPath, canopyPath, threadId)
+    followInPreview?.(canopyPath)
+  }
   const jumpToThreadField = (entryPath: string, canopyPath: string, threadId: string) => {
     if (entryPath === currentEntry?.path) {
-      handleJumpToField(entryPath, canopyPath, threadId)
+      jumpToField(entryPath, canopyPath, threadId)
       return
     }
     setPendingFieldJump({ entryPath, canopyPath, threadId })
@@ -969,7 +980,8 @@ const EditorContent: React.FC<EditorProps> = ({
     const placed = displayComments.find((t) => t.id === threadId)
     // A thread whose item is gone lives on its entry, not at the index it was made at.
     if (placed?.onRemovedItem) handleJumpToEntry(entryPath, threadId)
-    else handleJumpToField(entryPath, placed?.canopyPath ?? canopyPath, threadId)
+    else jumpToField(entryPath, placed?.canopyPath ?? canopyPath, threadId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- jumpToField reads this render's follow
   }, [pendingFieldJump, selectedPath, currentEntry, displayValue, displayComments])
 
   // A thread on an item only the draft has is refused: a discard would leave it on nothing.
@@ -1946,11 +1958,6 @@ const EditorContent: React.FC<EditorProps> = ({
     data: displayValue,
   })
 
-  const { reveal: previewReveal, follow: followInPreview } = usePreviewFollow({
-    enabled: previewFollowsForm,
-    entryKey: currentEntry?.contentId,
-  })
-
   // Only the default preview has the toolbar that maximizes and restores it. It stays maximized
   // while an entry loads. With no value after a failed load and no draft, the form shows instead,
   // and the choice reapplies once a value arrives.
@@ -2052,7 +2059,15 @@ const EditorContent: React.FC<EditorProps> = ({
         onSiteChromeChange={setSiteChrome}
         reveal={previewReveal}
         previewFollowsForm={previewFollowsForm}
-        onPreviewFollowsFormChange={setPreviewFollowsForm}
+        // Only beside a form, the one thing it follows.
+        onPreviewFollowsFormChange={
+          !currentEntryUnavailable &&
+          currentEntry?.canEdit !== false &&
+          schema.length > 0 &&
+          displayValue
+            ? setPreviewFollowsForm
+            : undefined
+        }
         onNavigate={openPreviewLink}
         notice={
           previewError && (

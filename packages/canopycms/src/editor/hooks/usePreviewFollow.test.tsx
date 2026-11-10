@@ -18,16 +18,18 @@ afterEach(() => {
 /** A form pane with two fields and a nested one, plus a control outside the form. */
 const Harness = ({
   enabled = true,
+  branch = 'main',
   entryKey = 'entry-1',
   onReveal,
   onFollow,
 }: {
   enabled?: boolean
+  branch?: string
   entryKey?: string
   onReveal: (reveal: PreviewReveal | undefined) => void
   onFollow?: (follow: ((path: string) => void) | undefined) => void
 }) => {
-  const { reveal, follow } = usePreviewFollow({ enabled, entryKey })
+  const { reveal, follow } = usePreviewFollow({ enabled, branch, entryId: entryKey })
   onReveal(reveal)
   onFollow?.(follow)
   return (
@@ -90,10 +92,41 @@ describe('usePreviewFollow', () => {
     expect(latest()?.path).toBe('blocks[0].heading')
   })
 
-  it('asks again, under a new id, when the form comes back to a field', () => {
-    const { getByLabelText, sent, wait } = setup()
+  it('leaves the preview be when focus comes back to the field it followed last', () => {
+    const { getByLabelText, getByText, sent, wait } = setup()
+    fireEvent.focusIn(getByLabelText('Heading'))
+    wait()
+    fireEvent.focusIn(getByLabelText('Heading'))
+    wait()
+    expect(sent()).toEqual([{ path: 'blocks[0].heading', id: 1 }])
+    fireEvent.focusIn(getByText('Comment on Heading'))
+    wait()
+    fireEvent.focusIn(getByLabelText('Heading'))
+    wait()
+    expect(sent()).toEqual([
+      { path: 'blocks[0].heading', id: 1 },
+      { path: 'blocks[0]', id: 2 },
+      { path: 'blocks[0].heading', id: 3 },
+    ])
+  })
+
+  it('asks again for the field it followed last when a comment opens on it', () => {
+    const { getByLabelText, follow, sent, wait } = setup()
     fireEvent.focusIn(getByLabelText('Title'))
     wait()
+    act(() => follow()?.('title'))
+    wait()
+    expect(sent()).toEqual([
+      { path: 'title', id: 1 },
+      { path: 'title', id: 2 },
+    ])
+  })
+
+  it('follows the field again after an entry change', () => {
+    const { getByLabelText, sent, wait, rerender, onReveal } = setup()
+    fireEvent.focusIn(getByLabelText('Title'))
+    wait()
+    rerender(<Harness onReveal={onReveal} entryKey="entry-2" />)
     fireEvent.focusIn(getByLabelText('Title'))
     wait()
     expect(sent()).toEqual([
@@ -135,6 +168,15 @@ describe('usePreviewFollow', () => {
       wait(1000)
       expect(latest()).toBeUndefined()
     })
+  })
+
+  it('drops the reveal when the branch changes, since its page is another page', () => {
+    const { getByLabelText, latest, wait, rerender, onReveal } = setup()
+    fireEvent.focusIn(getByLabelText('Title'))
+    wait()
+    expect(latest()).toBeDefined()
+    rerender(<Harness onReveal={onReveal} branch="feature" />)
+    expect(latest()).toBeUndefined()
   })
 
   it('drops the reveal when the entry changes, so another page never gets it', () => {

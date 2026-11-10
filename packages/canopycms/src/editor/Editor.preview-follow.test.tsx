@@ -99,7 +99,7 @@ const world: EditorEntry = {
 }
 const helloSrc = '/preview/posts/hello?branch=main'
 
-const stubApi = () => {
+const stubApi = ({ helloEditable = true } = {}) => {
   const branch = (name: string) => ({
     name,
     status: 'editing',
@@ -178,6 +178,7 @@ const stubApi = () => {
                 entryType: 'post',
                 physicalPath: `/content/posts.abc123XYZ789/post.${e.slug}.${e.contentId}.json`,
                 exists: true,
+                ...(e === hello && !helloEditable ? { canEdit: false } : {}),
               })),
               pagination: { hasMore: false, limit: 50 },
             },
@@ -275,5 +276,24 @@ describe('the preview follows the form', () => {
     act(() => input.focus())
     await settle()
     expect(revealsSent(post)).toEqual([])
+  })
+
+  it('offers no toggle beside an entry with no form to follow', async () => {
+    stubApi({ helloEditable: false })
+    renderWithProviders(
+      <Editor
+        entries={[hello, world]}
+        initialSelectedId={hello.path}
+        title="Test Editor"
+        branchName="main"
+        operatingMode="dev"
+        themeOptions={{}}
+        previewPrefix="/preview"
+      />,
+    )
+    await waitFor(() => expect(iframe()?.getAttribute('src')).toBe(helloSrc))
+    await screen.findByRole('button', { name: 'Highlight fields in the preview' })
+    await screen.findByText(/permission/i)
+    expect(screen.queryByRole('button', { name: FOLLOW_LABEL })).toBeNull()
   })
 })

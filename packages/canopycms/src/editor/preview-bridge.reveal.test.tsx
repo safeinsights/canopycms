@@ -82,18 +82,42 @@ describe('a reveal from the editor', () => {
 
     expect(scroll).toHaveBeenCalledWith({ block: 'center', inline: 'nearest', behavior: 'smooth' })
     expect(getByTestId('hero').hasAttribute('data-canopy-revealed')).toBe(true)
+    // The mark's time starts once the scroll ends.
+    act(() => vi.advanceTimersByTime(800))
+    act(() => {
+      document.dispatchEvent(new Event('scrollend'))
+    })
     act(() => vi.advanceTimersByTime(1499))
     expect(getByTestId('hero').hasAttribute('data-canopy-revealed')).toBe(true)
     act(() => vi.advanceTimersByTime(1))
     expect(getByTestId('hero').hasAttribute('data-canopy-revealed')).toBe(false)
   })
 
+  it('starts the mark time anyway when no scroll end comes within a second', () => {
+    const { getByTestId, parentWin } = renderPage(marked('a', 'a'))
+    place(getByTestId('a'), 2000)
+    send(reveal('a'), parentWin)
+    act(() => vi.advanceTimersByTime(1000 + 1499))
+    expect(getByTestId('a').hasAttribute('data-canopy-revealed')).toBe(true)
+    act(() => vi.advanceTimersByTime(1))
+    expect(getByTestId('a').hasAttribute('data-canopy-revealed')).toBe(false)
+  })
+
   it('outlines the mark whether or not highlighting is on', () => {
     const { parentWin } = renderPage(marked('a', 'a'))
     send(reveal('a'), parentWin)
     const style = document.getElementById('canopycms-preview-reveal-style')
-    expect(style?.textContent).toContain('[data-canopy-revealed]')
     expect(style?.textContent).toContain('outline')
+  })
+
+  it('outranks the highlight outline, which the page may add after it, by matching two attributes', () => {
+    const { parentWin } = renderPage(marked('a', 'a'))
+    send(reveal('a'), parentWin)
+    const sheet = (document.getElementById('canopycms-preview-reveal-style') as HTMLStyleElement)
+      .sheet as CSSStyleSheet
+    expect((sheet.cssRules[0] as CSSStyleRule).selectorText).toBe(
+      '[data-canopy-path][data-canopy-revealed]',
+    )
   })
 
   it('matches a mark spelled with dots to a path spelled with brackets', () => {
@@ -121,6 +145,58 @@ describe('a reveal from the editor', () => {
     expect(blockScroll).toHaveBeenCalledTimes(1)
   })
 
+  it('falls back to the marks inside a field that has none of its own, first in the page first', () => {
+    const { getByTestId, parentWin } = renderPage(
+      <>
+        {marked('other', 'tagline')}
+        {marked('first', 'tags[0]')}
+        {marked('second', 'tags[1]')}
+        {marked('nested', 'hero.title')}
+      </>,
+    )
+    place(getByTestId('other'), 3000)
+    const firstScroll = place(getByTestId('first'), 1500)
+    const secondScroll = place(getByTestId('second'), 1600)
+    const nestedScroll = place(getByTestId('nested'), 1700)
+    send(reveal('tags'), parentWin)
+    expect(firstScroll).toHaveBeenCalledTimes(1)
+    expect(secondScroll).not.toHaveBeenCalled()
+    send(reveal('hero'), parentWin)
+    expect(nestedScroll).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves a mark taller than the page that fills it, as one being read', () => {
+    const { getByTestId, parentWin } = renderPage(marked('body', 'body'))
+    const scroll = place(getByTestId('body'), -1500, 3000)
+    send(reveal('body'), parentWin)
+    expect(scroll).not.toHaveBeenCalled()
+  })
+
+  it('leaves a mark wider than the page that fills its width and shows its height', () => {
+    const { getByTestId, parentWin } = renderPage(marked('table', 'table'))
+    const table = getByTestId('table')
+    const rect = DOMRect.fromRect({ x: -100, y: 150, width: window.innerWidth + 300, height: 200 })
+    table.getBoundingClientRect = () => rect
+    table.getClientRects = () => [rect] as unknown as DOMRectList
+    const scroll = vi.fn()
+    table.scrollIntoView = scroll
+    send(reveal('table'), parentWin)
+    expect(scroll).not.toHaveBeenCalled()
+  })
+
+  it('scrolls a mark its scrolling box cuts off, though the window would show it', () => {
+    const { getByTestId, parentWin } = renderPage(
+      <div data-testid="box" style={{ overflow: 'auto' }}>
+        {marked('deep', 'deep')}
+      </div>,
+    )
+    getByTestId('box').getBoundingClientRect = () =>
+      DOMRect.fromRect({ x: 0, y: 100, width: 400, height: 150 })
+    const scroll = place(getByTestId('deep'), 450)
+    send(reveal('deep'), parentWin)
+    expect(scroll).toHaveBeenCalledTimes(1)
+  })
+
   it('shows the top of a mark taller than the page', () => {
     const { getByTestId, parentWin } = renderPage(marked('body', 'body'))
     const scroll = place(getByTestId('body'), 900, 3000)
@@ -128,14 +204,16 @@ describe('a reveal from the editor', () => {
     expect(scroll).toHaveBeenCalledWith(expect.objectContaining({ block: 'start' }))
   })
 
-  it('jumps rather than scrolls smoothly when the reader asks for reduced motion', () => {
+  it("jumps, whatever the page's own scroll-behavior, when the reader asks for reduced motion", () => {
     vi.spyOn(window, 'matchMedia').mockImplementation(
       (query: string) => ({ matches: query.includes('reduce'), media: query }) as MediaQueryList,
     )
     const { getByTestId, parentWin } = renderPage(marked('a', 'a'))
     const scroll = place(getByTestId('a'), 2000)
     send(reveal('a'), parentWin)
-    expect(scroll).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'auto' }))
+    expect(scroll).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'instant' }))
+    act(() => vi.advanceTimersByTime(1500))
+    expect(getByTestId('a').hasAttribute('data-canopy-revealed')).toBe(false)
   })
 
   it('does nothing when a mark for the path is already in full view', () => {
