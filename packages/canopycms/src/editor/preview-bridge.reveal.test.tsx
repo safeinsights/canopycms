@@ -146,16 +146,15 @@ describe('a reveal from the editor', () => {
     expect(getByTestId('mid').hasAttribute('data-canopy-revealed')).toBe(true)
   })
 
-  it("adds its white ring to the element's own shadow, and gives it back", () => {
+  it("leaves the element's own inline styles alone", () => {
     const { getByTestId, parentWin } = renderPage(marked('a', 'a'))
     const element = getByTestId('a')
     element.style.boxShadow = 'inset 0 0 0 2px black'
     place(element, 2000)
     send(reveal('a'), parentWin)
-    expect(element.style.boxShadow).toContain('0 0 0 9px')
-    expect(element.style.boxShadow).toContain('inset 0 0 0 2px black')
+    expect(element.getAttribute('style')).toBe('box-shadow: inset 0 0 0 2px black;')
     act(() => vi.advanceTimersByTime(150 + 1500))
-    expect(element.style.boxShadow).toBe('inset 0 0 0 2px black')
+    expect(element.getAttribute('style')).toBe('box-shadow: inset 0 0 0 2px black;')
   })
 
   it('outlines the mark whether or not highlighting is on', () => {

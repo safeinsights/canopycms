@@ -470,25 +470,15 @@ export const usePreviewReveal = (opts?: { editorOrigin?: string }) => {
       styleEl.textContent = `[data-canopy-path][${REVEALED_ATTR}] { outline: 3px solid #4338ca; outline-offset: 3px; }`
       document.head.appendChild(styleEl)
     }
-    let marked: { element: HTMLElement; boxShadow: string } | undefined
+    let marked: HTMLElement | undefined
     let unmarkTimer: ReturnType<typeof setTimeout> | undefined
     let retryTimer: ReturnType<typeof setTimeout> | undefined
     let stopWaiting: (() => void) | undefined
     const unmark = () => {
       stopWaiting?.()
       clearTimeout(unmarkTimer)
-      if (marked) {
-        marked.element.removeAttribute(REVEALED_ATTR)
-        marked.element.style.boxShadow = marked.boxShadow
-      }
+      marked?.removeAttribute(REVEALED_ATTR)
       marked = undefined
-    }
-    // A white ring keeps the outline 3:1 on any page, added to the element's own shadows.
-    const mark = (element: HTMLElement) => {
-      const own = getComputedStyle(element).boxShadow
-      marked = { element, boxShadow: element.style.boxShadow }
-      element.setAttribute(REVEALED_ATTR, '')
-      element.style.boxShadow = `0 0 0 9px #fff${own && own !== 'none' ? `, ${own}` : ''}`
     }
     // The mark's time starts once the scrolling that holds `target` pauses, so a slow smooth
     // scroll can't use it up; another scroller on the page, such as a carousel, doesn't count.
@@ -532,7 +522,9 @@ export const usePreviewReveal = (opts?: { editorOrigin?: string }) => {
         behavior: smooth ? 'smooth' : 'instant',
       })
       unmark()
-      mark(target)
+      // An attribute and a stylesheet only: the page's own styles are never written to.
+      marked = target
+      target.setAttribute(REVEALED_ATTR, '')
       unmarkAfterScroll(target, smooth)
       return true
     }
