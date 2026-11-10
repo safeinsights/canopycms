@@ -134,7 +134,7 @@ export const ThreadReplyControls: React.FC<ThreadReplyControlsProps> = ({
 
   const mayResolve = canResolve || thread.authorId === currentUserId
   // Shown disabled with its reason rather than hidden: the same user may resolve threads they start.
-  // `aria-disabled` keeps it focusable so the Tooltip opens on focus and touch.
+  // `data-disabled` without native `disabled` keeps it focusable, so the Tooltip can open on focus.
   const resolveButton = mayResolve ? (
     <Button
       variant="light"
