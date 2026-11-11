@@ -20,6 +20,18 @@ import { mockConsole, type MockConsole } from '../test-utils/console-spy'
 import { CANOPY_META_DIR } from '../utils/git'
 import { backfillItemKeys, backfillItemKeysCLI, BACKFILL_EXIT_CODES } from './backfill-item-keys'
 
+const listing = vi.hoisted(() => ({ fail: false }))
+vi.mock('../content-listing', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../content-listing')>()
+  return {
+    ...actual,
+    listCollectionEntries: (...args: Parameters<typeof actual.listCollectionEntries>) =>
+      listing.fail
+        ? Promise.reject(new Error('EIO: i/o error, scandir'))
+        : actual.listCollectionEntries(...args),
+  }
+})
+
 const link: FieldConfig[] = [
   { name: 'href', type: 'string' },
   { name: 'label', type: 'string' },
@@ -234,6 +246,13 @@ const FILES = {
   keyed: `card.done.Jk3nPq6rSt7u.yaml`,
 } as const
 
+/** Files a save normalises beyond keys: CRLF line endings; a stray body key and object reference. */
+const CRLF = { file: 'doc.crlf.Lm6rSt9uVw2x.md', slug: 'crlf' }
+const CRLF_MD =
+  '---\r\ntitle: Windows\r\nsteps:\r\n  - title: a\r\n  - title: b\r\n---\r\n\r\nBody.\r\n'
+const STRAY = { file: 'doc.stray.Mn7sTu2vWx3y.md', slug: 'stray' }
+const STRAY_MD = `---\ntitle: Stray\nbody: left over\nauthor:\n  id: ${AUTHOR_ID}\nsteps:\n  - title: a\n---\n\nThe body.\n`
+
 const docPath = (root: string, file: string) => path.join(root, 'content', DOCS_DIR, file)
 const rel = (file: string) => `content/${DOCS_DIR}/${file}`
 
@@ -390,6 +409,48 @@ describe('backfillItemKeys', () => {
     expect(await run(root, false)).toEqual(checked)
   })
 
+  it('lists a CRLF markdown file apart, since its save changes line endings', async () => {
+    await fs.writeFile(docPath(root, CRLF.file), CRLF_MD)
+
+    const result = await run(root, false)
+
+    const file = result.changed.find((changed) => changed.path === rel(CRLF.file))
+    expect(file?.itemsKeyed).toBe(2)
+    expect(file?.otherLines).toBeGreaterThan(0)
+  })
+
+  it('drops a frontmatter key named as the body and collapses an object reference, as a save does', async () => {
+    await fs.writeFile(docPath(root, STRAY.file), STRAY_MD)
+
+    const result = await run(root, false)
+
+    const text = await fs.readFile(docPath(root, STRAY.file), 'utf8')
+    expect(text).not.toContain('left over')
+    expect(text).toContain(`author: ${AUTHOR_ID}\n`)
+    expect(text).toContain('The body.')
+    const file = result.changed.find((changed) => changed.path === rel(STRAY.file))
+    expect(file?.otherLines).toBeGreaterThan(0)
+  })
+
+  it('records a file whose slug another entry type shares, and keys the rest', async () => {
+    const twins = ['card.twin.Np8tUv3wXy4z.yaml', 'data.twin.Pq9uVw4xYz5a.json']
+    await fs.writeFile(docPath(root, twins[0]), 'title: A\nsteps:\n  - title: a\n')
+    await fs.writeFile(docPath(root, twins[1]), '{ "title": "B", "steps": [{ "title": "b" }] }\n')
+
+    const result = await run(root, false)
+
+    expect(result.failed).toEqual([
+      {
+        path: expect.stringMatching(/twin/) as string,
+        error: expect.stringContaining('"twin"') as string,
+      },
+    ])
+    const failed = result.failed[0].path
+    expect(twins.map(rel)).toContain(failed)
+    expect(result.changed.map((file) => file.path)).not.toContain(failed)
+    expect(result.changed.length).toBe(6)
+  })
+
   it('records a file that fails to read, and keys the rest', async () => {
     const broken = `data.broken.Km4pQr7sTu8v.json`
     await fs.writeFile(docPath(root, broken), '{ not json')
@@ -459,9 +520,14 @@ describe('a backfill write', () => {
   it('is byte for byte what an editor save of the unedited entry writes', async () => {
     const saved = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-backfill-saved-'))
     try {
-      await writeContent(saved)
+      for (const site of [root, saved]) {
+        if (site === saved) await writeContent(saved)
+        await fs.writeFile(docPath(site, CRLF.file), CRLF_MD)
+        await fs.writeFile(docPath(site, STRAY.file), STRAY_MD)
+      }
       const save = editor(saved)
-      for (const slug of ['start', 'intro', 'promo', 'facts', 'compact']) await save(slug)
+      const slugs = ['start', 'intro', 'promo', 'facts', 'compact', CRLF.slug, STRAY.slug]
+      for (const slug of slugs) await save(slug)
 
       await run(root, false)
 
@@ -534,7 +600,7 @@ describe('backfillItemKeysCLI', () => {
 
     expect(await cli()).toBe(BACKFILL_EXIT_CODES.ok)
     expect(await cli({ check: true })).toBe(BACKFILL_EXIT_CODES.ok)
-    expect(logged()).toContain('Every item already has its key.')
+    expect(logged()).toContain("Every entry's items already have their keys.")
   })
 
   it('lists a file the save also normalises under its own heading', async () => {
@@ -638,5 +704,26 @@ describe('backfillItemKeysCLI', () => {
 
     expect(await cli({ check: true })).toBe(BACKFILL_EXIT_CODES.loadError)
     expect(output.all().error.join('\n')).toContain(rel(`data.broken.Km4pQr7sTu8v.json`))
+  })
+
+  it('says only the other entries are keyed when some could not be read', async () => {
+    await commitAll()
+    expect(await cli()).toBe(BACKFILL_EXIT_CODES.ok)
+    await fs.writeFile(docPath(root, `data.broken.Km4pQr7sTu8v.json`), '{ not json')
+
+    expect(await cli({ check: true })).toBe(BACKFILL_EXIT_CODES.loadError)
+
+    const lines = logged().split('\n')
+    expect(lines.at(-2)).toBe("  Every other entry's items already have their keys.")
+  })
+
+  it('exits 2, not 1, when the listing fails mid-run', async () => {
+    listing.fail = true
+    try {
+      expect(await cli({ check: true })).toBe(BACKFILL_EXIT_CODES.loadError)
+    } finally {
+      listing.fail = false
+    }
+    expect(output.all().error.join('\n')).toContain('Could not finish: EIO')
   })
 })

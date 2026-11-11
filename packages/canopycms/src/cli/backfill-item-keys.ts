@@ -30,6 +30,7 @@ import {
   parseEntryParts,
   type CollectionSchemaItem,
 } from '../content-listing'
+import { entryDataAsSaved } from '../api/content'
 import { ContentStore, type ContentDocument } from '../content-store'
 import { ITEM_KEY, withItemKeys } from '../item-keys'
 import { isValidSchema, resolveSchema } from '../schema'
@@ -119,6 +120,13 @@ async function backfillEntry(
   check: boolean,
 ): Promise<Omit<BackfillFileResult, 'path'> | null> {
   const doc = await store.read(item.collectionPath, item.slug, { resolveReferences: false })
+  // A slug two entry types share in one collection addresses only one of their files.
+  if (doc.relativePath !== item.physicalPath) {
+    throw new Error(
+      `Another entry in its collection has the slug "${item.slug}", so neither a save nor the ` +
+        'backfill can address this file. Rename one of them.',
+    )
+  }
   // After the read: its version was taken before its own read of the file, so a change landing
   // between the two fails the write's version check rather than writing over it.
   const before = await fs.readFile(doc.absolutePath, 'utf8')
@@ -126,7 +134,7 @@ async function backfillEntry(
   const keyed = withItemKeys(fields, asWritten, 'content')
   if (keyed === asWritten) return null
 
-  const entry = savedEntry(doc)
+  const entry = savedEntry(doc, fields)
   let after: string
   if (check) {
     after = serializeEntry(entry, before, fields)
@@ -146,11 +154,12 @@ async function backfillEntry(
   }
 }
 
-/** What the editor sends back for an entry it opened and saved unedited. */
-function savedEntry(doc: ContentDocument): SerializableEntry {
-  if (doc.format === 'json') return { format: 'json', data: doc.data }
-  if (doc.format === 'yaml') return { format: 'yaml', data: doc.data }
-  return { format: doc.format, data: doc.data, body: doc.body }
+/** What a save of the entry, opened and saved unedited, hands the serialiser. */
+function savedEntry(doc: ContentDocument, fields: readonly FieldConfig[]): SerializableEntry {
+  const data = entryDataAsSaved(fields, doc.format, doc.data)
+  if (doc.format === 'json') return { format: 'json', data }
+  if (doc.format === 'yaml') return { format: 'yaml', data }
+  return { format: doc.format, data, body: doc.body }
 }
 
 /**
@@ -182,12 +191,12 @@ function isKeyLine(line: string): boolean {
 }
 
 /**
- * Lines changed between `before` and `after` other than added `_key` lines. Trailing commas are
- * ignored, since a JSON key appended to an object adds one to the line above it.
+ * Lines changed between `before` and `after` other than added `_key` lines, a changed line ending
+ * included. A trailing comma is ignored, since a JSON key appended to an object adds one to the
+ * line above it.
  */
 function countOtherLines(before: string, after: string): number {
-  const lines = (text: string) =>
-    text.split(/\r?\n/).map((line) => line.trimEnd().replace(/,$/, ''))
+  const lines = (text: string) => text.split('\n').map((line) => line.replace(/,(\r?)$/, '$1'))
   let other = 0
   for (const change of diffArrays(lines(before), lines(after))) {
     if (change.removed) other += change.value.length
@@ -262,6 +271,12 @@ export async function backfillItemKeysCLI(options: BackfillItemKeysCLIOptions): 
   let result: BackfillResult
   try {
     result = await backfillItemKeys({ root: projectDir, flatSchema, contentRootName, check })
+  } catch (err) {
+    console.error(
+      `Could not finish: ${getErrorMessage(err)}` +
+        (check ? '' : '\nFiles keyed before the error stay written; run the backfill again.'),
+    )
+    return BACKFILL_EXIT_CODES.loadError
   } finally {
     // Outside a branch workspace nothing reads the store's generation marker, and an adopter's
     // .gitignore need not cover `.canopy-meta/`: remove what this run created there.
@@ -356,8 +371,9 @@ function printResult(result: BackfillResult, check: boolean): void {
     for (const file of result.failed) console.error(`    ${file.path}: ${file.error}`)
   }
 
+  const skippedAny = result.failed.length + result.unavailable.length + result.malformed.length > 0
   if (result.changed.length === 0) {
-    console.log('  Every item already has its key.')
+    console.log(`  Every ${skippedAny ? 'other ' : ''}entry's items already have their keys.`)
   } else if (check) {
     console.log(`\n  Run \`canopycms backfill-item-keys\` to write them.`)
   } else {
