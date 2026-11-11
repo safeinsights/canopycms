@@ -2945,6 +2945,44 @@ describe('CmsWorker.syncGit() worker-status.json bookkeeping', () => {
     expect(() => makeSyncWorker(days)).toThrow(/archivedBranchRetentionDays must be a positive/)
   })
 
+  it('takes a fresh GitHub fetch for a cycle a request woke, and answers by when that fetch began', async () => {
+    const { branchPath } = await createSyncBranch('asked')
+    await advanceGitHubMain()
+    const worker = makeSyncWorker()
+    const gateway = (worker as unknown as { gateway: GitHubGateway }).gateway
+    const fetch = vi.spyOn(gateway, 'fetch')
+    const internals = worker as unknown as { requestBranchSync(ref?: string): void }
+
+    await worker.syncGit()
+    expect(fetch.mock.calls[0]?.[0]).toMatchObject({ fresh: false })
+
+    await getBranchMetadataFileManager(
+      branchPath,
+      path.join(workspacePath, 'content-branches'),
+    ).save({ branch: { baseUpdateRequestedAt: new Date().toISOString() } })
+    internals.requestBranchSync('asked')
+    await worker.syncGit()
+
+    expect(fetch.mock.calls[1]?.[0]).toMatchObject({ fresh: true })
+    const { startedAt } = await fetch.mock.results[1]!.value
+    const answer = (await BranchMetadataFileManager.loadOnly(branchPath))?.branch.lastBaseUpdate
+    expect(answer).toMatchObject({ outcome: 'up-to-date', at: new Date(startedAt).toISOString() })
+  })
+
+  it('takes the requests even when the cycle fails before its fetch, so the loop rests again', async () => {
+    const worker = makeSyncWorker()
+    const gateway = (worker as unknown as { gateway: GitHubGateway }).gateway
+    vi.spyOn(gateway, 'fetch').mockRejectedValue(new Error('GitHub unreachable'))
+    const internals = worker as unknown as {
+      requestBranchSync(ref?: string): void
+      gitSyncRequested: boolean
+    }
+    internals.requestBranchSync('asked')
+
+    await expect(worker.syncGit()).rejects.toThrow('GitHub unreachable')
+    expect(internals.gitSyncRequested).toBe(false)
+  })
+
   it('records lastGitSyncAt and a rebase summary after a successful cycle, including a per-branch rebase failure', async () => {
     // Behind, no conflicts -> should complete and land in lastGitSync.rebased.
     await createSyncBranch('behind-branch')

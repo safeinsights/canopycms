@@ -49,7 +49,9 @@ const name = z.string().max(4096)
 const prNumber = z.number().int().safe()
 const message = z.string().max(MAX_MESSAGE_LENGTH)
 
-export const fetchRequest = z.object({ have: z.array(objectId).max(MAX_FETCH_HAVE) }).strict()
+export const fetchRequest = z
+  .object({ have: z.array(objectId).max(MAX_FETCH_HAVE), fresh: z.boolean().optional() })
+  .strict()
 
 export const pushRequest = z
   .object({
@@ -215,6 +217,7 @@ export const fetchPoll = z.discriminatedUnion('state', [
       /** Every GitHub branch and its tip, as pairs: a `Map` has no JSON form of its own. */
       refs: z.array(z.tuple([name, objectId])).max(1_000_000),
       bundleId: jobId.nullable(),
+      startedAt: z.number().int().nonnegative(),
     })
     .strict(),
 ])

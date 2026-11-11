@@ -42,6 +42,12 @@ export interface ClientSafeStrategy {
 
   supportsPullRequests(): boolean
 
+  /**
+   * Whether a worker brings the base branch into editing branches, so a request for the latest
+   * changes (base-update.ts) gets an answer. Dev runs no git sync.
+   */
+  syncsBranchesWithBase(): boolean
+
   /** Get the permissions file name (e.g., 'permissions.json' or 'permissions.local.json') */
   getPermissionsFileName(): string
 

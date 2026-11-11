@@ -110,6 +110,7 @@ const ALL_TASK_ACTIONS = Object.keys({
   'close-pr': true,
   'delete-remote-branch': true,
   'sync-pr-comments': true,
+  'sync-branch': true,
 } satisfies Record<TaskAction, true>) as TaskAction[]
 
 type Responses = Record<string, unknown>
@@ -212,6 +213,7 @@ function taskContext(octokit: Octokit): TaskRunnerContext {
     pushBranchToGitHub: async (branch: string) => {
       pushed.push(branch)
     },
+    requestBranchSync: () => {},
   }
   return context as unknown as TaskRunnerContext
 }

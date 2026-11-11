@@ -546,7 +546,7 @@ class GatewayRequestHandler {
 
   private async startFetch(req: IncomingMessage, res: ServerResponse): Promise<void> {
     await this.prepared
-    const { have } = parseRequest(fetchRequest, await readJsonBody(req), 'fetch')
+    const { have, fresh } = parseRequest(fetchRequest, await readJsonBody(req), 'fetch')
     this.evictJobs()
     const running = [...this.jobs.values()].filter((job) => job.settledAt === null).length
     if (running >= MAX_RUNNING_FETCH_JOBS) {
@@ -570,14 +570,20 @@ class GatewayRequestHandler {
       progress: 0,
       // No signal: the job outlives the request that started it (see the module doc).
       settled: this.gateway
-        .fetch({ have }, undefined, () => {
+        .fetch({ have, fresh }, undefined, () => {
           job.progress++
         })
         .then(
-          ({ refs, bundleId }) => {
+          ({ refs, bundleId, startedAt }) => {
             job.answer = {
               ok: true,
-              value: { state: 'done', progress: job.progress, refs: [...refs], bundleId },
+              value: {
+                state: 'done',
+                progress: job.progress,
+                refs: [...refs],
+                bundleId,
+                startedAt,
+              },
             }
           },
           (err: unknown) => {
@@ -881,16 +887,17 @@ class GitHubGatewayClient implements GitHubGateway {
    * the job expired) starts one new job; a second loss fails.
    */
   async fetch(
-    request: { have: readonly string[] },
+    request: { have: readonly string[]; fresh?: boolean },
     signal?: AbortSignal,
     onProgress?: () => void,
   ): Promise<GitHubFetchResult> {
     const have = [...new Set(request.have)]
+    const json = { have, fresh: request.fresh === true }
     for (let attempt = 1; ; attempt++) {
       const started = await this.send({
         method: 'POST',
         path: FETCH_ROUTE,
-        json: { have },
+        json,
         signal,
       })
       const { job } = await readAnswer(started, fetchStarted, signal)
@@ -938,7 +945,9 @@ class GitHubGatewayClient implements GitHubGateway {
         progress = poll.progress
         movedAt = performance.now()
       }
-      if (poll.state === 'done') return { refs: new Map(poll.refs), bundleId: poll.bundleId }
+      if (poll.state === 'done') {
+        return { refs: new Map(poll.refs), bundleId: poll.bundleId, startedAt: poll.startedAt }
+      }
       if (performance.now() - movedAt >= this.fetchInactivityMs) {
         throw new GitHubTransientError(
           'github-fetch-failed',

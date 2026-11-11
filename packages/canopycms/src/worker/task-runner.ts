@@ -31,6 +31,7 @@ import { pushToGitHub } from './github-transfer'
 import { clearHistoryRewrittenMarker, readPublishedSha } from './history-rewrite'
 import { writeWorkerStatus } from '../task-queue/worker-status'
 import { SYNC_PR_COMMENTS_ACTION, refreshCommentsBlock, renderPrCommentsBody } from '../pr-comments'
+import { SYNC_BRANCH_ACTION } from '../base-update'
 import {
   COMMIT_ID,
   REWRITTEN_PUSH_REFUSAL,
@@ -79,6 +80,7 @@ export type TaskRunnerContext = Pick<
   | 'isDraining'
   | 'shutdownSignal'
   | 'ensureStatusReport'
+  | 'requestBranchSync'
 >
 
 /**
@@ -590,6 +592,13 @@ export async function executeTask(
       workerLog(`Updated the comment and review blocks of PR #${prNumber} for ${branch}`)
       return { updated: true }
     }
+    case SYNC_BRANCH_ACTION: {
+      // Only a wake-up: the git sync does the work, so the fetch, the schema gate and the locks
+      // keep one path. The request itself is recorded on branch.json, which outlives this.
+      const branch = requireString(payload, 'branch')
+      ctx.requestBranchSync(branch)
+      return { requested: true }
+    }
     default:
       throw new PermanentTaskError(`Unknown task action: ${action}`)
   }
@@ -640,10 +649,17 @@ function editorBranchOf(payload: Record<string, unknown>, branch: string): strin
 /**
  * The branch whose metadata records a task's outcome, or null when none does. A
  * delete-remote-branch task names a branch already deleted here, so a workspace under that
- * name is leftover or a newer branch's that reused the name.
+ * name is leftover or a newer branch's that reused the name. A sync-branch task syncs nothing
+ * with GitHub, so recording it would clear the branch's own failed sync.
  */
 function metadataBranchOf(task: Task): string | null {
-  if (task.action === 'delete-remote-branch' || task.action === SYNC_PR_COMMENTS_ACTION) return null
+  if (
+    task.action === 'delete-remote-branch' ||
+    task.action === SYNC_PR_COMMENTS_ACTION ||
+    task.action === SYNC_BRANCH_ACTION
+  ) {
+    return null
+  }
   return typeof task.payload.branch === 'string' ? task.payload.branch : null
 }
 

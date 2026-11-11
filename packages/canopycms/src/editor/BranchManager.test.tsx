@@ -1511,6 +1511,30 @@ describe('BranchManager', () => {
       expect(onSubmit).not.toHaveBeenCalled()
     })
 
+    it('offers the current branch "Get latest changes" beside its workflow action', async () => {
+      const onRequest = vi.fn()
+      renderBranchManager({
+        branches: baseBranches,
+        currentBranchName: 'main',
+        currentBaseUpdate: {
+          wait: 'none',
+          requesting: false,
+          tooltip: 'Bring in changes made on the site since you started this branch.',
+          onRequest,
+        },
+        user: creatorUser,
+        mode: 'prod',
+      })
+
+      const row = screen.getByTestId('branch-action-row-main')
+      const button = within(row).getByTestId('get-latest-changes-button-main')
+      expect(within(row).getByTestId('submit-branch-button-main')).toBeTruthy()
+      await userEvent.click(button)
+      expect(onRequest).toHaveBeenCalledTimes(1)
+      // Only the open branch's card offers it.
+      expect(screen.queryByTestId('get-latest-changes-button-feature/test')).toBeNull()
+    })
+
     it('offers the current branch in review Withdraw from review as its primary action', async () => {
       const onWithdraw = vi.fn()
       renderBranchManager({

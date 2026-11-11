@@ -15,6 +15,7 @@ One word per idea, everywhere. New UI takes the verbs from `EDITOR_ACTIONS` in
 | **Refresh from server**   | Replacing the open entry with its saved copy                   | Reload entry                                |
 | **Submit for review**     | Committing the branch and opening its pull request             | Submit branch, Publish                      |
 | **Withdraw from review**  | Taking a submitted branch back for editing                     | Withdraw branch                             |
+| **Get latest changes**    | Bringing the site's newer changes into a branch                | Update from main, Sync                      |
 | **Approve**               | A reviewer signing off a submitted branch                      | Accept, LGTM                                |
 | **Review**                | Opening a submitted branch to review it                        | Inspect                                     |
 | **Request changes**       | A reviewer sending a branch back to its editor                 | Reject                                      |

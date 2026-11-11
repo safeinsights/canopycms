@@ -21,6 +21,10 @@ export class ProdClientSafeStrategy implements ClientSafeStrategy {
     return true
   }
 
+  syncsBranchesWithBase(): boolean {
+    return true
+  }
+
   getPermissionsFileName(): string {
     return 'permissions.json'
   }
@@ -51,6 +55,10 @@ export class DevClientSafeStrategy implements ClientSafeStrategy {
 
   supportsPullRequests(): boolean {
     return false // No real GitHub in local dev mode
+  }
+
+  syncsBranchesWithBase(): boolean {
+    return false
   }
 
   getPermissionsFileName(): string {

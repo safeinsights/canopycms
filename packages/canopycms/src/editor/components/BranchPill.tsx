@@ -8,6 +8,8 @@ import { EDITOR_ACTIONS } from '../copy'
 import { DestructiveMenuItem } from './DestructiveMenuItem'
 import { ReasonedMenuItem } from './ReasonedMenuItem'
 import { useMenuItemFocusReturn } from '../utils/focus-return'
+import type { BaseUpdateControl } from '../base-update-wait'
+import { getLatestChangesReason } from './GetLatestChangesButton'
 
 export interface BranchPillProps {
   branchName: string
@@ -20,6 +22,8 @@ export interface BranchPillProps {
   onDiscardAll: () => void
   /** The pill, which stands in for a menu item that opened something. */
   pillRef?: Ref<HTMLButtonElement>
+  /** "Get latest changes" as a menu item, where the bar has no room for its button. */
+  getLatest?: BaseUpdateControl
 }
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
@@ -36,6 +40,7 @@ export function BranchPill({
   onRefreshBranch,
   onDiscardAll,
   pillRef,
+  getLatest,
 }: BranchPillProps) {
   const trigger = useRef<HTMLButtonElement>(null)
   const triggerRef = useMergedRef(trigger, pillRef)
@@ -80,6 +85,19 @@ export function BranchPill({
         >
           Refresh branch
         </ReasonedMenuItem>
+        {getLatest && (
+          <ReasonedMenuItem
+            onClick={getLatest.onRequest}
+            blockedReason={
+              getLatest.requesting || getLatest.wait !== 'none'
+                ? getLatestChangesReason(getLatest)
+                : getLatest.blockedReason
+            }
+            data-testid="get-latest-changes-menu-item"
+          >
+            {EDITOR_ACTIONS.getLatestChanges}
+          </ReasonedMenuItem>
+        )}
         <Menu.Divider />
         <DestructiveMenuItem
           data-testid="discard-all-drafts-menu-item"

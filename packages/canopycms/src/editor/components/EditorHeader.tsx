@@ -4,6 +4,7 @@ import {
   Box,
   Button,
   Group,
+  Loader,
   Menu,
   Text,
   Tooltip,
@@ -28,6 +29,14 @@ import { TooltipDetail } from './TooltipDetail'
 import { ReasonedMenuItem } from './ReasonedMenuItem'
 import { UnsavedMark } from './UnsavedMark'
 import { DraftStorageWarning, HIDDEN_STYLE, SaveAllButton } from './SaveAllButton'
+import { GetLatestChangesButton } from './GetLatestChangesButton'
+import {
+  GETTING_LATEST_CHANGES,
+  WAITING_NOTICE,
+  WAITING_SUBMIT_REASON,
+  type BaseUpdateControl,
+  type BaseUpdateWait,
+} from '../base-update-wait'
 import { useFocusHandOff, useMenuItemFocusReturn } from '../utils/focus-return'
 
 export interface EditorHeaderProps {
@@ -98,6 +107,10 @@ export interface EditorHeaderProps {
   branchPending?: boolean
   /** The branch list answered without this branch. */
   branchMissing?: boolean
+  /** "Get latest changes", when this user may ask on the open branch (hooks/useBaseUpdate.tsx). */
+  baseUpdate?: BaseUpdateControl
+  /** The open branch's wait for the latest changes, whoever asked: every viewer who sees it waits. */
+  latestWait?: BaseUpdateWait
 }
 
 /**
@@ -139,6 +152,8 @@ export function EditorHeader({
   branchLoading = false,
   branchPending = false,
   branchMissing = false,
+  baseUpdate,
+  latestWait = 'none',
 }: EditorHeaderProps) {
   const reviewRole = reviewRoleOf(
     {
@@ -163,6 +178,7 @@ export function EditorHeader({
     savingAll: !!saveAllProgress,
     rewritten: branchHold?.kind === 'rewritten',
     approveBlocked: branchApproveBlocked,
+    waitingForLatest: latestWait === 'waiting',
   })
   const lock = {
     branchStatus,
@@ -231,11 +247,16 @@ export function EditorHeader({
             onRefreshBranch={onBranchReloadData}
             onDiscardAll={onBranchDiscardDrafts}
             pillRef={branchToggleRef}
+            // Below `md` the bar has no room for it, so the branch's menu offers it.
+            getLatest={narrow ? baseUpdate : undefined}
           />
           <BranchStatusLabel
             status={branchName ? status : { value: 'none', readOnly: false }}
             reason={branchLockReason}
             holdMessage={holdMessage}
+            working={latestWait !== 'none' ? GETTING_LATEST_CHANGES : undefined}
+            // The bar's button carries the spinner where it shows.
+            workingSpinner={narrow || !baseUpdate}
           />
           {modifiedCount > 0 && (
             <Tooltip
@@ -266,6 +287,7 @@ export function EditorHeader({
       trailing={
         <>
           <DraftStorageWarning shown={draftStorageFailed && modifiedCount > 0} />
+          {!narrow && baseUpdate && <GetLatestChangesButton control={baseUpdate} />}
           {/* A lock can end, so wide Save all stays and says why; below `md` space wins. */}
           {(!narrow || editable) && (
             <SaveAllButton
@@ -277,9 +299,11 @@ export function EditorHeader({
                 branchLockReason ??
                 (!branchName
                   ? 'Open a branch first.'
-                  : entryListFailed && modifiedCount > 0
-                    ? 'The list of entries couldn\'t be loaded, so these changes can\'t be saved yet. Choose "Refresh branch" in the branch menu to try again.'
-                    : undefined)
+                  : latestWait === 'waiting'
+                    ? WAITING_NOTICE
+                    : entryListFailed && modifiedCount > 0
+                      ? 'The list of entries couldn\'t be loaded, so these changes can\'t be saved yet. Choose "Refresh branch" in the branch menu to try again.'
+                      : undefined)
               }
               saveAllProgress={saveAllProgress}
               singleSaving={singleSaving}
@@ -354,19 +378,40 @@ function BranchStatusLabel({
   status,
   reason,
   holdMessage,
+  working,
+  workingSpinner = true,
 }: {
   status: BranchBarStatus
   reason?: string
   holdMessage?: string
+  /** Work the branch waits on, such as getting the latest changes, shown and announced. */
+  working?: string
+  /** A spinner beside `working`, unless the control doing the work shows one. */
+  workingSpinner?: boolean
 }) {
-  const spoken =
+  const spoken = [
     status.label && status.value !== 'loading'
       ? [status.label.replace(' · ', ', '), reason].filter(Boolean).join('. ')
-      : ''
+      : '',
+    working,
+  ]
+    .filter(Boolean)
+    .join('. ')
   return (
     // Always mounted, so a lock that arrives is announced.
-    <Box role="status" style={status.label || holdMessage ? { flexShrink: 0 } : HIDDEN_STYLE}>
+    <Box
+      role="status"
+      style={status.label || holdMessage || working ? { flexShrink: 0 } : HIDDEN_STYLE}
+    >
       <Group gap="xs" wrap="nowrap">
+        {working && (
+          <Group gap={4} wrap="nowrap" aria-hidden="true" data-testid="branch-working-status">
+            {workingSpinner && <Loader size={12} />}
+            <Text span size="sm">
+              {working}
+            </Text>
+          </Group>
+        )}
         {status.label && (
           <Group
             gap={4}
@@ -466,6 +511,8 @@ type WorkflowActionInput = Pick<
   rewritten: boolean
   /** The pull request may not hold what would be approved. */
   approveBlocked: boolean
+  /** The branch waits on the latest changes, which a submit would leave behind. */
+  waitingForLatest: boolean
 }
 
 /**
@@ -484,6 +531,7 @@ function workflowAction({
   savingAll,
   rewritten,
   approveBlocked,
+  waitingForLatest,
 }: WorkflowActionInput): WorkflowAction | null {
   const isSubmitted = branchStatus === 'submitted'
   const isEditing = branchStatus === 'editing'
@@ -538,24 +586,31 @@ function workflowAction({
   return {
     kind: isWithdrawable ? 'withdraw' : 'submit',
     // `busy` alone can't hold it: an entry load clears that shared flag mid-run.
-    blocked: !branchName || busy || savingAll || !canPerformAction || (rewritten && isEditing),
+    blocked:
+      !branchName ||
+      busy ||
+      savingAll ||
+      !canPerformAction ||
+      (isEditing && (rewritten || waitingForLatest)),
     permitted: canPerformAction,
     reason: savingAll
       ? 'Wait for Save all to finish.'
-      : rewritten && isEditing
-        ? rewrittenSubmitReason(isAdmin(userContext?.groups ?? []))
-        : // No branch data (`branchStatus === undefined`) must not be
-          // interpolated raw into this label. Guarded explicitly here rather
-          // than left to the early return above, which hides the action
-          // today only as a side effect of `branchIsProtected`'s `?? true`
-          // default -- not a guarantee this arm stays unreachable.
-          branchStatus === undefined
-          ? 'Branch details could not be loaded. Use "Refresh branch" to try again.'
-          : !statusHasAction
-            ? `This branch is ${branchStatus}, so it can't be submitted for review or withdrawn from review.`
-            : !userHasPermission
-              ? 'You do not have permission to submit this branch for review or withdraw it from review. Ask an admin for access.'
-              : '',
+      : waitingForLatest && isEditing
+        ? WAITING_SUBMIT_REASON
+        : rewritten && isEditing
+          ? rewrittenSubmitReason(isAdmin(userContext?.groups ?? []))
+          : // No branch data (`branchStatus === undefined`) must not be
+            // interpolated raw into this label. Guarded explicitly here rather
+            // than left to the early return above, which hides the action
+            // today only as a side effect of `branchIsProtected`'s `?? true`
+            // default -- not a guarantee this arm stays unreachable.
+            branchStatus === undefined
+            ? 'Branch details could not be loaded. Use "Refresh branch" to try again.'
+            : !statusHasAction
+              ? `This branch is ${branchStatus}, so it can't be submitted for review or withdrawn from review.`
+              : !userHasPermission
+                ? 'You do not have permission to submit this branch for review or withdraw it from review. Ask an admin for access.'
+                : '',
   }
 }
 

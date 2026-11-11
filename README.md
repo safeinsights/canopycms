@@ -1898,7 +1898,7 @@ The base branch (the PR target, usually `main`) can never be submitted, so "Subm
 
 ### Drafts and Unpublishing
 
-A draft is a branch: content goes live only when its branch merges, so unfinished content stays on its branch however long that takes. A branch with saved edits does not follow the base branch until it is submitted; if GitHub then reports a conflict on its PR, click "Withdraw", wait about five minutes for the CMS to update the branch, and submit again.
+A draft is a branch: content goes live only when its branch merges, so unfinished content stays on its branch however long that takes. A branch with saved edits follows the base branch only once submitted or when an editor uses "Get latest changes"; if GitHub reports a conflict on its PR, withdraw it, which gets them, and submit again.
 
 **To unpublish** an entry, delete it on a branch and publish that branch. To bring it back, a developer runs `git revert` on a branch created after the deletion merged. Branches created with plain git do not appear in the editor.
 

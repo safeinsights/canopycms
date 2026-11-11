@@ -9,7 +9,12 @@ import {
 } from '../branch-metadata'
 import { invalidateBranchContentCaches } from '../content-index-generation'
 import { isSettingsBranchName, sanitizeBranchName } from '../paths/branch-name'
-import type { PullRequestHold, PullRequestState } from '../types'
+import type { BaseUpdateOutcome, BranchMetadata, PullRequestHold, PullRequestState } from '../types'
+import {
+  BASE_UPDATE_CLOCK_SKEW_MS,
+  BASE_UPDATE_EARLY_RETRY_MS,
+  isBaseUpdatePending,
+} from '../base-update'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import {
   holdProvisionedWorkspace,
@@ -92,6 +97,7 @@ export type RebaseContext = Pick<
   | 'afterRebaseCompletedForTesting'
   | 'ensureSettingsBranch'
   | 'isDraining'
+  | 'requestBranchSync'
 >
 
 /**
@@ -168,7 +174,12 @@ export async function pollMergeState(
             }
           : null,
       )
-      if (saved) workerLog(`  PR #${prNumber} for ${branchDir} is merged -> archived`)
+      if (saved) {
+        workerLog(`  PR #${prNumber} for ${branchDir} is merged -> archived`)
+        // The base most likely moved with it, after this cycle's fetch: the next cycle brings
+        // that into the other branches without waiting out the interval.
+        ctx.requestBranchSync()
+      }
       return null
     }
 
@@ -534,6 +545,114 @@ type BranchRebaseOutcome =
     }
 
 /**
+ * What one branch's sync tells a request for the latest changes standing on it
+ * (base-update.ts), filled in by {@link rebaseOneBranch} as it goes.
+ */
+interface BaseUpdateProbe {
+  /** The branch's ref and its unanswered request, as read when its sync began. */
+  request?: { branchRef: string; requestedAt: string }
+  /** The base commit the branch was compared with. */
+  baseSha?: string
+  /** It already contained that commit. */
+  upToDate?: boolean
+  /** Entries that kept the branch's version as it took the base in. */
+  keptEntries?: number
+}
+
+/** What an outcome answers a request with; undefined when it settles nothing. */
+function answerFor(
+  outcome: BranchRebaseOutcome,
+  probe: BaseUpdateProbe,
+): BaseUpdateOutcome | undefined {
+  // `rebased` on a failure: the base came in, and only publishing the rewrite failed.
+  if (outcome.kind === 'rebased' || (outcome.kind === 'failed' && outcome.rebased)) {
+    return probe.keptEntries ? 'conflicts' : 'merged'
+  }
+  if (outcome.kind === 'none') return probe.upToDate ? 'up-to-date' : undefined
+  // A save since the request, which the sync never commits: the editor's Retry commits it.
+  if (outcome.kind === 'failed' || outcome.kind === 'skippedDirty') return 'failed'
+  return undefined
+}
+
+/** Whether a request is unanswered and recent enough for the worker to chase with early cycles. */
+function worthAnotherCycle(
+  branch: Pick<BranchMetadata, 'status' | 'baseUpdateRequestedAt' | 'lastBaseUpdate'>,
+): boolean {
+  const age = Date.now() - Date.parse(branch.baseUpdateRequestedAt ?? '')
+  return (
+    branch.status === 'editing' &&
+    isBaseUpdatePending(branch) &&
+    age >= -BASE_UPDATE_CLOCK_SKEW_MS &&
+    age < BASE_UPDATE_EARLY_RETRY_MS
+  )
+}
+
+/**
+ * Answer the branch's request for the latest changes in `lastBaseUpdate`, which ends the editor's
+ * wait. Only from a cycle whose GitHub fetch began at or after the request, and only once the
+ * branch holds the base that fetch found: an earlier fetch may predate the changes asked for, and a
+ * base ref that didn't move (a held or failed update) isn't the latest. While the schema gate holds
+ * the base the request stands. Anything else that settles nothing, a lock or a GitHub step on its
+ * way among them, asks for another early cycle while the request is recent. Never throws.
+ */
+async function answerBaseUpdate(
+  ctx: RebaseContext,
+  branchDir: string,
+  branchPath: string,
+  probe: BaseUpdateProbe,
+  outcome: BranchRebaseOutcome,
+  gitHub: GitHubSnapshot | undefined,
+  requested: boolean,
+): Promise<void> {
+  const { request } = probe
+  if (!request) {
+    // Skipped before its request was read: a provisioning lock held elsewhere.
+    if (requested && outcome.kind === 'skippedLocked') {
+      const meta = await BranchMetadataFileManager.loadOnly(branchPath).catch(() => null)
+      if (meta && worthAnotherCycle(meta.branch)) ctx.requestBranchSync(branchDir)
+    }
+    return
+  }
+  if (!gitHub || ctx.ensureStatusReport().baseHold) return
+  const askAgain = () => {
+    if (worthAnotherCycle({ status: 'editing', baseUpdateRequestedAt: request.requestedAt })) {
+      ctx.requestBranchSync(request.branchRef)
+    }
+  }
+  // The request's time is the Lambda's clock and the fetch's this host's: both keep NTP time.
+  if (gitHub.fetchedAt < Date.parse(request.requestedAt)) return askAgain()
+  const answer = answerFor(outcome, probe)
+  if (answer === undefined) return askAgain()
+  const gitHubBase = gitHub.tips.get(ctx.baseBranch)
+  if (answer !== 'failed' && gitHubBase !== undefined && probe.baseSha !== gitHubBase) {
+    return askAgain()
+  }
+  const lastBaseUpdate = {
+    at: new Date(gitHub.fetchedAt).toISOString(),
+    outcome: answer,
+    ...(probe.baseSha !== undefined && { baseSha: probe.baseSha }),
+    ...(answer === 'conflicts' && { keptEntries: probe.keptEntries }),
+  }
+  try {
+    // A newer request, made after this fetch began, waits for the next cycle's answer.
+    const saved = await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update(
+      (existing) =>
+        existing?.branch.name === request.branchRef &&
+        existing.branch.status === 'editing' &&
+        existing.branch.baseUpdateRequestedAt === request.requestedAt
+          ? { branch: { lastBaseUpdate } }
+          : null,
+      { keepUpdatedAt: true },
+    )
+    if (saved) workerLog(`  ${branchDir}: answered the request for the latest changes (${answer})`)
+  } catch (err) {
+    workerLogWarn(
+      `  ${branchDir}: could not record the answer to its request for the latest changes: ${getErrorMessage(err)}`,
+    )
+  }
+}
+
+/**
  * Rebase every branch workspace that is behind the base branch, one cycle.
  *
  * The per-branch work is {@link rebaseOneBranch}; what stays here is the walk
@@ -549,6 +668,7 @@ export async function runRebaseCycle(
   ctx: RebaseContext,
   gatewayPolicy?: BranchPolicyDescription,
   gitHub?: GitHubSnapshot,
+  requested: ReadonlySet<string> = new Set(),
 ): Promise<RebaseSummary> {
   const rebased: string[] = []
   const skippedDirty: string[] = []
@@ -561,6 +681,8 @@ export async function runRebaseCycle(
   } catch {
     return { rebased, skippedDirty, skippedLocked, failed }
   }
+  // Branches someone is waiting on go first; the sort is stable, so the rest keep their order.
+  branchDirs.sort((a, b) => Number(requested.has(b)) - Number(requested.has(a)))
 
   for (const branchDir of branchDirs) {
     // A draining worker finishes the branch it is rebasing and starts no other:
@@ -609,7 +731,24 @@ export async function runRebaseCycle(
       workerLogWarn(`  Skipping ${branchDir}: settings branch, never a content workspace`)
       continue
     }
-    const outcome = await holdAndRebaseOneBranch(ctx, branchDir, branchPath, gatewayPolicy, gitHub)
+    const probe: BaseUpdateProbe = {}
+    const outcome = await holdAndRebaseOneBranch(
+      ctx,
+      branchDir,
+      branchPath,
+      gatewayPolicy,
+      gitHub,
+      probe,
+    )
+    await answerBaseUpdate(
+      ctx,
+      branchDir,
+      branchPath,
+      probe,
+      outcome,
+      gitHub,
+      requested.has(branchDir),
+    )
     if (outcome.kind === 'rebased') rebased.push(branchDir)
     else if (outcome.kind === 'skippedDirty') skippedDirty.push(branchDir)
     else if (outcome.kind === 'skippedLocked') skippedLocked.push(branchDir)
@@ -693,6 +832,7 @@ async function holdAndRebaseOneBranch(
   branchPath: string,
   gatewayPolicy: BranchPolicyDescription | undefined,
   gitHub: GitHubSnapshot | undefined,
+  probe: BaseUpdateProbe,
 ): Promise<BranchRebaseOutcome> {
   let hold: ProvisionedWorkspaceHold
   try {
@@ -718,6 +858,7 @@ async function holdAndRebaseOneBranch(
       hold.isCompromised,
       gatewayPolicy,
       gitHub,
+      probe,
     )
   } finally {
     await releaseProvisionedWorkspace(hold.release, branchDir)
@@ -1037,6 +1178,7 @@ async function rebaseOneBranch(
   isProvisioningLockCompromised: () => boolean,
   gatewayPolicy: BranchPolicyDescription | undefined,
   gitHub: GitHubSnapshot | undefined,
+  probe: BaseUpdateProbe = {},
 ): Promise<BranchRebaseOutcome> {
   // Read only by the catch below. See the `rebased` rider on
   // BranchRebaseOutcome.
@@ -1052,6 +1194,16 @@ async function rebaseOneBranch(
       gatewayPolicy?.namespace,
     )
     const branchStatus = metaFile?.branch.status
+    // Only an editing branch takes the base in, so only its request can be answered.
+    const requestedAt = metaFile?.branch.baseUpdateRequestedAt
+    if (
+      metaFile !== null &&
+      branchStatus === 'editing' &&
+      requestedAt !== undefined &&
+      isBaseUpdatePending(metaFile.branch)
+    ) {
+      probe.request = { branchRef: metaFile.branch.name, requestedAt }
+    }
 
     // Skip branches that must not be mutated:
     // - submitted/approved: in review, so never rewrite history under an active
@@ -1323,8 +1475,10 @@ async function rebaseOneBranch(
         10,
       )
       const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
+      probe.baseSha = fetchedBaseTip
 
       if (behindCount === 0) {
+        probe.upToDate = true
         // Already in sync -- the overwhelmingly common outcome per branch per
         // cycle, so skip the save entirely when metadata already reflects a
         // clean state. save() eager-regenerates the branch registry
@@ -1379,6 +1533,7 @@ async function rebaseOneBranch(
           return recordBlocked(ctx, branchDir, branchPath, branchRef, outcome.reason)
         }
         if (outcome.kind !== 'merged') return { kind: 'none' }
+        probe.keptEntries = outcome.keptEntries
         await clearRebaseFailure(ctx, branchPath, branchRef)
         return { kind: 'rebased' }
       }
@@ -1473,6 +1628,7 @@ async function rebaseOneBranch(
       const conflictIdsDeduped = conflictFilesToContentIds(conflictedFiles, ctx.contentRoot)
 
       const hadConflicts = conflictIdsDeduped.length > 0
+      probe.keptEntries = conflictIdsDeduped.length
       workerLog(
         hadConflicts
           ? `  Rebased ${branchDir} (kept branch version for ${conflictIdsDeduped.length} conflicting file(s))`

@@ -48,6 +48,10 @@ describe('Operating Mode Strategies', () => {
         expect(strategy.supportsPullRequests()).toBe(true)
       })
 
+      it('has a worker that brings the base into editing branches', () => {
+        expect(clientOperatingStrategy(mode).syncsBranchesWithBase()).toBe(true)
+      })
+
       it('should use standard permissions file name', () => {
         const strategy = clientOperatingStrategy(mode)
         expect(strategy.getPermissionsFileName()).toBe('permissions.json')
@@ -90,6 +94,10 @@ describe('Operating Mode Strategies', () => {
       it('should NOT support pull requests', () => {
         const strategy = clientOperatingStrategy(mode)
         expect(strategy.supportsPullRequests()).toBe(false)
+      })
+
+      it('has no worker to bring the base into editing branches', () => {
+        expect(clientOperatingStrategy(mode).syncsBranchesWithBase()).toBe(false)
       })
 
       it('should use standard permissions file name', () => {

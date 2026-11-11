@@ -28,7 +28,7 @@ export function RetryToastMessage({
         <Text size="sm" miw={0}>
           {message}
         </Text>
-        <Button size="compact-sm" variant="subtle" onClick={onRetry}>
+        <Button size="compact-sm" variant="subtle" onClick={onRetry} style={{ flexShrink: 0 }}>
           {actionLabel}
         </Button>
       </Group>
