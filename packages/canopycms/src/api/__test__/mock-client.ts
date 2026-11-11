@@ -11,7 +11,7 @@ import type { ContentId } from '../../paths'
 import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, CreateBranchBody, UpdateBranchAccessBody } from '../branch'
 import type { BranchChangesResponse } from '../branch-changes'
 import type { BranchEntryChangeResponse, RestoreEntryBody, RestoreEntryResponse } from '../branch-entry-changes'
-import type { BranchMergeResponse, RequestChangesBody, SubmitBranchBody, SubmitBranchResponse } from '../branch-status'
+import type { BranchMergeResponse, RequestChangesBody, SubmitBranchBody, SubmitBranchResponse, UpdateFromBaseResponse } from '../branch-status'
 import type { AdminDeleteTaskResponse, AdminRetryTaskResponse, AdminStatusResponse, AdminTasksResponse, BranchHealthResponse, DeleteArchivedBranchesBody, DeleteArchivedBranchesResponse, DismissUnpublishedResponse, PurgeBranchDirResponse, RepairBranchDirResponse, RepairContentDuplicatesResponse } from '../admin'
 import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from '../comments'
 import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse, RenameEntryBody, RenameEntryResponse, ValidateReferencesBody, WriteContentBody } from '../content'
@@ -58,6 +58,7 @@ export function createMockApiClient(): MockApiClient {
 
   workflow: {
     withdraw: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"test-branch","status":"editing","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})),
+    updateFromBase: vi.fn().mockResolvedValue(mockSuccess({"requestedAt":"2024-01-01T00:00:00.000Z","branch":{"name":"test-branch","status":"editing","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01","baseUpdateRequestedAt":"2024-01-01T00:00:00.000Z"}})),
     requestChanges: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"test-branch","status":"editing","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})),
     approve: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"test-branch","status":"approved","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})),
     markMerged: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"test-branch","status":"archived"}})),
@@ -180,6 +181,10 @@ export function mockBranchEntryChangeResponse(): BranchEntryChangeResponse {
 
 export function mockRestoreEntryResponse(): RestoreEntryResponse {
   return mockSuccess({"logicalPath":"","contentId":""})
+}
+
+export function mockUpdateFromBaseResponse(): UpdateFromBaseResponse {
+  return mockSuccess({"requestedAt":"2024-01-01T00:00:00.000Z","branch":{"name":"test-branch","status":"editing","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01","baseUpdateRequestedAt":"2024-01-01T00:00:00.000Z"}})
 }
 
 export function mockBranchMergeResponse(): BranchMergeResponse {

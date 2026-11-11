@@ -69,7 +69,7 @@
     "ARCHITECTURE.md": {
       "historyMarkers": 0,
       "maxSectionWords": 2901,
-      "words": 24880
+      "words": 24975
     },
     "CHANGELOG.md": {
       "historyMarkers": null,
@@ -77,7 +77,7 @@
     },
     "CODEBASE_GUIDE.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 834,
+      "maxSectionWords": 854,
       "words": 4547
     },
     "DEVELOPING.md": {
@@ -102,8 +102,8 @@
     },
     "docs/ux-guidelines.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 298,
-      "words": 2260
+      "maxSectionWords": 315,
+      "words": 2301
     },
     "packages/canopycms/src/AGENTS.md": {
       "historyMarkers": 0,

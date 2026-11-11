@@ -19,6 +19,7 @@ import type { ApiClient } from '../context'
 import type { BranchListItem } from '../../api/branch'
 import { isNonApiResponse } from '../../api/client'
 import { seedUserProfiles } from './useUserMetadata'
+import { noteServerTime } from '../server-clock'
 
 /** Cache key for the branches list. */
 export const BRANCHES_KEY = 'canopy:branches'
@@ -55,6 +56,7 @@ export async function fetchBranches(
   if (!result.ok) {
     throw new Error(result.error ?? `Failed to load branches: ${result.status}`)
   }
+  if (result.data?.serverTime !== undefined) noteServerTime(result.data.serverTime)
   const users = result.data?.users ?? []
   await seedUserProfiles(swr, users)
   return {

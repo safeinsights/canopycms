@@ -117,6 +117,7 @@ Route handlers, one file per endpoint namespace:
 
 - `branch.ts` — `/branches`: create, list, delete; `toBranchListItem` shapes branch responses, with server-computed `isProtected` / `readOnly`
 - `branch-status.ts` — `/branch-status`: status and submit (`SubmitBranchResponse`)
+- `branch-update-from-base.ts` — `POST /:branch/update-from-base` (`updateFromBase`): `commitSavedWork`, enqueue `sync-branch`
 - `branch-withdraw.ts` — `/branch-withdraw`: withdraw a PR
 - `archived-branches.ts` — `POST /:branch/archive`, `POST /admin/archived-branches/delete`
 - `branch-review.ts` — `/branch-review`: approve, request changes
@@ -245,7 +246,7 @@ direction, and every invariant.
 - `stale-mirror.ts` — `settleStaleMirror`: a `remote.git` head without editor work follows GitHub
 - `canopy-state.ts` — how sync treats adopter-tracked `.canopy-meta/` state: `listTrackedCanopyState`, `trackedCanopyStateChanges`, `splitByUpstreamTracking`, `untrackInIndex`, `restoreRetiredSchemaCache`
 - `provisioned-workspace.ts` — `holdProvisionedWorkspace`: the zero-retry provisioning-lock hold around base refresh and each rebase
-- `rebase.ts` — the rebase loop, `runRebaseCycle`, `pollMergeState`
+- `rebase.ts` — the rebase loop, `runRebaseCycle` (requested branches first), `answerBaseUpdate`, `pollMergeState`; `requestBranchSync` wakes `scheduleLoop`
 - `github-commits.ts`, `branch-merge.ts`: GitHub-side commits
 - `github-gateway.ts` — GitHub access; `branch-policy.ts`, `gateway-egress.ts`, `github-gateway-http.ts` its policy, scrubbing, socket
 - `github-mirror.ts`, `github-mirror-upkeep.ts`, `shared-repo-git.ts` — isolated git
@@ -514,6 +515,7 @@ Top-level components and helpers:
 - `FormRenderer.tsx` — schema-driven form dispatch incl. `group` and string-list; a boundary per field; under `readOnly`, `ReadOnlyFence` disables custom renderers
 - `FormHeader.tsx` / `form-outline.ts` — the form's sticky header and its field outline
 - `BranchManager.tsx` — branch list, badges and workflow buttons; `getBranchPermissions` folds in `isProtected`
+- `GetLatestChangesButton.tsx`, `BaseUpdateNotice.tsx`, `hooks/useBaseUpdate.tsx`, `base-update-wait.ts` — "Get latest changes"
 - `CommentsPanel.tsx` — comment panel
 - `GroupManager.tsx` / `PermissionManager.tsx` — admin group, permission drawers
 - `preview-bridge.tsx` / `PreviewFrame.tsx` — the bridge's host and editor sides; `PreviewPane.tsx` adds the toolbar (`PreviewToolbarTools.tsx`); see [Preview Bridge](#preview-bridge)
@@ -705,6 +707,7 @@ All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 - `branch-delete.ts` — `deleteBranchWorkspace`: the one delete path (API, admin bulk, worker sweep)
 - `branch-param.ts` — `resolveBranchParam` (the exact form first), `shortNameOf`
 - `branch-metadata.ts` — `branch.json` persistence under layered concurrency; `baseBranch` immutable; `buildMergedBranchUpdate`, `buildInitialBranchMetadata`; `update` (a computed save), `recordEditor`, `markEditorsCommitted`, `recordBranchEditor`
+- `base-update.ts` — dependency-free "Get latest changes" constants and `isBaseUpdatePending`; metadata `baseUpdateRequestedAt`, `lastBaseUpdate`
 - `branch-metadata-file.ts` — schema-checked `branch.json` reads; a deliberate leaf module
 - `branch-metadata-error.ts` — the corrupt-metadata error, node-free
 - `branch-workspace.ts` — `BranchWorkspaceManager`: `provisionBranch` returns a `created` / `exists` `ProvisionOutcome`

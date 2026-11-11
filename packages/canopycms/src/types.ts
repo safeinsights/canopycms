@@ -201,6 +201,31 @@ export interface BranchMetadata {
   uncommittedEditors?: CanopyUserId[]
   /** The reviewer's verdict on the last submit; absent until a reviewer acts. */
   review?: BranchReview
+  /**
+   * When someone last asked for the latest changes (api/branch-update-from-base.ts). The request
+   * stands while this is newer than `lastBaseUpdate.at`; the editor holds the form read-only and
+   * polls meanwhile, and the worker answers it even after a restart lost its wake-up.
+   */
+  baseUpdateRequestedAt?: string
+  /** The worker's answer to the latest request for the latest changes (worker/rebase.ts). */
+  lastBaseUpdate?: LastBaseUpdate
+}
+
+/** How a requested update from the base went. */
+export type BaseUpdateOutcome = 'merged' | 'up-to-date' | 'conflicts' | 'failed'
+
+export interface LastBaseUpdate {
+  /**
+   * When the GitHub fetch began that the branch was brought up to, as the gateway reports it
+   * (worker/github-gateway.ts, `GitHubFetchResult.startedAt`): a request is answered only from a
+   * fetch begun at or after it, so a cycle already running when it arrived never ends it.
+   */
+  at: string
+  outcome: BaseUpdateOutcome
+  /** The base commit the branch now contains; absent when it failed before reading one. */
+  baseSha?: string
+  /** For `conflicts`: how many entries kept this branch's version. */
+  keptEntries?: number
 }
 
 export interface BranchPaths {

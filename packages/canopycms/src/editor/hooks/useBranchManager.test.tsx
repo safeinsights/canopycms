@@ -1247,6 +1247,81 @@ describe('useBranchManager', () => {
       expect(body).not.toContain('Are you sure')
     })
 
+    describe('withdrawing a branch that conflicts with its base', () => {
+      // The listing carries the hold as `hold`, as api/branch.ts serves it.
+      const listing: BranchMetadata[] = mockBranches.map((b) =>
+        b.name === 'feature' ? { ...b, hold: { kind: 'conflicts' as const } } : b,
+      )
+
+      it('withdraws, then gets the latest changes, where a worker answers', async () => {
+        mockClient.workflow.withdraw.mockResolvedValueOnce({ ok: true, status: 200 })
+        const requestLatestChanges = vi.fn().mockResolvedValue(undefined)
+        const { result } = await loaded(listing, {
+          operatingMode: 'prod',
+          latestChangesAfterWithdraw: () => requestLatestChanges,
+        })
+
+        await act(async () => {
+          await result.current.handleWithdraw('feature')
+        })
+
+        const { options, body } = await lastDialog()
+        expect(options.labels).toEqual({
+          confirm: 'Withdraw and get latest changes',
+          cancel: 'Cancel',
+        })
+        expect(body).toContain('• Bring in the latest changes made on the site')
+        expect(mockClient.workflow.withdraw).toHaveBeenCalled()
+        expect(requestLatestChanges).toHaveBeenCalledTimes(1)
+      })
+
+      it('only withdraws in dev mode, where no worker answers', async () => {
+        mockClient.workflow.withdraw.mockResolvedValueOnce({ ok: true, status: 200 })
+        const requestLatestChanges = vi.fn().mockResolvedValue(undefined)
+        const { result } = await loaded(listing, {
+          latestChangesAfterWithdraw: () => requestLatestChanges,
+        })
+
+        await act(async () => {
+          await result.current.handleWithdraw('feature')
+        })
+
+        const { options } = await lastDialog()
+        expect(options.labels).toEqual({ confirm: 'Withdraw from review', cancel: 'Cancel' })
+        expect(requestLatestChanges).not.toHaveBeenCalled()
+      })
+
+      it("only withdraws where the editor says it can't apply, as for a branch not open", async () => {
+        mockClient.workflow.withdraw.mockResolvedValueOnce({ ok: true, status: 200 })
+        const { result } = await loaded(listing, {
+          operatingMode: 'prod',
+          latestChangesAfterWithdraw: () => undefined,
+        })
+
+        await act(async () => {
+          await result.current.handleWithdraw('feature')
+        })
+
+        const { options } = await lastDialog()
+        expect(options.labels).toEqual({ confirm: 'Withdraw from review', cancel: 'Cancel' })
+      })
+
+      it('asks for nothing when the withdraw fails', async () => {
+        mockClient.workflow.withdraw.mockResolvedValueOnce({ ok: false, status: 500, error: 'x' })
+        const requestLatestChanges = vi.fn().mockResolvedValue(undefined)
+        const { result } = await loaded(listing, {
+          operatingMode: 'prod',
+          latestChangesAfterWithdraw: () => requestLatestChanges,
+        })
+
+        await act(async () => {
+          await result.current.handleWithdraw('feature').catch(() => {})
+        })
+
+        expect(requestLatestChanges).not.toHaveBeenCalled()
+      })
+    })
+
     it('asks to archive, and says deletion by age leaves the branch', async () => {
       mockClient.workflow.archive.mockResolvedValueOnce({ ok: true, status: 200 })
       const { result } = await loaded(

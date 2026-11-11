@@ -118,6 +118,11 @@ export type BranchListResponse = ApiResponse<{
   defaultBranch?: string
   /** Profiles of the listed branches' creators, in no order; unknown ids are absent. */
   users: UserProfile[]
+  /**
+   * The server's clock as it answered, in ms since the epoch, so the editor times a wait for the
+   * latest changes against the clock that stamped the request rather than the browser's.
+   */
+  serverTime?: number
 }>
 
 /** Response type for branch deletion */
@@ -771,6 +776,7 @@ const branchListResponse = async (
       ),
       defaultBranch,
       users,
+      serverTime: Date.now(),
     },
   }
 }

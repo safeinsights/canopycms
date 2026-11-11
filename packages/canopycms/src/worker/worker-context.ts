@@ -118,6 +118,19 @@ export interface WorkerContext {
    */
   warnedDivergences(): Map<string, string>
   /**
+   * Run the git sync early, coalesced: once it has rested `EARLY_RUN_MIN_REST_MS` (cms-worker.ts),
+   * or its own interval if shorter, counting from when the last cycle ended, so a request during a
+   * cycle waits that long after it. `branchRef`, when given, is synced ahead of the rest. In memory only: a restart loses
+   * it, and the request recorded on the branch's branch.json still gets its answer from the next
+   * regular cycle (worker/rebase.ts).
+   */
+  requestBranchSync(branchRef?: string): void
+  /**
+   * What was asked since the last call, which clears it: the branches, by workspace directory name,
+   * and whether anything asked at all (a request with no branch wakes the sync too).
+   */
+  takeBranchSyncRequests(): { branches: Set<string>; requested: boolean }
+  /**
    * Test hook: fires when the rebase has reported conflicted files and is about
    * to `checkout --theirs` them. No-op in production.
    */

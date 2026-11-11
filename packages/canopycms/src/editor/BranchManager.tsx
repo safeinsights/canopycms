@@ -55,6 +55,8 @@ import {
   rewrittenSubmitReason,
   UNFINISHED_SUBMIT_APPROVE_REASON,
 } from './copy'
+import { GetLatestChangesButton } from './components/GetLatestChangesButton'
+import type { BaseUpdateControl } from './base-update-wait'
 import { isReviewerOfOthersReview } from '../authorization/review-role'
 import { SYSTEM_USER_ID } from '../system-users'
 
@@ -224,6 +226,8 @@ export interface BranchManagerProps {
   currentBranchName?: string
   /** Why the open branch's Submit or Withdraw must wait, such as a Save all still writing it. */
   currentWorkflowBlockedReason?: string
+  /** "Get latest changes" for the open branch, when it applies (hooks/useBaseUpdate.tsx). */
+  currentBaseUpdate?: BaseUpdateControl
   /** Opens on the new-branch form, its name field focused, as New branch… in the branch bar asks. */
   startCreating?: boolean
   onSelect?: (name: string) => void
@@ -338,6 +342,8 @@ interface BranchCardProps {
   branch: BranchSummary
   isCurrent: boolean
   workflowBlockedReason?: string
+  /** The open branch's "Get latest changes". */
+  baseUpdate?: BaseUpdateControl
   user?: UserContext
   onSelect?: (name: string) => void
   onSubmit?: (name: string) => void
@@ -365,6 +371,7 @@ const BranchCard: React.FC<BranchCardProps> = ({
   branch: b,
   isCurrent,
   workflowBlockedReason,
+  baseUpdate,
   user,
   onSelect,
   onSubmit,
@@ -430,7 +437,10 @@ const BranchCard: React.FC<BranchCardProps> = ({
   // crowd the details at the drawer's width, so they take a row below. Open and Review stay beside
   // the title.
   const actionRow =
-    !!secondary || primary?.label === EDITOR_ACTIONS.withdrawFromReview || (!!primary && !!b.hold)
+    !!secondary ||
+    !!baseUpdate ||
+    primary?.label === EDITOR_ACTIONS.withdrawFromReview ||
+    (!!primary && !!b.hold)
   const archive: BranchWorkflowAction | undefined = heldBack(
     userIsAdmin && b.status !== 'archived' && b.pullRequestState === 'closed'
       ? {
@@ -697,6 +707,12 @@ const BranchCard: React.FC<BranchCardProps> = ({
           mt="sm"
           data-testid={`branch-action-row-${b.name}`}
         >
+          {baseUpdate && (
+            <GetLatestChangesButton
+              control={baseUpdate}
+              testId={`get-latest-changes-button-${b.name}`}
+            />
+          )}
           {secondary && <CardActionButton action={secondary} />}
           {primary && <CardActionButton action={primary} />}
         </Group>
@@ -818,6 +834,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   user,
   currentBranchName,
   currentWorkflowBlockedReason,
+  currentBaseUpdate,
   startCreating = false,
   onSelect,
   onBeforeCreate,
@@ -929,6 +946,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
         workflowBlockedReason={
           b.name === currentBranchName ? currentWorkflowBlockedReason : undefined
         }
+        baseUpdate={b.name === currentBranchName ? currentBaseUpdate : undefined}
         user={user}
         onSelect={act(onSelect)}
         onSubmit={act(onSubmit)}

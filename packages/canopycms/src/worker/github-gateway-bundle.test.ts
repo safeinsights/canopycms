@@ -1124,6 +1124,24 @@ describe('GitHub fetches, coalesced at the production window', () => {
     expect(second.refs.get('main')).toBe(main)
   })
 
+  it('says when the fetch it answers from began, and takes none begun before a fresh request', async () => {
+    const main = await commitAndPush(githubPath, 'refs/heads/main', 'main.txt')
+    const github = coalescing()
+    const before = Date.now()
+    const first = await github.fetch({ have: [] })
+    expect(first.startedAt).toBeGreaterThanOrEqual(before)
+
+    const next = await commitAndPush(githubPath, 'refs/heads/main', 'next.txt')
+    const reused = await github.fetch({ have: [] })
+    expect(reused.refs.get('main')).toBe(main)
+    expect(reused.startedAt).toBe(first.startedAt)
+
+    const askedAt = Date.now()
+    const fresh = await github.fetch({ have: [], fresh: true })
+    expect(fresh.refs.get('main')).toBe(next)
+    expect(fresh.startedAt).toBeGreaterThanOrEqual(askedAt)
+  })
+
   it('has concurrent operations join the one in flight', async () => {
     const { main, feature } = await featureAhead()
     const github = coalescing()
