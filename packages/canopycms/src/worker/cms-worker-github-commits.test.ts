@@ -487,9 +487,37 @@ describe('an open pull request GitHub reports behind', () => {
       expect((await readMeta(s))?.pullRequestHold).toBeUndefined()
     })
 
-    it('records no conflict GitHub measured on a commit the clone has moved past', async () => {
-      await cycle(s, workerWithPullRequest(s, 'dirty', { headSha: 'a'.repeat(40) }))
-      expect((await readMeta(s))?.pullRequestHold).toBeUndefined()
+    describe('measured on a commit the clone does not hold', () => {
+      const elsewhere = { headSha: 'a'.repeat(40) }
+
+      it('records no conflict', async () => {
+        await cycle(s, workerWithPullRequest(s, 'dirty', elsewhere))
+        expect((await readMeta(s))?.pullRequestHold).toBeUndefined()
+      })
+
+      it('keeps a conflict already recorded, unwritten', async () => {
+        await cycle(s, workerWithPullRequest(s, 'dirty'))
+        const before = await BranchMetadataFileManager.loadOnly(s.branchPath)
+        expect(before?.branch.pullRequestHold).toEqual({ kind: 'conflicts' })
+
+        await cycle(s, workerWithPullRequest(s, 'dirty', elsewhere))
+
+        const after = await BranchMetadataFileManager.loadOnly(s.branchPath)
+        expect(after?.branch.pullRequestHold).toEqual({ kind: 'conflicts' })
+        expect(after?.version).toBe(before?.version)
+      })
+
+      it('clears a retargeted hold once the pull request is back on its base', async () => {
+        await cycle(s, workerWithPullRequest(s, 'dirty', { base: 'release' }))
+        expect((await readMeta(s))?.pullRequestHold).toEqual({
+          kind: 'retargeted',
+          base: 'release',
+        })
+
+        await cycle(s, workerWithPullRequest(s, 'dirty', elsewhere))
+
+        expect((await readMeta(s))?.pullRequestHold).toBeUndefined()
+      })
     })
 
     it('records a pull request retargeted while it is behind, naming the base', async () => {

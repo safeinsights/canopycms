@@ -574,13 +574,15 @@ export async function mergeIntoBranch(
   // `catchUpWithPublished`.
   if (lockLost()) return { kind: 'wait' }
   await moveClone(git, branchPath, sha)
-  // Again once moved: approving takes no content-write lock, so it can land mid-merge. A failure
-  // here must not skip what follows for the merge that did land.
-  await (async () => {
-    if (await changesWhatWasReviewed(ctx, args, head, sha)) await returnToReview(ctx, args)
-  })().catch((err: unknown) =>
-    workerLogWarn(`  ${branchDir}: could not judge a late approval: ${getErrorMessage(err)}`),
-  )
+  // Again once moved: approving takes no content-write lock, so it can land mid-merge. Unjudged, an
+  // approval goes back to review, and a failure must not skip what follows for the merge that did
+  // land.
+  await changesWhatWasReviewed(ctx, args, head, sha)
+    .catch(() => true)
+    .then((changed) => (changed ? returnToReview(ctx, args) : undefined))
+    .catch((err: unknown) =>
+      workerLogWarn(`  ${branchDir}: could not judge a late approval: ${getErrorMessage(err)}`),
+    )
   // Landed: a failure here leaves the remaps and the stamp for the next cycle's reconcile.
   await landed(ctx, args, sha).catch((err: unknown) =>
     workerLogWarn(
