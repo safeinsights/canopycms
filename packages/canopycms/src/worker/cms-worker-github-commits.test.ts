@@ -426,7 +426,7 @@ describe('an open pull request GitHub reports behind', () => {
 
   it('does nothing when GitHub reports anything else, so no adopter gets commits unasked', async () => {
     const before = await s.head()
-    for (const state of ['clean', 'blocked', 'unstable', 'dirty', 'unknown', 'draft']) {
+    for (const state of ['clean', 'blocked', 'unstable', 'unknown', 'draft']) {
       await cycle(s, workerWithPullRequest(s, state))
     }
     expect(await s.head()).toBe(before)
@@ -466,6 +466,11 @@ describe('an open pull request GitHub reports behind', () => {
   })
 
   describe('what the branch card is told', () => {
+    // A clash nothing settles, so a `dirty` pull request stays as it is.
+    beforeEach(async () => {
+      await s.advanceBase({ 'editor.txt': 'base edit\n' })
+    })
+
     it('records a conflict GitHub reports, and clears it once GitHub stops', async () => {
       await cycle(s, workerWithPullRequest(s, 'dirty'))
       expect((await readMeta(s))?.pullRequestHold).toEqual({ kind: 'conflicts' })
@@ -622,6 +627,89 @@ describe('an open pull request GitHub reports behind', () => {
       expect(await s.head()).toBe(before)
     } finally {
       await release()
+    }
+  })
+})
+
+describe('row 42: a pull request in review that GitHub reports dirty', () => {
+  let tmpDir: string
+  let s: Setup
+  const submitted = { status: 'submitted', pullRequestNumber: 7 } as const
+  const approved = {
+    ...submitted,
+    status: 'approved',
+    review: { state: 'approved', by: { userId: 'r' }, at: '2026-10-01T00:00:00.000Z' },
+  } as const
+  // One field a line, so git conflicts on any two neighbouring fields changed apart.
+  const page = (title: string, sub: string) => JSON.stringify({ title, sub }, null, 2) + '\n'
+
+  beforeEach(async () => {
+    mockConsole()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-pr-dirty-'))
+    s = await createSetup(tmpDir)
+    await s.advanceBase({ [ENTRY]: page('seed', 'seed') })
+    await s.clone.raw(['fetch', '-q', 'origin', BASE])
+    await s.clone.raw(['merge', '-q', '--ff-only', 'FETCH_HEAD'])
+    await s.commit({ [ENTRY]: page('editor', 'seed') })
+    await s.push()
+    await writeMeta(s, submitted)
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('merges a field-clean base into a submitted branch, which stays submitted', async () => {
+    await writeMeta(s, { ...submitted, pullRequestHold: { kind: 'conflicts' } })
+    await s.advanceBase({ [ENTRY]: page('seed', 'base') })
+    const before = await s.head()
+
+    const summary = await cycle(s, workerWithPullRequest(s, 'dirty'))
+
+    expect(summary.rebased).toEqual([BRANCH])
+    expect(await s.file(ENTRY)).toBe(page('editor', 'base'))
+    const parents = (await s.clone.raw(['rev-list', '--parents', '-n1', 'HEAD'])).trim().split(' ')
+    expect(parents[1]).toBe(before)
+    expect(await s.remoteSha(`refs/heads/${BRANCH}`)).toBe(await s.head())
+    expect(await queued(s, 'push-branch')).toEqual([BRANCH])
+    const meta = await readMeta(s)
+    expect(meta?.status).toBe('submitted')
+    expect(meta?.pullRequestHold).toBeUndefined()
+    expect(meta?.conflictFiles ?? []).toEqual([])
+    expect(await queued(s, 'sync-pr-comments')).toEqual([])
+  })
+
+  it('sends an approved branch back to review once a field-clean merge lands', async () => {
+    await writeMeta(s, approved)
+    await s.advanceBase({ [ENTRY]: page('seed', 'base') })
+
+    await cycle(s, workerWithPullRequest(s, 'dirty'))
+
+    expect(await s.file(ENTRY)).toBe(page('editor', 'base'))
+    const meta = await readMeta(s)
+    expect(meta?.status).toBe('submitted')
+    expect(meta?.review).toBeUndefined()
+    expect(await queued(s, 'sync-pr-comments')).toEqual([BRANCH])
+  })
+
+  it('leaves a branch with a real field clash as it is, held, approved or not', async () => {
+    for (const status of [submitted, approved]) {
+      await writeMeta(s, status)
+      await s.advanceBase({ [ENTRY]: page(`base ${status.status}`, 'base') })
+      const before = await s.head()
+
+      const summary = await cycle(s, workerWithPullRequest(s, 'dirty'))
+
+      expect(summary.rebased).toEqual([])
+      expect(summary.failed).toEqual([])
+      expect(await s.head()).toBe(before)
+      expect(await s.file(ENTRY)).toBe(page('editor', 'seed'))
+      expect(await queued(s, 'push-branch')).toEqual([])
+      const meta = await readMeta(s)
+      expect(meta?.status).toBe(status.status)
+      expect(meta?.pullRequestHold).toEqual({ kind: 'conflicts' })
+      expect(meta?.conflictFiles).toBeUndefined()
+      expect((await new MergeConflictStore(s.branchPath).read())?.entries ?? {}).toEqual({})
     }
   })
 })

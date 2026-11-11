@@ -497,8 +497,8 @@ async function moveClone(git: SimpleGit, branchPath: string, to: string): Promis
  * `other` merged into the branch: built, recorded, published to `remote.git`, queued for GitHub,
  * and the clone moved to it, in that order, so each step leaves what the next cycle picks up and
  * only the last touches the working tree. `fromGitHub` says `other` is GitHub's tip rather than the
- * base. `stopOnConflict` leaves a branch in review as it is wherever git meets a conflict: nobody
- * is at the editor to see what a kept value replaced, and GitHub's own conflict notice stands on
+ * base. `inReview` takes only a merge with nothing for a person to choose: a conflict on a branch in
+ * review is never recorded, so the branch stays as it is, and GitHub's own conflict notice stands on
  * the pull request. A lock lost before the clone moves leaves it where it was: `wait`.
  */
 export async function mergeIntoBranch(
@@ -509,11 +509,11 @@ export async function mergeIntoBranch(
     other: string
     message: string
     fromGitHub: boolean
-    stopOnConflict?: boolean
+    inReview?: boolean
   },
 ): Promise<GitHubCommitsOutcome> {
   const { git, branchPath, branchDir, branchRef, gatewayPolicy, lockLost } = args
-  const { head, other, message, fromGitHub, stopOnConflict } = merge
+  const { head, other, message, fromGitHub, inReview } = merge
   const built = await buildMergeCommit(git, branchPath, {
     head,
     other,
@@ -521,9 +521,12 @@ export async function mergeIntoBranch(
     contentRoot: ctx.contentRoot,
     timeoutMs: ctx.taskTimeoutMs,
   })
-  // A branch in review takes only git's own merge with nothing to decide: anything else changes
-  // what was reviewed, and nobody is at the editor to choose.
-  if (stopOnConflict && (built.kind === 'unsettled' || !built.asGitDoes)) {
+  // Nobody is at the editor of a branch in review to choose: a value or file kept over the other
+  // side's change would stand unseen in the pull request.
+  if (
+    inReview &&
+    (built.kind === 'unsettled' || built.conflicts.length > 0 || built.keptPaths.length > 0)
+  ) {
     workerLog(`  ${branchDir}: conflicts with ${other.slice(0, 7)}, so it stays as it is`)
     return { kind: 'wait' }
   }
@@ -540,9 +543,8 @@ export async function mergeIntoBranch(
   const refused = await refuseIncoming(args, head, sha)
   if (refused) return refused
   if (lockLost()) return { kind: 'wait' }
-  if (fromGitHub && (await changesWhatWasReviewed(ctx, args, head, sha))) {
-    await returnToReview(ctx, args)
-  }
+  // A field merge of the base settles what git could not, which no reviewer has seen either.
+  if (await changesWhatWasReviewed(ctx, args, head, sha)) await returnToReview(ctx, args)
 
   const published = await readPublishedSha(ctx, branchRef)
   const unpublishable =
@@ -647,7 +649,7 @@ export async function returnToReview(
     (current) => current?.branch.name === branchRef && current.branch.status === 'approved',
   )
   if (saved === null) return
-  workerLog(`  ${branchDir}: back in review, as commits from GitHub changed what was approved`)
+  workerLog(`  ${branchDir}: back in review, as what was approved changed`)
   await enqueueReviewBlockSync(ctx, branchRef, metaFile)
 }
 

@@ -553,7 +553,7 @@ Between the local publish and the GitHub push landing, such a branch reads as di
 
 Update branch or a maintainer's fix puts commits on a PR branch that its clone never sees, so each cycle, in every status but archived, `worker/github-commits.ts` brings them in ahead of the rebase. A clone behind GitHub fast-forwards. One with commits of its own gets a real merge, decided as below and listing what it kept in the PR body. A conflict that moves or joins paths is left for a developer, as are commits that change `.canopy-meta/`. A commit removed on GitHub stays removed, even one only `remote.git` took in: a rebase failure stays recorded, and pushes stop, until a developer merges the commit it names back in. A commit that isn't a clean merge of the base sends an approved branch back to review.
 
-A submitted or approved PR that GitHub reports `behind`, which needs the up-to-date rule, gets the base merged in, keeping any approval. Only git's own merge with nothing to decide is taken; anything else stops it.
+A submitted or approved PR that GitHub reports `behind` or `dirty` gets the base merged in field by field. An approved branch keeps its approval only for git's own clean merge; any other returns it to review. A merge leaving anything for a person stops, and the PR's conflict hold tells the author to withdraw.
 
 ### Conflict Resolution Strategy
 
