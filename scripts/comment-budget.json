@@ -47,6 +47,10 @@
           "maxRun": 30,
           "ratio": 0.413
         },
+        "packages/canopycms/src/merge": {
+          "maxRun": 30,
+          "ratio": 0.21
+        },
         "packages/canopycms/src/operating-mode": {
           "maxRun": 30,
           "ratio": 0.542

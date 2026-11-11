@@ -840,6 +840,17 @@ parse-versus-create-versus-cast conventions.
 - `deletion-checker.ts` — `findReferencingEntries`, the entries a delete would orphan
 - `block-structural-keys.ts` — which keys of a block item are structure rather than content
 
+## Merge Module
+
+**Location**: `packages/canopycms/src/merge/` —
+[AGENTS.md](packages/canopycms/src/merge/AGENTS.md)
+
+- `entry-merge.ts` — `mergeEntry`, one entry's field-level three-way merge; `mergeCollectionMeta`
+- `list-alignment.ts` — list item identity (`alignToAncestor`) and merged order (`mergeOrder`)
+- `text-merge.ts` — `mergeText`, line-level merge with conflict regions
+- `conflict-path.ts` — `describePath`, a conflict's drawer key and data path
+- `value-equality.ts` — `sameValue`, the equality the drawer shares
+
 ## Entry Links
 
 Cross-cutting feature linking between entries with `entry:CONTENT_ID` in markdown bodies —
