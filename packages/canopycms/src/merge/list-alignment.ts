@@ -7,9 +7,10 @@
  */
 
 import { ITEM_KEY, isItemKey, itemKeysAsRead } from '../item-keys'
+import { isBlockStructuralKey } from '../validation/block-structural-keys'
 import { isPlainRecord } from '../validation/field-traversal'
 import { commonPairs } from './diff3'
-import { valueToken } from './value-equality'
+import { isEmptyValue, sameValue, valueToken } from './value-equality'
 
 /** Marks an identity no file holds: a side's new item. Item keys never contain it. */
 const INTERNAL = '\u0000'
@@ -76,33 +77,33 @@ const ancestorAliases = (
   return aliases
 }
 
-/** Which ancestor item each item of a side's list is, and which identities rest on position alone. */
+/** Which ancestor item each item of a side's list is. */
 export interface Alignment {
   /** Per item: the ancestor item's key, or for an item new on this side an identity of its own. */
   ids: string[]
-  /** The items paired with an ancestor item only by their place in a gap: an edit in place, or
-   * one item replaced by another, which nothing here can tell apart. */
-  weak: Set<number>
+  /** Items matched by their place alone, sharing no value with the ancestor item. */
+  byPlace: Set<number>
 }
 
 /**
- * Each item of `items`' identity. `ancestorKeys` are the ancestor's items' keys as a read gives
- * them, and a side's item is first named by the key a read gives IT: its own key the first time
- * the list holds it, else a hash of its content. A name the ancestor's read gave, or another key a
- * read could have given an ancestor item ({@link ancestorAliases}), is that ancestor item.
+ * Each item of `items`' identity: the key of the ancestor item it is, or for an item new on this
+ * side an identity of its own. `ancestorKeys` are the ancestor's items' keys as a read gives them.
+ * An item with a key of its own is named by the key a read gives it: that key the first time the
+ * list holds it, else a hash of its content. A name the ancestor's read gave, or another key a
+ * read could have given an ancestor item ({@link ancestorAliases}), is that ancestor item; any
+ * other key marks the item new when it was minted for it or the ancestor knows it (a copy), and so
+ * does a read key the ancestor gave an item of another list (`inEntry`): that item moved here.
  *
- * Any other key on an item marks it new on this side when it was minted for the item or is a
- * key the ancestor knows (a copy of a keyed item), so a delete and an add in its place never
- * read as an edit. The rest align as diff3 aligns lines: equal content in order, then equal
- * content out of order (a move), then, in a gap between two matches holding as many unmatched
- * items on both sides, one by one by position. An ancestor item with a minted key never pairs by
- * position: a side item in its place without the key replaced it.
+ * The rest align as diff3 aligns lines: equal content in order, then equal content out of order
+ * (a move), then, in each gap between two matches, by shared values ({@link pairInGap}).
+ * Undefined when the diff ran out of time.
  */
 export function alignToAncestor(
   items: readonly unknown[],
   ancestorItems: readonly unknown[],
   ancestorKeys: readonly string[],
   side: string,
+  inEntry: ReadonlySet<string> = new Set(),
 ): Alignment | undefined {
   const known = new Set(ancestorKeys)
   const aliases = ancestorAliases(ancestorItems, ancestorKeys)
@@ -113,16 +114,23 @@ export function alignToAncestor(
   items.forEach((item, j) => {
     const own = ownKey(item)
     const read = readKeys[j]
+    // A keyless item's read key is a hash of its content, which repeats among identical items:
+    // those align by content and order below, never by the hash.
     const id =
-      read !== undefined && known.has(read)
-        ? read
-        : own !== undefined && !known.has(own)
-          ? aliases.get(own)
-          : undefined
+      own === undefined
+        ? undefined
+        : read !== undefined && known.has(read)
+          ? read
+          : !known.has(own)
+            ? aliases.get(own)
+            : undefined
     if (id !== undefined && !taken.has(id)) {
       ids[j] = id
       taken.add(id)
     } else if (own !== undefined && (known.has(own) || isMinted(item))) {
+      minted.add(j)
+    } else if (read !== undefined && !known.has(read) && inEntry.has(read)) {
+      // An ancestor item of another list, moved here: new to this list.
       minted.add(j)
     }
   })
@@ -154,30 +162,83 @@ export function alignToAncestor(
     const i = unmatched.get(valueToken(item))?.shift()
     if (i !== undefined) match(j, i)
   })
-  const weak = new Set<number>()
-  const pairable = (i: number) => !taken.has(ancestorKeys[i]) && !isMinted(ancestorItems[i])
   const bounds: Array<[number, number]> = [
     [-1, -1],
     ...anchors,
     [ancestorItems.length, items.length],
   ]
+  const byPlace = new Set<number>()
   for (let n = 0; n + 1 < bounds.length; n++) {
     const ancestorGap: number[] = []
     const sideGap: number[] = []
     for (let i = bounds[n][0] + 1; i < bounds[n + 1][0]; i++) {
-      if (pairable(i)) ancestorGap.push(i)
+      if (!taken.has(ancestorKeys[i])) ancestorGap.push(i)
     }
     for (let j = bounds[n][1] + 1; j < bounds[n + 1][1]; j++) {
       if (ids[j] === undefined && !minted.has(j)) sideGap.push(j)
     }
-    if (ancestorGap.length === sideGap.length) {
-      ancestorGap.forEach((i, k) => {
-        match(sideGap[k], i)
-        weak.add(sideGap[k])
-      })
+    for (const [j, i, place] of pairInGap(sideGap, items, ancestorGap, ancestorItems)) {
+      match(j, i)
+      if (place) byPlace.add(j)
     }
   }
-  return { ids: ids.map((id, j) => id ?? newIdentity(side, j)), weak }
+  return { ids: ids.map((id, j) => id ?? newIdentity(side, j)), byPlace }
+}
+
+/** Above this many item comparisons in one gap, its items are left unpaired: each is new. */
+const MAX_GAP_COMPARISONS = 10_000
+
+/** `item`'s content members: a block's data inside its `value`, never its key or template. */
+const contentMembers = (item: unknown): Array<[string, unknown]> => {
+  if (!isPlainRecord(item)) return []
+  const data = typeof item.template === 'string' && isPlainRecord(item.value) ? item.value : item
+  return Object.entries(data).filter(
+    ([name, value]) => name !== ITEM_KEY && !isBlockStructuralKey(name) && !isEmptyValue(value),
+  )
+}
+
+/** How many of `ancestor`'s non-empty content values `item` holds unchanged. */
+const sharedValues = (ancestor: unknown, item: unknown): number => {
+  const theirs = new Map(contentMembers(item))
+  return contentMembers(ancestor).filter(([name, value]) => sameValue(value, theirs.get(name)))
+    .length
+}
+
+/**
+ * Pairs a gap's side items with its ancestor items: each with the one holding most of its values,
+ * the earliest on a tie. When as many are left on both sides, keyless ones pair in order by place
+ * (`true`), except with an ancestor item carrying a key minted for it; the rest are adds and
+ * removes, so a delete and an add in one place never read as an edit.
+ */
+function pairInGap(
+  sideGap: readonly number[],
+  items: readonly unknown[],
+  ancestorGap: readonly number[],
+  ancestorItems: readonly unknown[],
+): Array<[number, number, boolean]> {
+  if (sideGap.length * ancestorGap.length > MAX_GAP_COMPARISONS) return []
+  const free = new Set(ancestorGap)
+  const pairs: Array<[number, number, boolean]> = []
+  const unpaired: number[] = []
+  for (const j of sideGap) {
+    let best: number | undefined
+    let bestScore = 0
+    for (const i of free) {
+      const score = sharedValues(ancestorItems[i], items[j])
+      if (score > bestScore) [best, bestScore] = [i, score]
+    }
+    if (best === undefined) {
+      // An item with a key of its own that keeps no value of any is not one of them.
+      if (ownKey(items[j]) === undefined) unpaired.push(j)
+      continue
+    }
+    free.delete(best)
+    pairs.push([j, best, false])
+  }
+  // An ancestor item with a key minted for it is that item only under the key.
+  const left = [...free].filter((i) => !isMinted(ancestorItems[i])).sort((x, y) => x - y)
+  if (left.length === unpaired.length) unpaired.forEach((j, k) => pairs.push([j, left[k], true]))
+  return pairs
 }
 
 /** The identity of the `j`th item of `side`'s list, new on that side. */

@@ -119,6 +119,8 @@ interface Walk {
   conflicts: RawConflict[]
   keyRemaps: KeyRemap[]
   texts: TextMerge[]
+  /** Every key the ancestor's read gives its list items, across the entry. */
+  ancestorKeys: ReadonlySet<string>
 }
 
 const ROOT: At = { segments: [], trail: [], branchKeys: [], item: false }
@@ -353,8 +355,6 @@ function mergeRecord(
  * item, and ordered by `mergeOrder`. A matched item takes the base's key, else the branch's, so
  * the merged file converges on the base's keys; an item neither side keyed gets no key. An item
  * removed on one side and changed on the other is an item conflict, and the branch's state holds.
- * An item matched to the ancestor by position alone that keeps none of its values is likely another
- * item in its place: when the other side changed the item too, it is one whole-item conflict.
  */
 function mergeList(
   o: unknown,
@@ -366,10 +366,12 @@ function mergeList(
 ): unknown[] | undefined {
   const O = asList(o)
   const identities =
-    namedBy === undefined ? identifyByKey(O, a, b) : identifyByName(O, a, b, namedBy)
+    namedBy === undefined
+      ? identifyByKey(O, a, b, walk.ancestorKeys)
+      : identifyByName(O, a, b, namedBy)
   // A list too far apart to align in time is one value.
   if (!identities) return undefined
-  const { oKeys, aIds, bIds, aWeak, bWeak } = identities
+  const { oKeys, aIds, bIds, aByPlace, bByPlace } = identities
   const bReadKeys = itemKeysAsRead(b)
   const index = (ids: readonly string[]) => new Map(ids.map((id, n) => [id, n]))
   const [oAt, aAt, bAt] = [index(oKeys), index(aIds), index(bIds)]
@@ -405,17 +407,15 @@ function mergeList(
       out.push(ja === undefined ? bi : ai)
       continue
     }
-    const replaced =
-      ((aWeak.has(ja) && sharesNothing(oi, ai) && !sameValue(oi, bi)) ||
-        (bWeak.has(jb) && sharesNothing(oi, bi) && !sameValue(oi, ai))) &&
-      !sameValue(ai, bi)
-    let merged: unknown
-    if (replaced) {
-      conflict(oi, ai, bi, itemAt, walk)
-      merged = bi
-    } else {
-      merged = mergeValue(oi, ai, bi, itemAt, walk)
+    // Matched by place alone, it may be another item: one side's change stands whole, two conflict.
+    const placeOnly = aByPlace.has(ja) || bByPlace.has(jb)
+    if (placeOnly && !sameValue(ai, bi)) {
+      const [aChanged, bChanged] = [!sameValue(oi, ai), !sameValue(oi, bi)]
+      if (aChanged && bChanged) conflict(oi, ai, bi, itemAt, walk)
+      out.push(aChanged && !bChanged ? ai : bi)
+      continue
     }
+    const merged = mergeValue(oi, ai, bi, itemAt, walk)
     out.push(
       withListKey(merged, ai, bi, (jb !== undefined && bReadKeys[jb]) || undefined, used, at, walk),
     )
@@ -423,27 +423,23 @@ function mergeList(
   return out
 }
 
-/** `item` keeps none of the ancestor item's non-empty values. */
-function sharesNothing(ancestor: unknown, item: unknown): boolean {
-  if (!isPlainRecord(ancestor) || !isPlainRecord(item)) return false
-  return Object.entries(ancestor).every(
-    ([name, value]) =>
-      name === ITEM_KEY || isEmptyValue(value) || !sameValue(value, member(item, name)),
-  )
-}
-
-function identifyByKey(O: readonly unknown[], a: readonly unknown[], b: readonly unknown[]) {
+function identifyByKey(
+  O: readonly unknown[],
+  a: readonly unknown[],
+  b: readonly unknown[],
+  inEntry: ReadonlySet<string>,
+) {
   const oKeys = itemKeysAsRead(O).map((key, i) => key ?? `${i}`)
-  const aligned = alignToAncestor(a, O, oKeys, 'a')
-  const bAligned = alignToAncestor(b, O, oKeys, 'b')
+  const aligned = alignToAncestor(a, O, oKeys, 'a', inEntry)
+  const bAligned = alignToAncestor(b, O, oKeys, 'b', inEntry)
   if (!aligned || !bAligned) return undefined
   pairNewItems(a, aligned.ids, b, bAligned.ids)
   return {
     oKeys,
     aIds: aligned.ids,
     bIds: bAligned.ids,
-    aWeak: aligned.weak,
-    bWeak: bAligned.weak,
+    aByPlace: aligned.byPlace,
+    bByPlace: bAligned.byPlace,
   }
 }
 
@@ -465,7 +461,7 @@ function identifyByName(
   }
   const [oKeys, aIds, bIds] = [ids(O), ids(a), ids(b)]
   if (!oKeys || !aIds || !bIds) return undefined
-  return { oKeys, aIds, bIds, aWeak: new Set<number>(), bWeak: new Set<number>() }
+  return { oKeys, aIds, bIds, aByPlace: new Set<number>(), bByPlace: new Set<number>() }
 }
 
 /** `merged` with the key its list gives it, recording the remap when the branch's key changes. */
@@ -550,7 +546,9 @@ export function mergeEntry({
       keyRemaps: [],
     }
   }
-  const walk: Walk = { conflicts: [], keyRemaps: [], texts: [] }
+  const ancestorKeys = new Set<string>()
+  visitItems(ancestor.data, (_item, key) => ancestorKeys.add(key))
+  const walk: Walk = { conflicts: [], keyRemaps: [], texts: [], ancestorKeys }
   const data = mergeRecord(ancestor.data, base.data, branch.data, ROOT, walk)
   if (fields) undoUnparseableMdx(fields, data, walk)
   flagItemsMovedAway(ancestor.data, base.data, branch.data, data, walk)
@@ -571,7 +569,11 @@ export function mergeEntry({
     kind: 'merged',
     data,
     ...(body !== undefined && { body }),
-    conflicts: named(walk.conflicts, fields, read),
+    conflicts: named(walk.conflicts, fields, read, {
+      o: ancestor.data,
+      a: base.data,
+      b: branch.data,
+    }),
     keyRemaps: walk.keyRemaps,
   }
 }
@@ -582,14 +584,24 @@ interface KeyedItem {
   list: string
 }
 
-/** Each usable item key held once in `data`, at any depth; null for a key held more often. */
+/**
+ * Each item in `data`, at any depth, by the key a read gives it, so a keyless item is found by its
+ * content; null for a key held more than once in the entry.
+ */
 function keyedItems(data: unknown): Map<string, KeyedItem | null> {
   const found = new Map<string, KeyedItem | null>()
-  visitItems(data, (item, key, list) => found.set(key, found.has(key) ? null : { item, list }))
+  visitItems(data, (item, key, list) => {
+    for (const name of [key, contentName(item)]) {
+      found.set(name, found.has(name) ? null : { item, list })
+    }
+  })
   return found
 }
 
-/** Calls `onItem` for every keyed list item in `node`, with its path and its list's name. */
+/** An item's content as a name, so an item a side moved without its key is still found. */
+const contentName = (item: unknown): string => `${ITEM_KEY}:${valueToken(item)}`
+
+/** Calls `onItem` for every record in a list in `node`, with its read key, list and path. */
 function visitItems(
   node: unknown,
   onItem: (item: unknown, key: string, list: string, at: RawSegment[]) => void,
@@ -597,8 +609,9 @@ function visitItems(
   list = '',
 ): void {
   if (Array.isArray(node)) {
+    const keys = itemKeysAsRead(node)
     node.forEach((item, index) => {
-      const key = usableKey(item)
+      const key = keys[index]
       const itemAt = [...at, { index }]
       if (key !== undefined) onItem(item, key, list, itemAt)
       visitItems(item, onItem, itemAt, `${list}[${key ?? `#${index}`}]`)
@@ -613,8 +626,9 @@ function visitItems(
 /**
  * Lists merge one at a time, so an item one side moved to another list survives there although
  * the other side removed it, or is there twice when the other side changed it in its old place.
- * A keyed item the merged entry holds in another list than the ancestor did, which a side no
- * longer has anywhere, or which the entry now holds twice, is an item conflict.
+ * An item the merged entry holds in another list than the ancestor did, which a side no longer has
+ * anywhere (by its key as read, so a keyless item by its content), or which the entry now holds
+ * twice, is an item conflict.
  */
 function flagItemsMovedAway(
   ancestor: Record<string, unknown>,
@@ -626,16 +640,20 @@ function flagItemsMovedAway(
   const [o, a, b] = [keyedItems(ancestor), keyedItems(base), keyedItems(branch)]
   const named = new Set(walk.conflicts.map((c) => JSON.stringify(c.at)))
   const seen = new Set<string>()
-  visitItems(merged, (_item, key, list, at) => {
-    const [inO, inA, inB] = [o.get(key), a.get(key), b.get(key)]
+  visitItems(merged, (item, key, list, at) => {
+    const content = contentName(item)
+    const find = (found: Map<string, KeyedItem | null>) =>
+      found.has(key) ? found.get(key) : found.get(content)
+    const holds = (found: Map<string, KeyedItem | null>) => found.has(key) || found.has(content)
+    const [inO, inA, inB] = [find(o), find(a), find(b)]
     const twice = seen.has(key) && inA !== null && inB !== null
     seen.add(key)
     const moved = inO && inO.list !== list
     const kind = twice
       ? 'changed'
-      : moved && !a.has(key)
+      : moved && !holds(a)
         ? 'removed-on-base'
-        : moved && !b.has(key)
+        : moved && !holds(b)
           ? 'removed-by-you'
           : undefined
     if (!kind || named.has(JSON.stringify(at))) return
@@ -652,6 +670,7 @@ function named(
   conflicts: readonly RawConflict[],
   fields: readonly FieldConfig[] | undefined,
   read: unknown,
+  sides: Versions,
 ): FieldConflict[] {
   const seen = new Set<string>()
   const out: FieldConflict[] = []
@@ -659,17 +678,25 @@ function named(
     const { key, dataPath, depth } = describePath(fields, read, at)
     if (seen.has(key)) continue
     seen.add(key)
-    const whole = depth < at.length ? trail?.[depth - 1] : undefined
-    if (!whole) {
+    if (depth === at.length) {
       out.push({ key, dataPath, ...rest })
       continue
     }
+    // The whole value's versions: from the merge's own trail, else by member names when the way
+    // there passes no list item (whose place differs between versions), else none to offer.
+    const prefix = at.slice(0, depth)
+    const byName = prefix.every((segment) => 'field' in segment)
+    const whole =
+      trail?.[depth - 1] ??
+      (byName
+        ? { o: valueAt(sides.o, prefix), a: valueAt(sides.a, prefix), b: valueAt(sides.b, prefix) }
+        : undefined)
     out.push({
       key,
       dataPath,
-      kind: kindOf(whole.a, whole.b),
+      kind: whole ? kindOf(whole.a, whole.b) : 'changed',
       ...(!('field' in at[depth - 1]) && { item: true as const }),
-      ...versions(whole.o, whole.a, whole.b),
+      ...(whole && versions(whole.o, whole.a, whole.b)),
     })
   }
   return out
@@ -752,7 +779,7 @@ export function mergeCollectionMeta(
   base: Record<string, unknown>,
   branch: Record<string, unknown>,
 ): { data: Record<string, unknown>; conflicts: FieldConflict[] } {
-  const walk: Walk = { conflicts: [], keyRemaps: [], texts: [] }
+  const walk: Walk = { conflicts: [], keyRemaps: [], texts: [], ancestorKeys: new Set() }
   const data: Record<string, unknown> = {}
   for (const name of new Set([
     ...Object.keys(branch),
@@ -772,5 +799,8 @@ export function mergeCollectionMeta(
     }
     if (v !== undefined) setMember(data, name, v)
   }
-  return { data, conflicts: named(walk.conflicts, undefined, data) }
+  return {
+    data,
+    conflicts: named(walk.conflicts, undefined, data, { o: ancestor, a: base, b: branch }),
+  }
 }

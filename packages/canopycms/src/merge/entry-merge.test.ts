@@ -1000,8 +1000,26 @@ describe('shapes the second review found', () => {
     expect(result.data.l).toEqual(added)
   })
 
+  const listsSchema: FieldConfig[] = [
+    { name: 'p', type: 'object', list: true, fields: text('t') },
+    { name: 'q', type: 'object', list: true, fields: text('t') },
+    {
+      name: 'blocks',
+      type: 'block',
+      templates: [
+        {
+          name: 'hero',
+          fields: [
+            ...text('heading'),
+            { name: 'items', type: 'object', list: true, fields: text('t') },
+          ],
+        },
+      ],
+    },
+  ]
+  const i1 = { t: 'one', _key: 'Ki1aaaaaaaaa' }
+
   it('row 14: an item the base moved to another list and the branch deleted is a conflict', () => {
-    const i1 = { t: 'one', _key: 'Ki1aaaaaaaaa' }
     const block = (key: string, items: unknown[]) => ({
       template: 'hero',
       value: { heading: key, items },
@@ -1012,13 +1030,40 @@ describe('shapes the second review found', () => {
       { data: { blocks: [block('b1', []), block('b2', [i1])] } },
       { data: { blocks: [block('b1', []), block('b2', [])] } },
       'md',
-      undefined,
+      listsSchema,
     )
-    expect(result.conflicts.map((c) => [c.kind, c.item])).toEqual([['removed-by-you', true]])
+    expect(kinds(result)).toEqual([
+      { key: `blocks.b2.items.${i1._key}`, kind: 'removed-by-you', item: true },
+    ])
   })
 
   it('row 14: an item the branch moved to another list and the base deleted is a conflict', () => {
-    const i1 = { t: 'one', _key: 'Ki1aaaaaaaaa' }
+    const result = run(
+      { data: { p: [i1], q: [] } },
+      { data: { p: [], q: [] } },
+      { data: { p: [], q: [i1] } },
+      'md',
+      listsSchema,
+    )
+    expect(result.data).toEqual({ p: [], q: [i1] })
+    expect(kinds(result)).toEqual([{ key: `q.${i1._key}`, kind: 'removed-on-base', item: true }])
+  })
+
+  it('row 14: an item one side moved and the other changed in place is flagged where it doubles', () => {
+    const result = run(
+      { data: { p: [i1], q: [] } },
+      { data: { p: [], q: [i1] } },
+      { data: { p: [{ ...i1, t: 'mine' }], q: [] } },
+      'md',
+      listsSchema,
+    )
+    expect(kinds(result)).toEqual([
+      { key: `p.${i1._key}`, kind: 'removed-on-base', item: true },
+      { key: `q.${i1._key}`, kind: 'changed', item: true },
+    ])
+  })
+
+  it('row 14: without a schema, a moved-away conflict is lifted to its list with whole versions', () => {
     const result = run(
       { data: { p: [i1], q: [] } },
       { data: { p: [], q: [] } },
@@ -1026,22 +1071,16 @@ describe('shapes the second review found', () => {
       'md',
       undefined,
     )
-    expect(result.data).toEqual({ p: [], q: [i1] })
-    expect(result.conflicts.map((c) => [c.kind, c.dataPath])).toEqual([
-      ['removed-on-base', [{ field: 'q' }]],
+    expect(result.conflicts).toEqual([
+      {
+        key: '?q',
+        dataPath: [{ field: 'q' }],
+        kind: 'removed-on-base',
+        ancestor: [],
+        base: [],
+        branch: [i1],
+      },
     ])
-  })
-
-  it('row 14: an item one side moved and the other changed in place is flagged where it doubles', () => {
-    const i1 = { t: 'one', _key: 'Ki1aaaaaaaaa' }
-    const result = run(
-      { data: { p: [i1], q: [] } },
-      { data: { p: [], q: [i1] } },
-      { data: { p: [{ ...i1, t: 'mine' }], q: [] } },
-      'md',
-      undefined,
-    )
-    expect(result.conflicts.map((c) => c.kind).sort()).toEqual(['changed', 'removed-on-base'])
   })
 
   it('row 16: a keyless item the base moved up while the branch deleted it stays deleted', () => {
@@ -1122,6 +1161,21 @@ describe('shapes the second review found', () => {
     expect(kinds(result)).toEqual([{ key: `items.${hq}`, kind: 'changed', item: true }])
   })
 
+  it('KNOWN LIMIT, row 19: a keyless item the base replaced in place, sharing one value, merges field by field', () => {
+    // Pairing keyless items by position is the engine's one heuristic. A replacement that keeps a
+    // value of the item it replaced cannot be told from an edit, so the branch's edit lands on
+    // it. Keys everywhere (the key backfill) remove the case.
+    const q = { title: 'q', detail: '2' }
+    const hq = itemKeysAsRead([q])[0]!
+    const result = merge(
+      { items: [q] },
+      { items: [{ title: 'replacement', detail: '2' }] },
+      { items: [{ ...q, detail: 'mine', _key: hq }] },
+    )
+    expect(result.data.items).toEqual([{ title: 'replacement', detail: 'mine', _key: hq }])
+    expect(result.conflicts).toEqual([])
+  })
+
   it('row 22: a tag both sides added at different places is one tag', () => {
     expect(merge({ tags: ['a'] }, { tags: ['a', 'b'] }, { tags: ['b', 'a'] }).data).toEqual({
       tags: ['b', 'a'],
@@ -1173,6 +1227,163 @@ describe('shapes the second review found', () => {
   it('a conflicted text keeps the branch end line break', () => {
     const result = merge({ notes: 'b\n\n' }, { notes: '' }, { notes: 'a\n\n' })
     expect(result.data).toEqual({ notes: 'a\n\n' })
+  })
+})
+
+describe('shapes the third review found', () => {
+  it('row 20: identical keyless items: the branch deleting the second copy deletes it', () => {
+    const dup = { title: 'TBD', detail: 'x' }
+    const b = { title: 'B', detail: 'b' }
+    const result = merge(
+      { items: [dup, b, dup] },
+      { items: [{ ...dup, detail: 'edited' }, b, dup] },
+      { items: [dup, b] },
+    )
+    expect(result.data.items).toEqual([{ ...dup, detail: 'edited' }, b])
+    expect(result.conflicts).toEqual([])
+  })
+
+  it('row 21: a block the base replaced, keeping none of its data, is not merged into', () => {
+    const hero = (heading: string, sub: string, more = {}) => ({
+      template: 'hero',
+      value: { heading, sub, ...more },
+    })
+    const result = merge(
+      { blocks: [hero('A', 'a')] },
+      { blocks: [hero('B', 'b')] },
+      { blocks: [hero('A', 'a', { cta: 'x' })] },
+    )
+    expect(result.data.blocks).toEqual([hero('A', 'a', { cta: 'x' })])
+    expect(result.conflicts.map((c) => [c.kind, c.item])).toEqual([['changed', true]])
+  })
+
+  it('row 14: a keyless item put where a keyed one was takes none of its key', () => {
+    const [x, y] = [
+      { title: 'x', detail: 'one' },
+      { title: 'y', detail: 'two' },
+    ]
+    const [hx, hy] = itemKeysAsRead([x, y]) as string[]
+    const keyed = {
+      items: [
+        { ...x, _key: hx },
+        { ...y, _key: hy },
+      ],
+    }
+    const replaced = {
+      items: [
+        { title: 'new', detail: 'three' },
+        { ...y, _key: hy },
+      ],
+    }
+    const result = merge(keyed, keyed, replaced)
+    expect(result.data).toStrictEqual(replaced)
+    expect(result.keyRemaps).toEqual([])
+  })
+
+  const listsOnly: FieldConfig[] = [
+    { name: 'items', type: 'object', list: true, fields: text('title', 'detail') },
+    { name: 'l2', type: 'object', list: true, fields: text('title', 'detail') },
+  ]
+
+  it('row 14: an item a hand edit moved from another list is new there, not the item it displaced', () => {
+    const [x, y] = [
+      { title: 'x', detail: 'one' },
+      { title: 'y', detail: 'two' },
+    ]
+    const result = run(
+      { data: { items: [x], l2: [y] } },
+      { data: { items: [{ ...x, detail: 'base' }], l2: [y] } },
+      { data: { items: [y], l2: [] } },
+      'md',
+      listsOnly,
+    )
+    expect(kinds(result).map((c) => c.kind)).toEqual(['removed-by-you'])
+  })
+
+  it('row 14: a new item with a key from its own content, in a deleted item place, is new', () => {
+    const [x, z] = [
+      { title: 'x', detail: 'one' },
+      { title: 'z', detail: 'two' },
+    ]
+    const n = { title: 'n', detail: 'three' }
+    const result = run(
+      { data: { items: [x, z] } },
+      { data: { items: [{ ...x, detail: 'base' }, z] } },
+      { data: { items: [{ ...n, _key: itemKeysAsRead([n])[0]! }, z] } },
+      'md',
+      listsOnly,
+    )
+    expect(kinds(result).map((c) => c.kind)).toEqual(['removed-by-you'])
+  })
+
+  it('row 19: items sharing a value with two ancestor items pair with the earliest, in order', () => {
+    const [a, b] = [
+      { title: 'p', detail: 'x' },
+      { title: 'q', detail: 'x' },
+    ]
+    const ha = itemKeysAsRead([a, b])[0]!
+    const result = run(
+      { data: { items: [a, b] } },
+      {
+        data: {
+          items: [
+            { ...a, title: 'p2' },
+            { ...b, title: 'q2' },
+          ],
+        },
+      },
+      {
+        data: {
+          items: [
+            { ...a, detail: 'x-B', _key: ha },
+            { ...b, _key: itemKeysAsRead([a, b])[1]! },
+          ],
+        },
+      },
+      'md',
+      listsOnly,
+    )
+    expect(
+      (result.data.items as Array<{ title: string; detail: string }>).map((i) => [
+        i.title,
+        i.detail,
+      ]),
+    ).toEqual([
+      ['p2', 'x-B'],
+      ['q2', 'x'],
+    ])
+  })
+
+  it('row 14: an item a hand edit moved without its key, which the other side deleted, conflicts', () => {
+    const i1 = { title: 'one', detail: 'd', _key: 'Ki1aaaaaaaaa' }
+    const result = run(
+      { data: { items: [i1], l2: [] } },
+      { data: { items: [], l2: [{ title: 'one', detail: 'd' }] } },
+      { data: { items: [], l2: [] } },
+      'md',
+      listsOnly,
+    )
+    expect(kinds(result).map((c) => c.kind)).toEqual(['removed-by-you'])
+  })
+
+  it('row 21: a keyless block edited on both sides in different fields merges by field', () => {
+    const hero = (heading: string, sub: string) => ({ template: 'hero', value: { heading, sub } })
+    const result = merge(
+      { blocks: [hero('H', 'S')] },
+      { blocks: [hero('H', 'S2')] },
+      { blocks: [hero('H2', 'S')] },
+    )
+    expect(result.data.blocks).toEqual([hero('H2', 'S2')])
+    expect(result.conflicts).toEqual([])
+  })
+
+  it('row 14: an item one side deleted beside one the other side edited keeps that conflict', () => {
+    const [x, y] = [
+      { title: 'x', detail: 'one' },
+      { title: 'y', detail: 'two' },
+    ]
+    const result = merge({ items: [x, y] }, { items: [x] }, { items: [{ ...y, title: 'y2' }] })
+    expect(kinds(result).map((c) => c.kind)).toEqual(['removed-on-base'])
   })
 })
 
