@@ -10,7 +10,7 @@ import { ITEM_KEY, isItemKey, itemKeysAsRead } from '../item-keys'
 import { isBlockStructuralKey } from '../validation/block-structural-keys'
 import { isPlainRecord } from '../validation/field-traversal'
 import { commonPairs } from './diff3'
-import { isEmptyValue, sameValue, valueToken } from './value-equality'
+import { isEmptyValue, valueToken } from './value-equality'
 
 /** Marks an identity no file holds: a side's new item. Item keys never contain it. */
 const INTERNAL = '\u0000'
@@ -129,8 +129,8 @@ export function alignToAncestor(
       taken.add(id)
     } else if (own !== undefined && (known.has(own) || isMinted(item))) {
       minted.add(j)
-    } else if (read !== undefined && !known.has(read) && inEntry.has(read)) {
-      // An ancestor item of another list, moved here: new to this list.
+    } else if (own !== undefined && read !== undefined && inEntry.has(read)) {
+      // An ancestor item of another list, moved here with its key: new to this list.
       minted.add(j)
     }
   })
@@ -177,7 +177,13 @@ export function alignToAncestor(
     for (let j = bounds[n][1] + 1; j < bounds[n + 1][1]; j++) {
       if (ids[j] === undefined && !minted.has(j)) sideGap.push(j)
     }
-    for (const [j, i, place] of pairInGap(sideGap, items, ancestorGap, ancestorItems)) {
+    // A keyless item holding an ancestor item of another list exactly may have moved here: it
+    // pairs only by its values, never by place.
+    const movedHere = (j: number) => {
+      const read = readKeys[j]
+      return read !== undefined && !known.has(read) && inEntry.has(read)
+    }
+    for (const [j, i, place] of pairInGap(sideGap, items, ancestorGap, ancestorItems, movedHere)) {
       match(j, i)
       if (place) byPlace.add(j)
     }
@@ -185,8 +191,8 @@ export function alignToAncestor(
   return { ids: ids.map((id, j) => id ?? newIdentity(side, j)), byPlace }
 }
 
-/** Above this many item comparisons in one gap, its items are left unpaired: each is new. */
-const MAX_GAP_COMPARISONS = 10_000
+/** Above this many shared values counted in one gap, its items pair by place alone. */
+const MAX_SCORE_STEPS = 1_000_000
 
 /** `item`'s content members: a block's data inside its `value`, never its key or template. */
 const contentMembers = (item: unknown): Array<[string, unknown]> => {
@@ -195,13 +201,6 @@ const contentMembers = (item: unknown): Array<[string, unknown]> => {
   return Object.entries(data).filter(
     ([name, value]) => name !== ITEM_KEY && !isBlockStructuralKey(name) && !isEmptyValue(value),
   )
-}
-
-/** How many of `ancestor`'s non-empty content values `item` holds unchanged. */
-const sharedValues = (ancestor: unknown, item: unknown): number => {
-  const theirs = new Map(contentMembers(item))
-  return contentMembers(ancestor).filter(([name, value]) => sameValue(value, theirs.get(name)))
-    .length
 }
 
 /**
@@ -215,21 +214,39 @@ function pairInGap(
   items: readonly unknown[],
   ancestorGap: readonly number[],
   ancestorItems: readonly unknown[],
+  movedHere: (j: number) => boolean,
 ): Array<[number, number, boolean]> {
-  if (sideGap.length * ancestorGap.length > MAX_GAP_COMPARISONS) return []
+  // Which ancestor items hold each member value, so an item's score counts only real matches.
+  const holders = new Map<string, number[]>()
+  for (const i of ancestorGap) {
+    for (const [name, value] of contentMembers(ancestorItems[i])) {
+      const at = `${name}\u0000${valueToken(value)}`
+      holders.set(at, [...(holders.get(at) ?? []), i])
+    }
+  }
   const free = new Set(ancestorGap)
   const pairs: Array<[number, number, boolean]> = []
   const unpaired: number[] = []
+  let steps = 0
   for (const j of sideGap) {
+    const scores = new Map<number, number>()
+    for (const [name, value] of contentMembers(items[j])) {
+      for (const i of holders.get(`${name}\u0000${valueToken(value)}`) ?? []) {
+        steps++
+        if (free.has(i)) scores.set(i, (scores.get(i) ?? 0) + 1)
+      }
+    }
+    if (steps > MAX_SCORE_STEPS) return byPlace(sideGap, ancestorGap, items, ancestorItems)
     let best: number | undefined
     let bestScore = 0
-    for (const i of free) {
-      const score = sharedValues(ancestorItems[i], items[j])
-      if (score > bestScore) [best, bestScore] = [i, score]
+    for (const [i, score] of scores) {
+      if (score > bestScore || (score === bestScore && best !== undefined && i < best)) {
+        ;[best, bestScore] = [i, score]
+      }
     }
     if (best === undefined) {
       // An item with a key of its own that keeps no value of any is not one of them.
-      if (ownKey(items[j]) === undefined) unpaired.push(j)
+      if (ownKey(items[j]) === undefined && !movedHere(j)) unpaired.push(j)
       continue
     }
     free.delete(best)
@@ -239,6 +256,18 @@ function pairInGap(
   const left = [...free].filter((i) => !isMinted(ancestorItems[i])).sort((x, y) => x - y)
   if (left.length === unpaired.length) unpaired.forEach((j, k) => pairs.push([j, left[k], true]))
   return pairs
+}
+
+/** A gap too large to score: as many items on both sides pair in order by place, else none. */
+function byPlace(
+  sideGap: readonly number[],
+  ancestorGap: readonly number[],
+  items: readonly unknown[],
+  ancestorItems: readonly unknown[],
+): Array<[number, number, boolean]> {
+  const side = sideGap.filter((j) => ownKey(items[j]) === undefined)
+  const ancestor = ancestorGap.filter((i) => !isMinted(ancestorItems[i]))
+  return side.length === ancestor.length ? side.map((j, k) => [j, ancestor[k], true]) : []
 }
 
 /** The identity of the `j`th item of `side`'s list, new on that side. */

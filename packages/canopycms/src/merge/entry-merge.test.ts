@@ -1387,6 +1387,120 @@ describe('shapes the third review found', () => {
   })
 })
 
+describe('shapes the fix review found', () => {
+  const lists: FieldConfig[] = [
+    { name: 'items', type: 'object', list: true, fields: text('title', 'detail') },
+    { name: 'l2', type: 'object', list: true, fields: text('title', 'detail') },
+    { name: 'l3', type: 'object', list: true, fields: text('title', 'detail') },
+  ]
+
+  it('row 14: a large list edited throughout by hand still conflicts with a delete', () => {
+    const o = Array.from({ length: 101 }, (_, i) => ({ title: `t${i}`, detail: 'd' }))
+    const result = run(
+      { data: { items: o } },
+      { data: { items: o.map((item) => ({ ...item, detail: 'd2' })) } },
+      { data: { items: o.filter((_, i) => i !== 50) } },
+      'md',
+      lists,
+    )
+    expect(result.conflicts.map((c) => c.kind)).toEqual(['removed-by-you'])
+    expect((result.data.items as unknown[]).length).toBe(100)
+  })
+
+  it('row 14: a list too alike to score pairs by place, so a delete still conflicts', () => {
+    const o = Array.from({ length: 1500 }, (_, i) => ({ title: `t${i}`, detail: 'd' }))
+    const result = run(
+      { data: { items: o } },
+      { data: { items: o.map((item) => ({ ...item, title: item.title.toUpperCase() })) } },
+      { data: { items: o.filter((_, i) => i !== 700) } },
+      'md',
+      lists,
+    )
+    expect(result.conflicts.map((c) => c.kind)).toEqual(['removed-by-you'])
+  })
+
+  it('row 14: a keyless edit whose new content matches an item of another list is still an edit', () => {
+    const result = run(
+      { data: { items: [{ title: 'Docs', detail: 'x' }], l2: [{ title: 'Docs', detail: 'y' }] } },
+      { data: { items: [{ title: 'Docs', detail: 'y' }], l2: [{ title: 'Docs', detail: 'y' }] } },
+      { data: { items: [], l2: [{ title: 'Docs', detail: 'y' }] } },
+      'md',
+      lists,
+    )
+    expect(result.conflicts.map((c) => c.kind)).toEqual(['removed-by-you'])
+  })
+
+  it('row 14: a keyed item moved away and deleted conflicts though another item reads alike', () => {
+    const same = { title: 'Learn more', detail: '/x' }
+    const [k1, k2] = [
+      { ...same, _key: 'K1aaaaaaaaaa' },
+      { ...same, _key: 'K2aaaaaaaaaa' },
+    ]
+    const result = run(
+      { data: { items: [k1], l2: [k2], l3: [] } },
+      { data: { items: [], l2: [k2], l3: [k1] } },
+      { data: { items: [], l2: [k2], l3: [] } },
+      'md',
+      lists,
+    )
+    expect(kinds(result)).toEqual([{ key: `l3.${k1._key}`, kind: 'removed-by-you', item: true }])
+  })
+
+  it('row 15: a keyed copy into another list is a new item, whatever happens to the original', () => {
+    const x = { title: 'x', detail: 'one', _key: 'Kxaaaaaaaaaa' }
+    const copy = { ...x, _key: 'Knewaaaaaaaa' }
+    const result = run(
+      { data: { items: [x], l2: [] } },
+      { data: { items: [], l2: [] } },
+      { data: { items: [x], l2: [copy] } },
+      'md',
+      lists,
+    )
+    expect(result.data).toEqual({ items: [], l2: [copy] })
+    expect(result.conflicts).toEqual([])
+  })
+
+  it('row 14: a keyed item moved in from another list never pairs with an item it resembles', () => {
+    // `b` carries the key a read gave it from its content, as an editor's first save writes.
+    const a = { title: 'a', detail: 'x' }
+    const b = { title: 'b', detail: 'x', _key: itemKeysAsRead([{ title: 'b', detail: 'x' }])[0]! }
+    const result = run(
+      { data: { items: [a], l2: [b] } },
+      { data: { items: [{ ...a, title: 'a2' }], l2: [b] } },
+      { data: { items: [b], l2: [] } },
+      'md',
+      lists,
+    )
+    expect(result.conflicts.map((c) => c.kind)).toEqual(['removed-by-you'])
+  })
+
+  it('row 15: the same keyless item added to two lists, one on each side, is no conflict', () => {
+    const more = { title: 'More', detail: 'm' }
+    const result = run(
+      { data: { items: [], l2: [] } },
+      { data: { items: [more], l2: [] } },
+      { data: { items: [], l2: [more] } },
+      'md',
+      lists,
+    )
+    expect(result.data).toEqual({ items: [more], l2: [more] })
+    expect(result.conflicts).toEqual([])
+  })
+
+  it('row 14: a keyless copy into another list, beside a delete of the original, is no conflict', () => {
+    const x = { title: 'x', detail: 'one' }
+    const result = run(
+      { data: { items: [x], l2: [] } },
+      { data: { items: [x], l2: [x] } },
+      { data: { items: [], l2: [] } },
+      'md',
+      lists,
+    )
+    expect(result.data).toEqual({ items: [], l2: [x] })
+    expect(result.conflicts).toEqual([])
+  })
+})
+
 describe('conflicts inside a value the drawer shows whole are named at that value', () => {
   const cases: Array<[string, Data, Data, Data, string]> = [
     [

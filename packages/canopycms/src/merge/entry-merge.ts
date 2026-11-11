@@ -641,12 +641,18 @@ function flagItemsMovedAway(
   const named = new Set(walk.conflicts.map((c) => JSON.stringify(c.at)))
   const seen = new Set<string>()
   visitItems(merged, (item, key, list, at) => {
+    // A keyed item is found by its key alone: another item reading alike is not it. A keyless
+    // one, by its content too, which finds an item a side moved without its key.
+    const keyed = usableKey(item) !== undefined
     const content = contentName(item)
     const find = (found: Map<string, KeyedItem | null>) =>
-      found.has(key) ? found.get(key) : found.get(content)
-    const holds = (found: Map<string, KeyedItem | null>) => found.has(key) || found.has(content)
+      found.has(key) || keyed ? found.get(key) : found.get(content)
+    const holds = (found: Map<string, KeyedItem | null>) =>
+      found.has(key) || (!keyed && found.has(content))
     const [inO, inA, inB] = [find(o), find(a), find(b)]
-    const twice = seen.has(key) && inA !== null && inB !== null
+    // A side holding it twice copied it: no move to judge.
+    if (inA === null || inB === null) return
+    const twice = keyed && seen.has(key)
     seen.add(key)
     const moved = inO && inO.list !== list
     const kind = twice
