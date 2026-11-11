@@ -71,6 +71,11 @@ interface Repo {
   /** Replace the base branch with a commit that shares no history with the branch. */
   orphanBase(files: Record<string, string>): Promise<void>
   status(status: 'editing' | 'submitted'): Promise<void>
+  /**
+   * Publish to `remote.git` a merge of the base into the branch that the clone never moved to, as a
+   * crash between the two leaves it. Resolves the merge.
+   */
+  publishMergeOnly(): Promise<string>
   cycle(worker?: CmsWorker): Promise<Summary>
   file(name: string): Promise<string | null>
   record(): Promise<MergeConflictsFile | null>
@@ -163,6 +168,16 @@ async function createRepo(tmpDir: string, initial: Record<string, string>): Prom
       await upstream.commit('unrelated base')
       await upstream.raw(['push', '-q', '--force', remotePath, 'unrelated:main'])
     },
+    async publishMergeOnly() {
+      await git.raw(['fetch', '-q', remotePath, 'main'])
+      const base = (await git.raw(['rev-parse', 'FETCH_HEAD'])).trim()
+      const tree = (await git.raw(['rev-parse', 'HEAD^{tree}'])).trim()
+      const merge = (
+        await git.raw(['commit-tree', tree, '-p', 'HEAD', '-p', base, '-m', 'merge'])
+      ).trim()
+      await git.raw(['push', '-q', '--force', remotePath, `${merge}:refs/heads/${BRANCH}`])
+      return merge
+    },
     async status(status) {
       await BranchMetadataFileManager.get(clonePath, contentBranches).save({ branch: { status } })
     },
@@ -246,6 +261,25 @@ const yamlList = (name: string, items: Item[], keys: boolean): string =>
   '\n'
 
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`
+
+const loseLock = () => compromiseHook.fire?.(new Error('simulated lock takeover'))
+
+/** Run `then` once, right after the first write of merge-conflicts.json that writes anything. */
+const afterFirstRecordWrite = (then: () => void) => {
+  const update = MergeConflictStore.prototype.update
+  let done = false
+  return vi.spyOn(MergeConflictStore.prototype, 'update').mockImplementation(async function (
+    this: MergeConflictStore,
+    change,
+  ) {
+    const written = await update.call(this, change)
+    if (!done && written !== null) {
+      done = true
+      then()
+    }
+    return written
+  })
+}
 
 describe('the field merge in the rebase loop', () => {
   let tmpDir: string
@@ -951,13 +985,9 @@ describe('the field merge in the rebase loop', () => {
     await repo.branch({ [FILE]: json({ title: 'Mine' }) })
     await repo.base({ [FILE]: json({ title: 'Theirs' }) })
     const before = (await repo.git.revparse(['HEAD'])).trim()
-    const update = MergeConflictStore.prototype.update
-    const crash = vi
-      .spyOn(MergeConflictStore.prototype, 'update')
-      .mockImplementationOnce(async function (this: MergeConflictStore, change) {
-        await update.call(this, change)
-        throw new Error('crashed after the record')
-      })
+    const crash = afterFirstRecordWrite(() => {
+      throw new Error('crashed after the record')
+    })
 
     const crashed = await repo.cycle()
 
@@ -982,15 +1012,7 @@ describe('the field merge in the rebase loop', () => {
     await repo.publish()
     await repo.base({ [FILE]: json({ title: 'Theirs' }) })
     const before = (await repo.git.revparse(['HEAD'])).trim()
-    const update = MergeConflictStore.prototype.update
-    vi.spyOn(MergeConflictStore.prototype, 'update').mockImplementationOnce(async function (
-      this: MergeConflictStore,
-      change,
-    ) {
-      const written = await update.call(this, change)
-      compromiseHook.fire?.(new Error('simulated lock takeover'))
-      return written
-    })
+    afterFirstRecordWrite(loseLock)
 
     const summary = await repo.cycle()
 
@@ -1041,16 +1063,10 @@ describe('the field merge in the rebase loop', () => {
 
     // The base changes the title again, and the lock is lost once the merge is recorded.
     await repo.base({ [FILE]: json({ title: 'Base 2' }) })
-    const update = MergeConflictStore.prototype.update
-    const spy = vi
-      .spyOn(MergeConflictStore.prototype, 'update')
-      .mockImplementationOnce(async function (this: MergeConflictStore, change) {
-        const written = await update.call(this, change)
-        compromiseHook.fire?.(new Error('simulated lock takeover'))
-        return written
-      })
+    const spy = afterFirstRecordWrite(loseLock)
     expect((await repo.cycle()).skippedLocked).toEqual([BRANCH])
     spy.mockRestore()
+    expect((await repo.record())?.entries[ID]?.previous).toEqual(first)
 
     // The base goes back: the merge now finds nothing new, and the first record stands.
     await repo.base({ [FILE]: json({ title: 'Base 1' }) })
@@ -1090,14 +1106,7 @@ describe('the field merge in the rebase loop', () => {
           threads: Record<string, { itemKeys: string[] }>
         }
       ).threads.t1.itemKeys
-    const update = MergeConflictStore.prototype.update
-    const spy = vi
-      .spyOn(MergeConflictStore.prototype, 'update')
-      .mockImplementationOnce(async function (this: MergeConflictStore, change) {
-        const written = await update.call(this, change)
-        compromiseHook.fire?.(new Error('simulated lock takeover'))
-        return written
-      })
+    const spy = afterFirstRecordWrite(loseLock)
 
     expect((await repo.cycle()).skippedLocked).toEqual([BRANCH])
     expect(await keys()).toEqual([readKey(steps[2])])
@@ -1113,13 +1122,19 @@ describe('the field merge in the rebase loop', () => {
     await repo.branch({ 'content/x.txt': 'x\n' })
     await repo.publish()
     const forged = await repo.forgeRemoteHead()
+    const earlier = { path: 'p', mergeSha: 'a'.repeat(40), kind: 'unreadable' as const, sides: {} }
     await new MergeConflictStore(repo.clonePath).update(() => ({
-      entries: { [ID]: { path: 'p', mergeSha: forged, kind: 'unreadable', sides: {} } },
+      entries: {
+        [ID]: { path: 'p', mergeSha: forged, kind: 'unreadable', sides: {}, previous: earlier },
+      },
     }))
 
     await repo.cycle()
 
-    expect(Object.keys((await repo.record())?.entries ?? {})).toEqual([ID])
+    // Landed, as far as it can tell: the record it replaced goes.
+    expect((await repo.record())?.entries).toEqual({
+      [ID]: { path: 'p', mergeSha: forged, kind: 'unreadable', sides: {} },
+    })
   })
 
   it('moves aside a conflict record that does not parse, and the base still comes in', async () => {
@@ -1257,5 +1272,231 @@ describe('the field merge in the rebase loop', () => {
     expect(
       summary.failed.map(({ branch, error }) => [branch, /no history in common/.test(error)]),
     ).toEqual([[BRANCH, true]])
+  })
+
+  it("puts each side's new entry in a collection directory both sides moved, where the branch put it", async () => {
+    const [OLD, BASE, MINE] = ['posts', 'articles', 'stories'].map(
+      (n) => `content/${n}.cNbR5xFm2Kpd`,
+    )
+    const [A, N, M] = [
+      'post.a.aboutAbc1234.json',
+      'post.n.priceAbc1234.json',
+      'post.m.notesAbc1234.json',
+    ]
+    const meta = json({ name: 'posts' })
+    const repo = await createRepo(tmpDir, {
+      [`${OLD}/.collection.json`]: meta,
+      [`${OLD}/${A}`]: json({ title: 'A' }),
+    })
+    await repo.branch({
+      [`${OLD}/.collection.json`]: null,
+      [`${OLD}/${A}`]: null,
+      [`${MINE}/.collection.json`]: meta,
+      [`${MINE}/${A}`]: json({ title: 'A' }),
+      [`${MINE}/${M}`]: json({ title: 'M' }),
+    })
+    await repo.base({
+      [`${OLD}/.collection.json`]: null,
+      [`${OLD}/${A}`]: null,
+      [`${BASE}/.collection.json`]: meta,
+      [`${BASE}/${A}`]: json({ title: 'A' }),
+      [`${BASE}/${N}`]: json({ title: 'N' }),
+    })
+
+    await repo.cycle()
+
+    const tree = (await repo.git.raw(['ls-tree', '-r', '--name-only', 'HEAD', 'content']))
+      .trim()
+      .split('\n')
+    expect(tree.sort()).toEqual(
+      [`${MINE}/.collection.json`, `${MINE}/${A}`, `${MINE}/${M}`, `${MINE}/${N}`].sort(),
+    )
+    expect((await repo.record())?.entries[COLLECTION_ID]?.fields?.map(({ key }) => key)).toEqual([
+      '@location',
+    ])
+  })
+
+  it('combines a parent directory renamed on one side with a child renamed on the other', async () => {
+    const P = 'docs.cNbR5xFm2Kpd'
+    const [Q, Q2] = ['api.priceAbc1234', 'reference.priceAbc1234']
+    const [A, N] = ['page.a.aboutAbc1234.json', 'page.n.notesAbc1234.json']
+    const repo = await createRepo(tmpDir, {
+      [`content/${P}/.collection.json`]: json({ name: 'docs' }),
+      [`content/${P}/${Q}/.collection.json`]: json({ name: 'api' }),
+      [`content/${P}/${Q}/${A}`]: json({ title: 'A' }),
+    })
+    await repo.branch({
+      [`content/${P}/${Q}/.collection.json`]: null,
+      [`content/${P}/${Q}/${A}`]: null,
+      [`content/${P}/${Q2}/.collection.json`]: json({ name: 'api' }),
+      [`content/${P}/${Q2}/${A}`]: json({ title: 'A' }),
+      [`content/${P}/${Q2}/${N}`]: json({ title: 'N' }),
+    })
+    const G = 'guides.cNbR5xFm2Kpd'
+    await repo.base({
+      [`content/${P}/.collection.json`]: null,
+      [`content/${P}/${Q}/.collection.json`]: null,
+      [`content/${P}/${Q}/${A}`]: null,
+      [`content/${G}/.collection.json`]: json({ name: 'docs' }),
+      [`content/${G}/${Q}/.collection.json`]: json({ name: 'api' }),
+      [`content/${G}/${Q}/${A}`]: json({ title: 'A' }),
+    })
+
+    await repo.cycle()
+
+    const tree = (await repo.git.raw(['ls-tree', '-r', '--name-only', 'HEAD', 'content']))
+      .trim()
+      .split('\n')
+    expect(tree.sort()).toEqual(
+      [
+        `content/${G}/.collection.json`,
+        `content/${G}/${Q2}/.collection.json`,
+        `content/${G}/${Q2}/${A}`,
+        `content/${G}/${Q2}/${N}`,
+      ].sort(),
+    )
+    expect(await repo.record()).toBeNull()
+  })
+
+  it('records a collection moved on one side and deleted on the other, rather than blocking', async () => {
+    const [OLD, NEW] = ['content/posts.cNbR5xFm2Kpd', 'content/articles.cNbR5xFm2Kpd']
+    const A = 'post.a.aboutAbc1234.json'
+    const repo = await createRepo(tmpDir, {
+      [`${OLD}/.collection.json`]: json({ name: 'posts' }),
+      [`${OLD}/${A}`]: json({ title: 'A' }),
+    })
+    await repo.branch({ [`${OLD}/.collection.json`]: null, [`${OLD}/${A}`]: null })
+    await repo.base({
+      [`${OLD}/.collection.json`]: null,
+      [`${OLD}/${A}`]: null,
+      [`${NEW}/.collection.json`]: json({ name: 'posts' }),
+      [`${NEW}/${A}`]: json({ title: 'A' }),
+    })
+
+    const summary = await repo.cycle()
+
+    expect(summary.failed).toEqual([])
+    expect(await repo.file(`${NEW}/.collection.json`)).toBeNull()
+    expect((await repo.record())?.entries[COLLECTION_ID]).toMatchObject({
+      kind: 'deleted-on-branch',
+      path: `${NEW}/.collection.json`,
+    })
+  })
+
+  it('records an entry the branch deleted where it would be now, in a directory the branch moved', async () => {
+    const [OLD, NEW] = ['content/posts.cNbR5xFm2Kpd', 'content/articles.cNbR5xFm2Kpd']
+    const [A, B] = ['post.a.aboutAbc1234.json', 'post.b.priceAbc1234.json']
+    const repo = await createRepo(tmpDir, {
+      [`${OLD}/.collection.json`]: json({ name: 'posts' }),
+      [`${OLD}/${A}`]: json({ title: 'A' }),
+      [`${OLD}/${B}`]: json({ title: 'B' }),
+    })
+    await repo.branch({
+      [`${OLD}/.collection.json`]: null,
+      [`${OLD}/${A}`]: null,
+      [`${OLD}/${B}`]: null,
+      [`${NEW}/.collection.json`]: json({ name: 'posts' }),
+      [`${NEW}/${B}`]: json({ title: 'B' }),
+    })
+    await repo.base({ [`${OLD}/${A}`]: json({ title: 'A, edited' }) })
+
+    await repo.cycle()
+
+    expect((await repo.record())?.entries.aboutAbc1234).toMatchObject({
+      kind: 'deleted-on-branch',
+      path: `${NEW}/${A}`,
+    })
+  })
+
+  it('keeps a CRLF file CRLF when the merge is written onto it', async () => {
+    const FILE = entry('page', 'home', 'aboutAbc1234', 'md')
+    const doc = (title: string, extra: string) =>
+      `---\r\ntitle: ${title}\r\n# a note\r\nauthor: X\r\n${extra}---\r\nPara one.\r\n`
+    const repo = await createRepo(tmpDir, { [FILE]: doc('T', '') })
+    await repo.branch({ [FILE]: doc('Mine', '') })
+    await repo.base({ [FILE]: doc('Theirs', 'summary: S\r\n') })
+
+    await repo.cycle()
+
+    const text = (await repo.file(FILE)) ?? ''
+    expect(text).not.toMatch(/(^|[^\r])\n/)
+    expect(parse(text, 'md').data).toEqual({ title: 'Mine', author: 'X', summary: 'S' })
+  })
+
+  it('keeps an open conflict when a merge runs after a reconcile that failed', async () => {
+    const ID = 'aboutAbc1234'
+    const FILE = entry('page', 'home', ID, 'json')
+    const page = (title: string, cta: string) => json({ title, sub: 'Sub', cta })
+    const repo = await createRepo(tmpDir, { [FILE]: page('Home', 'Go') })
+    await repo.branch({ [FILE]: page('Mine', 'Go') })
+    await repo.base({ [FILE]: page('Base 1', 'Go') })
+    await repo.cycle()
+    await repo.base({ [FILE]: page('Base 2', 'Go') })
+    const spy = afterFirstRecordWrite(loseLock)
+    expect((await repo.cycle()).skippedLocked).toEqual([BRANCH])
+    spy.mockRestore()
+
+    // The next reconcile fails, and the base goes back on the title and changes the call to action.
+    vi.spyOn(MergeConflictStore.prototype, 'read').mockRejectedValueOnce(new Error('EIO'))
+    await repo.base({ [FILE]: page('Base 1', 'Start') })
+    await repo.cycle()
+    await repo.cycle()
+
+    expect(JSON.parse((await repo.file(FILE)) ?? '')).toEqual({
+      title: 'Mine',
+      sub: 'Sub',
+      cta: 'Start',
+    })
+    expect((await repo.record())?.entries[ID]?.fields?.map(({ key }) => key)).toEqual(['?title'])
+  })
+
+  it('catches the clone up with a merge it published and never moved to, then takes its remaps', async () => {
+    const repo = await createRepo(tmpDir, { [GUIDE_FILE]: guide(steps, false) })
+    await repo.branch({ [GUIDE_FILE]: guide(steps, true) })
+    await repo.publish()
+    const merge = await repo.publishMergeOnly()
+    const entryPath = 'content/pages/guide'
+    const from = readKey(steps[2])
+    await new MergeConflictStore(repo.clonePath).update(() => ({
+      entries: {},
+      remaps: [{ mergeSha: merge, entryPath, remaps: [{ within: [], from, to: 'newKey12' }] }],
+    }))
+    const commentsFile = path.join(repo.clonePath, '.canopy-meta', 'comments.json')
+    await fs.writeFile(
+      commentsFile,
+      JSON.stringify({
+        schemaVersion: 1,
+        version: 1,
+        threads: {
+          t1: {
+            id: 't1',
+            comments: [],
+            resolved: false,
+            createdAt: '2026-11-01T00:00:00.000Z',
+            type: 'field',
+            authorId: 'u1',
+            entryPath,
+            canopyPath: 'steps[2].detail',
+            itemKeys: [from],
+          },
+        },
+      }),
+    )
+
+    const keys = async () =>
+      (
+        JSON.parse(await fs.readFile(commentsFile, 'utf8')) as {
+          threads: Record<string, { itemKeys: string[] }>
+        }
+      ).threads.t1.itemKeys
+
+    const summary = await repo.cycle()
+
+    // Caught up; the threads waited while only remote.git held the merge, and follow it now.
+    expect(summary.failed).toEqual([])
+    expect((await repo.git.revparse(['HEAD'])).trim()).toBe(merge)
+    expect(await keys()).toEqual([from])
+    await repo.cycle()
+    expect(await keys()).toEqual(['newKey12'])
   })
 })

@@ -16,6 +16,7 @@ import {
   withFoundConflicts,
   withoutMergesGone,
   type MergeConflictEntry,
+  type MergeConflictState,
 } from '../merge-conflicts'
 import { SYNC_PR_COMMENTS_ACTION } from '../pr-comments'
 import { enqueueTask } from '../task-queue/cms-task-queue'
@@ -140,6 +141,35 @@ export function rewriteCleared(branch: BranchMetadata): Partial<BranchMetadata> 
 /** A branch this deployment put on GitHub. Any other GitHub branch of that name is not its own. */
 function isPublished({ branch }: BranchMetadataFile): boolean {
   return branch.pushedToGitHubAt !== undefined || branch.pullRequestNumber !== undefined
+}
+
+/**
+ * Fast-forward the clone to a merge `remote.git` holds on top of it, as a crash between publishing
+ * a merge and moving the clone leaves it, whether or not the branch is on GitHub, which
+ * {@link bringInGitHubCommits} reconciles. Resolves why it stopped, or null when there was nothing
+ * to catch up with or it caught up.
+ */
+export async function catchUpWithPublished(
+  ctx: GitHubCommitsContext,
+  args: GitHubCommitsArgs,
+): Promise<GitHubCommitsOutcome | null> {
+  const { git, branchRef } = args
+  const published = await readPublishedSha(ctx, branchRef)
+  if (published === null) return null
+  const head = (await git.revparse(['HEAD'])).trim()
+  if (published === head) return null
+  if (!(await holdsCommit(git, published))) {
+    await fetchFromRemoteGit(git, ctx.remoteGitPath, `refs/heads/${branchRef}`)
+  }
+  // Only a merge built on this very clone's tip: `remote.git` can also hold a same-named branch, or
+  // a reviewer's commit, that this worker never wrote, which other steps judge.
+  const parents = (
+    await git.raw(['rev-list', '--parents', '-n', '1', '--end-of-options', published])
+  )
+    .trim()
+    .split(' ')
+  if (parents.length !== 3 || parents[1] !== head) return null
+  return fastForward(ctx, args, head, published)
 }
 
 /** Bring GitHub's commits into the clone. Throws what git throws; the caller records it. */
@@ -508,7 +538,7 @@ export async function mergeIntoBranch(
   // Recorded before the merge is visible anywhere: the next cycle only fast-forwards to it, and
   // the conflicts cannot be read back from the merge. A merge that never lands leaves a record the
   // next cycle's reconcile drops.
-  await recordMerge(ctx, args, built, fromGitHub)
+  await recordMerge(ctx, args, built, { head, fromGitHub })
   if (lockLost()) return { kind: 'wait' }
   // Before `remote.git` holds it, as reconcile does: a crash past this point leaves GitHub's commit
   // in `remote.git`, and a removal then has to read as one (`rewrittenFrom`).
@@ -523,7 +553,14 @@ export async function mergeIntoBranch(
     await enqueueReviewBlockSync(ctx, branchRef, args.metaFile)
   }
   await moveClone(git, branchPath, sha)
-  if (built.keyRemaps.length > 0) await applyRemaps(branchPath, (landed) => landed === sha)
+  if (built.keyRemaps.length > 0) {
+    // Landed: a failure here leaves the remaps for the next cycle's reconcile.
+    await applyRemaps(branchPath, (landed) => landed === sha).catch((err: unknown) =>
+      workerLogWarn(
+        `  ${branchDir}: comment threads keep their item keys until the next cycle: ${getErrorMessage(err)}`,
+      ),
+    )
+  }
   if (fromGitHub) await recordGitHubTip(ctx, args, other)
   const keptEntries = new Set(conflicts.map(({ contentId }) => contentId)).size
   workerLog(
@@ -603,33 +640,35 @@ export async function returnToReview(
  * Record what a merge left for a person in merge-conflicts.json, with the item keys it changed for
  * the branch's comment threads to take once it lands, and the content IDs it names in `branch.json`
  * `conflictFiles`; for GitHub's commits, the paths whose values this branch kept over them, for the
- * PR body. Before the merge is visible: a merge that never lands leaves records the next
- * {@link reconcileMergeConflicts} turns back.
+ * PR body. The record is first settled against `head`, which the merge builds on, so a record of a
+ * merge that never landed can't carry into this one. Before the merge is visible: one that never
+ * lands leaves records the next {@link reconcileMergeConflicts} turns back.
  */
 async function recordMerge(
   ctx: GitHubCommitsContext,
   args: GitHubCommitsArgs,
   built: Extract<BuiltMerge, { kind: 'built' }>,
-  fromGitHub: boolean,
+  merge: { head: string; fromGitHub: boolean },
 ): Promise<void> {
-  const { branchPath, branchRef } = args
+  const { git, branchPath, branchRef } = args
   const { sha, conflicts, keptPaths, keyRemaps, paths } = built
+  const inHead = await settleRecord(git, branchPath, merge.head)
   const moves = (entries: Readonly<Record<string, MergeConflictEntry>>) =>
     Object.entries(entries).some(([id, { path }]) => (paths.get(id) ?? path) !== path)
-  const state = await new MergeConflictStore(branchPath).update((current) =>
-    conflicts.length === 0 &&
-    keyRemaps.length === 0 &&
-    (current === null || !moves(current.entries))
-      ? null
-      : {
-          entries: withFoundConflicts(current?.entries ?? {}, conflicts, sha, paths),
-          remaps: [
-            ...(current?.remaps ?? []),
-            ...keyRemaps.map(({ entryPath, remaps }) => ({ mergeSha: sha, entryPath, remaps })),
-          ],
-        },
-  )
-  const kept = fromGitHub ? keptPaths : []
+  const state = await new MergeConflictStore(branchPath).update((current) => {
+    const settled = current && withoutMergesGone(current.entries, inHead)
+    if (conflicts.length === 0 && keyRemaps.length === 0 && (!settled || !moves(settled))) {
+      return null
+    }
+    return {
+      entries: withFoundConflicts(settled ?? {}, conflicts, sha, paths),
+      remaps: [
+        ...(current?.remaps ?? []),
+        ...keyRemaps.map(({ entryPath, remaps }) => ({ mergeSha: sha, entryPath, remaps })),
+      ],
+    }
+  })
+  const kept = merge.fromGitHub ? keptPaths : []
   if (state !== null || kept.length > 0) {
     await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update((existing) =>
       existing?.branch.name === branchRef
@@ -646,10 +685,62 @@ async function recordMerge(
   }
 }
 
+/** Every merge a record names, its earlier versions' included. */
+function mergesNamedBy(entry: MergeConflictEntry): string[] {
+  return [
+    entry.mergeSha,
+    ...(entry.fields ?? []).map((f) => f.mergeSha),
+    ...(entry.previous ? mergesNamedBy(entry.previous) : []),
+  ]
+}
+
+/** The merges merge-conflicts.json names, and which of them each of `tips` holds. */
+async function mergesHeld(
+  git: SimpleGit,
+  state: MergeConflictState,
+  tips: readonly string[],
+): Promise<Array<Set<string>>> {
+  const shas = new Set([
+    ...Object.values(state.entries).flatMap(mergesNamedBy),
+    ...(state.remaps ?? []).map(({ mergeSha }) => mergeSha),
+  ])
+  const held = tips.map(() => new Set<string>())
+  for (const sha of shas) {
+    for (const [n, tip] of tips.entries()) {
+      if (await contains(git, tip, sha)) held[n].add(sha)
+    }
+  }
+  return held
+}
+
 /**
- * Point the branch's comment threads at the item keys the merges in `landed` gave their items, then
- * drop those remaps from the record. A remap of a merge the branch never got is dropped unapplied
- * when `gone` says so.
+ * The record as `head` has it: comment threads take the item keys of merges `head` holds, other
+ * merges' remaps go, and records changed by merges it lacks give back the ones they replaced.
+ * Resolves whether `head` holds a merge the record named then; a merge recorded since counts as
+ * held, as nothing settled it.
+ */
+async function settleRecord(
+  git: SimpleGit,
+  branchPath: string,
+  head: string,
+): Promise<(mergeSha: string) => boolean> {
+  const store = new MergeConflictStore(branchPath)
+  const current = await store.read()
+  if (current === null) return () => true
+  const [held] = await mergesHeld(git, current, [head])
+  const known = new Set([
+    ...Object.values(current.entries).flatMap(mergesNamedBy),
+    ...(current.remaps ?? []).map(({ mergeSha }) => mergeSha),
+  ])
+  const inHead = (sha: string) => held.has(sha) || !known.has(sha)
+  await applyRemaps(branchPath, inHead, (sha) => !inHead(sha))
+  return inHead
+}
+
+/**
+ * Point the branch's comment threads at the item keys the merges in `landed` gave their items, in
+ * the order they were recorded, then drop those remaps from the record, and those `gone` names
+ * unapplied.
  */
 async function applyRemaps(
   branchPath: string,
@@ -673,24 +764,15 @@ async function applyRemaps(
   )
 }
 
-/** Every merge a record names, its earlier versions' included. */
-function mergesNamedBy(entry: MergeConflictEntry): string[] {
-  return [
-    entry.mergeSha,
-    ...(entry.fields ?? []).map((f) => f.mergeSha),
-    ...(entry.previous ? mergesNamedBy(entry.previous) : []),
-  ]
-}
-
 /**
  * Bring merge-conflicts.json in line with the branch's history: a record changed by a merge the
- * branch never got gives back the one it replaced (`withoutMergesGone`), comment threads take the
- * item keys of merges that landed, and `branch.json` `conflictFiles` follows the record when the two
- * differ. A merge counts as held while the clone or `remote.git` holds it, since a clone behind its
- * published merge fast-forwards to it, and nothing counts as gone while either can't be read in the
- * clone. A record that does not parse is moved aside, so
- * the branch's merges carry on with a new one. Each cycle, before the branch takes anything in. A
- * clone with no record keeps whatever `conflictFiles` it has. Never throws.
+ * branch never got gives back the one it replaced (`withoutMergesGone`), and `branch.json`
+ * `conflictFiles` follows the record when the two differ. A merge counts as held while the clone or
+ * `remote.git` holds it, since a clone behind its published merge catches up with it; comment
+ * threads take a merge's item keys only once the clone holds it. While either can't be read in the
+ * clone, nothing is judged. A record that does not parse is moved aside, so the branch's merges
+ * carry on with a new one. Each cycle, before the branch takes anything in. A clone with no record
+ * keeps whatever `conflictFiles` it has. Never throws.
  */
 export async function reconcileMergeConflicts(
   ctx: GitHubCommitsContext,
@@ -718,28 +800,14 @@ export async function reconcileMergeConflicts(
       await fetchFromRemoteGit(git, ctx.remoteGitPath, `refs/heads/${branchRef}`)
     }
     const tips = ['HEAD', ...(published === null ? [] : [published])]
-    const shas = new Set([
-      ...Object.values(current.entries).flatMap(mergesNamedBy),
-      ...(current.remaps ?? []).map(({ mergeSha }) => mergeSha),
-    ])
-    const held = new Set<string>()
-    for (const sha of shas) {
-      for (const tip of tips) {
-        if (await contains(git, tip, sha)) {
-          held.add(sha)
-          break
-        }
-      }
-    }
-    // A tip the clone can't read says nothing about what it holds: then no merge counts as gone.
-    const tipsRead = (await Promise.all(tips.map((tip) => holdsCommit(git, tip)))).every(Boolean)
-    const gone = (sha: string) => tipsRead && !held.has(sha)
-    await applyRemaps(branchPath, (sha) => held.has(sha), gone)
+    for (const tip of tips) if (!(await holdsCommit(git, tip))) return
+    const [inHead, inPublished = new Set<string>()] = await mergesHeld(git, current, tips)
+    const held = (sha: string) => inHead.has(sha) || inPublished.has(sha)
     const entries =
       (
         await store.update((now) => {
           if (now === null) return null
-          const kept = withoutMergesGone(now.entries, (sha) => !gone(sha))
+          const kept = withoutMergesGone(now.entries, held)
           return JSON.stringify(kept) === JSON.stringify(now.entries)
             ? null
             : { ...now, entries: kept }
@@ -758,6 +826,11 @@ export async function reconcileMergeConflicts(
       { keepUpdatedAt: true },
     )
     if (saved) workerLog(`  ${branchDir}: ${conflictFiles.length} entries with conflicts on record`)
+    await applyRemaps(
+      branchPath,
+      (sha) => inHead.has(sha),
+      (sha) => !held(sha),
+    )
   } catch (err) {
     workerLogWarn(
       `  ${branchDir}: could not reconcile its conflict record: ${getErrorMessage(err)}`,

@@ -164,40 +164,87 @@ async function changedFiles(
   return changes
 }
 
+/** Where one version holds a collection directory: what it sits in, and its own name. */
+interface DirAt {
+  /** The collection it sits in, as `id:<ContentId>`, or the plain path of a directory with none. */
+  parent: string
+  name: string
+}
+
 /**
- * Where each collection directory a merge touches ends up, by its collection ID: where the branch
- * moved it, else where the base did. A directory one version holds at two places is left out.
+ * Where each collection directory a merge touches ends up, by its collection ID. A directory's
+ * parent and its own name are settled apart, each as a field is: the branch's change, else the
+ * base's. So a parent one side renamed and a child the other side renamed both come through, and
+ * only both sides changing the same one differently is a move apart. A directory one version
+ * holds at two places is left where each file has it.
  */
 class CollectionMoves {
   private readonly at = {
-    ancestor: new Map<string, string | null>(),
-    base: new Map<string, string | null>(),
-    branch: new Map<string, string | null>(),
+    ancestor: new Map<string, DirAt | null>(),
+    base: new Map<string, DirAt | null>(),
+    branch: new Map<string, DirAt | null>(),
   }
 
   note(version: 'ancestor' | Side, file: string): void {
     const segments = file.split('/')
+    let parent = ''
     for (let k = 0; k < segments.length - 1; k++) {
       const id = extractIdFromFilename(segments[k])
-      if (!id) continue
-      const dir = segments.slice(0, k + 1).join('/')
+      if (!id) {
+        parent = parent.startsWith('id:')
+          ? `${parent}/${segments[k]}`
+          : segments.slice(0, k + 1).join('/')
+        continue
+      }
+      const here: DirAt = { parent, name: segments[k] }
       const known = this.at[version].get(id)
-      this.at[version].set(id, known === undefined || known === dir ? dir : null)
+      const same = known && known.parent === here.parent && known.name === here.name
+      this.at[version].set(id, known === undefined || same ? here : null)
+      parent = `id:${id}`
     }
   }
 
-  /** Where `id`'s directory ends up, when a side moved it. */
-  private final(id: string): string | undefined {
-    const ancestor = this.at.ancestor.get(id)
-    if (!ancestor) return undefined
-    for (const side of ['branch', 'base'] as const) {
-      const dir = this.at[side].get(id)
-      if (dir && dir !== ancestor) return dir
-    }
-    return undefined
+  /** Each side's place for `id`'s directory, when every version that has one has just one. */
+  private versions(id: string): { o?: DirAt; a?: DirAt; b?: DirAt } | undefined {
+    const [o, a, b] = (['ancestor', 'base', 'branch'] as const).map((v) => this.at[v].get(id))
+    if (o === null || a === null || b === null) return undefined
+    return { o, a, b }
   }
 
-  /** `file` with the deepest collection directory on its way moved where it ends up. */
+  private settle(id: string): DirAt | undefined {
+    const v = this.versions(id)
+    if (!v) return undefined
+    const pick = (part: keyof DirAt) => {
+      const [o, a, b] = [v.o?.[part], v.a?.[part], v.b?.[part]]
+      if (b !== undefined && b !== o) return b
+      if (a !== undefined && a !== o) return a
+      return o ?? b ?? a
+    }
+    const [parent, name] = [pick('parent'), pick('name')]
+    return parent !== undefined && name !== undefined ? { parent, name } : undefined
+  }
+
+  /** The path `id`'s directory ends up at, or undefined where that can't be told. */
+  private final(id: string, depth = 0): string | undefined {
+    const dir = this.settle(id)
+    if (!dir || depth > 64) return undefined
+    if (!dir.parent.startsWith('id:')) return dir.parent ? `${dir.parent}/${dir.name}` : dir.name
+    const [parentId, ...below] = dir.parent.slice(3).split('/')
+    const parent = this.final(parentId, depth + 1)
+    return parent === undefined ? undefined : [parent, ...below, dir.name].join('/')
+  }
+
+  /** Whether both sides moved `id`'s directory, changing its parent or its name differently. */
+  movedApart(id: string): boolean {
+    const v = this.versions(id)
+    if (!v?.o || !v.a || !v.b) return false
+    const { o, a, b } = v
+    return (['parent', 'name'] as const).some(
+      (part) => a[part] !== o[part] && b[part] !== o[part] && a[part] !== b[part],
+    )
+  }
+
+  /** `file` in the collection directories it is in, each where it ends up. */
   place(file: string): string {
     const segments = file.split('/')
     for (let k = segments.length - 2; k >= 0; k--) {
@@ -454,8 +501,12 @@ class Resolver {
       if (text !== undefined && c.reads(text)) return c.git
     }
     if (c.isBase) return { ...c.base.file, path: at, mode }
-    const onBase = c.serialize(c.base.text)
-    if (c.reads(onBase)) return this.write(onBase, c.branch, at)
+    const serialized = c.serialize(c.base.text)
+    // The serializer writes some lines with `\n` alone: a base written with `\r\n` keeps them.
+    const crlf = /\r\n/.test(c.base.text) && !/(^|[^\r])\n/.test(c.base.text)
+    for (const onBase of crlf ? [serialized.replace(/\r?\n/g, '\r\n'), serialized] : [serialized]) {
+      if (c.reads(onBase)) return this.write(onBase, c.branch, at)
+    }
     if (c.isBranch) return { ...c.branch, path: at }
     const plain = c.serialize(undefined)
     return c.reads(plain) ? this.write(plain, c.branch, at) : undefined
@@ -500,7 +551,7 @@ class Resolver {
       return { file: { ...b, path: at }, conflict: { path: at, kind: 'deleted-on-base', sides } }
     }
     if (a && !b) {
-      return { conflict: { path: o?.path ?? a.path, kind: 'deleted-on-branch', sides } }
+      return { conflict: { path: this.moves.place(a.path), kind: 'deleted-on-branch', sides } }
     }
     if (!a || !b) return null
     const { at, apart } = this.placeOf(o, a, b)
@@ -582,6 +633,20 @@ class Resolver {
   ): Promise<Resolution | null> {
     const { git } = this.args
     const [o, a, b] = [unit.ancestor, sideFile(unit, 'base'), sideFile(unit, 'branch')]
+    const sides = blobSides(unit)
+    // Deleted on one side and changed on the other, as for an entry: the branch's side stands.
+    if (o && (!a || !b)) {
+      if (!a && !b) return {}
+      const contentId = this.args.collectionIdOf((b ?? a ?? o).path)
+      if (!contentId) return null
+      if (b) {
+        const at = this.moves.place(b.path)
+        return { file: { ...b, path: at }, conflict: { path: at, kind: 'deleted-on-base', sides } }
+      }
+      return {
+        conflict: { path: this.moves.place((a ?? o).path), kind: 'deleted-on-branch', sides },
+      }
+    }
     if (!o || !a || !b) return null
     const parse = async (file: TreeFile) => {
       const text = await readText(git, file.oid)
@@ -597,7 +662,8 @@ class Resolver {
     if (!oJson || !aJson || !bJson) return null
     const merged = mergeCollectionMeta(oJson.json, aJson.json, bJson.json)
     // The directory moved apart on both sides: it goes where the branch put it.
-    const apart = a.path !== o.path && b.path !== o.path && a.path !== b.path
+    const dirId = extractIdFromFilename(path.posix.basename(path.posix.dirname(b.path)))
+    const apart = dirId !== null && this.moves.movedApart(dirId)
     const at = this.moves.place(b.path)
     const fields = [...recordFields(merged.conflicts), ...(apart ? [LOCATION] : [])]
     const contentId = this.args.collectionIdOf(at)
@@ -627,7 +693,7 @@ class Resolver {
     return {
       file,
       ...(fields.length > 0 &&
-        contentId && { conflict: { path: at, kind: 'fields', sides: blobSides(unit), fields } }),
+        contentId && { conflict: { path: at, kind: 'fields', sides, fields } }),
     }
   }
 }
@@ -681,7 +747,8 @@ export async function resolveFieldMerge(args: FieldMergeArgs): Promise<FieldMerg
       // The one side's file, where git put it if git kept it whole, else where the collection
       // directories it is in ended up.
       const kept = file && only?.oid === file.oid && only.mode === file.mode
-      resolution = { file: file && (kept ? only : { ...file, path: moves.place(file.path) }) }
+      const from = kept ? only : file
+      resolution = { file: from && { ...from, path: moves.place(from.path) } }
     }
 
     for (const p of paths) result.covered.add(p)

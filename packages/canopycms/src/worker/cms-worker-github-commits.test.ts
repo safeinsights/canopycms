@@ -402,13 +402,16 @@ describe('an open pull request GitHub reports behind', () => {
   })
 
   it("leaves a branch whose merge the field merge would decide otherwise than git's", async () => {
-    // The base retypes an entry the branch edited: git merges it cleanly, the field merge keeps
-    // the branch's file, and that is not the diff that was reviewed.
-    await s.advanceBase({ [ENTRY]: '{"title":"base"}\n' })
-    await s.commit({ [ENTRY]: '{"title":"editor"}\n' })
+    // The base retypes an entry the branch edited: git follows the rename and merges cleanly, the
+    // field merge keeps the branch's file, and that is not the diff that was reviewed.
+    const page = (title: string) =>
+      JSON.stringify({ title, sub: 'Sub', cta: 'Go', note: 'n', more: 'm' }, null, 2) + '\n'
+    await s.advanceBase({ [ENTRY]: page('base') })
+    await s.clone.raw(['fetch', '-q', 'origin', 'main'])
+    await s.clone.raw(['merge', '-q', '--no-edit', 'FETCH_HEAD'])
+    await s.commit({ [ENTRY]: page('editor') })
     await s.push()
-    const retyped = ENTRY.replace('/post.', '/page.')
-    await s.advanceBase({ [ENTRY]: null, [retyped]: '{"title":"base"}\n' })
+    await s.advanceBase({ [ENTRY]: null, [ENTRY.replace('/post.', '/page.')]: page('base') })
     const before = await s.head()
 
     const summary = await cycle(s, workerWithPullRequest(s, 'behind'))

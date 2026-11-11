@@ -43,6 +43,7 @@ import { commitsApart, mergesAsGitDoes, planMerge } from './branch-merge'
 import type { GitHubPullRequest } from './github-gateway'
 import {
   bringInGitHubCommits,
+  catchUpWithPublished,
   mergeIntoBranch,
   reconcileMergeConflicts,
   returnToReview,
@@ -854,23 +855,32 @@ async function lacksPublishedCommits(
 
 /**
  * {@link reconcileMergeConflicts} for a submitted or approved branch, whose merges of GitHub's
- * commits can leave records too. Only for a clone with a record, so others cost one stat. Never
- * throws.
+ * commits can leave records too, under the content-write lock as for a branch being edited. Only
+ * for a clone with a record, so others cost one stat. Never throws.
  */
 async function reconcileInReview(
   ctx: RebaseContext,
   branchDir: string,
   branchPath: string,
+  isProvisioningLockCompromised: () => boolean,
 ): Promise<void> {
   try {
     if (!(await new MergeConflictStore(branchPath).exists())) return
     await assertSharedRepoConfig(branchPath, 'worktree')
-    await reconcileMergeConflicts(ctx, {
-      git: sharedRepoGit(branchPath, 'worktree'),
-      branchPath,
+    await withContentLockInReview(
       branchDir,
-      branchRef: await readCloneRef(branchPath),
-    })
+      branchPath,
+      isProvisioningLockCompromised,
+      async () => {
+        await reconcileMergeConflicts(ctx, {
+          git: sharedRepoGit(branchPath, 'worktree'),
+          branchPath,
+          branchDir,
+          branchRef: await readCloneRef(branchPath),
+        })
+        return { kind: 'none' }
+      },
+    )
   } catch (err) {
     workerLogWarn(
       `  ${branchDir}: could not reconcile its conflict record: ${getErrorMessage(err)}`,
@@ -1185,7 +1195,7 @@ async function rebaseOneBranch(
     // - archived: finished, with no PR left to poll.
     if (metaFile !== null && (branchStatus === 'submitted' || branchStatus === 'approved')) {
       workerLog(`  Skipping ${branchDir} (${branchStatus})`)
-      await reconcileInReview(ctx, branchDir, branchPath)
+      await reconcileInReview(ctx, branchDir, branchPath, isProvisioningLockCompromised)
       const outcome = await bringInCommitsForBranchInReview(
         ctx,
         branchDir,
@@ -1395,6 +1405,12 @@ async function rebaseOneBranch(
         else if (outcome.kind !== 'in-step') {
           return editorDirt.length > 0 ? { kind: 'skippedDirty' } : { kind: 'none' }
         }
+        // A merge of the base this worker published and never moved the clone to comes first.
+        const caughtUp = await catchUpWithPublished(ctx, commitArgs)
+        if (caughtUp?.kind === 'blocked') {
+          return recordBlocked(ctx, branchDir, branchPath, branchRef, caughtUp.reason)
+        }
+        if (caughtUp) return editorDirt.length > 0 ? { kind: 'skippedDirty' } : { kind: 'none' }
       }
 
       if (editorDirt.length > 0) {
