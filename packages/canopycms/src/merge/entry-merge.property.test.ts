@@ -2,7 +2,8 @@
  * The merge's identities over many generated entries rather than chosen ones: for random content
  * O and random edits of it, `merge(O, A, O) ≡ A`, `merge(O, O, B) ≡ B` and `merge(O, X, X) ≡ X`,
  * each with no conflict. The generator mixes the shapes the merge treats differently: records,
- * keyed and keyless lists, blocks in both shapes, tag lists, multi-line text, dates and empties.
+ * keyed and keyless lists, pasted copies that repeat a key, blocks in both shapes, tag lists,
+ * multi-line text, dates and empties.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -52,7 +53,7 @@ const record = (g: Gen, depth: number): Data => {
 const list = (g: Gen, depth: number): unknown[] => {
   const keyed = g.next() < 0.5
   const blocks = g.next() < 0.3
-  return Array.from({ length: g.int(5) }, () => {
+  const items = Array.from({ length: g.int(5) }, () => {
     const data = record(g, depth + 1)
     const item = blocks
       ? g.next() < 0.5
@@ -61,6 +62,9 @@ const list = (g: Gen, depth: number): unknown[] => {
       : data
     return keyed ? { ...item, _key: mint() } : item
   })
+  // A pasted copy: the same item, key and all, twice.
+  if (items.length > 0 && g.next() < 0.2) items.push(clone(items[g.int(items.length)]))
+  return items
 }
 
 const value = (g: Gen, depth: number): unknown => {
@@ -76,7 +80,8 @@ const edit = (g: Gen, v: unknown, depth = 0): unknown => {
   if (Array.isArray(v)) {
     const items = v.map((x) => (g.next() < 0.4 ? edit(g, x, depth + 1) : clone(x)))
     const r = g.next()
-    if (r < 0.15 && items.length > 0) items.splice(g.int(items.length), 1)
+    if (r < 0.05 && items.length > 0) items.push(clone(items[g.int(items.length)]))
+    else if (r < 0.15 && items.length > 0) items.splice(g.int(items.length), 1)
     else if (r < 0.3 && items.every((x) => x !== null && typeof x === 'object')) {
       const added = record(g, depth + 1)
       items.splice(g.int(items.length + 1), 0, g.next() < 0.5 ? { ...added, _key: mint() } : added)

@@ -76,39 +76,60 @@ const ancestorAliases = (
   return aliases
 }
 
+/** Which ancestor item each item of a side's list is, and which identities rest on position alone. */
+export interface Alignment {
+  /** Per item: the ancestor item's key, or for an item new on this side an identity of its own. */
+  ids: string[]
+  /** The items paired with an ancestor item only by their place in a gap: an edit in place, or
+   * one item replaced by another, which nothing here can tell apart. */
+  weak: Set<number>
+}
+
 /**
- * Each item of `items`' identity: the key of the ancestor item it is, or, for an item new on this
- * side, an internal identity unique to it. `ancestorKeys` are the ancestor's items' keys as a read
- * gives them, so an item an editor's first save keyed carries one the ancestor knows.
+ * Each item of `items`' identity. `ancestorKeys` are the ancestor's items' keys as a read gives
+ * them, and a side's item is first named by the key a read gives IT: its own key the first time
+ * the list holds it, else a hash of its content. A name the ancestor's read gave, or another key a
+ * read could have given an ancestor item ({@link ancestorAliases}), is that ancestor item.
  *
- * A key is identity only when the ancestor knows it, under any key a read could have given it
- * ({@link ancestorAliases}). A key added since that is a hash of the item's own content (a backfill run after the item was edited) is aligned like a missing one; any
- * other new key was minted for an item added on this side, which is new and aligned to nothing,
- * so a delete and an add in its place never read as an edit. A key a later item repeats is
- * identity for the first holder only, as a read keys the list.
+ * Any other key on an item marks it new on this side when it was minted for the item or is a
+ * key the ancestor knows (a copy of a keyed item), so a delete and an add in its place never
+ * read as an edit. The rest align as diff3 aligns lines: equal content in order, then equal
+ * content out of order (a move), then, in a gap between two matches holding as many unmatched
+ * items on both sides, one by one by position. An ancestor item with a minted key never pairs by
+ * position: a side item in its place without the key replaced it.
  */
 export function alignToAncestor(
   items: readonly unknown[],
   ancestorItems: readonly unknown[],
   ancestorKeys: readonly string[],
   side: string,
-): string[] | undefined {
+): Alignment | undefined {
   const known = new Set(ancestorKeys)
   const aliases = ancestorAliases(ancestorItems, ancestorKeys)
+  const readKeys = itemKeysAsRead(items)
   const ids: Array<string | undefined> = items.map(() => undefined)
   const taken = new Set<string>()
   const minted = new Set<number>()
   items.forEach((item, j) => {
-    const key = ownKey(item)
-    if (key === undefined) return
-    const id = known.has(key) ? key : aliases.get(key)
+    const own = ownKey(item)
+    const read = readKeys[j]
+    const id =
+      read !== undefined && known.has(read)
+        ? read
+        : own !== undefined && !known.has(own)
+          ? aliases.get(own)
+          : undefined
     if (id !== undefined && !taken.has(id)) {
       ids[j] = id
       taken.add(id)
-    } else if (isMinted(item)) {
+    } else if (own !== undefined && (known.has(own) || isMinted(item))) {
       minted.add(j)
     }
   })
+  const match = (j: number, i: number) => {
+    ids[j] = ancestorKeys[i]
+    taken.add(ancestorKeys[i])
+  }
   // Items matched by key anchor the alignment too, where they kept their order.
   const ancestorTokens = ancestorItems.map((item, i) =>
     taken.has(ancestorKeys[i]) ? `${INTERNAL}k${ancestorKeys[i]}` : `c${valueToken(item)}`,
@@ -120,14 +141,20 @@ export function alignToAncestor(
   })
   const anchors = commonPairs(ancestorTokens, sideTokens)
   if (!anchors) return undefined
-  for (const [i, j] of anchors) {
-    if (ids[j] === undefined) {
-      ids[j] = ancestorKeys[i]
-      taken.add(ancestorKeys[i])
-    }
-  }
-  // An ancestor item whose stored key was minted for it is that item only under that key: a
-  // side item in its place without the key replaced it, unless the content is the same.
+  for (const [i, j] of anchors) if (ids[j] === undefined) match(j, i)
+  // An item whose content an unmatched ancestor item has, out of order: it was moved.
+  const unmatched = new Map<string, number[]>()
+  ancestorItems.forEach((item, i) => {
+    if (taken.has(ancestorKeys[i])) return
+    const token = valueToken(item)
+    unmatched.set(token, [...(unmatched.get(token) ?? []), i])
+  })
+  items.forEach((item, j) => {
+    if (ids[j] !== undefined || minted.has(j)) return
+    const i = unmatched.get(valueToken(item))?.shift()
+    if (i !== undefined) match(j, i)
+  })
+  const weak = new Set<number>()
   const pairable = (i: number) => !taken.has(ancestorKeys[i]) && !isMinted(ancestorItems[i])
   const bounds: Array<[number, number]> = [
     [-1, -1],
@@ -145,30 +172,16 @@ export function alignToAncestor(
     }
     if (ancestorGap.length === sideGap.length) {
       ancestorGap.forEach((i, k) => {
-        ids[sideGap[k]] = ancestorKeys[i]
-        taken.add(ancestorKeys[i])
+        match(sideGap[k], i)
+        weak.add(sideGap[k])
       })
     }
   }
-  // An item left over whose content an unmatched ancestor item has was moved there.
-  const unmatched = new Map<string, number[]>()
-  ancestorItems.forEach((item, i) => {
-    if (taken.has(ancestorKeys[i])) return
-    const token = valueToken(item)
-    unmatched.set(token, [...(unmatched.get(token) ?? []), i])
-  })
-  items.forEach((item, j) => {
-    if (ids[j] !== undefined || minted.has(j)) return
-    const i = unmatched.get(valueToken(item))?.shift()
-    if (i === undefined) return
-    ids[j] = ancestorKeys[i]
-    taken.add(ancestorKeys[i])
-  })
-  return ids.map((id, j) => id ?? newIdentity(side, j))
+  return { ids: ids.map((id, j) => id ?? newIdentity(side, j)), weak }
 }
 
 /** The identity of the `j`th item of `side`'s list, new on that side. */
-export const newIdentity = (side: string, j: number): string => `${INTERNAL}${side}${j}`
+const newIdentity = (side: string, j: number): string => `${INTERNAL}${side}${j}`
 
 /** True for an identity {@link alignToAncestor} gave an item new on its side. */
 export const isNewIdentity = (id: string): boolean => id.startsWith(INTERNAL)
@@ -189,13 +202,15 @@ export function pairNewItems(
   const branchNew = branchIds.flatMap((id, j) => (isNewIdentity(id) ? [j] : []))
   const pairedBase = new Set<number>()
   const pairedBranch = new Set<number>()
+  // The same key as a read gives it: a key both added, or a repeat both added alike.
+  const [baseRead, branchRead] = [itemKeysAsRead(baseItems), itemKeysAsRead(branchItems)]
   const branchByKey = new Map<string, number>()
   for (const j of branchNew) {
-    const key = ownKey(branchItems[j])
+    const key = branchRead[j]
     if (key !== undefined && !branchByKey.has(key)) branchByKey.set(key, j)
   }
   for (const j of baseNew) {
-    const key = ownKey(baseItems[j])
+    const key = baseRead[j]
     const match = key === undefined ? undefined : branchByKey.get(key)
     if (match !== undefined && !pairedBranch.has(match)) {
       baseIds[j] = branchIds[match]

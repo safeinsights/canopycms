@@ -973,6 +973,209 @@ describe('shapes the review found', () => {
   })
 })
 
+describe('shapes the second review found', () => {
+  it('row 20: a key the ancestor repeats: the branch deleting the copy deletes it', () => {
+    const x = { t: 'x', _key: 'Kq1w2e3r4t5y' }
+    const result = merge(
+      { title: 'T', l: [x, x] },
+      { title: 'T2', l: [x, x] },
+      { title: 'T', l: [x] },
+    )
+    expect(result.data).toEqual({ title: 'T2', l: [x] })
+    expect(result.conflicts).toEqual([])
+  })
+
+  it('row 20: a key the ancestor repeats: the base deleting one item never doubles the other', () => {
+    const [x, y] = [
+      { t: 'x', _key: 'Kq1w2e3r4t5y' },
+      { t: 'y', _key: 'Kq1w2e3r4t5y' },
+    ]
+    const result = merge({ l: [x, y] }, { l: [y] }, { l: [x, y], title: 'mine' })
+    expect((result.data.l as unknown[]).length).toBeLessThanOrEqual(1)
+  })
+
+  it('row 15: four items added alike on both sides with one shared key stay four', () => {
+    const added = ['a', 'b', 'c', 'd'].map((t) => ({ t, _key: 'Mshared12345' }))
+    const result = merge({ l: [] }, { l: added }, { l: added })
+    expect(result.data.l).toEqual(added)
+  })
+
+  it('row 14: an item the base moved to another list and the branch deleted is a conflict', () => {
+    const i1 = { t: 'one', _key: 'Ki1aaaaaaaaa' }
+    const block = (key: string, items: unknown[]) => ({
+      template: 'hero',
+      value: { heading: key, items },
+      _key: key,
+    })
+    const result = run(
+      { data: { blocks: [block('b1', [i1]), block('b2', [])] } },
+      { data: { blocks: [block('b1', []), block('b2', [i1])] } },
+      { data: { blocks: [block('b1', []), block('b2', [])] } },
+      'md',
+      undefined,
+    )
+    expect(result.conflicts.map((c) => [c.kind, c.item])).toEqual([['removed-by-you', true]])
+  })
+
+  it('row 14: an item the branch moved to another list and the base deleted is a conflict', () => {
+    const i1 = { t: 'one', _key: 'Ki1aaaaaaaaa' }
+    const result = run(
+      { data: { p: [i1], q: [] } },
+      { data: { p: [], q: [] } },
+      { data: { p: [], q: [i1] } },
+      'md',
+      undefined,
+    )
+    expect(result.data).toEqual({ p: [], q: [i1] })
+    expect(result.conflicts.map((c) => [c.kind, c.dataPath])).toEqual([
+      ['removed-on-base', [{ field: 'q' }]],
+    ])
+  })
+
+  it('row 14: an item one side moved and the other changed in place is flagged where it doubles', () => {
+    const i1 = { t: 'one', _key: 'Ki1aaaaaaaaa' }
+    const result = run(
+      { data: { p: [i1], q: [] } },
+      { data: { p: [], q: [i1] } },
+      { data: { p: [{ ...i1, t: 'mine' }], q: [] } },
+      'md',
+      undefined,
+    )
+    expect(result.conflicts.map((c) => c.kind).sort()).toEqual(['changed', 'removed-on-base'])
+  })
+
+  it('row 16: a keyless item the base moved up while the branch deleted it stays deleted', () => {
+    const [x, y, z] = [{ title: 'X' }, { title: 'Y' }, { title: 'Z' }]
+    const [hy, hz] = [itemKeysAsRead([y])[0]!, itemKeysAsRead([z])[0]!]
+    const result = merge(
+      { items: [x, y, z] },
+      { items: [y, x] },
+      {
+        items: [
+          { ...y, _key: hy },
+          { ...z, _key: hz },
+        ],
+      },
+    )
+    expect(result.data.items).toEqual([{ ...y, _key: hy }])
+    expect(result.conflicts).toEqual([])
+  })
+
+  it('row 16: a base that dropped the keys and reordered keeps the branch deletion', () => {
+    const [x, y] = [
+      { t: 'x', _key: 'Kx7Pq2Lm9Zr4' },
+      { t: 'y', _key: 'Ky3Wd8Hn5Tb1' },
+    ]
+    // Keys are carried, so merge(O, A, O) keeps the keys this base dropped: no identity check.
+    const result = run(
+      { data: { items: [x, y] } },
+      { data: { items: [{ t: 'y' }, { t: 'x' }] } },
+      { data: { items: [y] } },
+    )
+    expect(result.data.items).toEqual([y])
+    expect(result.conflicts).toEqual([])
+  })
+
+  it('row 14: a pasted copy of an item in the place of a deleted one is a new item', () => {
+    const [x, y] = [
+      { title: 'x', detail: 'one' },
+      { title: 'y', detail: 'one' },
+    ]
+    const hx = itemKeysAsRead([x])[0]!
+    const result = merge(
+      { items: [x, y] },
+      { items: [x, { ...y, title: 'y (base)' }] },
+      {
+        items: [
+          { ...x, _key: hx },
+          { ...x, _key: hx },
+        ],
+      },
+    )
+    expect(result.data.items).toEqual([
+      { ...x, _key: hx },
+      { ...x, _key: hx },
+    ])
+    expect(kinds(result)).toEqual([
+      { key: `items.${itemKeysAsRead([y])[0]}`, kind: 'removed-by-you', item: true },
+    ])
+  })
+
+  it('row 19: an item the base replaced in place, keeping none of its values, is one conflict', () => {
+    const q = { title: 'q', detail: '2' }
+    const s1 = { title: 's', detail: '1' }
+    const [hq, hs] = itemKeysAsRead([q, s1]) as string[]
+    const result = merge(
+      { items: [q, s1] },
+      { items: [{ title: 'new', detail: '9' }, s1] },
+      {
+        items: [
+          { ...q, detail: 'e4', _key: hq },
+          { ...s1, _key: hs },
+        ],
+      },
+    )
+    expect(result.data.items).toEqual([
+      { ...q, detail: 'e4', _key: hq },
+      { ...s1, _key: hs },
+    ])
+    expect(kinds(result)).toEqual([{ key: `items.${hq}`, kind: 'changed', item: true }])
+  })
+
+  it('row 22: a tag both sides added at different places is one tag', () => {
+    expect(merge({ tags: ['a'] }, { tags: ['a', 'b'] }, { tags: ['b', 'a'] }).data).toEqual({
+      tags: ['b', 'a'],
+    })
+    // Kept at its first place in the merged list, whichever side put it there.
+    expect(merge({ tags: ['a'] }, { tags: ['b', 'a'] }, { tags: ['a', 'b'] }).data).toEqual({
+      tags: ['b', 'a'],
+    })
+  })
+
+  it('row 22: a tag deleted on one side and emptied on the other conflicts either way round', () => {
+    const one = merge({ tags: ['a', 'b', 'c'] }, { tags: ['a', 'c'] }, { tags: ['a', null, 'c'] })
+    const other = merge({ tags: ['a', 'b', 'c'] }, { tags: ['a', null, 'c'] }, { tags: ['a', 'c'] })
+    expect(kinds(one)).toEqual([{ key: 'tags', kind: 'changed' }])
+    expect(kinds(other)).toEqual([{ key: 'tags', kind: 'changed' }])
+  })
+
+  it('row 10: lists both sides added with different kinds of element are one conflict', () => {
+    const result = merge({}, { x: ['tag'] }, { x: [{ t: 1 }] })
+    expect(result.data).toEqual({ x: [{ t: 1 }] })
+    expect(kinds(result)).toEqual([{ key: '?x', kind: 'changed' }])
+  })
+
+  it('row 34: entries with no name, or a repeated name, merge as one value', () => {
+    const unnamed = { entries: [{ label: 'a' }] }
+    expect(mergeCollectionMeta(unnamed, { ...unnamed, title: 'T' }, { entries: [] }).data).toEqual({
+      entries: [],
+      title: 'T',
+    })
+    const repeated = [
+      { name: 'a', x: 1 },
+      { name: 'a', x: 2 },
+    ]
+    const result = mergeCollectionMeta(
+      { entries: repeated },
+      { entries: [repeated[1]] },
+      { entries: [repeated[0]] },
+    )
+    expect(result.conflicts.map((c) => c.key)).toEqual(['?entries'])
+  })
+
+  it('reads a __proto__ member as a member when deciding an item changed', () => {
+    const k1 = JSON.parse('{"__proto__": "one", "t": "x", "_key": "K1aaaaaaaaaa"}') as Data
+    const k1Mine = JSON.parse('{"__proto__": "two", "t": "x", "_key": "K1aaaaaaaaaa"}') as Data
+    const result = merge({ items: [k1] }, { items: [] }, { items: [k1Mine] })
+    expect(result.conflicts.map((c) => c.kind)).toEqual(['removed-on-base'])
+  })
+
+  it('a conflicted text keeps the branch end line break', () => {
+    const result = merge({ notes: 'b\n\n' }, { notes: '' }, { notes: 'a\n\n' })
+    expect(result.data).toEqual({ notes: 'a\n\n' })
+  })
+})
+
 describe('conflicts inside a value the drawer shows whole are named at that value', () => {
   const cases: Array<[string, Data, Data, Data, string]> = [
     [
@@ -1020,6 +1223,41 @@ describe('conflicts inside a value the drawer shows whole are named at that valu
       ])
     })
   }
+
+  it('a conflict inside an image carries the whole image versions, and covers both members', () => {
+    const o = { src: '/a.png', alt: 'old' }
+    const a = { src: '/base.png', alt: 'base alt' }
+    const b = { src: '/branch.png', alt: 'branch alt' }
+    const result = merge({ cover: o }, { cover: a }, { cover: b })
+    expect(result.conflicts).toEqual([
+      {
+        key: 'cover',
+        dataPath: [{ field: 'cover' }],
+        kind: 'changed',
+        ancestor: o,
+        base: a,
+        branch: b,
+      },
+    ])
+  })
+
+  it('a conflict inside a record outside the schema carries the whole record versions', () => {
+    const result = merge(
+      { extra: { p: 1, q: 1 } },
+      { extra: { p: 2, q: 2 } },
+      { extra: { p: 3, q: 3 } },
+    )
+    expect(result.conflicts).toEqual([
+      {
+        key: '?extra',
+        dataPath: [{ field: 'extra' }],
+        kind: 'changed',
+        ancestor: { p: 1, q: 1 },
+        base: { p: 2, q: 2 },
+        branch: { p: 3, q: 3 },
+      },
+    ])
+  })
 
   it('an item the branch removed is named by the ancestor key, as the drawer names it', () => {
     const t = { title: 'T', detail: 'd' }

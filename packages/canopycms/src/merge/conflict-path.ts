@@ -39,14 +39,15 @@ const keysOf = (items: readonly unknown[]): Array<string | undefined> => {
  * `at`, a path through `read` (the merged data as a read gives it, so items carry the keys the
  * drawer names them by), as the drawer's key and data path. The drawer goes into a record the
  * schema describes, an object list's items and a block whose template resolves; anywhere else it
- * shows the whole value, so a deeper path is named there. `field` is the schema's field at the end
- * of the whole path, when the schema reaches that far.
+ * shows the whole value, so a deeper path is named there: `depth` is how many steps of `at` the
+ * name covers. `field` is the schema's field at the end of the whole path, when the schema reaches
+ * that far.
  */
 export function describePath(
   fields: readonly FieldConfig[] | undefined,
   read: unknown,
   at: readonly RawSegment[],
-): { key: string; dataPath: DataPathSegment[]; field?: FieldConfig } {
+): { key: string; dataPath: DataPathSegment[]; depth: number; field?: FieldConfig } {
   let key = ''
   const dataPath: DataPathSegment[] = []
   let scope: readonly FieldConfig[] = fields ?? []
@@ -112,5 +113,5 @@ export function describePath(
       break walk
     }
   }
-  return { key, dataPath, ...(n === at.length && field && { field }) }
+  return { key, dataPath, depth: n, ...(n === at.length && field && { field }) }
 }
