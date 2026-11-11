@@ -6,10 +6,9 @@
  * item edited in place). Anything left is new on that side.
  */
 
-import { LCS } from 'node-diff3'
-
 import { ITEM_KEY, isItemKey, itemKeysAsRead } from '../item-keys'
 import { isPlainRecord } from '../validation/field-traversal'
+import { commonPairs } from './diff3'
 import { valueToken } from './value-equality'
 
 /** Marks an identity no file holds: a side's new item. Item keys never contain it. */
@@ -49,13 +48,10 @@ const isContentKey = (item: Record<string, unknown>, key: string): boolean => {
   return hashes.includes(key) || hashes.includes(base)
 }
 
-/** The index pairs on a longest common subsequence of two token lists, in order. */
-const commonRun = (x: readonly string[], y: readonly string[]): Array<[number, number]> => {
-  const pairs: Array<[number, number]> = []
-  for (let c = LCS([...x], [...y]); c.chain !== null; c = c.chain) {
-    pairs.push([c.buffer1index, c.buffer2index])
-  }
-  return pairs.reverse()
+/** An item carrying a usable key that is not a hash of its content: a key minted for it. */
+const isMinted = (item: unknown): boolean => {
+  const key = ownKey(item)
+  return key !== undefined && !isContentKey(item as Record<string, unknown>, key)
 }
 
 /**
@@ -96,7 +92,7 @@ export function alignToAncestor(
   ancestorItems: readonly unknown[],
   ancestorKeys: readonly string[],
   side: string,
-): string[] {
+): string[] | undefined {
   const known = new Set(ancestorKeys)
   const aliases = ancestorAliases(ancestorItems, ancestorKeys)
   const ids: Array<string | undefined> = items.map(() => undefined)
@@ -109,7 +105,7 @@ export function alignToAncestor(
     if (id !== undefined && !taken.has(id)) {
       ids[j] = id
       taken.add(id)
-    } else if (id === undefined && !isContentKey(item as Record<string, unknown>, key)) {
+    } else if (isMinted(item)) {
       minted.add(j)
     }
   })
@@ -122,13 +118,17 @@ export function alignToAncestor(
     if (minted.has(j)) return `${INTERNAL}m${j}`
     return id !== undefined ? `${INTERNAL}k${id}` : `c${valueToken(item)}`
   })
-  const anchors = commonRun(ancestorTokens, sideTokens)
+  const anchors = commonPairs(ancestorTokens, sideTokens)
+  if (!anchors) return undefined
   for (const [i, j] of anchors) {
     if (ids[j] === undefined) {
       ids[j] = ancestorKeys[i]
       taken.add(ancestorKeys[i])
     }
   }
+  // An ancestor item whose stored key was minted for it is that item only under that key: a
+  // side item in its place without the key replaced it, unless the content is the same.
+  const pairable = (i: number) => !taken.has(ancestorKeys[i]) && !isMinted(ancestorItems[i])
   const bounds: Array<[number, number]> = [
     [-1, -1],
     ...anchors,
@@ -138,7 +138,7 @@ export function alignToAncestor(
     const ancestorGap: number[] = []
     const sideGap: number[] = []
     for (let i = bounds[n][0] + 1; i < bounds[n + 1][0]; i++) {
-      if (!taken.has(ancestorKeys[i])) ancestorGap.push(i)
+      if (pairable(i)) ancestorGap.push(i)
     }
     for (let j = bounds[n][1] + 1; j < bounds[n + 1][1]; j++) {
       if (ids[j] === undefined && !minted.has(j)) sideGap.push(j)
@@ -150,6 +150,20 @@ export function alignToAncestor(
       })
     }
   }
+  // An item left over whose content an unmatched ancestor item has was moved there.
+  const unmatched = new Map<string, number[]>()
+  ancestorItems.forEach((item, i) => {
+    if (taken.has(ancestorKeys[i])) return
+    const token = valueToken(item)
+    unmatched.set(token, [...(unmatched.get(token) ?? []), i])
+  })
+  items.forEach((item, j) => {
+    if (ids[j] !== undefined || minted.has(j)) return
+    const i = unmatched.get(valueToken(item))?.shift()
+    if (i === undefined) return
+    ids[j] = ancestorKeys[i]
+    taken.add(ancestorKeys[i])
+  })
   return ids.map((id, j) => id ?? newIdentity(side, j))
 }
 
@@ -162,7 +176,8 @@ export const isNewIdentity = (id: string): boolean => id.startsWith(INTERNAL)
 /**
  * Pairs the items new on the base with the items new on the branch that are the same addition:
  * the same key, else equal content, in order. The branch's identity replaces the base's in
- * `baseIds` for each pair, so an item both sides added alike is one item.
+ * `baseIds` for each pair, so an item both sides added alike is one item. Pairing is skipped by
+ * content when the diff runs out of time: the additions stay apart, and none is lost.
  */
 export function pairNewItems(
   baseItems: readonly unknown[],
@@ -188,12 +203,16 @@ export function pairNewItems(
       pairedBranch.add(match)
     }
   }
+  // Equal content pairs two additions unless both carry keys minted for them: those are two
+  // items that happen to read alike.
   const restBase = baseNew.filter((j) => !pairedBase.has(j))
   const restBranch = branchNew.filter((j) => !pairedBranch.has(j))
-  const pairs = commonRun(
-    restBase.map((j) => valueToken(baseItems[j])),
-    restBranch.map((j) => valueToken(branchItems[j])),
-  )
+  const pairs = (
+    commonPairs(
+      restBase.map((j) => valueToken(baseItems[j])),
+      restBranch.map((j) => valueToken(branchItems[j])),
+    ) ?? []
+  ).filter(([x, y]) => !(isMinted(baseItems[restBase[x]]) && isMinted(branchItems[restBranch[y]])))
   for (const [x, y] of pairs) baseIds[restBase[x]] = branchIds[restBranch[y]]
 }
 

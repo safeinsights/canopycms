@@ -23,72 +23,94 @@ const fieldNamed = (
   name: string,
 ): FieldConfig | undefined => scope && flattenGroupFields(scope).find((f) => f.name === name)
 
-/** The fields inside a value of `field`, when it is a record the drawer walks by schema. */
-const fieldsInside = (field: FieldConfig | undefined): readonly FieldConfig[] | undefined =>
-  field?.type === 'object' && !(field as ObjectFieldConfig).list
-    ? ((field as ObjectFieldConfig).fields ?? [])
-    : undefined
+const member = (node: unknown, name: string): unknown =>
+  isPlainRecord(node) && Object.prototype.hasOwnProperty.call(node, name) ? node[name] : undefined
+
+const readKeys = new WeakMap<readonly unknown[], Array<string | undefined>>()
+
+/** The key a read gives each item of `items`, worked out once per list. */
+const keysOf = (items: readonly unknown[]): Array<string | undefined> => {
+  let keys = readKeys.get(items)
+  if (!keys) readKeys.set(items, (keys = itemKeysAsRead(items)))
+  return keys
+}
 
 /**
  * `at`, a path through `read` (the merged data as a read gives it, so items carry the keys the
- * drawer names them by), as the drawer's key and data path.
+ * drawer names them by), as the drawer's key and data path. The drawer goes into a record the
+ * schema describes, an object list's items and a block whose template resolves; anywhere else it
+ * shows the whole value, so a deeper path is named there. `field` is the schema's field at the end
+ * of the whole path, when the schema reaches that far.
  */
 export function describePath(
   fields: readonly FieldConfig[] | undefined,
   read: unknown,
   at: readonly RawSegment[],
-): { key: string; dataPath: DataPathSegment[] } {
+): { key: string; dataPath: DataPathSegment[]; field?: FieldConfig } {
   let key = ''
   const dataPath: DataPathSegment[] = []
-  let scope: readonly FieldConfig[] | undefined = fields ?? []
+  let scope: readonly FieldConfig[] = fields ?? []
+  let list: FieldConfig | undefined
+  let mode: 'record' | 'list' | 'block' = 'record'
   let field: FieldConfig | undefined
   let node: unknown = read
-  // The list field whose item `node` is, while no member of that item has been entered yet.
-  let itemOf: { field: FieldConfig | undefined } | undefined
-  for (const segment of at) {
-    if (!('field' in segment)) {
+  let n = 0
+  walk: for (; n < at.length; n++) {
+    const segment = at[n]
+    if (mode === 'list') {
+      if ('field' in segment) break
       const items = Array.isArray(node) ? node : []
       const itemKey =
-        'item' in segment
-          ? segment.item
-          : (itemKeysAsRead(items)[segment.index] ?? String(segment.index))
+        'item' in segment ? segment.item : (keysOf(items)[segment.index] ?? String(segment.index))
       key = `${key}.${itemKey}`
       dataPath.push({ item: itemKey })
-      itemOf = { field }
       node = 'index' in segment ? items[segment.index] : undefined
-      scope = field?.type === 'object' ? ((field as ObjectFieldConfig).fields ?? []) : undefined
+      field = undefined
+      if (list?.type === 'object') {
+        scope = (list as ObjectFieldConfig).fields ?? []
+        mode = 'record'
+      } else {
+        mode = 'block'
+      }
       continue
     }
-    const name = segment.field
-    if (itemOf && itemOf.field?.type !== 'object' && isPlainRecord(node)) {
+    if (!('field' in segment)) break
+    if (mode === 'block') {
       // A block item: canonical `{ template, value }`, or inline `{ _type, ...data }`.
-      const template = typeof node.template === 'string' ? node.template : undefined
-      const inline =
-        template === undefined && typeof node._type === 'string' ? node._type : undefined
-      const templateFields =
-        itemOf.field?.type === 'block'
-          ? (itemOf.field as BlockFieldConfig).templates.find(
-              (t) => t.name === (template ?? inline),
-            )?.fields
-          : undefined
-      if (template !== undefined && name === 'value') {
-        dataPath.push({ blockData: true })
-        node = node.value
-        scope = templateFields
-        itemOf = undefined
+      const template = member(node, 'template')
+      const inline = member(node, '_type')
+      const name = typeof template === 'string' ? template : inline
+      const templateFields = (list as BlockFieldConfig).templates.find(
+        (t) => t.name === name,
+      )?.fields
+      if (!templateFields || isBlockStructuralKey(segment.field)) break
+      dataPath.push({ blockData: true })
+      scope = templateFields
+      mode = 'record'
+      if (typeof template === 'string') {
+        if (segment.field !== 'value') break
+        node = member(node, 'value')
         continue
       }
-      if (inline !== undefined && !isBlockStructuralKey(name)) {
-        dataPath.push({ blockData: true })
-        scope = templateFields
-      }
     }
-    itemOf = undefined
+    const name = segment.field
     field = fieldNamed(scope, name)
     key = field ? (key ? `${key}.${name}` : name) : `${key}?${name}`
     dataPath.push({ field: name })
-    node = isPlainRecord(node) ? node[name] : undefined
-    scope = fieldsInside(field)
+    node = member(node, name)
+    if (!field) {
+      n++
+      break walk
+    }
+    if (field.type === 'object' && !(field as ObjectFieldConfig).list) {
+      scope = (field as ObjectFieldConfig).fields ?? []
+    } else if (field.type === 'object' || field.type === 'block') {
+      list = field
+      mode = 'list'
+    } else {
+      n++
+      break walk
+    }
   }
-  return { key, dataPath }
+  return { key, dataPath, ...(n === at.length && field && { field }) }
 }

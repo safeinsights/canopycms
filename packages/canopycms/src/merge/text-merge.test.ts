@@ -34,7 +34,7 @@ describe('mergeText', () => {
   it('merges from and to empty text', () => {
     expect(mergeText('', 'base\n', '')).toEqual({ text: 'base\n', regions: [] })
     expect(mergeText('only\n', '', 'only\n')).toEqual({ text: '', regions: [] })
-    expect(mergeText('', 'x', 'y').regions).toHaveLength(1)
+    expect(mergeText('', 'x', 'y')?.regions).toHaveLength(1)
   })
 
   it('merges the end line break on its own: the side that changed it wins', () => {

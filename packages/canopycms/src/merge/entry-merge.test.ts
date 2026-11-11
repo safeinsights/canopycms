@@ -42,6 +42,8 @@ const fields: FieldConfig[] = [
     ],
   },
   { name: 'notes', type: 'markdown' },
+  { name: 'snippet', type: 'mdx' },
+  { name: 'cover', type: 'image' },
   { name: 'body', type: 'markdown', isBody: true },
 ]
 
@@ -770,6 +772,269 @@ describe('collection meta', () => {
       { order: ['a', 'b', 'c', 'd'] },
     )
     expect(result.data).toEqual({ order: ['a', 'c', 'd'] })
+  })
+})
+
+describe('shapes the review found', () => {
+  const kx = { _key: 'Kx7Pq2Lm9Zr4', t: 'X' }
+  const ky = { _key: 'Ky3Wd8Hn5Tb1', t: 'Y', url: '/y' }
+
+  it('row 14: a keyed item the base replaced by a keyless one is never read as an edit', () => {
+    const z = { t: 'Z', url: '/z' }
+    const result = merge(
+      { items: [kx, ky] },
+      { items: [kx, z] },
+      { items: [kx, { ...ky, note: 'mine' }] },
+    )
+    expect(result.data.items).toEqual([kx, z, { ...ky, note: 'mine' }])
+    expect(kinds(result)).toEqual([
+      { key: `items.${ky._key}`, kind: 'removed-on-base', item: true },
+    ])
+    expect(result.keyRemaps).toEqual([])
+  })
+
+  it('row 14: the same, with the base item carrying its own content key', () => {
+    const z = { t: 'Z', url: '/z' }
+    const zKeyed = { ...z, _key: itemKeysAsRead([z])[0]! }
+    const result = merge(
+      { items: [kx, ky] },
+      { items: [kx, zKeyed] },
+      { items: [kx, { ...ky, url: '/y2' }] },
+    )
+    expect(result.data.items).toEqual([kx, zKeyed, { ...ky, url: '/y2' }])
+    expect(kinds(result)).toEqual([
+      { key: `items.${ky._key}`, kind: 'removed-on-base', item: true },
+    ])
+    expect(result.keyRemaps).toEqual([])
+  })
+
+  it('row 14: a copy carrying a key another item holds is a new item, not an edit', () => {
+    const y2 = { ...ky, t: 'Y (base)' }
+    const copy = { ...kx, t: 'X copy' }
+    const result = merge({ items: [kx, ky] }, { items: [kx, y2] }, { items: [kx, copy] })
+    expect(result.data.items).toEqual([kx, copy])
+    expect(kinds(result)).toEqual([{ key: `items.${ky._key}`, kind: 'removed-by-you', item: true }])
+  })
+
+  it('row 14: in a keyless list, a new item added where the branch deleted one is not that item', () => {
+    const [x, y, z] = [{ t: 'x' }, { t: 'y' }, { t: 'z' }]
+    const [hx, hz] = [itemKeysAsRead([x])[0]!, itemKeysAsRead([z])[0]!]
+    const added = { t: 'new', _key: 'Nw3xQ8rT2kLm' }
+    const result = merge(
+      { items: [x, y, z] },
+      { items: [x, { t: 'y (base)' }, z] },
+      { items: [{ ...x, _key: hx }, added, { ...z, _key: hz }] },
+    )
+    expect(result.data.items).toEqual([{ ...x, _key: hx }, added, { ...z, _key: hz }])
+    expect(kinds(result)).toEqual([
+      { key: `items.${itemKeysAsRead([y])[0]}`, kind: 'removed-by-you', item: true },
+    ])
+  })
+
+  it('row 14: in a keyless list, a copy carrying its original key is a new item', () => {
+    const [x, y] = [{ t: 'x' }, { t: 'y' }]
+    const hx = itemKeysAsRead([x])[0]!
+    const copy = { t: 'x copy', _key: hx }
+    const result = merge(
+      { items: [x, y] },
+      { items: [x, { t: 'y (base)' }] },
+      { items: [{ ...x, _key: hx }, copy] },
+    )
+    expect(result.data.items).toEqual([{ ...x, _key: hx }, copy])
+    expect(kinds(result)).toEqual([
+      { key: `items.${itemKeysAsRead([y])[0]}`, kind: 'removed-by-you', item: true },
+    ])
+  })
+
+  it('row 16: an item the base moved in a keyless list keeps the branch key and edit', () => {
+    const [x, y, z] = [{ t: 'x' }, { t: 'y' }, { t: 'z' }]
+    const [hx, hy, hz] = itemKeysAsRead([x, y, z]) as string[]
+    const keysOnly = merge(
+      { items: [x, y, z] },
+      { items: [z, x, y] },
+      {
+        items: [
+          { ...x, _key: hx },
+          { ...y, _key: hy },
+          { ...z, _key: hz },
+        ],
+      },
+    )
+    expect(keysOnly.data.items).toEqual([
+      { ...z, _key: hz },
+      { ...x, _key: hx },
+      { ...y, _key: hy },
+    ])
+    expect(keysOnly.conflicts).toEqual([])
+    const edited = merge(
+      { items: [x, y, z] },
+      { items: [z, x, y] },
+      {
+        items: [
+          { ...x, _key: hx },
+          { ...y, _key: hy },
+          { t: 'z2', _key: hz },
+        ],
+      },
+    )
+    expect(edited.data.items).toEqual([
+      { t: 'z2', _key: hz },
+      { ...x, _key: hx },
+      { ...y, _key: hy },
+    ])
+    expect(edited.conflicts).toEqual([])
+  })
+
+  it('row 15: two additions that read alike but carry minted keys are two items', () => {
+    const [a, b] = [
+      { t: 'a', _key: 'Ka1' },
+      { t: 'b', _key: 'Kb1' },
+    ]
+    const top = { t: 'spacer', _key: 'Mint1aaaaaaa' }
+    const bottom = { t: 'spacer', _key: 'Mint2bbbbbbb' }
+    const result = merge({ items: [a, b] }, { items: [top, a, b] }, { items: [a, b, bottom] })
+    expect(result.data.items).toEqual([top, a, b, bottom])
+    expect(result.keyRemaps).toEqual([])
+  })
+
+  it('row 22: inserts at one place keep the branch duplicates and order', () => {
+    expect(merge({ tags: ['a'] }, { tags: ['a', 'x'] }, { tags: ['a', 'x', 'x'] }).data).toEqual({
+      tags: ['a', 'x', 'x'],
+    })
+    expect(
+      merge({ tags: ['a', 'b'] }, { tags: ['a', 'x', 'b'] }, { tags: ['a', 'y', 'x', 'b'] }).data,
+    ).toEqual({
+      tags: ['a', 'y', 'x', 'b'],
+    })
+    expect(
+      merge({ tags: ['a'] }, { tags: ['a', 'p', 'q'] }, { tags: ['a', 'q', 'r', 'q'] }).data,
+    ).toEqual({
+      tags: ['a', 'p', 'q', 'r', 'q'],
+    })
+  })
+
+  it('row 22: a 4,000-tag list with many repeats merges quickly', () => {
+    const tags = Array.from({ length: 4000 }, (_, i) => `t${i % 10}`)
+    const base = tags.map((t, i) => (i === 100 ? 'base' : t))
+    const mine = tags.map((t, i) => (i === 3000 ? 'mine' : t))
+    const started = performance.now()
+    const result = merge({ tags }, { tags: base }, { tags: mine })
+    expect(performance.now() - started).toBeLessThan(3000)
+    expect(result.data.tags).toEqual(
+      tags.map((t, i) => (i === 100 ? 'base' : i === 3000 ? 'mine' : t)),
+    )
+  })
+
+  it('row 25: an mdx field that merges by line but does not parse is one whole conflict', () => {
+    const lines = (...xs: string[]) => `${xs.join('\n')}\n`
+    const o = lines('<Note>', 'inside', '</Note>', 'outside one', 'outside two')
+    const a = lines('inside', 'outside one', 'outside two')
+    const b = lines('<Note>', 'inside', 'outside one', 'outside two', '</Note>')
+    const result = merge({ snippet: o }, { snippet: a }, { snippet: b })
+    expect(result.data).toEqual({ snippet: b })
+    expect(result.conflicts).toEqual([
+      {
+        key: 'snippet',
+        dataPath: [{ field: 'snippet' }],
+        kind: 'changed',
+        ancestor: o,
+        base: a,
+        branch: b,
+        unparseable: true,
+      },
+    ])
+    // A markdown field is not parsed as mdx: its line merge stands.
+    expect(merge({ notes: o }, { notes: a }, { notes: b }).conflicts).toEqual([])
+  })
+
+  it('row 34: a name the entries repeat is matched by its occurrence, and nothing doubles', () => {
+    const entries = [
+      { name: 'a', x: 1 },
+      { name: 'a', x: 2 },
+    ]
+    expect(mergeCollectionMeta({ entries }, { entries, title: 'T' }, { entries }).data).toEqual({
+      entries,
+      title: 'T',
+    })
+  })
+
+  it('reads and writes members named like Object.prototype ones as plain members', () => {
+    const result = merge(
+      { constructor: 'x', title: 't' },
+      { constructor: 'x', title: 't' },
+      { title: 't' },
+    )
+    expect(result.data).toStrictEqual({ title: 't' })
+    const proto = JSON.parse('{"__proto__": "o", "title": "t"}') as Data
+    const mine = JSON.parse('{"__proto__": "mine", "title": "t"}') as Data
+    const merged = merge(proto, proto, mine)
+    expect(Object.getPrototypeOf(merged.data)).toBe(Object.prototype)
+    expect(Object.getOwnPropertyDescriptor(merged.data, '__proto__')?.value).toBe('mine')
+  })
+})
+
+describe('conflicts inside a value the drawer shows whole are named at that value', () => {
+  const cases: Array<[string, Data, Data, Data, string]> = [
+    [
+      'an image',
+      { cover: { src: '/a.png', alt: 'A' } },
+      { cover: { src: '/a.png', alt: 'B' } },
+      { cover: { src: '/a.png', alt: 'M' } },
+      'cover',
+    ],
+    [
+      'a record outside the schema',
+      { meta: { a: 1 } },
+      { meta: { a: 2 } },
+      { meta: { a: 3 } },
+      '?meta',
+    ],
+    [
+      'a list outside the schema',
+      { legacy: [{ t: 'x', _key: 'k1' }] },
+      { legacy: [{ t: 'B', _key: 'k1' }] },
+      { legacy: [{ t: 'M', _key: 'k1' }] },
+      '?legacy',
+    ],
+    [
+      'a block whose template the schema lacks',
+      { blocks: [{ template: 'gone', value: { h: 'H' }, _key: 'b1' }] },
+      { blocks: [{ template: 'gone', value: { h: 'B' }, _key: 'b1' }] },
+      { blocks: [{ template: 'gone', value: { h: 'M' }, _key: 'b1' }] },
+      'blocks.b1',
+    ],
+  ]
+  for (const [name, o, a, b, key] of cases) {
+    it(name, () => {
+      const result = merge(o, a, b)
+      expect(result.conflicts.map((c) => c.key)).toEqual([key])
+      const drawer = computeEntryDiff({
+        fields,
+        before: { format: 'json', entryType: 'page', data: entryAsRead(fields, o) },
+        after: { format: 'json', entryType: 'page', data: entryAsRead(fields, b) },
+        marks: false,
+      })
+      expect(drawer.changes.map((c) => [c.key, c.dataPath])).toContainEqual([
+        key,
+        result.conflicts[0].dataPath,
+      ])
+    })
+  }
+
+  it('an item the branch removed is named by the ancestor key, as the drawer names it', () => {
+    const t = { title: 'T', detail: 'd' }
+    const result = merge({ items: [t] }, { items: [{ ...t, title: 'B' }] }, { items: [] })
+    const ancestorKey = itemKeysAsRead([t])[0]
+    expect(kinds(result)).toEqual([
+      { key: `items.${ancestorKey}`, kind: 'removed-by-you', item: true },
+    ])
+    const drawer = computeEntryDiff({
+      fields,
+      before: { format: 'json', entryType: 'page', data: entryAsRead(fields, { items: [t] }) },
+      after: { format: 'json', entryType: 'page', data: entryAsRead(fields, { items: [] }) },
+      marks: false,
+    })
+    expect(drawer.changes.map((c) => c.key)).toContain(`items.${ancestorKey}`)
   })
 })
 

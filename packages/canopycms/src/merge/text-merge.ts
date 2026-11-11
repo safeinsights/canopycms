@@ -5,7 +5,7 @@
  * lines, and the region records all three versions for the person who resolves it.
  */
 
-import { diff3MergeRegions } from 'node-diff3'
+import { diff3Regions } from './diff3'
 
 /** Lines the base and the branch both changed, differently. */
 export interface TextConflictRegion {
@@ -37,35 +37,46 @@ const sameLines = (x: readonly string[], y: readonly string[]): boolean =>
 /**
  * `base` and `branch`, both changed from `ancestor`, merged line by line. A line break at the very
  * end, the only line a serializer adds or drops by itself, is merged on its own and never makes a
- * conflict: the side that changed it wins.
+ * conflict: the side that changed it wins. Undefined when the texts are too far apart to diff in
+ * time: the caller then treats each version as one whole.
  */
-export function mergeText(ancestor: string, base: string, branch: string): TextMergeResult {
+export function mergeText(
+  ancestor: string,
+  base: string,
+  branch: string,
+): TextMergeResult | undefined {
   const o = split(ancestor)
   const a = split(base)
   const b = split(branch)
+  const regions = diff3Regions(o.lines, a.lines, b.lines)
+  if (!regions) return undefined
+  const versions = { ancestor: o.lines, base: a.lines, branch: b.lines }
   const out: string[] = []
-  const regions: TextConflictRegion[] = []
-  for (const region of diff3MergeRegions(a.lines, o.lines, b.lines)) {
+  const conflicts: TextConflictRegion[] = []
+  for (const region of regions) {
     if (region.stable) {
-      out.push(...region.bufferContent)
+      out.push(...versions[region.side].slice(...region.span))
       continue
     }
-    const { aContent, oContent, bContent } = region
-    // diff3 makes a region unstable only where both sides changed lines in it.
-    if (sameLines(aContent, bContent)) {
-      out.push(...bContent)
-    } else {
-      regions.push({
-        ancestor: oContent.join('\n'),
-        base: aContent.join('\n'),
-        branch: bContent.join('\n'),
-        line: out.length,
-        lines: bContent.length,
-      })
-      out.push(...bContent)
+    const [oLines, aLines, bLines] = [
+      o.lines.slice(...region.ancestor),
+      a.lines.slice(...region.base),
+      b.lines.slice(...region.branch),
+    ]
+    if (sameLines(aLines, bLines)) {
+      out.push(...bLines)
+      continue
     }
+    conflicts.push({
+      ancestor: oLines.join('\n'),
+      base: aLines.join('\n'),
+      branch: bLines.join('\n'),
+      line: out.length,
+      lines: bLines.length,
+    })
+    out.push(...bLines)
   }
   const endBreak = o.endBreak === a.endBreak ? b.endBreak : a.endBreak
   const body = out.join('\n')
-  return { text: endBreak ? `${body}\n` : body, regions }
+  return { text: endBreak ? `${body}\n` : body, regions: conflicts }
 }
