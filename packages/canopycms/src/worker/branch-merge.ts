@@ -184,6 +184,7 @@ export async function planMerge(
   const unsettledLeft = unsettled.filter(
     ({ paths }) => paths.length === 0 || paths.some((p) => !field.covered.has(p)),
   )
+  if (field.unsettled) unsettledLeft.push({ kind: field.unsettled, paths: [] })
   if (unsettledLeft.length > 0) {
     return {
       kind: 'unsettled',

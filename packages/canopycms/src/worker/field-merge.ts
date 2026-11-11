@@ -82,8 +82,10 @@ export interface FieldMergeResult {
   conflicts: FoundEntryConflict[]
   /** Item keys the merge changed, by the logical path the branch's comment threads name. */
   keyRemaps: Array<{ entryPath: string; remaps: KeyRemap[] }>
-  /** Where each entry with a conflict on record may now be: its path in the merge. */
+  /** Where each entry or collection with a conflict on record may now be: its path in the merge. */
   paths: Map<string, string>
+  /** Why git's merge can't be settled by rule, where it can't. */
+  unsettled?: string
 }
 
 export interface FieldMergeArgs {
@@ -224,13 +226,20 @@ class CollectionMoves {
     return parent !== undefined && name !== undefined ? { parent, name } : undefined
   }
 
+  /** Collection directories each side moved into the other: no tree holds both moves. */
+  cyclic = false
+
   /** The path `id`'s directory ends up at, or undefined where that can't be told. */
-  private final(id: string, depth = 0): string | undefined {
+  private final(id: string, seen: ReadonlySet<string> = new Set()): string | undefined {
+    if (seen.has(id)) {
+      this.cyclic = true
+      return undefined
+    }
     const dir = this.settle(id)
-    if (!dir || depth > 64) return undefined
+    if (!dir) return undefined
     if (!dir.parent.startsWith('id:')) return dir.parent ? `${dir.parent}/${dir.name}` : dir.name
     const [parentId, ...below] = dir.parent.slice(3).split('/')
-    const parent = this.final(parentId, depth + 1)
+    const parent = this.final(parentId, new Set([...seen, id]))
     return parent === undefined ? undefined : [parent, ...below, dir.name].join('/')
   }
 
@@ -759,7 +768,8 @@ export async function resolveFieldMerge(args: FieldMergeArgs): Promise<FieldMerg
       }
       if (resolution.file) result.updates.set(resolution.file.path, resolution.file)
     }
-    if (unit.id && resolution.file) result.paths.set(unit.id, resolution.file.path)
+    const recordId = unit.id ?? (resolution.file && args.collectionIdOf(resolution.file.path))
+    if (recordId && resolution.file) result.paths.set(recordId, resolution.file.path)
     if (unit.id && resolution.conflict) {
       result.conflicts.push({ contentId: unit.id, ...resolution.conflict })
     } else if (unit.kind === 'meta' && resolution.conflict) {
@@ -772,5 +782,6 @@ export async function resolveFieldMerge(args: FieldMergeArgs): Promise<FieldMerg
       result.keyRemaps.push({ entryPath, remaps: resolution.remaps })
     }
   }
+  if (moves.cyclic) result.unsettled = 'collection directories moved into each other'
   return result
 }

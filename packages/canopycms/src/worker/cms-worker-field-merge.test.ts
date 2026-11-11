@@ -262,6 +262,9 @@ const yamlList = (name: string, items: Item[], keys: boolean): string =>
 
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`
 
+/** The conflicts on record, none when there is no record. */
+const openConflicts = async (repo: Repo) => (await repo.record())?.entries ?? {}
+
 const loseLock = () => compromiseHook.fire?.(new Error('simulated lock takeover'))
 
 /** Run `then` once, right after the first write of merge-conflicts.json that writes anything. */
@@ -308,7 +311,7 @@ describe('the field merge in the rebase loop', () => {
     expect(summary.rebased).toEqual([BRANCH])
     expect(await repo.parents()).toBe(1)
     expect(await repo.file('content/other.txt')).toBe('from the base\n')
-    expect(await repo.record()).toBeNull()
+    expect(await openConflicts(repo)).toEqual({})
   })
 
   it('row 1: disjoint fields git conflicts on merge, and publish as a fast-forward', async () => {
@@ -329,7 +332,7 @@ describe('the field merge in the rebase loop', () => {
       description: 'Where it begins.',
     })
     expect(await repo.parents()).toBe(2)
-    expect(await repo.record()).toBeNull()
+    expect(await openConflicts(repo)).toEqual({})
     await expectNoMarkers(repo)
     // Published as a plain push on top of what remote.git held: no rewrite to carry forward.
     const head = (await repo.git.revparse(['HEAD'])).trim()
@@ -353,7 +356,7 @@ describe('the field merge in the rebase loop', () => {
     expect(consoleSpy).toHaveLogged(/a replayed commit conflicts/)
     expect(await repo.parents()).toBe(2)
     expect(JSON.parse((await repo.file(FILE)) ?? '')).toEqual({ title: 'Welcome' })
-    expect(await repo.record()).toBeNull()
+    expect(await openConflicts(repo)).toEqual({})
   })
 
   it('row 38: git merges cleanly but wrongly, a duplicate frontmatter key, and the field merge wins', async () => {
@@ -372,7 +375,7 @@ describe('the field merge in the rebase loop', () => {
     expect(text.match(/^summary:/gm)).toHaveLength(1)
     expect(parse(text, 'md').data).toMatchObject({ title: 'Home', summary: 'Short.', e: 5 })
     expect(await repo.parents()).toBe(2)
-    expect(await repo.record()).toBeNull()
+    expect(await openConflicts(repo)).toEqual({})
   })
 
   // --- Values ----------------------------------------------------------------------------------
@@ -531,7 +534,7 @@ describe('the field merge in the rebase loop', () => {
       summary: 'Short.',
       steps: reworded.map((s, i) => ({ ...s, _key: readKey(steps[i]) })),
     })
-    expect(await repo.record()).toBeNull()
+    expect(await openConflicts(repo)).toEqual({})
   })
 
   it("row 18, fixture 4: a base keyed after rewording gives its keys, and the branch's threads follow", async () => {
@@ -764,7 +767,7 @@ describe('the field merge in the rebase loop', () => {
       title: 'Begin',
       body: 'Text, edited',
     })
-    expect(await repo.record()).toBeNull()
+    expect(await openConflicts(repo)).toEqual({})
   })
 
   it("row 30: an entry renamed apart on both sides stays at the branch's path, with a location conflict", async () => {
@@ -869,7 +872,7 @@ describe('the field merge in the rebase loop', () => {
       { name: 'page', label: 'Web page' },
       { name: 'post', label: 'Blog post' },
     ])
-    expect(await repo.record()).toBeNull()
+    expect(await openConflicts(repo)).toEqual({})
   })
 
   it("row 35: a conflicting file that is no entry keeps the branch's version, flagged", async () => {
@@ -923,7 +926,7 @@ describe('the field merge in the rebase loop', () => {
     expect(parse(await repo.file(files.mdx), 'mdx')).toEqual({ data: want, body: mdxBody })
     expect(parse(await repo.file(files.json), 'json').data).toEqual(want)
     expect(parse(await repo.file(files.yaml), 'yaml').data).toEqual(want)
-    expect(await repo.record()).toBeNull()
+    expect(await openConflicts(repo)).toEqual({})
   })
 
   it("row 37: the base's frontmatter comments and formatting survive the merge", async () => {
@@ -1190,7 +1193,7 @@ describe('the field merge in the rebase loop', () => {
       label: 'Articles',
       order: ['b2', 'a1'],
     })
-    expect(await repo.record()).toBeNull()
+    expect(await openConflicts(repo)).toEqual({})
   })
 
   it('puts an entry added in a directory the other side renamed into the renamed directory', async () => {
@@ -1218,7 +1221,7 @@ describe('the field merge in the rebase loop', () => {
       .split('\n')
     expect(tree.sort()).toEqual([`${NEW}/.collection.json`, `${NEW}/${A}`, `${NEW}/${B}`].sort())
     expect(JSON.parse((await repo.file(`${NEW}/${A}`)) ?? '')).toEqual({ title: 'A!' })
-    expect(await repo.record()).toBeNull()
+    expect(await openConflicts(repo)).toEqual({})
   })
 
   it("keeps a base's frontmatter comment git merged in, by a rebase", async () => {
@@ -1355,7 +1358,7 @@ describe('the field merge in the rebase loop', () => {
         `content/${G}/${Q2}/${N}`,
       ].sort(),
     )
-    expect(await repo.record()).toBeNull()
+    expect(await openConflicts(repo)).toEqual({})
   })
 
   it('records a collection moved on one side and deleted on the other, rather than blocking', async () => {
@@ -1460,6 +1463,7 @@ describe('the field merge in the rebase loop', () => {
     await new MergeConflictStore(repo.clonePath).update(() => ({
       entries: {},
       remaps: [{ mergeSha: merge, entryPath, remaps: [{ within: [], from, to: 'newKey12' }] }],
+      landing: { mergeSha: merge },
     }))
     const commentsFile = path.join(repo.clonePath, '.canopy-meta', 'comments.json')
     await fs.writeFile(
@@ -1492,11 +1496,75 @@ describe('the field merge in the rebase loop', () => {
 
     const summary = await repo.cycle()
 
-    // Caught up; the threads waited while only remote.git held the merge, and follow it now.
+    // Caught up, and the merge landed: its remaps applied, and it is no longer landing.
     expect(summary.failed).toEqual([])
     expect((await repo.git.revparse(['HEAD'])).trim()).toBe(merge)
-    expect(await keys()).toEqual([from])
-    await repo.cycle()
     expect(await keys()).toEqual(['newKey12'])
+    expect((await repo.record())?.landing).toBeUndefined()
+  })
+
+  it("never catches up with a merge on remote.git's same-named branch that this worker did not land", async () => {
+    const FILE = entry('page', 'home', 'aboutAbc1234', 'json')
+    const repo = await createRepo(tmpDir, { [FILE]: json({ title: 'Home' }) })
+    const base = await repo.base({ 'content/other.txt': 'theirs\n' })
+    const stranger = await repo.publishMergeOnly()
+
+    await repo.cycle()
+
+    const head = (await repo.git.revparse(['HEAD'])).trim()
+    expect(head).not.toBe(stranger)
+    expect(head).toBe(base)
+  })
+
+  it('blocks a merge where each side moved a collection directory into the other', async () => {
+    const [A, B] = ['a.cNbR5xFm2Kpd', 'b.priceAbc1234']
+    const repo = await createRepo(tmpDir, {
+      [`content/${A}/.collection.json`]: json({ name: 'a' }),
+      [`content/${B}/.collection.json`]: json({ name: 'b' }),
+    })
+    await repo.branch({
+      [`content/${B}/.collection.json`]: null,
+      [`content/${A}/${B}/.collection.json`]: json({ name: 'b' }),
+    })
+    await repo.base({
+      [`content/${A}/.collection.json`]: null,
+      [`content/${B}/${A}/.collection.json`]: json({ name: 'a' }),
+    })
+
+    const summary = await repo.cycle()
+
+    expect(summary.failed.map(({ error }) => /moved into each other/.test(error))).toEqual([true])
+  })
+
+  it("moves a collection's conflict record with its directory", async () => {
+    const [OLD, NEW] = ['content/posts.cNbR5xFm2Kpd', 'content/articles.cNbR5xFm2Kpd']
+    const repo = await createRepo(tmpDir, {
+      [`${OLD}/.collection.json`]: json({ name: 'posts', label: 'Posts' }),
+    })
+    await repo.branch({ [`${OLD}/.collection.json`]: json({ name: 'posts', label: 'Mine' }) })
+    await repo.base({ [`${OLD}/.collection.json`]: json({ name: 'posts', label: 'Theirs' }) })
+    await repo.cycle()
+    expect((await repo.record())?.entries[COLLECTION_ID]?.path).toBe(`${OLD}/.collection.json`)
+
+    await repo.base({
+      [`${OLD}/.collection.json`]: null,
+      [`${NEW}/.collection.json`]: json({ name: 'posts', label: 'Theirs' }),
+    })
+    await repo.cycle()
+
+    expect((await repo.record())?.entries[COLLECTION_ID]?.path).toBe(`${NEW}/.collection.json`)
+  })
+
+  it('leaves a conflict record in a later format alone', async () => {
+    const repo = await createRepo(tmpDir, {})
+    const dir = path.join(repo.clonePath, '.canopy-meta')
+    await fs.mkdir(dir, { recursive: true })
+    const later = JSON.stringify({ schema: 2, version: 1, entries: { x: { novel: true } } })
+    await fs.writeFile(path.join(dir, 'merge-conflicts.json'), later)
+
+    await repo.cycle()
+
+    expect(await fs.readFile(path.join(dir, 'merge-conflicts.json'), 'utf8')).toBe(later)
+    expect((await fs.readdir(dir)).filter((f) => f.includes('.malformed-'))).toEqual([])
   })
 })

@@ -24,6 +24,7 @@ import type { ConflictStatus } from './types'
 import { withLock } from './utils/async-mutex'
 import { isNotFoundError } from './utils/error'
 import { withOccFileLock, withOccRetry, writeOccJsonFile } from './utils/occ-json-write'
+import { isPlainRecord } from './validation/field-traversal'
 
 const MERGE_CONFLICTS_FILE = 'merge-conflicts.json'
 
@@ -92,7 +93,21 @@ interface PendingRemap {
 export interface MergeConflictState {
   entries: Record<string, MergeConflictEntry>
   remaps?: PendingRemap[]
+  /**
+   * The merge this worker is landing: written before it reaches `remote.git`, cleared once the
+   * clone holds it. The one commit a clone left behind its own published merge may catch up with.
+   */
+  landing?: Landing
 }
+
+interface Landing {
+  mergeSha: string
+  /** For a merge of GitHub's commits, the paths whose values the branch kept over them. */
+  keptOverGitHub?: string[]
+}
+
+/** The record's format; a file of a later one is left as it is. */
+const RECORD_SCHEMA = 1
 
 export interface MergeConflictsFile extends MergeConflictState {
   version: number
@@ -146,8 +161,12 @@ const entrySchema: z.ZodType<MergeConflictEntry> = z.lazy(() =>
 )
 
 const fileSchema = z.object({
+  schema: z.literal(RECORD_SCHEMA).optional(),
   version: z.number(),
   writeId: z.string().optional(),
+  landing: z
+    .object({ mergeSha: z.string(), keptOverGitHub: z.array(z.string()).optional() })
+    .optional(),
   entries: z.record(z.string(), entrySchema),
   remaps: z
     .array(
@@ -161,6 +180,14 @@ const fileSchema = z.object({
     )
     .optional(),
 })
+
+/** merge-conflicts.json was written in a later format than this module reads. */
+class MergeConflictsFileNewerError extends Error {
+  constructor() {
+    super('merge-conflicts.json is in a later format than this worker reads; left as it is')
+    this.name = 'MergeConflictsFileNewerError'
+  }
+}
 
 /** merge-conflicts.json is there but is not a record this module wrote. */
 export class MergeConflictsFileMalformedError extends Error {
@@ -306,6 +333,9 @@ export class MergeConflictStore {
     } catch {
       throw new MergeConflictsFileMalformedError('it is not JSON')
     }
+    const schema = isPlainRecord(json) ? json.schema : undefined
+    if (typeof schema === 'number' && schema > RECORD_SCHEMA)
+      throw new MergeConflictsFileNewerError()
     const parsed = fileSchema.safeParse(json)
     if (!parsed.success) throw new MergeConflictsFileMalformedError(parsed.error.message)
     return parsed.data
@@ -327,10 +357,16 @@ export class MergeConflictStore {
             current && {
               entries: current.entries,
               ...(current.remaps && { remaps: current.remaps }),
+              ...(current.landing && { landing: current.landing }),
             },
           )
           if (next === null) return null
-          const payload = { entries: next.entries, ...(next.remaps && { remaps: next.remaps }) }
+          const payload = {
+            schema: RECORD_SCHEMA,
+            entries: next.entries,
+            ...(next.remaps && { remaps: next.remaps }),
+            ...(next.landing && { landing: next.landing }),
+          }
           await writeOccJsonFile(this.filePath, payload, {
             expectedVersion: current ? current.version : null,
             settleMs: this.settleMs,
