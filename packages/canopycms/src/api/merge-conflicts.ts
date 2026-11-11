@@ -5,6 +5,8 @@
  * (`resolvedConflicts`, api/content.ts), through {@link clearFieldConflicts}.
  */
 
+import path from 'node:path'
+
 import { z } from 'zod'
 
 import type { BranchContext, BranchContextWithSchema } from '../types'
@@ -48,6 +50,7 @@ import { entryAsRead } from '../utils/calendar-day'
 import { ContentWriteLockBusyError, withContentWriteLock } from '../utils/content-write-lock'
 import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from '../utils/error'
 import { getFormatExtension } from '../utils/format'
+import { parseTypedFilename } from '../utils/typed-filename'
 import { canopyLogWarn } from '../utils/logger'
 import { entryLogicalPath } from '../paths'
 import type { ContentId, LogicalPath, Slug } from '../paths/types'
@@ -172,13 +175,66 @@ const refOf = (
   return entryRefFromRepoPathShape(repoPath, contentRoot) ?? placed
 }
 
-/** The path a path rule judges for `ref`; none for a file that is neither entry nor settings. */
-const aclPathOf = (ref: RepoPathRef): LogicalPath | undefined =>
-  ref.kind === 'entry'
-    ? ref.logicalPath
-    : ref.kind === 'collection-meta'
-      ? ref.collectionPath
-      : undefined
+/** A record with where its file is now, and the path the editor addresses it, and rules judge, by. */
+interface LocatedRecord {
+  contentId: string
+  entry: MergeConflictEntry
+  ref: RepoPathRef
+  /**
+   * An entry's logical path, or a collection's for its settings or another file in its directory;
+   * none for a file outside every collection.
+   */
+  address?: LogicalPath
+}
+
+/**
+ * Every record, located: an entry where its content ID is now, since the branch may have renamed or
+ * moved it since the merge recorded its path, and anything else where the record says.
+ */
+const locateRecords = async (
+  store: ContentStore,
+  entries: Readonly<Record<string, MergeConflictEntry>>,
+  flatSchema: readonly FlatSchemaItem[],
+  contentRoot: string,
+): Promise<LocatedRecord[]> => {
+  const index = await store.idIndex()
+  return Object.entries(entries)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([contentId, entry]) => {
+      const recorded = refOf(entry.path, flatSchema, contentRoot)
+      const now = recorded.kind === 'entry' ? index.findById(contentId) : null
+      const ref =
+        now?.type === 'entry' && now.relativePath !== entry.path
+          ? refOf(now.relativePath, flatSchema, contentRoot)
+          : recorded
+      const settings =
+        ref.kind === 'other'
+          ? refOf(`${path.posix.dirname(entry.path)}/.collection.json`, flatSchema, contentRoot)
+          : undefined
+      const address =
+        ref.kind === 'entry'
+          ? ref.logicalPath
+          : ref.kind === 'collection-meta'
+            ? ref.collectionPath
+            : settings?.kind === 'collection-meta'
+              ? settings.collectionPath
+              : undefined
+      return { contentId, entry, ref, ...(address !== undefined && { address }) }
+    })
+}
+
+/**
+ * Whether `user` may read or edit the record: by the path rules at its address, and, for a file
+ * that is neither entry nor settings, which only admins are shown, as an admin.
+ */
+const mayAccess = (
+  record: LocatedRecord,
+  checkAccess: (path: LogicalPath, level: 'read' | 'edit') => { allowed: boolean },
+  user: ApiRequest['user'],
+  level: 'read' | 'edit',
+): boolean =>
+  (record.ref.kind !== 'other' || isAdmin(user.groups)) &&
+  (record.address === undefined ? isAdmin(user.groups) : checkAccess(record.address, level).allowed)
 
 /**
  * Change the record's entries by `change`, under the record's locks, then `branch.json`
@@ -257,22 +313,22 @@ const listHandler = async (
     branchContext.branchRoot,
     req.user,
   )
-  const admin = isAdmin(req.user.groups)
+  const store = new ContentStore(branchContext.branchRoot, branchContext.flatSchema, {
+    contentRootName: contentRoot,
+  })
   const conflicts: MergeConflictListItem[] = []
   let hiddenCount = 0
-  for (const [contentId, entry] of Object.entries(entries).sort(([a], [b]) => a.localeCompare(b))) {
-    const ref = refOf(entry.path, branchContext.flatSchema, contentRoot)
-    const aclPath = aclPathOf(ref)
-    const readable = aclPath === undefined ? admin : checkAccess(aclPath, 'read').allowed
-    if (!readable) {
+  for (const record of await locateRecords(store, entries, branchContext.flatSchema, contentRoot)) {
+    const { contentId, entry, ref, address } = record
+    if (!mayAccess(record, checkAccess, req.user, 'read')) {
       hiddenCount++
       continue
     }
     conflicts.push({
       contentId,
       kind: entry.kind,
-      path: entry.path,
-      ...(aclPath !== undefined && { logicalPath: aclPath }),
+      path: ref.physicalPath,
+      ...(address !== undefined && { logicalPath: address }),
       fieldCount: entry.kind === 'fields' ? (entry.fields ?? []).length : 0,
       mergeSha: entry.mergeSha,
     })
@@ -322,25 +378,15 @@ const canonicalLogicalPath = (store: ContentStore, requested: string): string =>
   }
 }
 
-/**
- * The record at `entryPath`, matched by `id` when given; an entry wins over collection settings. A
- * file that is neither is matched by its repo path.
- */
+/** The record addressed at `target`, matched by `id` when given; an entry wins over the rest. */
 const findRecord = (
-  entries: Readonly<Record<string, MergeConflictEntry>>,
+  records: readonly LocatedRecord[],
   target: string,
   id: string | undefined,
-  flatSchema: readonly FlatSchemaItem[],
-  contentRoot: string,
-): { contentId: string; entry: MergeConflictEntry; ref: RepoPathRef } | undefined => {
-  const found = Object.entries(entries)
-    .filter(([contentId]) => id === undefined || contentId === id)
-    .map(([contentId, entry]) => ({
-      contentId,
-      entry,
-      ref: refOf(entry.path, flatSchema, contentRoot),
-    }))
-    .filter(({ entry, ref }) => (aclPathOf(ref) ?? entry.path) === target)
+): LocatedRecord | undefined => {
+  const found = records.filter(
+    (r) => r.address === target && (id === undefined || r.contentId === id),
+  )
   return found.find(({ ref }) => ref.kind === 'entry') ?? found[0]
 }
 
@@ -406,8 +452,9 @@ const entryHandler = async (
   if (!checkAccess(target as LogicalPath, 'read').allowed) return noConflict
   const entries = await readEntries(branchRoot)
   if (entries === 'unreadable') return { ok: false, status: 503, error: RECORD_UNREADABLE_ERROR }
-  const found = findRecord(entries, target, params.id, flatSchema, contentRoot)
-  if (!found || (found.ref.kind === 'other' && !isAdmin(req.user.groups))) return noConflict
+  const records = await locateRecords(store, entries, flatSchema, contentRoot)
+  const found = findRecord(records, target, params.id)
+  if (!found || !mayAccess(found, checkAccess, req.user, 'read')) return noConflict
   const { contentId, entry, ref } = found
 
   const shas = new Set<string>()
@@ -443,7 +490,7 @@ const entryHandler = async (
     data: {
       contentId,
       kind: entry.kind,
-      path: entry.path,
+      path: ref.physicalPath,
       logicalPath: target,
       mergeSha: entry.mergeSha,
       sides: entry.sides,
@@ -513,6 +560,32 @@ const CHOICE_KINDS: Record<EntryConflictChoice, readonly MergeConflictKind[]> = 
   'use-latest': ['unreadable'],
 }
 
+/**
+ * Whether the latest version of entry `id`, in the tree the record's merge took in (its second
+ * parent), has the entry type and extension of the branch's file at `placed`.
+ */
+const sameKindAtLatest = async (
+  git: ReturnType<ApiContext['services']['createGitManagerFor']>,
+  entry: MergeConflictEntry,
+  id: string,
+  placed: Extract<RepoPathRef, { kind: 'entry' }>,
+  contentRoot: string,
+): Promise<boolean> => {
+  const own = parseTypedFilename(path.posix.basename(placed.physicalPath))
+  let files: Array<{ path: string }>
+  try {
+    files = await git.listFilesWithSizeAt(`${entry.mergeSha}^2`, contentRoot)
+  } catch {
+    return false
+  }
+  const latest = files.find((f) => parseTypedFilename(path.posix.basename(f.path))?.id === id)
+  if (!latest || !own) return false
+  return (
+    parseTypedFilename(path.posix.basename(latest.path))?.type === own.type &&
+    path.posix.extname(latest.path) === path.posix.extname(placed.physicalPath)
+  )
+}
+
 /** Thrown inside a resolve's locks when the record no longer holds what the person chose on. */
 class ConflictChangedError extends Error {}
 
@@ -541,10 +614,10 @@ const resolveHandler = async (
   }
   const entries = await readEntries(branchRoot)
   if (entries === 'unreadable') return { ok: false, status: 503, error: RECORD_UNREADABLE_ERROR }
-  const found = findRecord(entries, target, body.id, flatSchema, contentRoot)
+  const records = await locateRecords(store, entries, flatSchema, contentRoot)
+  const found = findRecord(records, target, body.id)
   if (!found) return { ok: false, status: 404, error: NO_CONFLICT_ERROR }
-  // A file that is neither entry nor settings is listed to admins only, so only they resolve it.
-  if (found.ref.kind === 'other' && !isAdmin(req.user.groups)) {
+  if (!mayAccess(found, checkAccess, req.user, 'edit')) {
     return { ok: false, status: 403, error: 'Forbidden' }
   }
   const { entry, ref } = found
@@ -600,7 +673,11 @@ const resolveHandler = async (
       })
     } else if (body.choice === 'delete' || (body.choice === 'use-latest' && !entry.sides.base)) {
       // For `use-latest`, the latest version has no such entry, so using it deletes the branch's.
-      await store.delete(placed.collectionPath, slug, { beforeDelete: verify, afterDelete: clear })
+      await store.delete(placed.collectionPath, slug, {
+        expectId: body.id,
+        beforeDelete: verify,
+        afterDelete: clear,
+      })
     } else {
       const git = ctx.services.createGitManagerFor(branchRoot, {
         baseBranch: branchContext.branch.baseBranch,
@@ -610,6 +687,19 @@ const resolveHandler = async (
         : undefined
       if (latest === 'too-large') {
         return { ok: false, status: 413, error: 'The latest version is too large to use here.' }
+      }
+      // The latest version's bytes go under the branch's filename, so they must be the same entry
+      // type and format: the record keeps one path, the branch's.
+      if (
+        body.choice === 'use-latest' &&
+        !(await sameKindAtLatest(git, entry, body.id, placed, contentRoot))
+      ) {
+        return {
+          ok: false,
+          status: 409,
+          error:
+            'The latest version is a different type of entry, so it can’t replace this one here.',
+        }
       }
       const entryType = entryTypeOf(flatSchema, placed)
       if (latest === undefined || !entryType) throw new LatestUnavailableError()

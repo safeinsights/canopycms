@@ -38,6 +38,7 @@ import { matchRoute } from '../http/router'
 import { buildCanopyRoutes } from './routes'
 import type { ApiContext, ApiRequest } from './types'
 import { CONTENT_ROUTES, type ContentWriteResponse } from './content'
+import { logicalPathSchema } from './validators'
 import { MERGE_CONFLICT_ROUTES, type ResolveEntryConflictBody } from './merge-conflicts'
 
 const postFields = [
@@ -126,6 +127,38 @@ const recordAs = (entries: Record<string, MergeConflictEntry>) =>
   new MergeConflictStore(branchRoot, 0).update(() => ({ entries }))
 
 const recorded = async () => (await new MergeConflictStore(branchRoot).read())?.entries ?? {}
+
+/**
+ * A merge commit, as the worker builds one, whose second parent is the base with `latest`'s files
+ * and without `removed`,
+ * built in a scratch index so the working tree is left alone. Resolves the merge and its blobs.
+ */
+const mergeTaking = async (latest: Record<string, string>, removed: string[] = []) => {
+  const git = simpleGit({ baseDir: branchRoot }).env({
+    PATH: process.env.PATH ?? '',
+    HOME: tmpDir,
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_INDEX_FILE: path.join(tmpDir, 'latest.index'),
+    GIT_AUTHOR_NAME: 'Test',
+    GIT_AUTHOR_EMAIL: 'test@example.com',
+    GIT_COMMITTER_NAME: 'Test',
+    GIT_COMMITTER_EMAIL: 'test@example.com',
+  })
+  await git.raw(['read-tree', 'origin/main'])
+  for (const file of removed) await git.raw(['update-index', '--force-remove', '--', file])
+  const blobs: Record<string, string> = {}
+  for (const [file, text] of Object.entries(latest)) {
+    blobs[file] = await blob(text)
+    await git.raw(['update-index', '--add', '--cacheinfo', `100644,${blobs[file]},${file}`])
+  }
+  const tree = (await git.raw(['write-tree'])).trim()
+  const base = (await git.raw(['commit-tree', tree, '-p', 'origin/main', '-m', 'latest'])).trim()
+  const head = (await git.raw(['rev-parse', 'HEAD'])).trim()
+  const merge = (
+    await git.raw(['commit-tree', 'HEAD^{tree}', '-p', head, '-p', base, '-m', 'merge'])
+  ).trim()
+  return { merge, blobs }
+}
 
 let helloSides: { ancestor: string; base: string; branch: string }
 
@@ -311,8 +344,26 @@ describe('GET /:branch/conflicts', () => {
     })
     expect((await list(createCtx())).data).toMatchObject({ conflicts: [], hiddenCount: 1 })
     expect((await list(createCtx(), adminUser)).data?.conflicts).toEqual([
-      expect.objectContaining({ path: files.notes, kind: 'unreadable' }),
+      expect.objectContaining({
+        path: files.notes,
+        logicalPath: 'content/blog',
+        kind: 'unreadable',
+      }),
     ])
+  })
+
+  it('names an entry the branch renamed since the merge where it is now', async () => {
+    const renamed = `content/${BLOG}/post.renamed.${ID.hello}.json`
+    await fs.rename(path.join(branchRoot, files.hello), path.join(branchRoot, renamed))
+    await recordAs({ [ID.hello]: helloRecord() })
+    expect((await list(createCtx())).data?.conflicts).toEqual([
+      expect.objectContaining({ path: renamed, logicalPath: 'content/blog/renamed' }),
+    ])
+    expect((await entryConflict(createCtx(), 'blog/renamed')).data).toMatchObject({
+      path: renamed,
+      logicalPath: 'content/blog/renamed',
+    })
+    expect((await entryConflict(createCtx(), 'blog/hello')).status).toBe(404)
   })
 
   it('has none on a branch with no record', async () => {
@@ -650,22 +701,64 @@ describe('POST /:branch/resolve-entry/...entryPath', () => {
 
   it('replaces an entry that can’t merge field by field with the latest version (rows 33, 43)', async () => {
     const latest = json({ title: 'Latest', sections: [] })
+    const { merge, blobs } = await mergeTaking({ [files.hello]: latest })
     await recordAs({
       [ID.hello]: {
         path: files.hello,
-        mergeSha: MERGE,
+        mergeSha: merge,
         kind: 'unreadable',
-        sides: { base: await blob(latest), branch: helloSides.branch },
+        sides: { base: blobs[files.hello], branch: helloSides.branch },
       },
     })
     const res = await resolveEntry(createCtx(), 'blog/hello', {
       id: ID.hello,
-      mergeSha: MERGE,
+      mergeSha: merge,
       choice: 'use-latest',
     })
     expect(res.ok).toBe(true)
     expect(await fs.readFile(path.join(branchRoot, files.hello), 'utf8')).toBe(latest)
     expect(await recorded()).toEqual({})
+  })
+
+  it('refuses the latest version of another entry type or format, changing nothing (row 32)', async () => {
+    const asMarkdown = `content/${BLOG}/post.hello.${ID.hello}.md`
+    const { merge, blobs } = await mergeTaking({ [asMarkdown]: '---\ntitle: Latest\n---\n' }, [
+      files.hello,
+    ])
+    await recordAs({
+      [ID.hello]: {
+        path: files.hello,
+        mergeSha: merge,
+        kind: 'unreadable',
+        sides: { base: blobs[asMarkdown], branch: helloSides.branch },
+      },
+    })
+    const before = await fs.readFile(path.join(branchRoot, files.hello), 'utf8')
+    const res = await resolveEntry(createCtx(), 'blog/hello', {
+      id: ID.hello,
+      mergeSha: merge,
+      choice: 'use-latest',
+    })
+    expect(res).toMatchObject({ ok: false, status: 409 })
+    expect(await fs.readFile(path.join(branchRoot, files.hello), 'utf8')).toBe(before)
+    expect(Object.keys(await recorded())).toEqual([ID.hello])
+  })
+
+  it('deletes only the entry the record names, not another now at its slug', async () => {
+    await fs.rm(path.join(branchRoot, files.old))
+    const other = `content/${BLOG}/post.old-news.${ID.gone}.json`
+    await write(other, json({ title: 'Another entry' }))
+    await recordAs({
+      [ID.old]: { path: files.old, mergeSha: MERGE, kind: 'deleted-on-base', sides: {} },
+    })
+    const res = await resolveEntry(createCtx(), 'blog/old-news', {
+      id: ID.old,
+      mergeSha: MERGE,
+      choice: 'delete',
+    })
+    expect(res).toMatchObject({ ok: false, status: 409, code: 'CONFLICT_CHANGED' })
+    await expect(fs.stat(path.join(branchRoot, other))).resolves.toBeTruthy()
+    expect(Object.keys(await recorded())).toEqual([ID.old])
   })
 
   it('keeps every field of a fields record at once', async () => {
@@ -711,13 +804,16 @@ describe('POST /:branch/resolve-entry/...entryPath', () => {
     await recordAs({
       [collectionId]: { path: files.notes, mergeSha: MERGE, kind: 'unreadable', sides: {} },
     })
+    // Addressed by its collection, as the router takes no path with an id in it.
+    expect(logicalPathSchema.safeParse(files.notes).success).toBe(false)
+    expect(logicalPathSchema.safeParse('content/blog').success).toBe(true)
     const body = { id: collectionId, mergeSha: MERGE, choice: 'keep' as const }
-    expect(await resolveEntry(createCtx(), files.notes, body)).toMatchObject({ status: 403 })
+    expect(await resolveEntry(createCtx(), 'content/blog', body)).toMatchObject({ status: 403 })
     expect(Object.keys(await recorded())).toEqual([collectionId])
     const res = await MERGE_CONFLICT_ROUTES.resolveEntry.handler(
       createCtx(),
       { user: adminUser },
-      { branch, entryPath: unsafeAsLogicalPath(files.notes) },
+      { branch, entryPath: unsafeAsLogicalPath('content/blog') },
       { ...body, id: unsafeAsContentId(collectionId) },
     )
     expect(res).toMatchObject({ ok: true, status: 200 })

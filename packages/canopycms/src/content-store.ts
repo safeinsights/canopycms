@@ -1589,14 +1589,16 @@ export class ContentStore {
   protected async afterPrePassForTesting(): Promise<void> {}
 
   /**
-   * Delete an entry and remove it from the index. `beforeDelete` runs under both of the delete's
-   * locks before anything changes, and throwing refuses; `afterDelete` runs once it is gone, under
-   * them too.
+   * Delete an entry and remove it from the index. With `expectId`, only the entry of that content
+   * ID: another at the slug, or none, is `EntryGoneError`. `beforeDelete` runs under both of the
+   * delete's locks before anything changes, and throwing refuses; `afterDelete` runs once it is
+   * gone, under them too.
    */
   async delete(
     collectionPath: LogicalPath,
     slug: Slug,
     options: {
+      expectId?: string
       beforeDelete?: () => Promise<void>
       afterDelete?: (deleted: { id?: string }) => Promise<void>
     } = {},
@@ -1610,7 +1612,8 @@ export class ContentStore {
     const prePass = await this.buildPaths(collection, slug)
     if (prePass.existed) this.assertEntryTypeAvailable(collection, prePass.entryTypeName)
 
-    if (!prePass.existed) {
+    if (!prePass.existed || (options.expectId !== undefined && prePass.id !== options.expectId)) {
+      if (options.expectId !== undefined) throw new EntryGoneError()
       // Nothing on disk for this slug -- no shared resource to lock on, and fs.unlink on the
       // freshly generated (necessarily nonexistent) path throws ENOENT, as callers expect.
       await fs.unlink(prePass.absolutePath)
@@ -1638,6 +1641,12 @@ export class ContentStore {
             return RETRY_KEY
           }
           const { absolutePath, relativePath } = inLock
+          if (
+            options.expectId !== undefined &&
+            (!inLock.existed || inLock.id !== options.expectId)
+          ) {
+            throw new EntryGoneError()
+          }
 
           await options.beforeDelete?.()
           await fs.unlink(absolutePath)
