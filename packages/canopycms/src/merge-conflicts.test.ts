@@ -29,6 +29,13 @@ const fieldsFound = (
   fields: keys.map((key) => ({ key, dataPath: [{ field: key }], kind: 'changed' })),
 })
 
+const first = () =>
+  withFoundConflicts(
+    {},
+    [fieldsFound({ ancestor: 'o1', base: 'a1', branch: 'b1' }, 'title', 'cta')],
+    M1,
+  )
+
 describe('withFoundConflicts', () => {
   const first = withFoundConflicts(
     {},
@@ -85,6 +92,7 @@ describe('withFoundConflicts', () => {
       mergeSha: M2,
       kind: 'deleted-on-base',
       sides: { branch: 'b2' },
+      previous: first[ID],
     })
     const again = withFoundConflicts(deleted, [fieldsFound({ ancestor: 'o3' }, 'title')], M1)
     expect(again[ID]?.fields?.map(({ key, sides }) => ({ key, sides }))).toEqual([
@@ -94,11 +102,31 @@ describe('withFoundConflicts', () => {
 
   it('moves the records of entries the merge moved, and leaves the rest', () => {
     const moved = withFoundConflicts(first, [], M2, new Map([[ID, 'content/new.json']]))
-    expect(moved[ID]).toEqual({ ...first[ID], path: 'content/new.json' })
+    expect(moved[ID]).toEqual({
+      ...first[ID],
+      path: 'content/new.json',
+      mergeSha: M2,
+      previous: first[ID],
+    })
+    expect(withFoundConflicts(first, [], M2, new Map([[ID, first[ID]!.path]]))).toEqual(first)
   })
 })
 
 describe('withoutMergesGone', () => {
+  it('gives back the record a merge the branch never got replaced, and drops it once one lands', () => {
+    const renewed = withFoundConflicts(
+      first(),
+      [fieldsFound({ ancestor: 'o2', base: 'a2', branch: 'b2' }, 'title')],
+      M2,
+    )
+    expect(withoutMergesGone(renewed, (sha) => sha === M1)).toEqual(first())
+    const landed = withoutMergesGone(renewed, () => true)
+    expect(landed[ID]?.previous).toBeUndefined()
+    expect(landed[ID]?.mergeSha).toBe(M2)
+    const created = withFoundConflicts({}, [fieldsFound({}, 'title')], M2)
+    expect(withoutMergesGone(created, (sha) => sha === M1)).toEqual({})
+  })
+
   const entries: Record<string, MergeConflictEntry> = {
     [ID]: {
       ...withFoundConflicts({}, [fieldsFound({}, 'title')], M1)[ID]!,
@@ -149,11 +177,11 @@ describe('MergeConflictStore', () => {
     expect(await store.read()).toBeNull()
     const entries = withFoundConflicts({}, [fieldsFound({}, 'title')], M1)
 
-    await store.update((current) => (current === null ? entries : null))
+    await store.update((current) => (current === null ? { entries } : null))
     expect(await store.read()).toMatchObject({ version: 1, entries })
     expect(await store.update(() => null)).toBeNull()
     expect((await store.read())?.version).toBe(1)
-    await store.update(() => ({}))
+    await store.update(() => ({ entries: {} }))
     expect(await store.read()).toMatchObject({ version: 2, entries: {} })
   })
 

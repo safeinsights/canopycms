@@ -44,7 +44,7 @@ interface Setup {
   clone: SimpleGit
   /** A repository with its own view of remote.git: stands in for a person working on GitHub. */
   outside: SimpleGit
-  advanceBase(files: Record<string, string>, options?: { force?: boolean }): Promise<void>
+  advanceBase(files: Record<string, string | null>, options?: { force?: boolean }): Promise<void>
   /** A commit in the clone, as submit makes, without the push. */
   commit(files: Record<string, string>, message?: string): Promise<void>
   /** What submit's push does. */
@@ -120,9 +120,13 @@ async function createSetup(workspace: string): Promise<Setup> {
   await outside.addConfig('user.name', 'Maintainer')
   await outside.addConfig('user.email', 'maintainer@canopycms.test')
 
-  const write = async (root: string, files: Record<string, string>) => {
+  const write = async (root: string, files: Record<string, string | null>) => {
     for (const [name, content] of Object.entries(files)) {
       const full = path.join(root, name)
+      if (content === null) {
+        await fs.rm(full, { force: true })
+        continue
+      }
       await fs.mkdir(path.dirname(full), { recursive: true })
       await fs.writeFile(full, content)
     }
@@ -395,6 +399,24 @@ describe('an open pull request GitHub reports behind', () => {
     expect(meta?.status).toBe('approved')
     expect(meta?.review?.state).toBe('approved')
     expect(await queued(s, 'sync-pr-comments')).toEqual([])
+  })
+
+  it("leaves a branch whose merge the field merge would decide otherwise than git's", async () => {
+    // The base retypes an entry the branch edited: git merges it cleanly, the field merge keeps
+    // the branch's file, and that is not the diff that was reviewed.
+    await s.advanceBase({ [ENTRY]: '{"title":"base"}\n' })
+    await s.commit({ [ENTRY]: '{"title":"editor"}\n' })
+    await s.push()
+    const retyped = ENTRY.replace('/post.', '/page.')
+    await s.advanceBase({ [ENTRY]: null, [retyped]: '{"title":"base"}\n' })
+    const before = await s.head()
+
+    const summary = await cycle(s, workerWithPullRequest(s, 'behind'))
+
+    expect(summary.rebased).toEqual([])
+    expect(await s.head()).toBe(before)
+    expect(await queued(s, 'push-branch')).toEqual([])
+    expect((await readMeta(s))?.conflictFiles ?? []).toEqual([])
   })
 
   it('does nothing when GitHub reports anything else, so no adopter gets commits unasked', async () => {

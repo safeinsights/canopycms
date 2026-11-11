@@ -18,7 +18,7 @@ import path from 'node:path'
 import { z } from 'zod'
 
 import type { DataPathSegment } from './editor/entry-diff'
-import type { FieldConflictKind } from './merge/entry-merge'
+import type { FieldConflictKind, KeyRemap } from './merge/entry-merge'
 import type { ContentId } from './paths/types'
 import type { ConflictStatus } from './types'
 import { withLock } from './utils/async-mutex'
@@ -72,12 +72,31 @@ export interface MergeConflictEntry {
   sides: MergeSides
   /** For `fields`, never empty. */
   fields?: MergeConflictField[]
+  /**
+   * The record as it stood before `mergeSha` changed it, kept until the branch holds that merge:
+   * a merge recorded and then never landed gives the record back. Absent once it lands, and for a
+   * record that merge created.
+   */
+  previous?: MergeConflictEntry
 }
 
-export interface MergeConflictsFile {
+/** Item keys a merge changed, which the branch's comment threads take once it holds the merge. */
+interface PendingRemap {
+  mergeSha: string
+  /** The logical path the threads name the entry by. */
+  entryPath: string
+  remaps: KeyRemap[]
+}
+
+/** What the file holds. */
+export interface MergeConflictState {
+  entries: Record<string, MergeConflictEntry>
+  remaps?: PendingRemap[]
+}
+
+export interface MergeConflictsFile extends MergeConflictState {
   version: number
   writeId?: string
-  entries: Record<string, MergeConflictEntry>
 }
 
 /** What one merge found for one entry, before it has a commit to name. */
@@ -103,35 +122,48 @@ const dataPathSchema = z.array(
   ]),
 )
 
+const entrySchema: z.ZodType<MergeConflictEntry> = z.lazy(() =>
+  z.object({
+    path: z.string(),
+    mergeSha: z.string(),
+    kind: z.enum(['fields', 'deleted-on-base', 'deleted-on-branch', 'unreadable']),
+    sides: sidesSchema,
+    fields: z
+      .array(
+        z.object({
+          key: z.string(),
+          dataPath: dataPathSchema,
+          kind: z.enum(['changed', 'removed-on-base', 'removed-by-you']),
+          item: z.literal(true).optional(),
+          text: z.literal(true).optional(),
+          mergeSha: z.string(),
+          sides: sidesSchema,
+        }),
+      )
+      .optional(),
+    previous: entrySchema.optional(),
+  }),
+)
+
 const fileSchema = z.object({
   version: z.number(),
   writeId: z.string().optional(),
-  entries: z.record(
-    z.string(),
-    z.object({
-      path: z.string(),
-      mergeSha: z.string(),
-      kind: z.enum(['fields', 'deleted-on-base', 'deleted-on-branch', 'unreadable']),
-      sides: sidesSchema,
-      fields: z
-        .array(
-          z.object({
-            key: z.string(),
-            dataPath: dataPathSchema,
-            kind: z.enum(['changed', 'removed-on-base', 'removed-by-you']),
-            item: z.literal(true).optional(),
-            text: z.literal(true).optional(),
-            mergeSha: z.string(),
-            sides: sidesSchema,
-          }),
-        )
-        .optional(),
-    }),
-  ),
+  entries: z.record(z.string(), entrySchema),
+  remaps: z
+    .array(
+      z.object({
+        mergeSha: z.string(),
+        entryPath: z.string(),
+        remaps: z.array(
+          z.object({ within: z.array(z.string()), from: z.string(), to: z.string() }),
+        ),
+      }),
+    )
+    .optional(),
 })
 
 /** merge-conflicts.json is there but is not a record this module wrote. */
-class MergeConflictsFileMalformedError extends Error {
+export class MergeConflictsFileMalformedError extends Error {
   constructor(detail: string) {
     super(`merge-conflicts.json is malformed: ${detail}`)
     this.name = 'MergeConflictsFileMalformedError'
@@ -144,7 +176,8 @@ class MergeConflictsFileMalformedError extends Error {
  * A field found again keeps the ancestor it was first found against, so the person still sees what
  * they started from, and takes this merge's base and branch. An entry-level conflict replaces the
  * entry's record, and so does a field conflict an entry-level one held. `paths` moves the kept
- * records of entries this merge moved. Pure.
+ * records of entries this merge moved. Every record this merge changes keeps the one it replaced
+ * as `previous`. Pure.
  */
 export function withFoundConflicts(
   existing: Readonly<Record<string, MergeConflictEntry>>,
@@ -153,13 +186,23 @@ export function withFoundConflicts(
   paths: ReadonlyMap<string, string> = new Map(),
 ): Record<string, MergeConflictEntry> {
   const entries: Record<string, MergeConflictEntry> = {}
+  const changed = (
+    prior: MergeConflictEntry | undefined,
+    next: Omit<MergeConflictEntry, 'mergeSha'>,
+  ) => ({
+    ...next,
+    mergeSha,
+    ...(prior && { previous: prior }),
+  })
   for (const [id, entry] of Object.entries(existing)) {
-    entries[id] = { ...entry, path: paths.get(id) ?? entry.path }
+    const at = paths.get(id)
+    entries[id] =
+      at === undefined || at === entry.path ? entry : changed(entry, { ...entry, path: at })
   }
   for (const { contentId, path: at, kind, sides, fields } of found) {
-    const prior = entries[contentId] as MergeConflictEntry | undefined
+    const prior = existing[contentId] as MergeConflictEntry | undefined
     if (kind !== 'fields' || !fields || fields.length === 0) {
-      entries[contentId] = { path: at, mergeSha, kind, sides }
+      entries[contentId] = changed(prior, { path: at, kind, sides })
       continue
     }
     const priorFields = prior?.kind === 'fields' ? (prior.fields ?? []) : []
@@ -175,27 +218,33 @@ export function withFoundConflicts(
         sides: { ...latest, ...(ancestor !== undefined && { ancestor }) },
       }
     })
-    entries[contentId] = { path: at, mergeSha, kind, sides, fields: [...kept, ...now] }
+    entries[contentId] = changed(prior, { path: at, kind, sides, fields: [...kept, ...now] })
   }
   return entries
 }
 
 /**
- * `entries` without what a merge the branch no longer holds found: a field whose `mergeSha` fails
- * `holds`, and an entry left with no fields, or whose own `mergeSha` fails it. Pure.
+ * `entries` as the branch's history has them: a record whose `mergeSha` fails `holds` gives back the
+ * one it replaced, or goes when it replaced none, and a record whose merge the branch holds drops
+ * the one it replaced. A field whose own merge fails `holds` goes too, and an entry with no field
+ * left. Pure.
  */
 export function withoutMergesGone(
   entries: Readonly<Record<string, MergeConflictEntry>>,
   holds: (mergeSha: string) => boolean,
 ): Record<string, MergeConflictEntry> {
   const kept: Record<string, MergeConflictEntry> = {}
-  for (const [id, entry] of Object.entries(entries)) {
-    if (entry.kind !== 'fields') {
-      if (holds(entry.mergeSha)) kept[id] = entry
+  for (const [id, newest] of Object.entries(entries)) {
+    let entry: MergeConflictEntry | undefined = newest
+    while (entry && !holds(entry.mergeSha)) entry = entry.previous
+    if (!entry) continue
+    const { previous: _landed, ...landed } = entry
+    if (landed.kind !== 'fields') {
+      kept[id] = landed
       continue
     }
-    const fields = (entry.fields ?? []).filter((f) => holds(f.mergeSha))
-    if (fields.length > 0) kept[id] = { ...entry, fields }
+    const fields = (landed.fields ?? []).filter((f) => holds(f.mergeSha))
+    if (fields.length > 0) kept[id] = { ...landed, fields }
   }
   return kept
 }
@@ -224,6 +273,24 @@ export class MergeConflictStore {
     this.filePath = path.join(path.resolve(branchRoot), '.canopy-meta', MERGE_CONFLICTS_FILE)
   }
 
+  /** Whether the clone has a record at all. */
+  async exists(): Promise<boolean> {
+    return fs.stat(this.filePath).then(
+      () => true,
+      () => false,
+    )
+  }
+
+  /**
+   * Move a file that does not parse as a record aside, so the next write starts a new one. Resolves
+   * the name it was moved to.
+   */
+  async quarantine(): Promise<string> {
+    const aside = `${this.filePath}.malformed-${Date.now()}`
+    await fs.rename(this.filePath, aside)
+    return aside
+  }
+
   /** The record, or null when the clone has none. Throws on a file that does not parse as one. */
   async read(): Promise<MergeConflictsFile | null> {
     let text: string
@@ -245,27 +312,30 @@ export class MergeConflictStore {
   }
 
   /**
-   * Replace the entries with what `change` makes of them, under the module's locks. `change` gets
-   * null when there is no file yet, and returns null to write nothing. Resolves what was written,
-   * or null.
+   * Replace what the file holds with what `change` makes of it, under the module's locks. `change`
+   * gets null when there is no file yet, and returns null to write nothing. Resolves what was
+   * written, or null.
    */
   async update(
-    change: (
-      entries: Record<string, MergeConflictEntry> | null,
-    ) => Record<string, MergeConflictEntry> | null,
-  ): Promise<Record<string, MergeConflictEntry> | null> {
+    change: (current: MergeConflictState | null) => MergeConflictState | null,
+  ): Promise<MergeConflictState | null> {
     return withLock(this.filePath, () =>
       withOccFileLock(this.filePath, () =>
         withOccRetry(async () => {
           const current = await this.read()
-          const entries = change(current ? current.entries : null)
-          if (entries === null) return null
-          await writeOccJsonFile(
-            this.filePath,
-            { entries },
-            { expectedVersion: current ? current.version : null, settleMs: this.settleMs },
+          const next = change(
+            current && {
+              entries: current.entries,
+              ...(current.remaps && { remaps: current.remaps }),
+            },
           )
-          return entries
+          if (next === null) return null
+          const payload = { entries: next.entries, ...(next.remaps && { remaps: next.remaps }) }
+          await writeOccJsonFile(this.filePath, payload, {
+            expectedVersion: current ? current.version : null,
+            settleMs: this.settleMs,
+          })
+          return next
         }),
       ),
     )

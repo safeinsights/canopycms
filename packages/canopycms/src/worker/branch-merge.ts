@@ -108,6 +108,8 @@ export type MergePlan =
       conflicts: FoundEntryConflict[]
       /** Paths where the branch's version stands over the other side's change, whole or in part. */
       keptPaths: string[]
+      /** Git's own merge with nothing for a person: no conflict, and every file as git merged it. */
+      asGitDoes: boolean
       /** Item keys the merge changed, by the entry path the branch's comment threads name. */
       keyRemaps: Array<{ entryPath: string; remaps: KeyRemap[] }>
       /** Where each entry the merge decided stands in it. */
@@ -147,6 +149,12 @@ export async function planMerge(
   args: { head: string; other: string; contentRoot: string; timeoutMs: number },
 ): Promise<MergePlan> {
   const { head, other, contentRoot, timeoutMs } = args
+  const bases = (await git.raw(['merge-base', '--all', '--end-of-options', head, other]))
+    .split('\n')
+    .filter((line) => OBJECT_ID.test(line))
+  if (bases.length === 0) {
+    return { kind: 'unsettled', conflicts: ['no history in common with it'], paths: [] }
+  }
   const output = await git.raw([
     'merge-tree',
     '--write-tree',
@@ -157,9 +165,6 @@ export async function planMerge(
   ])
   const { tree: gitTree, stages, unsettled } = parseMergeTree(output, head, other)
   const gitConflicted = [...new Set(stages.map(({ path }) => path))]
-  const bases = (await git.raw(['merge-base', '--all', '--end-of-options', head, other]))
-    .split('\n')
-    .filter((line) => OBJECT_ID.test(line))
   const field =
     bases.length === 1
       ? await resolveFieldMerge({
@@ -196,15 +201,24 @@ export async function planMerge(
   }
   const tree =
     updates.size === 0 ? gitTree : await withUpdates(clonePath, { gitTree, updates, timeoutMs })
+  const conflicts = [
+    ...field.conflicts,
+    ...keptVersions(kept, stages, contentRoot, field.conflicts),
+  ]
   return {
     kind: 'planned',
     tree,
     gitTree,
     gitConflicted,
-    conflicts: [...field.conflicts, ...keptVersions(kept, stages, contentRoot, field.conflicts)],
+    conflicts,
     keptPaths: [...new Set([...field.conflicts.map(({ path }) => path), ...kept])],
     keyRemaps: field.keyRemaps,
     paths: field.paths,
+    asGitDoes:
+      gitConflicted.length === 0 &&
+      conflicts.length === 0 &&
+      field.keyRemaps.length === 0 &&
+      tree === gitTree,
   }
 }
 
@@ -260,16 +274,9 @@ export async function buildMergeCommit(
   return { kind: 'built', sha, ...rest }
 }
 
-/**
- * Whether `plan` is git's own merge with nothing left for a person: no conflict, and no file the
- * field merge decided otherwise than git did.
- */
+/** Whether `plan` is git's own merge with nothing for a person. */
 export const mergesAsGitDoes = (plan: MergePlan): boolean =>
-  plan.kind === 'planned' &&
-  plan.gitConflicted.length === 0 &&
-  plan.conflicts.length === 0 &&
-  plan.keyRemaps.length === 0 &&
-  plan.tree === plan.gitTree
+  plan.kind === 'planned' && plan.asGitDoes
 
 /**
  * Whether `merged` holds exactly what `from` and `other` merge to cleanly, and so nothing else. A

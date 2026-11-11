@@ -77,6 +77,25 @@ describe('CommentStore', () => {
     expect(await keys(untouched.threadId)).toEqual(['c'])
   })
 
+  it('remaps an item key only at the depth the remap names it', async () => {
+    const add = (itemKeys: string[]) =>
+      store.addComment({
+        userId: 'user1',
+        text: 'Note',
+        type: 'field',
+        entryPath: 'posts/hello',
+        canopyPath: 'x',
+        itemKeys,
+      })
+    const top = await add(['b'])
+    const nested = await add(['a', 'b'])
+
+    await store.remapItemKeys('posts/hello', [{ within: [], from: 'b', to: 'Z' }])
+
+    expect((await store.getThread(top.threadId))?.itemKeys).toEqual(['Z'])
+    expect((await store.getThread(nested.threadId))?.itemKeys).toEqual(['a', 'b'])
+  })
+
   it('writes nothing when no thread names a remapped item', async () => {
     expect(await store.remapItemKeys('posts/hello', [{ within: [], from: 'a', to: 'A' }])).toBe(0)
     await expect(fs.stat(path.join(tmpDir, '.canopy-meta', 'comments.json'))).rejects.toThrow()

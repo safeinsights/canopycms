@@ -8,6 +8,7 @@ import {
   type BranchMetadataFile,
 } from '../branch-metadata'
 import { invalidateBranchContentCaches } from '../content-index-generation'
+import { MergeConflictStore } from '../merge-conflicts'
 import { isSettingsBranchName, sanitizeBranchName } from '../paths/branch-name'
 import type { BaseUpdateOutcome, BranchMetadata, PullRequestHold, PullRequestState } from '../types'
 import {
@@ -852,6 +853,32 @@ async function lacksPublishedCommits(
 }
 
 /**
+ * {@link reconcileMergeConflicts} for a submitted or approved branch, whose merges of GitHub's
+ * commits can leave records too. Only for a clone with a record, so others cost one stat. Never
+ * throws.
+ */
+async function reconcileInReview(
+  ctx: RebaseContext,
+  branchDir: string,
+  branchPath: string,
+): Promise<void> {
+  try {
+    if (!(await new MergeConflictStore(branchPath).exists())) return
+    await assertSharedRepoConfig(branchPath, 'worktree')
+    await reconcileMergeConflicts(ctx, {
+      git: sharedRepoGit(branchPath, 'worktree'),
+      branchPath,
+      branchDir,
+      branchRef: await readCloneRef(branchPath),
+    })
+  } catch (err) {
+    workerLogWarn(
+      `  ${branchDir}: could not reconcile its conflict record: ${getErrorMessage(err)}`,
+    )
+  }
+}
+
+/**
  * {@link bringInGitHubCommits} for a submitted or approved branch, which skips the rest of the
  * rebase loop. Under the content-write lock, zero-retry, as a save or a submit can hold it. A
  * branch GitHub holds as it is costs no lock. Never throws, so the caller's merge poll still runs.
@@ -1158,6 +1185,7 @@ async function rebaseOneBranch(
     // - archived: finished, with no PR left to poll.
     if (metaFile !== null && (branchStatus === 'submitted' || branchStatus === 'approved')) {
       workerLog(`  Skipping ${branchDir} (${branchStatus})`)
+      await reconcileInReview(ctx, branchDir, branchPath)
       const outcome = await bringInCommitsForBranchInReview(
         ctx,
         branchDir,

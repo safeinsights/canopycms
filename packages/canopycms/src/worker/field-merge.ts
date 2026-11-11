@@ -1,10 +1,11 @@
 import path from 'node:path'
 
 import type { SimpleGit } from 'simple-git'
+import { parse as yamlParse } from 'yaml'
 
 import type { ContentFormat, FieldConfig } from '../config'
 import type { FlatSchemaItem } from '../config/types'
-import { entryLogicalPathOfFile } from '../content-id-index'
+import { entryLogicalPathOfFile, extractIdFromFilename } from '../content-id-index'
 import { parseEntryParts } from '../content-listing'
 import {
   mergeCollectionMeta,
@@ -40,10 +41,11 @@ import { sharedRepoProcessOptions } from './shared-repo-git'
  * `.collection.json` changed on both sides goes through the engine, whether or not git found a
  * conflict in it: a merge git calls clean can still be wrong, such as a duplicate frontmatter key.
  *
- * Entries are paired by the content ID in their file names, not by path, so a rename on one side
- * meets an edit on the other whatever git's rename detection makes of it. An entry changed on one
- * side only takes that side's version: where git's rename detection put something else there, the
- * pairing by ID puts it right.
+ * Entries are paired by the content ID in their file names, and `.collection.json` files by their
+ * collection's, not by path, so a rename on one side meets an edit on the other whatever git's
+ * rename detection makes of it. A collection directory one side moved moves the other side's files
+ * in it too. An entry changed on one side only takes that side's version: where git's rename
+ * detection put something else there, the pairing by ID puts it right.
  */
 
 /** A file in one version of the tree. */
@@ -56,13 +58,18 @@ interface TreeFile {
 /** The versions of one entry, or of one `.collection.json`, across a merge. */
 interface Unit {
   kind: 'entry' | 'meta'
-  /** The entry's content ID; a `.collection.json` is paired by its path alone. */
+  /** The entry's content ID. A `.collection.json` is paired by its collection's, kept apart. */
   id?: ContentId
   ancestor?: TreeFile
   /** What each side changed it to: undefined for deleted. Read only for a side that changed it. */
   changed: { base?: TreeFile; branch?: TreeFile }
   touched: { base: boolean; branch: boolean }
-  /** Two files of one version claim the ID, or a version is not a regular file: git's rule. */
+  /** Paths each side deleted. */
+  removed: { base: Set<string>; branch: Set<string> }
+  /**
+   * Git's rule decides it: two files of one version claim it, a side added a second file for it
+   * and kept the first, a version is not a regular file, or its name is not UTF-8.
+   */
   ambiguous: boolean
 }
 
@@ -101,6 +108,7 @@ export interface FieldMergeArgs {
 const MAX_MERGE_BYTES = 1024 * 1024
 const REGULAR_FILE = /^100(644|755)$/
 const FORMATS: readonly ContentFormat[] = ['md', 'mdx', 'json', 'yaml']
+type Side = 'base' | 'branch'
 
 const formatOf = (file: string): ContentFormat | undefined => {
   const ext = path.posix.extname(file)
@@ -108,7 +116,11 @@ const formatOf = (file: string): ContentFormat | undefined => {
 }
 
 /** The unit a path belongs to, by its key, or null for a path the engine never decides. */
-function unitKeyOf(file: string, root: string): { key: string; id?: ContentId } | null {
+function unitKeyOf(
+  file: string,
+  root: string,
+  collectionIdOf: FieldMergeArgs['collectionIdOf'],
+): { key: string; id?: ContentId } | null {
   if (entryLogicalPathOfFile(file, root) !== null) {
     const parsed = parseTypedFilename(path.posix.basename(file))
     return parsed ? { key: `id:${parsed.id}`, id: parsed.id } : null
@@ -116,7 +128,8 @@ function unitKeyOf(file: string, root: string): { key: string; id?: ContentId } 
   const below = file.startsWith(`${root}/`) ? file.slice(root.length + 1).split('/') : null
   if (!below || below.at(-1) !== '.collection.json') return null
   if (below.slice(0, -1).some((s) => s.startsWith('.') || s === '_ids_')) return null
-  return { key: `meta:${file}` }
+  const collection = collectionIdOf(file)
+  return { key: collection ? `meta:${collection}` : `meta-at:${file}` }
 }
 
 /** `diff-tree --raw` from `from` to `to`, without rename detection: each path's two files. */
@@ -151,8 +164,57 @@ async function changedFiles(
   return changes
 }
 
+/**
+ * Where each collection directory a merge touches ends up, by its collection ID: where the branch
+ * moved it, else where the base did. A directory one version holds at two places is left out.
+ */
+class CollectionMoves {
+  private readonly at = {
+    ancestor: new Map<string, string | null>(),
+    base: new Map<string, string | null>(),
+    branch: new Map<string, string | null>(),
+  }
+
+  note(version: 'ancestor' | Side, file: string): void {
+    const segments = file.split('/')
+    for (let k = 0; k < segments.length - 1; k++) {
+      const id = extractIdFromFilename(segments[k])
+      if (!id) continue
+      const dir = segments.slice(0, k + 1).join('/')
+      const known = this.at[version].get(id)
+      this.at[version].set(id, known === undefined || known === dir ? dir : null)
+    }
+  }
+
+  /** Where `id`'s directory ends up, when a side moved it. */
+  private final(id: string): string | undefined {
+    const ancestor = this.at.ancestor.get(id)
+    if (!ancestor) return undefined
+    for (const side of ['branch', 'base'] as const) {
+      const dir = this.at[side].get(id)
+      if (dir && dir !== ancestor) return dir
+    }
+    return undefined
+  }
+
+  /** `file` with the deepest collection directory on its way moved where it ends up. */
+  place(file: string): string {
+    const segments = file.split('/')
+    for (let k = segments.length - 2; k >= 0; k--) {
+      const id = extractIdFromFilename(segments[k])
+      const dir = id ? this.final(id) : undefined
+      if (dir) return [dir, ...segments.slice(k + 1)].join('/')
+    }
+    return file
+  }
+}
+
 /** The units both sides' changes touch, keyed as {@link unitKeyOf} keys them. */
-async function collectUnits(args: FieldMergeArgs, root: string): Promise<Map<string, Unit>> {
+async function collectUnits(
+  args: FieldMergeArgs,
+  root: string,
+  moves: CollectionMoves,
+): Promise<Map<string, Unit>> {
   const { git, ancestor, head, other } = args
   const units = new Map<string, Unit>()
   for (const [side, to] of [
@@ -160,23 +222,27 @@ async function collectUnits(args: FieldMergeArgs, root: string): Promise<Map<str
     ['branch', head],
   ] as const) {
     for (const change of await changedFiles(git, ancestor, to)) {
-      const at = unitKeyOf(change.path, root)
+      const { before, after } = change
+      if (before) moves.note('ancestor', change.path)
+      if (after) moves.note(side, change.path)
+      const at = unitKeyOf(change.path, root, args.collectionIdOf)
       if (!at) continue
       let unit = units.get(at.key)
       if (!unit) {
         unit = {
-          kind: at.id ? 'entry' : 'meta',
+          kind: at.key.startsWith('id:') ? 'entry' : 'meta',
           ...(at.id && { id: at.id }),
           changed: {},
           touched: { base: false, branch: false },
+          removed: { base: new Set(), branch: new Set() },
           ambiguous: false,
         }
         units.set(at.key, unit)
       }
-      const { before, after } = change
       if (before) {
         if (unit.ancestor && unit.ancestor.path !== before.path) unit.ambiguous = true
         unit.ancestor = before
+        if (!after) unit.removed[side].add(change.path)
       }
       if (after) {
         if (unit.changed[side]) unit.ambiguous = true
@@ -186,13 +252,22 @@ async function collectUnits(args: FieldMergeArgs, root: string): Promise<Map<str
       for (const file of [before, after]) {
         if (file && !REGULAR_FILE.test(file.mode)) unit.ambiguous = true
       }
+      if (change.path.includes('\uFFFD')) unit.ambiguous = true
+    }
+  }
+  // A side with a file for the unit at a new path, which kept the ancestor's, copied it.
+  for (const unit of units.values()) {
+    for (const side of ['base', 'branch'] as const) {
+      const file = unit.changed[side]
+      const kept = unit.ancestor && !unit.removed[side].has(unit.ancestor.path)
+      if (file && unit.ancestor && file.path !== unit.ancestor.path && kept) unit.ambiguous = true
     }
   }
   return units
 }
 
 /** One side's file, as it stands after that side's changes. */
-const sideFile = (unit: Unit, side: 'base' | 'branch'): TreeFile | undefined =>
+const sideFile = (unit: Unit, side: Side): TreeFile | undefined =>
   unit.touched[side] ? unit.changed[side] : unit.ancestor
 
 /** What git's merge holds for each unit: path to file. */
@@ -206,7 +281,7 @@ async function gitsFiles(
     held.set(key, new Map(unit.ancestor ? [[unit.ancestor.path, unit.ancestor]] : []))
   }
   for (const change of await changedFiles(args.git, args.ancestor, args.mergedTree)) {
-    const at = unitKeyOf(change.path, root)
+    const at = unitKeyOf(change.path, root, args.collectionIdOf)
     const files = at && held.get(at.key)
     if (!files) continue
     if (change.before) files.delete(change.path)
@@ -220,13 +295,24 @@ async function readText(git: SimpleGit, oid: string): Promise<string | undefined
   const size = parseInt((await git.raw(['cat-file', '-s', '--end-of-options', oid])).trim(), 10)
   if (!Number.isInteger(size) || size > MAX_MERGE_BYTES) return undefined
   const text = await git.raw(['cat-file', 'blob', '--end-of-options', oid])
-  return Buffer.byteLength(text, 'utf8') === size && !text.includes('�') ? text : undefined
+  return Buffer.byteLength(text, 'utf8') === size && !text.includes('\uFFFD') ? text : undefined
 }
 
 interface ParsedSide {
   file: TreeFile
   text: string
   side: MergeSide
+}
+
+/**
+ * Whether `text` holds a record at its top level, as an entry's data must: the store reads any
+ * other JSON or YAML as no data at all, which would make every version alike.
+ */
+function holdsRecord(text: string, format: ContentFormat): boolean {
+  if (format === 'json') return isPlainRecord(JSON.parse(text))
+  if (format !== 'yaml') return true
+  const value: unknown = yamlParse(text)
+  return value === null || value === undefined || isPlainRecord(value)
 }
 
 /** One version of an entry, parsed as `ContentStore.read` parses it, or undefined if it can't be. */
@@ -238,6 +324,7 @@ async function readEntry(
   const text = await readText(git, file.oid)
   if (text === undefined) return undefined
   try {
+    if (!holdsRecord(text, format)) return undefined
     const { data, body } = parseEntryParts(text, format)
     // A copy: gray-matter's cache hands every reader of the same text one object.
     const side: MergeSide = { data: structuredClone(data) }
@@ -289,16 +376,11 @@ const blobSides = (unit: Unit): MergeSides => {
   }
 }
 
-const recordFields = (conflicts: readonly FieldConflict[]): FoundEntryConflict['fields'] =>
+type FoundField = Omit<MergeConflictField, 'mergeSha' | 'sides'>
+
+const recordFields = (conflicts: readonly FieldConflict[]): FoundField[] =>
   conflicts.map(
-    ({
-      key,
-      dataPath,
-      kind,
-      item,
-      regions,
-      unparseable,
-    }): Omit<MergeConflictField, 'mergeSha' | 'sides'> => ({
+    ({ key, dataPath, kind, item, regions, unparseable }): FoundField => ({
       key,
       dataPath,
       kind,
@@ -307,11 +389,27 @@ const recordFields = (conflicts: readonly FieldConflict[]): FoundEntryConflict['
     }),
   )
 
+const LOCATION: FoundField = { key: LOCATION_CONFLICT_KEY, dataPath: [], kind: 'changed' }
+
 /** What one unit resolves to: its file in the merge, and what a person must still decide. */
 interface Resolution {
   file?: TreeFile
   conflict?: Omit<FoundEntryConflict, 'contentId'>
   remaps?: KeyRemap[]
+}
+
+/** A merged value's candidate files, in the order {@link Resolver.bytesFor} tries them. */
+interface Candidates {
+  /** Git's clean merge at the place the merge puts the file. */
+  git?: TreeFile
+  base: { file: TreeFile; text: string }
+  branch: TreeFile
+  /** Whether a file's text reads as the merged value. */
+  reads: (text: string) => boolean
+  /** Whether a side's own version is the merged value. */
+  isBase: boolean
+  isBranch: boolean
+  serialize: (onto: string | undefined) => string
 }
 
 class Resolver {
@@ -320,7 +418,10 @@ class Resolver {
     inactivityTimeoutMs: number
   }
 
-  constructor(private readonly args: FieldMergeArgs) {
+  constructor(
+    private readonly args: FieldMergeArgs,
+    private readonly moves: CollectionMoves,
+  ) {
     this.root = normalizeFilesystemPath(args.contentRoot)
     this.options = {
       ...sharedRepoProcessOptions(args.clonePath, 'worktree'),
@@ -341,9 +442,49 @@ class Resolver {
   }
 
   /**
-   * An entry both sides changed. The file stays where the branch has it unless only the base moved
-   * it; both moving it apart is a location conflict. A version that can't be merged field by field
-   * leaves git's merge where git merged it, and the branch's file where git could not.
+   * The file for a merged value at `at`, keeping the most of what each side wrote that the value
+   * does not carry, such as a developer's comments and formatting: git's clean merge, else the
+   * base's file, else the value written onto the base's file, else the branch's file, else the
+   * value written plain. A text must read back as the value. Undefined when none does.
+   */
+  async bytesFor(c: Candidates, at: string): Promise<TreeFile | undefined> {
+    const mode = c.branch.mode
+    if (c.git?.path === at) {
+      const text = await readText(this.args.git, c.git.oid)
+      if (text !== undefined && c.reads(text)) return c.git
+    }
+    if (c.isBase) return { ...c.base.file, path: at, mode }
+    const onBase = c.serialize(c.base.text)
+    if (c.reads(onBase)) return this.write(onBase, c.branch, at)
+    if (c.isBranch) return { ...c.branch, path: at }
+    const plain = c.serialize(undefined)
+    return c.reads(plain) ? this.write(plain, c.branch, at) : undefined
+  }
+
+  /**
+   * Where both sides' versions of a unit go: each side's path with every collection directory
+   * either side moved moved too. Where only one side moved the file, there; else the branch's
+   * place. Both moving it apart, or both adding it apart, is a location conflict.
+   */
+  placeOf(o: TreeFile | undefined, a: TreeFile, b: TreeFile): { at: string; apart: boolean } {
+    const [oAt, aAt, bAt] = [
+      o && this.moves.place(o.path),
+      this.moves.place(a.path),
+      this.moves.place(b.path),
+    ]
+    const moved = {
+      base: oAt !== undefined && aAt !== oAt,
+      branch: oAt !== undefined && bAt !== oAt,
+    }
+    return {
+      at: moved.base && !moved.branch ? aAt : bAt,
+      apart: aAt !== bAt && (oAt === undefined || (moved.base && moved.branch)),
+    }
+  }
+
+  /**
+   * An entry both sides changed. A version that can't be merged field by field leaves git's merge
+   * where git merged it, and the branch's file where git could not.
    */
   async entry(
     unit: Unit,
@@ -354,27 +495,32 @@ class Resolver {
     const [o, a, b] = [unit.ancestor, sideFile(unit, 'base'), sideFile(unit, 'branch')]
     const sides = blobSides(unit)
     if (!a && !b) return {}
-    if (!a && b) return { file: b, conflict: { path: b.path, kind: 'deleted-on-base', sides } }
+    if (!a && b) {
+      const at = this.moves.place(b.path)
+      return { file: { ...b, path: at }, conflict: { path: at, kind: 'deleted-on-base', sides } }
+    }
     if (a && !b) {
       return { conflict: { path: o?.path ?? a.path, kind: 'deleted-on-branch', sides } }
     }
     if (!a || !b) return null
-    if (a.oid === b.oid && a.path === b.path) return { file: b }
-    const unreadable = (): Resolution | null =>
-      gitClean ? null : { file: b, conflict: { path: b.path, kind: 'unreadable', sides } }
+    const { at, apart } = this.placeOf(o, a, b)
+    // The branch's whole file is the branch's version of the entry, so it keeps the branch's name.
+    const keepBranch = (): Resolution => {
+      const own = this.moves.place(b.path)
+      return { file: { ...b, path: own }, conflict: { path: own, kind: 'unreadable', sides } }
+    }
+    if (a.oid === b.oid && !apart) return { file: { ...b, path: at } }
 
     const format = formatOf(b.path)
-    if (!format || [o, a].some((f) => f && formatOf(f.path) !== format)) return unreadable()
+    if (!format || [o, a].some((f) => f && formatOf(f.path) !== format)) {
+      return gitClean ? null : keepBranch()
+    }
     const [oSide, aSide, bSide] = await Promise.all(
       [o, a, b].map((f) => (f ? readEntry(git, f, format) : undefined)),
     )
-    if (!aSide || !bSide || (o && !oSide)) return unreadable()
+    if (!aSide || !bSide || (o && !oSide)) return gitClean ? null : keepBranch()
 
-    const moved = { base: a.path !== (o?.path ?? a.path), branch: b.path !== (o?.path ?? b.path) }
-    const at = moved.base && !moved.branch ? a.path : b.path
-    const locationConflict = a.path !== b.path && (o === undefined || (moved.base && moved.branch))
     const fields = fieldsFor(this.args.flatSchema, b.path, this.root)
-
     let result: EntryMergeResult
     try {
       result = mergeEntry({
@@ -388,50 +534,52 @@ class Resolver {
       workerLogWarn(
         `  could not merge ${escapeForLog(b.path)} field by field: ${getErrorMessage(err)}`,
       )
-      return { file: b, conflict: { path: b.path, kind: 'unreadable', sides } }
+      return keepBranch()
     }
-    if (result.kind === 'entry-conflict') {
-      return { file: b, conflict: { path: b.path, kind: 'unreadable', sides } }
-    }
+    if (result.kind === 'entry-conflict') return keepBranch()
 
-    const found = recordFields(result.conflicts) ?? []
-    if (locationConflict) {
-      found.push({ key: LOCATION_CONFLICT_KEY, dataPath: [], kind: 'changed' })
+    const found = [...recordFields(result.conflicts), ...(apart ? [LOCATION] : [])]
+    const merged = result
+    const file = await this.bytesFor(
+      {
+        ...(gitClean && gitFile && { git: gitFile }),
+        base: { file: a, text: aSide.text },
+        branch: b,
+        isBase: sameContent(aSide.side, merged),
+        isBranch: sameContent(bSide.side, merged),
+        reads: (text) => {
+          try {
+            if (!holdsRecord(text, format)) return false
+            const back = parseEntryParts(text, format)
+            return sameContent(
+              { data: back.data, ...(back.body !== undefined && { body: back.body }) },
+              merged,
+            )
+          } catch {
+            return false
+          }
+        },
+        serialize: (onto) => serializeEntry(format, merged, onto),
+      },
+      at,
+    )
+    if (!file) {
+      workerLogWarn(`  the merge of ${escapeForLog(b.path)} does not read back as merged`)
+      return keepBranch()
     }
-    const resolution: Resolution = {
+    return {
+      file,
       ...(found.length > 0 && { conflict: { path: at, kind: 'fields', sides, fields: found } }),
-      ...(result.keyRemaps.length > 0 && { remaps: result.keyRemaps }),
+      ...(merged.keyRemaps.length > 0 && { remaps: merged.keyRemaps }),
     }
-    // The fewest changed bytes: a side's own file, git's merge, then the merge written onto the
-    // base's file, which keeps a developer's comments and formatting there.
-    if (sameContent(bSide.side, result)) return { ...resolution, file: { ...b, path: at } }
-    if (sameContent(aSide.side, result))
-      return { ...resolution, file: { ...a, path: at, mode: b.mode } }
-    if (gitClean && gitFile?.path === at) {
-      const gitSide = await readEntry(git, gitFile, format)
-      if (gitSide && sameContent(gitSide.side, result)) return { ...resolution, file: gitFile }
-    }
-    for (const onto of [aSide.text, undefined]) {
-      const text = serializeEntry(format, result, onto)
-      const reads = (() => {
-        try {
-          const back = parseEntryParts(text, format)
-          return sameContent(
-            { data: back.data, ...(back.body !== undefined && { body: back.body }) },
-            result,
-          )
-        } catch {
-          return false
-        }
-      })()
-      if (reads) return { ...resolution, file: await this.write(text, b, at) }
-    }
-    workerLogWarn(`  the merge of ${escapeForLog(b.path)} does not read back as merged`)
-    return { file: b, conflict: { path: b.path, kind: 'unreadable', sides } }
   }
 
   /** A `.collection.json` both sides changed and both still have; else git's rule. */
-  async collectionMeta(unit: Unit): Promise<Resolution | null> {
+  async collectionMeta(
+    unit: Unit,
+    gitClean: boolean,
+    gitFile: TreeFile | undefined,
+  ): Promise<Resolution | null> {
     const { git } = this.args
     const [o, a, b] = [unit.ancestor, sideFile(unit, 'base'), sideFile(unit, 'branch')]
     if (!o || !a || !b) return null
@@ -448,32 +596,39 @@ class Resolver {
     const [oJson, aJson, bJson] = await Promise.all([o, a, b].map(parse))
     if (!oJson || !aJson || !bJson) return null
     const merged = mergeCollectionMeta(oJson.json, aJson.json, bJson.json)
-    const contentId = this.args.collectionIdOf(b.path)
-    const fields = recordFields(merged.conflicts) ?? []
-    const resolution: Resolution = {
-      ...(fields.length > 0 &&
-        contentId && {
-          conflict: { path: b.path, kind: 'fields', sides: blobSides(unit), fields },
-        }),
-    }
+    // The directory moved apart on both sides: it goes where the branch put it.
+    const apart = a.path !== o.path && b.path !== o.path && a.path !== b.path
+    const at = this.moves.place(b.path)
+    const fields = [...recordFields(merged.conflicts), ...(apart ? [LOCATION] : [])]
+    const contentId = this.args.collectionIdOf(at)
     if (fields.length > 0 && !contentId) {
-      workerLogWarn(`  ${escapeForLog(b.path)} keeps this branch's values where both changed them`)
+      workerLogWarn(`  ${escapeForLog(at)} keeps this branch's values where both changed them`)
     }
     const token = exactToken(merged.data)
-    if (exactToken(bJson.json) === token) return { ...resolution, file: b }
-    if (exactToken(aJson.json) === token)
-      return { ...resolution, file: { ...a, path: b.path, mode: b.mode } }
-    for (const onto of [aJson.text, undefined]) {
-      const text = serializeJson(merged.data, onto)
-      try {
-        if (exactToken(JSON.parse(text)) === token) {
-          return { ...resolution, file: await this.write(text, b, b.path) }
-        }
-      } catch {
-        // Tried again without the base's formatting.
-      }
+    const file = await this.bytesFor(
+      {
+        ...(gitClean && gitFile && { git: gitFile }),
+        base: { file: a, text: aJson.text },
+        branch: b,
+        isBase: exactToken(aJson.json) === token,
+        isBranch: exactToken(bJson.json) === token,
+        reads: (text) => {
+          try {
+            return exactToken(JSON.parse(text)) === token
+          } catch {
+            return false
+          }
+        },
+        serialize: (onto) => serializeJson(merged.data, onto),
+      },
+      at,
+    )
+    if (!file) return null
+    return {
+      file,
+      ...(fields.length > 0 &&
+        contentId && { conflict: { path: at, kind: 'fields', sides: blobSides(unit), fields } }),
     }
-    return null
   }
 }
 
@@ -489,9 +644,10 @@ function sameFiles(held: ReadonlyMap<string, TreeFile>, wanted: TreeFile | undef
  * result says which blobs replace git's, and which conflicts a person must resolve.
  */
 export async function resolveFieldMerge(args: FieldMergeArgs): Promise<FieldMergeResult> {
-  const resolver = new Resolver(args)
+  const moves = new CollectionMoves()
+  const resolver = new Resolver(args, moves)
   const root = normalizeFilesystemPath(args.contentRoot)
-  const units = await collectUnits(args, root)
+  const units = await collectUnits(args, root, moves)
   const held = await gitsFiles(args, root, units)
   const result: FieldMergeResult = {
     updates: new Map(),
@@ -511,22 +667,21 @@ export async function resolveFieldMerge(args: FieldMergeArgs): Promise<FieldMerg
       ...gitHeld.keys(),
     ])
     const gitClean = ![...paths].some((p) => args.conflicted.has(p))
+    const only = gitHeld.size === 1 ? [...gitHeld.values()][0] : undefined
 
     let resolution: Resolution | null
     if (unit.touched.base && unit.touched.branch) {
-      const only = gitHeld.size === 1 ? [...gitHeld.values()][0] : undefined
       resolution =
         unit.kind === 'entry'
           ? await resolver.entry(unit, gitClean, only)
-          : await resolver.collectionMeta(unit)
+          : await resolver.collectionMeta(unit, gitClean, only)
       if (resolution === null) continue
     } else {
-      const side = unit.touched.base ? 'base' : 'branch'
-      const file = sideFile(unit, side)
-      // Git's directory rename detection moved a file one side added: that is where it belongs.
-      const only = gitHeld.size === 1 ? [...gitHeld.values()][0] : undefined
-      const relocated = gitClean && file && only?.oid === file.oid && only.mode === file.mode
-      resolution = { file: relocated ? only : file }
+      const file = sideFile(unit, unit.touched.base ? 'base' : 'branch')
+      // The one side's file, where git put it if git kept it whole, else where the collection
+      // directories it is in ended up.
+      const kept = file && only?.oid === file.oid && only.mode === file.mode
+      resolution = { file: file && (kept ? only : { ...file, path: moves.place(file.path) }) }
     }
 
     for (const p of paths) result.covered.add(p)

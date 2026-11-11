@@ -11,6 +11,7 @@ import { invalidateBranchContentCaches } from '../content-index-generation'
 import { GITHUB_TRACKING_REF_PREFIX } from '../git-manager'
 import {
   MergeConflictStore,
+  MergeConflictsFileMalformedError,
   conflictFilesOf,
   withFoundConflicts,
   withoutMergesGone,
@@ -473,7 +474,9 @@ export async function mergeIntoBranch(
     contentRoot: ctx.contentRoot,
     timeoutMs: ctx.taskTimeoutMs,
   })
-  if (stopOnConflict && (built.kind === 'unsettled' || built.gitConflicted.length > 0)) {
+  // A branch in review takes only git's own merge with nothing to decide: anything else changes
+  // what was reviewed, and nobody is at the editor to choose.
+  if (stopOnConflict && (built.kind === 'unsettled' || !built.asGitDoes)) {
     workerLog(`  ${branchDir}: conflicts with ${other.slice(0, 7)}, so it stays as it is`)
     return { kind: 'wait' }
   }
@@ -520,6 +523,7 @@ export async function mergeIntoBranch(
     await enqueueReviewBlockSync(ctx, branchRef, args.metaFile)
   }
   await moveClone(git, branchPath, sha)
+  if (built.keyRemaps.length > 0) await applyRemaps(branchPath, (landed) => landed === sha)
   if (fromGitHub) await recordGitHubTip(ctx, args, other)
   const keptEntries = new Set(conflicts.map(({ contentId }) => contentId)).size
   workerLog(
@@ -596,11 +600,11 @@ export async function returnToReview(
 }
 
 /**
- * Record what a merge left for a person in merge-conflicts.json, and the content IDs that names in
- * `branch.json` `conflictFiles`; for GitHub's commits, the paths whose values this branch kept over
- * them, for the PR body. Then point the branch's comment threads at the item keys the merge gave
- * their items. All before the merge is visible: a crash between the steps leaves records naming a
- * merge the branch never got, which {@link reconcileMergeConflicts} drops.
+ * Record what a merge left for a person in merge-conflicts.json, with the item keys it changed for
+ * the branch's comment threads to take once it lands, and the content IDs it names in `branch.json`
+ * `conflictFiles`; for GitHub's commits, the paths whose values this branch kept over them, for the
+ * PR body. Before the merge is visible: a merge that never lands leaves records the next
+ * {@link reconcileMergeConflicts} turns back.
  */
 async function recordMerge(
   ctx: GitHubCommitsContext,
@@ -612,18 +616,26 @@ async function recordMerge(
   const { sha, conflicts, keptPaths, keyRemaps, paths } = built
   const moves = (entries: Readonly<Record<string, MergeConflictEntry>>) =>
     Object.entries(entries).some(([id, { path }]) => (paths.get(id) ?? path) !== path)
-  const entries = await new MergeConflictStore(branchPath).update((current) =>
-    conflicts.length === 0 && (current === null || !moves(current))
+  const state = await new MergeConflictStore(branchPath).update((current) =>
+    conflicts.length === 0 &&
+    keyRemaps.length === 0 &&
+    (current === null || !moves(current.entries))
       ? null
-      : withFoundConflicts(current ?? {}, conflicts, sha, paths),
+      : {
+          entries: withFoundConflicts(current?.entries ?? {}, conflicts, sha, paths),
+          remaps: [
+            ...(current?.remaps ?? []),
+            ...keyRemaps.map(({ entryPath, remaps }) => ({ mergeSha: sha, entryPath, remaps })),
+          ],
+        },
   )
   const kept = fromGitHub ? keptPaths : []
-  if (entries !== null || kept.length > 0) {
+  if (state !== null || kept.length > 0) {
     await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update((existing) =>
       existing?.branch.name === branchRef
         ? {
             branch: {
-              ...(entries !== null && conflictFilesOf(entries)),
+              ...(state !== null && conflictFilesOf(state.entries)),
               ...(kept.length > 0 && {
                 keptOverGitHub: [...new Set([...(existing.branch.keptOverGitHub ?? []), ...kept])],
               }),
@@ -632,18 +644,53 @@ async function recordMerge(
         : null,
     )
   }
-  const comments = new CommentStore(branchPath)
-  for (const { entryPath, remaps } of keyRemaps) {
-    await comments.remapItemKeys(entryPath, remaps)
-  }
 }
 
 /**
- * Drop the conflict records of merges the branch no longer holds, which a crash between recording
- * a merge and moving the clone leaves, and bring `branch.json` `conflictFiles` back in line with
- * the record when the two differ. A merge counts as held while the clone or `remote.git` holds it,
- * since a clone behind its published merge fast-forwards to it. Each cycle, for a branch being
- * edited. A clone with no record keeps whatever `conflictFiles` it has. Never throws.
+ * Point the branch's comment threads at the item keys the merges in `landed` gave their items, then
+ * drop those remaps from the record. A remap of a merge the branch never got is dropped unapplied
+ * when `gone` says so.
+ */
+async function applyRemaps(
+  branchPath: string,
+  landed: (mergeSha: string) => boolean,
+  gone: (mergeSha: string) => boolean = () => false,
+): Promise<void> {
+  const store = new MergeConflictStore(branchPath)
+  const pending = (await store.read())?.remaps ?? []
+  const due = pending.filter(({ mergeSha }) => landed(mergeSha))
+  if (due.length === 0 && !pending.some(({ mergeSha }) => gone(mergeSha))) return
+  const comments = new CommentStore(branchPath)
+  for (const { entryPath, remaps } of due) await comments.remapItemKeys(entryPath, remaps)
+  await store.update(
+    (current) =>
+      current && {
+        entries: current.entries,
+        remaps: (current.remaps ?? []).filter(
+          ({ mergeSha }) => !landed(mergeSha) && !gone(mergeSha),
+        ),
+      },
+  )
+}
+
+/** Every merge a record names, its earlier versions' included. */
+function mergesNamedBy(entry: MergeConflictEntry): string[] {
+  return [
+    entry.mergeSha,
+    ...(entry.fields ?? []).map((f) => f.mergeSha),
+    ...(entry.previous ? mergesNamedBy(entry.previous) : []),
+  ]
+}
+
+/**
+ * Bring merge-conflicts.json in line with the branch's history: a record changed by a merge the
+ * branch never got gives back the one it replaced (`withoutMergesGone`), comment threads take the
+ * item keys of merges that landed, and `branch.json` `conflictFiles` follows the record when the two
+ * differ. A merge counts as held while the clone or `remote.git` holds it, since a clone behind its
+ * published merge fast-forwards to it, and nothing counts as gone while either can't be read in the
+ * clone. A record that does not parse is moved aside, so
+ * the branch's merges carry on with a new one. Each cycle, before the branch takes anything in. A
+ * clone with no record keeps whatever `conflictFiles` it has. Never throws.
  */
 export async function reconcileMergeConflicts(
   ctx: GitHubCommitsContext,
@@ -652,22 +699,29 @@ export async function reconcileMergeConflicts(
     branchPath,
     branchDir,
     branchRef,
-  }: Pick<GitHubCommitsArgs, 'git' | 'branchPath' | 'branchDir'> & {
-    branchRef: string | null
-  },
+  }: Pick<GitHubCommitsArgs, 'git' | 'branchPath' | 'branchDir'> & { branchRef: string | null },
 ): Promise<void> {
   try {
     const store = new MergeConflictStore(branchPath)
-    const current = await store.read()
+    let current
+    try {
+      current = await store.read()
+    } catch (err) {
+      if (!(err instanceof MergeConflictsFileMalformedError)) throw err
+      const aside = await store.quarantine()
+      workerLogWarn(`  ${branchDir}: its conflict record does not parse; moved it to ${aside}`)
+      current = null
+    }
     if (current === null) return
     const published = branchRef === null ? null : await readPublishedSha(ctx, branchRef)
+    if (published !== null && !(await holdsCommit(git, published))) {
+      await fetchFromRemoteGit(git, ctx.remoteGitPath, `refs/heads/${branchRef}`)
+    }
     const tips = ['HEAD', ...(published === null ? [] : [published])]
-    const shas = new Set(
-      Object.values(current.entries).flatMap((entry) => [
-        entry.mergeSha,
-        ...(entry.fields ?? []).map((f) => f.mergeSha),
-      ]),
-    )
+    const shas = new Set([
+      ...Object.values(current.entries).flatMap(mergesNamedBy),
+      ...(current.remaps ?? []).map(({ mergeSha }) => mergeSha),
+    ])
     const held = new Set<string>()
     for (const sha of shas) {
       for (const tip of tips) {
@@ -677,12 +731,20 @@ export async function reconcileMergeConflicts(
         }
       }
     }
+    // A tip the clone can't read says nothing about what it holds: then no merge counts as gone.
+    const tipsRead = (await Promise.all(tips.map((tip) => holdsCommit(git, tip)))).every(Boolean)
+    const gone = (sha: string) => tipsRead && !held.has(sha)
+    await applyRemaps(branchPath, (sha) => held.has(sha), gone)
     const entries =
-      (await store.update((now) => {
-        if (now === null) return null
-        const kept = withoutMergesGone(now, (sha) => held.has(sha))
-        return JSON.stringify(kept) === JSON.stringify(now) ? null : kept
-      })) ?? current.entries
+      (
+        await store.update((now) => {
+          if (now === null) return null
+          const kept = withoutMergesGone(now.entries, (sha) => !gone(sha))
+          return JSON.stringify(kept) === JSON.stringify(now.entries)
+            ? null
+            : { ...now, entries: kept }
+        })
+      )?.entries ?? current.entries
     const { conflictFiles, conflictStatus } = conflictFilesOf(entries)
     const same = (ids: readonly string[] | undefined) =>
       JSON.stringify([...(ids ?? [])].sort()) === JSON.stringify(conflictFiles)
