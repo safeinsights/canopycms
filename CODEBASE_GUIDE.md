@@ -124,6 +124,7 @@ Route handlers, one file per endpoint namespace:
 - `branch-review.ts` — `/branch-review`: approve, request changes
 - `branch-changes.ts` — `GET /:branch/changes`
 - `branch-entry-changes.ts` — `GET /:branch/changes/...entryPath`; `POST /:branch/restore-entry/...entryPath` (`ContentStore.restore`)
+- `merge-conflicts.ts` — `GET /:branch/conflicts[/...entryPath]`, `POST /:branch/resolve-entry/...entryPath`; `clearFieldConflicts`
 - `branch-merge.ts` — `/branch-merge`: merge and clean up
 - `content.ts` — `/content`: read and write; runs entry-link and adopter `validateEntry` validation on write
 - `entries.ts` — `/entries`: entry management; cursor-paginated listing

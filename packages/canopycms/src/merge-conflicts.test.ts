@@ -6,9 +6,14 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
   MergeConflictStore,
+  OpenMergeConflictsError,
+  assertNoOpenConflicts,
   conflictFilesOf,
+  openConflictCount,
   withFoundConflicts,
+  withoutEntryConflict,
   withoutMergesGone,
+  withoutResolvedFields,
   type FoundEntryConflict,
   type MergeConflictEntry,
 } from './merge-conflicts'
@@ -192,5 +197,202 @@ describe('MergeConflictStore', () => {
     await expect(new MergeConflictStore(root).read()).rejects.toThrow(/malformed/)
     await fs.writeFile(file, 'not json')
     await expect(new MergeConflictStore(root).read()).rejects.toThrow(/not JSON/)
+  })
+})
+
+describe('withoutResolvedFields', () => {
+  const entries = withFoundConflicts(
+    {},
+    [fieldsFound({ ancestor: 'o1', base: 'a1', branch: 'b1' }, 'title', 'cta')],
+    M1,
+  )
+
+  it('takes off the fields named by their own merge and key, and keeps the rest', () => {
+    const { entries: left, cleared } = withoutResolvedFields(entries, ID, [
+      { mergeSha: M1, key: 'title' },
+    ])
+    expect(cleared).toEqual([{ mergeSha: M1, key: 'title' }])
+    expect(left[ID]?.fields?.map((f) => f.key)).toEqual(['cta'])
+    expect(entries[ID]?.fields).toHaveLength(2)
+  })
+
+  it('ignores a pair whose merge or key the record no longer holds', () => {
+    const { entries: left, cleared } = withoutResolvedFields(entries, ID, [
+      { mergeSha: M2, key: 'title' },
+      { mergeSha: M1, key: 'summary' },
+    ])
+    expect(cleared).toEqual([])
+    expect(left).toEqual(entries)
+  })
+
+  it('drops the record once no field is left, its previous with it', () => {
+    const renewed = withFoundConflicts(
+      entries,
+      [fieldsFound({ ancestor: 'o2', base: 'a2', branch: 'b2' }, 'title')],
+      M2,
+    )
+    expect(renewed[ID]?.previous).toBeDefined()
+    const { entries: left, cleared } = withoutResolvedFields(renewed, ID, [
+      { mergeSha: M2, key: 'title' },
+      { mergeSha: M1, key: 'cta' },
+    ])
+    expect(cleared).toHaveLength(2)
+    expect(left).toEqual({})
+  })
+
+  it('keeps a partly resolved record’s previous, for a merge that never lands', () => {
+    const renewed = withFoundConflicts(
+      entries,
+      [fieldsFound({ ancestor: 'o2', base: 'a2', branch: 'b2' }, 'title')],
+      M2,
+    )
+    const { entries: left } = withoutResolvedFields(renewed, ID, [{ mergeSha: M1, key: 'cta' }])
+    expect(left[ID]?.previous).toEqual(renewed[ID]?.previous)
+  })
+
+  it('leaves an entry-level record to resolve-entry', () => {
+    const deleted = withFoundConflicts(
+      {},
+      [{ contentId: ID, path: 'p', kind: 'deleted-on-base', sides: {} }],
+      M1,
+    )
+    expect(withoutResolvedFields(deleted, ID, [{ mergeSha: M1, key: 'title' }]).cleared).toEqual([])
+  })
+})
+
+describe('withoutEntryConflict', () => {
+  const deleted = withFoundConflicts(
+    {},
+    [{ contentId: ID, path: 'p', kind: 'deleted-on-base', sides: {} }],
+    M1,
+  )
+
+  it('takes off an entry-level record the named merge last changed', () => {
+    expect(withoutEntryConflict(deleted, ID, M1)).toEqual({})
+  })
+
+  it('refuses one a later merge changed, one that is not there, and a fields record', () => {
+    expect(withoutEntryConflict(deleted, ID, M2)).toBeNull()
+    expect(withoutEntryConflict(deleted, OTHER, M1)).toBeNull()
+    expect(withoutEntryConflict(first(), ID, M1)).toBeNull()
+  })
+})
+
+describe('openConflictCount', () => {
+  it('counts each field, and each entry-level conflict once', () => {
+    const entries = withFoundConflicts(
+      {},
+      [
+        fieldsFound({}, 'title', 'cta'),
+        { contentId: OTHER, path: 'q', kind: 'unreadable', sides: {} },
+      ],
+      M1,
+    )
+    expect(openConflictCount(entries)).toBe(3)
+    expect(openConflictCount({})).toBe(0)
+  })
+})
+
+describe('resolving against the record, concurrently', () => {
+  let root: string
+
+  beforeEach(async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-merge-conflicts-race-'))
+  })
+
+  afterEach(async () => {
+    await fs.rm(root, { recursive: true, force: true })
+  })
+
+  const keys = Array.from({ length: 10 }, (_, i) => `field${i}`)
+  const seed = () =>
+    new MergeConflictStore(root, 0).update(() => ({
+      entries: withFoundConflicts({}, [fieldsFound({}, ...keys)], M1),
+    }))
+  /** A save's clear, as `clearFieldConflicts` makes it, from its own store instance. */
+  const clear = (key: string, mergeSha = M1, at = root) =>
+    new MergeConflictStore(at, 0).update((current) => {
+      if (current === null) return null
+      const next = withoutResolvedFields(current.entries, ID, [{ mergeSha, key }])
+      return next.cleared.length > 0 ? { ...current, entries: next.entries } : null
+    })
+  /** A merge's record write, as the worker makes it. */
+  const merge = (mergeSha: string, ...found: string[]) =>
+    new MergeConflictStore(root, 0).update((current) => ({
+      ...current,
+      entries: withFoundConflicts(current?.entries ?? {}, [fieldsFound({}, ...found)], mergeSha),
+    }))
+  const openKeys = async () =>
+    ((await new MergeConflictStore(root).read())?.entries[ID]?.fields ?? []).map((f) => f.key)
+
+  it('loses no clear when many saves clear fields at once', async () => {
+    await seed()
+    await Promise.all(keys.map((key) => clear(key)))
+    expect(await new MergeConflictStore(root).read()).toMatchObject({ entries: {} })
+  })
+
+  it('loses neither a clear nor a merge that race', async () => {
+    await seed()
+    await Promise.all([clear('field0'), merge(M2, 'summary'), clear('field1')])
+    const open = await openKeys()
+    expect(open).toContain('summary')
+    expect(open).not.toContain('field0')
+    expect(open).not.toContain('field1')
+    expect(open).toHaveLength(keys.length - 2 + 1)
+  })
+
+  it('keeps a field a racing merge found again open, whichever lands first', async () => {
+    for (const order of [0, 1]) {
+      await seed()
+      const steps = [() => clear('field0'), () => merge(M2, 'field0')]
+      await Promise.all(order === 0 ? steps.map((s) => s()) : steps.reverse().map((s) => s()))
+      const record = (await new MergeConflictStore(root).read())?.entries[ID]
+      expect(record?.fields?.find((f) => f.key === 'field0')?.mergeSha).toBe(M2)
+    }
+  })
+
+  it('serializes clears across differently-spelled paths to one branch root', async () => {
+    await seed()
+    await Promise.all(keys.map((key, i) => clear(key, M1, i % 2 ? root : path.join(root, '.'))))
+    expect(await openKeys()).toEqual([])
+  })
+
+  it('leaves no lock artifacts after a clear', async () => {
+    await seed()
+    await clear('field0')
+    const names = await fs.readdir(path.join(root, '.canopy-meta'))
+    expect(names.filter((n) => n.includes('.lock'))).toEqual([])
+  })
+})
+
+describe('assertNoOpenConflicts', () => {
+  let root: string
+
+  beforeEach(async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-merge-conflicts-gate-'))
+  })
+
+  afterEach(async () => {
+    await fs.rm(root, { recursive: true, force: true })
+  })
+
+  it('passes with no record and with an empty one, and counts what is open', async () => {
+    await expect(assertNoOpenConflicts(root)).resolves.toBeUndefined()
+    await new MergeConflictStore(root, 0).update(() => ({ entries: {} }))
+    await expect(assertNoOpenConflicts(root)).resolves.toBeUndefined()
+    await new MergeConflictStore(root, 0).update(() => ({ entries: first() }))
+    await expect(assertNoOpenConflicts(root)).rejects.toMatchObject({
+      name: 'OpenMergeConflictsError',
+      count: 2,
+      message: '2 changes on this branch conflict with newer changes on the site.',
+    })
+  })
+
+  it('refuses a record that does not parse, with no count', async () => {
+    await fs.mkdir(path.join(root, '.canopy-meta'))
+    await fs.writeFile(path.join(root, '.canopy-meta', 'merge-conflicts.json'), 'not json')
+    const err = await assertNoOpenConflicts(root).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(OpenMergeConflictsError)
+    expect(err).toMatchObject({ count: null })
   })
 })

@@ -568,6 +568,8 @@ A submitted or approved PR that GitHub reports `behind`, which needs the up-to-d
 The merge records each conflict in `.canopy-meta/merge-conflicts.json` in the clone, **per ContentId, not file path**, because ContentIds are stable across slug renames and file moves. A record holds the three blob ids compared and the field keys in conflict (src/merge-conflicts.ts). It is written before the merge is published, and a per-cycle reconcile turns back records of merges the branch never got (`reconcileMergeConflicts`).
 The branch's metadata `conflictStatus` (`clean` or `conflicts-detected`) and `conflictFiles` are **derived from that record**: the IDs with a conflict a person has yet to resolve.
 
+**People resolve conflicts through the API** (api/merge-conflicts.ts): a save naming a field conflict clears it inside the save's locks, `resolve-entry` resolves an entry-level one, and Submit and Approve answer 409 while any is open.
+
 ### Rebase Failure Tracking
 
 A conflict is the expected case. A rebase can also fail outright — an unexpected git error, or exhausting the safety limit on rounds — which means the automatic recovery itself broke down and the branch is stuck behind base until someone intervenes. The worker records that as a distinct, persistent `rebaseFailure` marker (a message plus first-seen and last-seen timestamps), separate from `conflictStatus`/`conflictFiles`, and surfaces it only in the admin System Health panel's branch list: a stuck rebase means the worker needs attention, which is not something an editor can act on.

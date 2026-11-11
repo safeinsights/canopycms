@@ -332,7 +332,8 @@ guarantee.
 One global order; nothing holding a lock takes one to its left:
 
 **provisioning → content-write → schema surrogate (`withLock`, then its lockfile) →
-`withLock` content-ID keys and per-file metadata lockfiles (`branch.json`, comments).**
+`withLock` content-ID keys and per-file metadata lockfiles (`branch.json`, comments, merge conflicts).**
+A resolve clears merge conflicts inside the resolving write's locks.
 
 The worker takes the first two try-only, so it never waits on a writer; writers take the
 content-write lock with a bounded wait and never take provisioning inside it. None is
