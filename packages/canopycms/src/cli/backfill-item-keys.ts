@@ -86,9 +86,15 @@ export async function backfillItemKeys(options: BackfillOptions): Promise<Backfi
   )
   for (const collection of collections) {
     const entryTypes = collection.entries ?? []
-    const listed = await listCollectionEntries(root, collection, (file) =>
-      result.malformed.push(path.posix.join(file.collectionPath, file.filename)),
-    )
+    let listed: Awaited<ReturnType<typeof listCollectionEntries>>
+    try {
+      listed = await listCollectionEntries(root, collection, (file) =>
+        result.malformed.push(path.posix.join(file.collectionPath, file.filename)),
+      )
+    } catch (err) {
+      result.failed.push({ path: `${collection.logicalPath}/`, error: getErrorMessage(err) })
+      continue
+    }
     for (const item of listed) {
       const entryType = entryTypes.find((type) => type.name === item.entryType)
       if (!entryType || entryType.unavailable) {
@@ -96,7 +102,7 @@ export async function backfillItemKeys(options: BackfillOptions): Promise<Backfi
         continue
       }
       try {
-        const changed = await backfillEntry(store, item, entryType.schema, check)
+        const changed = await backfillEntry(store, root, item, entryType.schema, check)
         if (changed) result.changed.push({ path: item.physicalPath, ...changed })
       } catch (err) {
         result.failed.push({ path: item.physicalPath, error: getErrorMessage(err) })
@@ -115,13 +121,14 @@ export async function backfillItemKeys(options: BackfillOptions): Promise<Backfi
 /** The entry's counts when its items lack keys, after writing it unless `check`; else null. */
 async function backfillEntry(
   store: ContentStore,
+  root: string,
   item: Awaited<ReturnType<typeof listCollectionEntries>>[number],
   fields: readonly FieldConfig[],
   check: boolean,
 ): Promise<Omit<BackfillFileResult, 'path'> | null> {
   const doc = await store.read(item.collectionPath, item.slug, { resolveReferences: false })
   // A slug two entry types share in one collection addresses only one of their files.
-  if (doc.relativePath !== item.physicalPath) {
+  if (doc.absolutePath !== path.resolve(root, item.physicalPath)) {
     throw new Error(
       `Another entry in its collection has the slug "${item.slug}", so neither a save nor the ` +
         'backfill can address this file. Rename one of them.',
@@ -274,7 +281,7 @@ export async function backfillItemKeysCLI(options: BackfillItemKeysCLIOptions): 
   } catch (err) {
     console.error(
       `Could not finish: ${getErrorMessage(err)}` +
-        (check ? '' : '\nFiles keyed before the error stay written; run the backfill again.'),
+        (check ? '' : '\nFiles keyed before the error stay written; finish with --force.'),
     )
     return BACKFILL_EXIT_CODES.loadError
   } finally {
@@ -365,9 +372,7 @@ function printResult(result: BackfillResult, check: boolean): void {
     )
   }
   if (result.failed.length > 0) {
-    console.error(
-      `\n  Could not ${check ? 'check' : 'key'} ${plural(result.failed.length, 'file')}:`,
-    )
+    console.error(`\n  Could not ${check ? 'check' : 'key'}:`)
     for (const file of result.failed) console.error(`    ${file.path}: ${file.error}`)
   }
 

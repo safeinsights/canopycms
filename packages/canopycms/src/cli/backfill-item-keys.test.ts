@@ -20,13 +20,13 @@ import { mockConsole, type MockConsole } from '../test-utils/console-spy'
 import { CANOPY_META_DIR } from '../utils/git'
 import { backfillItemKeys, backfillItemKeysCLI, BACKFILL_EXIT_CODES } from './backfill-item-keys'
 
-const listing = vi.hoisted(() => ({ fail: false }))
+const listing = vi.hoisted(() => ({ failCollection: '' }))
 vi.mock('../content-listing', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../content-listing')>()
   return {
     ...actual,
     listCollectionEntries: (...args: Parameters<typeof actual.listCollectionEntries>) =>
-      listing.fail
+      args[1].name === listing.failCollection
         ? Promise.reject(new Error('EIO: i/o error, scandir'))
         : actual.listCollectionEntries(...args),
   }
@@ -717,13 +717,16 @@ describe('backfillItemKeysCLI', () => {
     expect(lines.at(-2)).toBe("  Every other entry's items already have their keys.")
   })
 
-  it('exits 2, not 1, when the listing fails mid-run', async () => {
-    listing.fail = true
+  it('keys the other collections when one cannot be listed, and exits 2', async () => {
+    await commitAll()
+    listing.failCollection = 'people'
     try {
-      expect(await cli({ check: true })).toBe(BACKFILL_EXIT_CODES.loadError)
+      expect(await cli()).toBe(BACKFILL_EXIT_CODES.loadError)
     } finally {
-      listing.fail = false
+      listing.failCollection = ''
     }
-    expect(output.all().error.join('\n')).toContain('Could not finish: EIO')
+    expect(output.all().error.join('\n')).toContain('content/people/: EIO')
+    expect(logged()).toContain(rel(FILES.json))
+    expect(await fs.readFile(docPath(root, FILES.json), 'utf8')).toBe(JSON_KEYED)
   })
 })
