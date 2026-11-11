@@ -227,7 +227,7 @@ export interface LastBaseUpdate {
   outcome: BaseUpdateOutcome
   /** The base commit the branch now contains; absent when it failed before reading one. */
   baseSha?: string
-  /** For `conflicts`: how many entries kept this branch's version. */
+  /** For `conflicts`: how many entries the merge left a conflict in for a person. */
   keptEntries?: number
 }
 

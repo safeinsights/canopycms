@@ -5,12 +5,8 @@
  * `rebaseActiveBranches()` skips branches whose working tree is dirty, but the
  * check is a plain TOCTOU: once `git rebase` has started (fetch, replay and
  * rounds of awaited git subprocesses on EFS), a content write landing in that
- * window is destroyed two ways --
- *
- *  - a replayed commit, or the merge the worker falls back to, writes over the
- *    just-saved working-tree content, after which the sync SUCCEEDS and nothing
- *    logs a failure at all; and
- *  - `git rebase --abort` hard-resets the tree, discarding the save.
+ * window makes the next replayed commit fail, and the `git rebase --abort` that
+ * follows hard-resets the tree, discarding the save.
  *
  * Lambda's `ContentStore` and the worker share one EFS working tree and the
  * content files had only an in-process mutex, so nothing serialized them: the

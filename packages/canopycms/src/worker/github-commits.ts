@@ -566,7 +566,8 @@ export async function mergeIntoBranch(
     }
     await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
   }
-  // Published and not yet in the clone: `catchUpWithPublished` brings it in next cycle.
+  // Published and not yet in the clone: the next cycle brings it in, by `bringInGitHubCommits` or
+  // `catchUpWithPublished`.
   if (lockLost()) return { kind: 'wait' }
   await moveClone(git, branchPath, sha)
   // Landed: a failure here leaves the remaps and the stamp for the next cycle's reconcile.

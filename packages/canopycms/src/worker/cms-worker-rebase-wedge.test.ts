@@ -7,10 +7,9 @@
  * healthy. Editors meanwhile read -- and could save over -- conflict-marker
  * content. Recovery meant an operator running `git rebase --abort` on EFS.
  *
- *  1. A modify/delete conflict. `git checkout --theirs` on a path whose
- *     "their" side is a deletion exits non-zero and simple-git throws. That
- *     throw originated inside the round loop's OWN catch, so it escaped the
- *     round loop entirely and skipped both `rebase --abort` sites.
+ *  1. A modify/delete conflict, which a per-file resolution inside the round
+ *     loop's own catch can turn into a throw past both `rebase --abort` sites.
+ *     The merge decides it, and these tests pin the outcome.
  *
  *  2. A rebase interrupted by worker termination -- SIGKILL, OOM on the 512MB
  *     t4g.nano, spot interruption, or the ASG rolling the instance, which

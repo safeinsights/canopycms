@@ -95,7 +95,9 @@ export interface MergeConflictState {
   remaps?: PendingRemap[]
   /**
    * The merge this worker is landing: written before it reaches `remote.git`, cleared once the
-   * clone holds it. The one commit a clone left behind its own published merge may catch up with.
+   * clone holds it, or once neither the clone nor `remote.git` does; a clone whose ref can't be read
+   * keeps it. The one commit a clone left
+   * behind its own published merge may catch up with.
    */
   landing?: Landing
 }

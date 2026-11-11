@@ -87,6 +87,7 @@ Content, git and branch files have their own sections below; the rest:
 - `system-users.ts` — dependency-free ids CanopyCMS acts as: `SYSTEM_USER_ID`, `CONTENT_READER_USER_ID`, `isSystemUserId`
 - `resolve-canopy-user.ts` — shared authenticate-then-merge-internal-groups pipeline for both request entry points
 - `comment-store.ts` — comment persistence; field threads follow `item-keys.ts`' `_key`; see [ARCHITECTURE.md](ARCHITECTURE.md#comments--collaboration)
+- `merge-conflicts.ts` — unresolved field-merge conflicts
 - `entry-schema.ts` — `defineEntrySchema`, `TypeFromEntrySchema`, block templates, `buildResolvedReference`, `buildRestrictedReference`, `buildMissingReference`, `isResolvedReference`
 - `entry-schema-registry.ts` — registry for reusable field definitions; validates `isTitle` and `isBody`
 - `reference-resolver.ts` — `loadReferenceOptions`, scoped by collections and entry types
@@ -248,6 +249,7 @@ direction, and every invariant.
 - `provisioned-workspace.ts` — `holdProvisionedWorkspace`: the zero-retry provisioning-lock hold around base refresh and each rebase
 - `rebase.ts` — the rebase loop, `runRebaseCycle` (requested branches first), `answerBaseUpdate`, `pollMergeState`; `requestBranchSync` wakes `scheduleLoop`
 - `github-commits.ts`, `branch-merge.ts`: GitHub-side commits
+- `field-merge.ts` — `resolveFieldMerge`
 - `github-gateway.ts` — GitHub access; `branch-policy.ts`, `gateway-egress.ts`, `github-gateway-http.ts` its policy, scrubbing, socket
 - `github-mirror.ts`, `github-mirror-upkeep.ts`, `shared-repo-git.ts` — isolated git
 - `github-transfer.ts`, `bundle-header.ts`, `git-process.ts` — bundle transfer; `self-checks.ts` — boot checks
@@ -257,8 +259,8 @@ direction, and every invariant.
 - `log.ts` — `workerLog` / `workerLogWarn` / `workerLogError`, timestamped replacements for `console.*`
 
 Task actions: `push-branch`, `push-and-create-pr`, `push-and-update-pr`,
-`push-and-create-or-update-pr`, `convert-to-draft`, `close-pr`, `delete-remote-branch`. Rebase
-behaviour and conflict tracking are in
+`push-and-create-or-update-pr`, `convert-to-draft`, `close-pr`, `delete-remote-branch`. Base
+merges and conflicts:
 [ARCHITECTURE.md](ARCHITECTURE.md#branch-synchronization-and-conflict-detection).
 
 ## Task Queue Module
@@ -669,8 +671,8 @@ Admin UI, in `editor/admin/`, gated only by `Editor.tsx`:
 - `UnpublishedAtMergeAlert.tsx` — branches merged unfinished
 - `useSystemHealth.tsx` — loads on open, polls every 30 s, exposes the actions
 
-Conflict notices (`FormRenderer`'s `conflictNotice`, `EntryNavCollection.conflictNotice`) are
-computed in `Editor.tsx` from `currentBranch.conflictFiles`.
+Conflict notices (`FormRenderer`'s `conflictNotice`, `EntryNavCollection.conflictNotice`) come
+from `currentBranch.conflictFiles` in `Editor.tsx`.
 
 Design rationale: [ARCHITECTURE.md](ARCHITECTURE.md#editor-architecture).
 

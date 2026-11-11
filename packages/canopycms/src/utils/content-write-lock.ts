@@ -4,9 +4,9 @@
  *
  * Production runs a Lambda (API) and an EC2 worker over one EFS filesystem, so `ContentStore`'s
  * in-process mutex (`utils/async-mutex`) does not cover the worker's rebase (`rebaseOneBranch` in
- * worker/rebase.ts) rewriting the same tree. A write landing after `git rebase` started is
- * destroyed either way -- `git checkout --theirs` overwrites it and the rebase then SUCCEEDS
- * silently, or `git rebase --abort` hard-resets the tree -- and the editor already got its 200.
+ * worker/rebase.ts) rewriting the same tree. A write landing after `git rebase` started makes the
+ * next replayed commit fail, and the `git rebase --abort` that follows hard-resets the tree,
+ * discarding it -- and the editor already got its 200.
  *
  * **Asymmetric by design.** The worker retries every branch on its next sync cycle (~5 minutes)
  * while the editor is a person waiting on a save, so the worker yields and the writer waits:

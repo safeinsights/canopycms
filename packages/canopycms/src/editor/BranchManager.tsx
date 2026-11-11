@@ -89,7 +89,7 @@ export interface BranchSummary {
   syncFailureReason?: string
   /** Whether this branch has unresolved merge conflicts with the base branch */
   conflictStatus?: ConflictStatus
-  /** ContentIds of entries where --theirs was applied during rebase; cleared on clean rebase */
+  /** ContentIds of entries with a merge conflict a person has yet to resolve */
   conflictFiles?: string[]
   /** What is stuck and needs a person (api/branch.ts). */
   hold?: BranchHold

@@ -4,7 +4,9 @@
  * row of the field-merge plan's conflict-case table at the worker layer (W), named by its number.
  *
  * Rows: 1, 4, 6, 7, 9, 14, 17, 18, 23, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41.
- * Row 42 (branches in review) belongs to the review-branch merge, which ships separately.
+ * Tests that name no row cover what review found beyond the table. Row 42 (a branch in review
+ * merging when nothing clashes) ships separately: here a branch in review takes the base in only as
+ * git's own merge with nothing to decide (cms-worker-github-commits.test.ts).
  */
 
 import fs from 'node:fs/promises'
@@ -981,7 +983,7 @@ describe('the field merge in the rebase loop', () => {
     expect(JSON.parse((await repo.file(FILE)) ?? '').title).toBe('Mine')
   })
 
-  it('row 41: a crash between recording a merge and moving the clone is reconciled next cycle', async () => {
+  it('row 41: a crash between recording a merge and moving the clone leaves no stale record after the next merge', async () => {
     const ID = 'aboutAbc1234'
     const FILE = entry('page', 'home', ID, 'json')
     const repo = await createRepo(tmpDir, { [FILE]: json({ title: 'Home' }) })

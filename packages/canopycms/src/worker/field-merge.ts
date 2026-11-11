@@ -543,8 +543,10 @@ class Resolver {
   }
 
   /**
-   * An entry both sides changed. A version that can't be merged field by field leaves git's merge
-   * where git merged it, and the branch's file where git could not.
+   * An entry both sides changed. A version that can't be read or doesn't match the others' format
+   * leaves git's merge where git merged it, and the branch's file where git could not. An entry
+   * type changed on one side, a merge that throws, or merged text that doesn't read back keeps the
+   * branch's file, an entry-level conflict, whatever git made of it.
    */
   async entry(
     unit: Unit,

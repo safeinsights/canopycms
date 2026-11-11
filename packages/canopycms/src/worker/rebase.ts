@@ -301,13 +301,16 @@ interface RebaseRoundsResult {
 /**
  * Drive `git rebase` to a finished state, stopping at the first conflict, and
  * report what happened. A conflict is never resolved here: settling one by rule
- * in every round's replay is what silently reverted base's changes, and the
- * merge the caller falls back to decides each value against the fork point.
+ * in a round's replay reverts base's change, and the merge the caller falls back
+ * to decides each value against the fork point.
  *
- * ABORT OWNERSHIP is split across FOUR sites, none redundant; "the caller owns
- * the abort" would be wrong in a way that invites deleting a live one:
- * - the **unexpected-error** and **conflict** exits abort HERE, before breaking,
- *   so the caller's `!completed` abort is a caught no-op for those paths;
+ * ABORT OWNERSHIP is split across several sites, none redundant; "the caller
+ * owns the abort" would be wrong in a way that invites deleting a live one:
+ * - the **unexpected-error** exit aborts HERE, before breaking, so the caller's
+ *   `!completed` abort is a caught no-op for that path;
+ * - the **conflict** exit aborts HERE too, and the caller's `conflicted` branch,
+ *   which returns before `!completed`, calls `abortRebase` again: a no-op abort
+ *   that tells the caches the replay moved the tree back;
  * - the **lock-compromised** exit leaves the rebase in progress and is aborted
  *   by `rebaseOneBranch`'s own `lockCompromised() && !completed` branch,
  *   which returns `skippedLocked` before the `!completed` block below it is
@@ -502,7 +505,7 @@ interface BaseUpdateProbe {
   baseSha?: string
   /** It already contained that commit. */
   upToDate?: boolean
-  /** Entries that kept the branch's version as it took the base in. */
+  /** Entries the merge that took the base in left a conflict in for a person. */
   keptEntries?: number
 }
 
@@ -1026,8 +1029,9 @@ async function recordPullRequestHold(
  * is work still on its way, and only for the base GitHub measured against: a pull request someone
  * retargeted would gain another branch's commits under its approval. A branch with a failed sync
  * is left for its next submit or a retry of the task, as a push here would clear that failure with
- * the PR still stale. A conflict leaves the branch as it is; withdrawing it brings the rebase
- * loop's rule into play, where an editor can see the result. A failure goes in the cycle's summary
+ * the PR still stale. Only git's own merge with nothing to decide lands (`mergeIntoBranch`'s
+ * `stopOnConflict`); any other leaves the branch as it is, and withdrawing it lets the merge for a
+ * branch being edited take the base in, where an editor can see the result. A failure goes in the cycle's summary
  * only: the step before this one clears `rebaseFailure` each cycle, so recording it would reset its
  * age every time.
  * Never throws.
@@ -1242,10 +1246,9 @@ async function rebaseOneBranch(
     // [SYNC-C1] Take the branch's cross-host content-write lock BEFORE the
     // dirty check, and hold it for the whole rebase or merge. The dirty check
     // alone is check-then-act, and its residual window spans fetch, replay and
-    // the merge's awaited git subprocesses on EFS. A save landing in there is
-    // destroyed two ways: a replayed commit or the merge's fast-forward writes
-    // over the just-saved file, and `rebase --abort` hard-resets the tree. The
-    // editor already got its 200 either way.
+    // the merge's awaited git subprocesses on EFS. A save landing in there makes
+    // the next replayed commit fail, and the `rebase --abort` that follows
+    // hard-resets the tree, discarding it. The editor already got its 200.
     //
     // Zero-retry acquisition, deliberately: on contention this branch is
     // skipped and retried next sync cycle (~5 min), the same principle as the
@@ -1520,14 +1523,14 @@ async function rebaseOneBranch(
       /**
        * The base taken in by a merge (github-commits.ts), which decides each value against the fork
        * point and leaves what both sides changed differently for a person, rather than a rebase,
-       * whose rounds can only settle a conflict by rule. A clone with no branch checked out cannot
-       * name the ref the merge publishes, so it stays behind.
+       * whose rounds can only settle a conflict by rule. A clone with no branch checked out, or no
+       * `branch.json`, cannot name the ref the merge publishes, so it stays behind.
        */
       const takeBaseByMerge = async (): Promise<BranchRebaseOutcome> => {
         if (commitArgs === null) {
           const reason =
-            `the base conflicts with this clone's work, and the clone has no branch checked out ` +
-            `to merge it into`
+            `the base conflicts with this clone's work, and the clone has no branch checked out, ` +
+            `or no branch.json, to merge it into`
           workerLogWarn(`  Skipping ${branchDir}: ${reason}`)
           await recordRebaseFailure(ctx, branchPath, branchDir, reason)
           return { kind: 'failed', error: reason }

@@ -75,7 +75,7 @@ via `ctx.github()`, and `github-auth`, `github-mirror` and `shared-repo-git` sit
   `isRebaseInProgress` block.
 - Rebase only where `planMerge` finds nothing to decide, else merge, recording conflicts first: `rebase.ts` `takeBaseByMerge`, `github-commits.ts` `recordMerge`.
 - What is never merged: `github-commits.ts`, `bringInGitHubCommits`.
-- ABORT OWNERSHIP is split across four sites, none redundant: `rebase.ts`, `runRebaseRounds`'s
+- ABORT OWNERSHIP is split across several sites, none redundant: `rebase.ts`, `runRebaseRounds`'s
   doc comment.
 - `isLockCompromised` is a CALLBACK because [SYNC-C1] the lock can be lost between rounds: the
   same comment.
