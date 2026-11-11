@@ -1739,7 +1739,11 @@ const EditorContent: React.FC<EditorProps> = ({
     standIn: () => null,
   })
   const showChangesRef = useRef<HTMLButtonElement>(null)
+  // A confirm never opens over the drawer, nor while it closes: its focus return would take
+  // focus out of the confirm. So "Delete entry" closes the drawer, and its exit opens the confirm.
+  const deleteAfterChangesRef = useRef<LogicalPath>()
   useEffect(() => {
+    deleteAfterChangesRef.current = undefined
     setChangesOpen(false)
     setChangesShown(false)
   }, [branchNameState])
@@ -1903,6 +1907,14 @@ const EditorContent: React.FC<EditorProps> = ({
           }
           const entries = await refreshEntries(branch).catch(() => undefined)
           void branchChanges.reload()
+          if (answer?.ok && !entries) {
+            notifications.show({
+              message: `"${title}" is restored. Refresh the page to see it in the "Content" panel.`,
+              color: 'yellow',
+            })
+            setChangesOpen(false)
+            return undefined
+          }
           // Unanswered, the entry list settles it: this entry, by id, listed again.
           if (
             !answer?.ok &&
@@ -1924,10 +1936,8 @@ const EditorContent: React.FC<EditorProps> = ({
   const changesDeleteEntry =
     changesSubjectOpen && changesSubject?.status === 'added'
       ? () => {
-          // A confirm never opens over the drawer. Its opener goes with the drawer, so the confirm
-          // returns focus as one opened from the entry menu does.
+          deleteAfterChangesRef.current = changesSubject.logicalPath as LogicalPath
           setChangesOpen(false)
-          handleDeleteEntry(changesSubject.logicalPath as LogicalPath, true)
         }
       : undefined
   const runSaveAll = () => {
@@ -2833,7 +2843,12 @@ const EditorContent: React.FC<EditorProps> = ({
                 <LazyEntryChangesDrawer
                   opened={changesOpen}
                   onClose={() => setChangesOpen(false)}
-                  onExited={() => setChangesShown(false)}
+                  onExited={() => {
+                    setChangesShown(false)
+                    const deleting = deleteAfterChangesRef.current
+                    deleteAfterChangesRef.current = undefined
+                    if (deleting) handleDeleteEntry(deleting)
+                  }}
                   returnFocusTo={changesReturnTarget}
                   base={branchChanges.data?.base ?? currentBranch?.baseBranch ?? 'the base branch'}
                   subject={{

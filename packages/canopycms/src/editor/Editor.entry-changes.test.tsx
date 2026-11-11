@@ -388,7 +388,11 @@ describe('Show changes', () => {
       expect(screen.queryByRole('dialog', { name: 'Changes to Hello' })).toBeNull(),
     )
     const confirm = await screen.findByRole('dialog', { name: 'Delete entry' })
-    // Cancelled, focus goes to the entry menu's trigger, the drawer's button being gone.
+    // Focus stays in the confirm once the drawer has gone.
+    await waitFor(() => expect(confirm.contains(document.activeElement)).toBe(true))
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(confirm.contains(document.activeElement)).toBe(true)
+    // Cancelled, focus goes back to the "Show changes" button.
     await userEvent.keyboard('{Escape}')
     await waitFor(() => expect(confirm.isConnected).toBe(false))
     await waitFor(() =>
@@ -400,7 +404,7 @@ describe('Show changes', () => {
     /** The API with `gone` deleted on the branch, answering its restore with `restored`. */
     const stubDeleted = (
       restored: { status: number; body: unknown } | 'timeout' | 'lost',
-      options: { noAdd?: boolean; listedAs?: string } = {},
+      options: { noAdd?: boolean; listedAs?: string; listFails?: boolean } = {},
     ) => {
       const fetch = stubApi([])
       const answered = fetch.getMockImplementation()!
@@ -451,6 +455,9 @@ describe('Show changes', () => {
               headers: { 'Content-Type': 'application/json' },
             }),
           )
+        }
+        if (path.includes('/entries') && back && options.listFails) {
+          return Promise.resolve(new Response('{}', { status: 500 }))
         }
         if (path.includes('/entries') && options.noAdd) {
           return answered(input, init).then(async (res) => {
@@ -557,6 +564,28 @@ describe('Show changes', () => {
       expect(
         (await within(dialog).findByTestId('entry-changes-restore-refused')).textContent,
       ).toContain('may have gone through')
+    })
+
+    it('takes an answered restore as done when the list can’t be refreshed', async () => {
+      stubDeleted(
+        {
+          status: 200,
+          body: {
+            ok: true,
+            status: 200,
+            data: { logicalPath: 'content/posts/gone', contentId: 'zzz999ZZZ999' },
+          },
+        },
+        { listFails: true },
+      )
+      const dialog = await openDeleted()
+      await userEvent.click(await within(dialog).findByRole('button', { name: 'Restore entry' }))
+      await waitFor(() => expect(dialog.isConnected).toBe(false))
+      expect(
+        await screen.findByText(
+          '"Gone" is restored. Refresh the page to see it in the "Content" panel.',
+        ),
+      ).toBeTruthy()
     })
 
     it('treats an unanswered restore as done once the entry is listed', async () => {

@@ -123,34 +123,38 @@ describe('EntryChangesDrawer undo', () => {
     expect(within(title).getByTestId('entry-change-undone').textContent).toBe('')
   })
 
-  it('redoes to the unsaved edit the undo replaced, not the saved value', async () => {
-    const values: Array<Record<string, unknown>> = []
-    render(<Harness initial={{ ...after, title: 'Typed' }} onValue={(v) => values.push(v)} />)
-    const button = within(await card('Title')).getByRole('button', { name: /^Undo change/ })
-    await userEvent.click(button)
-    expect(values.at(-1)?.title).toBe('Hello')
-    await userEvent.click(button)
-    expect(values.at(-1)?.title).toBe('Typed')
-  })
-
-  it('redoes all to the unsaved edits "Undo all" replaced', async () => {
-    const values: Array<Record<string, unknown>> = []
-    render(<Harness initial={{ ...after, title: 'Typed' }} onValue={(v) => values.push(v)} />)
+  it('keeps undo from a change with unsaved edits, saying why', async () => {
+    const onValue = vi.fn()
+    render(<Harness initial={{ ...after, title: 'Typed' }} onValue={onValue} />)
+    const title = within(await card('Title')).getByRole('button', { name: /^Undo change/ })
+    expect(title.getAttribute('aria-disabled')).toBe('true')
+    await userEvent.hover(title)
+    expect((await screen.findByRole('tooltip')).textContent).toBe(
+      'This change has unsaved edits. Save them, or use "Discard changes", to undo it.',
+    )
+    await userEvent.click(title)
     const all = within(await dialog()).getByTestId('entry-changes-undo-all')
+    expect(all.getAttribute('aria-disabled')).toBe('true')
     await userEvent.click(all)
-    expect(values.at(-1)).toEqual(before)
-    await userEvent.click(all)
-    expect(values.at(-1)).toEqual({ ...after, title: 'Typed' })
+    expect(onValue).not.toHaveBeenCalled()
+    // A change the edit didn't touch still undoes.
+    const summary = within(await card('Summary')).getByRole('button', { name: /^Undo change/ })
+    expect(summary.getAttribute('aria-disabled')).toBeNull()
   })
 
-  it('announces an undo once, from one status region, not from the card', async () => {
+  it('announces each undo once, from one status region, not from the card', async () => {
     render(<Harness />)
+    const region = within(await dialog()).getByTestId('entry-changes-announcement')
     const title = await card('Title')
     await userEvent.click(within(title).getByRole('button', { name: 'Undo change to Title' }))
-    expect(within(await dialog()).getByTestId('entry-changes-announcement').textContent).toBe(
-      'Undone in the form. Save to keep it.',
-    )
+    expect(region.textContent).toBe('Undone: Title. Save to keep it.')
     expect(within(title).queryByRole('status')).toBeNull()
+    const first = region.firstElementChild
+    await userEvent.click(within(title).getByRole('button', { name: 'Redo change to Title' }))
+    await userEvent.click(within(title).getByRole('button', { name: 'Undo change to Title' }))
+    // The same words again, in a new node, so they are read again.
+    expect(region.textContent).toBe('Undone: Title. Save to keep it.')
+    expect(region.firstElementChild).not.toBe(first)
   })
 
   it('takes out an added item and says where its threads went', async () => {

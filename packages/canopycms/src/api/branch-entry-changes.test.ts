@@ -668,7 +668,7 @@ describe('POST /:branch/restore-entry/...entryPath', () => {
             reads++
             const head = await super.headSha()
             // The steady read's checks see one HEAD; the write's check sees another.
-            return reads > 3 ? `${head?.slice(0, -1)}0` : head
+            return reads > 3 ? `${head}-moved` : head
           }
         })({ repoPath, baseBranch: 'main', remote: 'origin' }),
     })
@@ -702,6 +702,27 @@ describe('POST /:branch/restore-entry/...entryPath', () => {
       await restore(createCtx({ currentSchema: withOrder }), 'content/blog/old-news', ID.old),
     ).toMatchObject({ ok: true, data: { contentId: ID.old } })
     expect(JSON.parse(await read(meta)).order).toEqual([ID.old, ID.hello])
+  })
+
+  it('answers 503 when git fails at the pre-write check, writing nothing', async () => {
+    const consoleSpy = mockConsole()
+    onTestFinished(() => consoleSpy.restore())
+    await fs.rm(path.join(branchRoot, files.old))
+    let reads = 0
+    const ctx = createCtx({
+      git: (repoPath) =>
+        new (class extends GitManager {
+          async headSha() {
+            if (++reads > 3) throw new Error('git broke')
+            return super.headSha()
+          }
+        })({ repoPath, baseBranch: 'main', remote: 'origin' }),
+    })
+    expect(await restore(ctx, 'content/blog/old-news', ID.old)).toMatchObject({
+      ok: false,
+      status: 503,
+    })
+    await expect(fs.access(path.join(branchRoot, files.old))).rejects.toThrow()
   })
 
   it('refuses with 403 where the user can’t edit, writing nothing', async () => {

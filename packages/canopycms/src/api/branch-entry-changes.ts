@@ -434,6 +434,13 @@ const orderAt = async (
   }
 }
 
+/** Git failing in a restore's pre-write HEAD check, answered as a failed read is. */
+class HeadReadError extends Error {
+  constructor(readonly failure: unknown) {
+    super("Couldn't read the branch's HEAD")
+  }
+}
+
 /** The base file a restore writes back, with what it was read against. */
 interface BaseEntry {
   raw: string
@@ -550,13 +557,20 @@ const restoreEntryHandler = async (
         // The bytes are the merge base's as HEAD stood at the read; a sync since may have
         // updated the entry upstream, so a moved HEAD refuses rather than reverting that.
         beforeWrite: async () => {
-          if ((await isRebaseInProgress(branchRoot)) || (await git.headSha()) !== entry.head) {
-            throw new BranchSyncingError(SYNCING_ERROR(base))
+          let moved: boolean
+          try {
+            moved = (await isRebaseInProgress(branchRoot)) || (await git.headSha()) !== entry.head
+          } catch (err) {
+            throw new HeadReadError(err)
           }
+          if (moved) throw new BranchSyncingError(SYNCING_ERROR(base))
         },
       },
     )
   } catch (err) {
+    if (err instanceof HeadReadError) {
+      return branchReadFailedResponse(branchContext.branch.name, base, err.failure)
+    }
     if (err instanceof BranchSyncingError) {
       return {
         ok: false,
