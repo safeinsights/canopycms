@@ -1,9 +1,10 @@
 /**
  * Which item of the ancestor's list each item of one side's list is, for the field merge. A side's
  * item is the ancestor's item when it carries a key the ancestor knows; otherwise it is ALIGNED to
- * the ancestor the way diff3 aligns lines: equal content first, then, inside a gap between two
- * matches, item by item by position when the gap holds as many unmatched items on both sides (an
- * item edited in place). Anything left is new on that side.
+ * the ancestor the way diff3 aligns lines: equal content in order, then equal content out of
+ * order, then, inside a gap between two matches, by the values it kept, and last by place.
+ * Anything left is new on that side. Aligning items no key names is the engine's one heuristic:
+ * see `merge/AGENTS.md`.
  */
 
 import { ITEM_KEY, isItemKey, itemKeysAsRead } from '../item-keys'
@@ -36,9 +37,8 @@ const withoutOwnKey = (item: Record<string, unknown>): Record<string, unknown> =
   Object.fromEntries(Object.entries(item).filter(([k]) => k !== ITEM_KEY))
 
 /**
- * True when `key` is a hash of `item`'s own content, as a read or a key backfill writes it down
- * (`-2` and on for a repeated item), so it says nothing about which item this is. Any other key
- * was minted for the item when it was added.
+ * True when `key` is a hash of `item`'s own content (`-2` and on for a repeat), as a read or a key
+ * backfill writes it, so it says nothing about which item this is; any other key was minted.
  */
 const isContentKey = (item: Record<string, unknown>, key: string): boolean => {
   const content = withoutOwnKey(item)
@@ -81,7 +81,7 @@ const ancestorAliases = (
 export interface Alignment {
   /** Per item: the ancestor item's key, or for an item new on this side an identity of its own. */
   ids: string[]
-  /** Items matched by their place alone, sharing no value with the ancestor item. */
+  /** Items matched by their place alone, sharing no value with any ancestor item left in the gap. */
   byPlace: Set<number>
 }
 
@@ -91,11 +91,12 @@ export interface Alignment {
  * An item with a key of its own is named by the key a read gives it: that key the first time the
  * list holds it, else a hash of its content. A name the ancestor's read gave, or another key a
  * read could have given an ancestor item ({@link ancestorAliases}), is that ancestor item; any
- * other key marks the item new when it was minted for it or the ancestor knows it (a copy), and so
- * does a read key the ancestor gave an item of another list (`inEntry`): that item moved here.
+ * other key marks the item new when it was minted for it, the ancestor knows it (a copy), or the
+ * ancestor's read gave it to an item of another list (`inEntry`): that item moved here.
  *
  * The rest align as diff3 aligns lines: equal content in order, then equal content out of order
- * (a move), then, in each gap between two matches, by shared values ({@link pairInGap}).
+ * (a move), then, in each gap between two matches, by shared values and last by place
+ * ({@link pairInGap}).
  * Undefined when the diff ran out of time.
  */
 export function alignToAncestor(
@@ -191,7 +192,7 @@ export function alignToAncestor(
   return { ids: ids.map((id, j) => id ?? newIdentity(side, j)), byPlace }
 }
 
-/** Above this many shared values counted in one gap, its items pair by place alone. */
+/** Above this many value matches counted in one gap, its items pair by place or not at all. */
 const MAX_SCORE_STEPS = 1_000_000
 
 /** `item`'s content members: a block's data inside its `value`, never its key or template. */
@@ -205,9 +206,10 @@ const contentMembers = (item: unknown): Array<[string, unknown]> => {
 
 /**
  * Pairs a gap's side items with its ancestor items: each with the one holding most of its values,
- * the earliest on a tie. When as many are left on both sides, keyless ones pair in order by place
- * (`true`), except with an ancestor item carrying a key minted for it; the rest are adds and
- * removes, so a delete and an add in one place never read as an edit.
+ * the earliest on a tie. When as many are left on both sides, they pair in order by place (`true`):
+ * only keyless items that did not come from another list (`movedHere`), and only with ancestor
+ * items not carrying a key minted for them. The rest are adds and removes, so a delete and an add
+ * in one place never read as an edit.
  */
 function pairInGap(
   sideGap: readonly number[],
@@ -258,7 +260,7 @@ function pairInGap(
   return pairs
 }
 
-/** A gap too large to score: as many items on both sides pair in order by place, else none. */
+/** A gap too large to score: pairs as `pairInGap`'s by-place step does, from the start. */
 function byPlace(
   sideGap: readonly number[],
   ancestorGap: readonly number[],

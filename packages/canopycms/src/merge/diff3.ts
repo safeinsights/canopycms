@@ -2,7 +2,7 @@
  * diff3 over sequences of strings: where the base and the branch each changed the ancestor, as
  * regions that are either one version's run of elements or a run both sides changed. Built on
  * jsdiff's Myers diff, which stays fast on long input with many equal elements (blank lines, a
- * repeated tag), where an LCS by candidate lists grows with the cube of the length.
+ * repeated tag), where an LCS by candidate lists grows with the cube of the length on such input.
  */
 
 import { diffArrays } from 'diff'

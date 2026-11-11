@@ -36,9 +36,9 @@ const sameLines = (x: readonly string[], y: readonly string[]): boolean =>
 
 /**
  * `base` and `branch`, both changed from `ancestor`, merged line by line. A line break at the very
- * end, the only line a serializer adds or drops by itself, is merged on its own and never makes a
- * conflict: the side that changed it wins, or the branch in a text with conflicts. Undefined when the texts are too far apart to diff in
- * time: the caller then treats each version as one whole.
+ * end, which a serializer may add or drop by itself, is merged on its own and never makes a
+ * conflict: the side that changed it wins, or the branch in a text with conflicts. Undefined when
+ * the texts are too far apart to diff in time: the caller then treats each version as one whole.
  */
 export function mergeText(
   ancestor: string,

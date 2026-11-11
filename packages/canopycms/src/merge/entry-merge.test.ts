@@ -1,8 +1,10 @@
 /**
- * The field merge's conflict cases, one named test per row of the plan's conflict-case table at
- * the engine layer: rows 1-16, 19-26, 32, 34 and 36 here; rows 17, 18, 27 and 28 are the golden
- * fixtures in `entry-merge.golden.test.ts`. Every case also checks the identities
- * `merge(O, A, O) ≡ A` and `merge(O, O, B) ≡ B`, and that no conflict marker reaches the result.
+ * The field merge's conflict cases, at least one named test per row of the plan's conflict-case
+ * table at the engine layer: rows 1-16, 19-26, 32, 34 and 36 here; rows 17, 18, 27 and 28 are the
+ * golden fixtures in `entry-merge.golden.test.ts`. Every case checks that no conflict marker
+ * reaches the result. Cases built with `merge` also check the identities `merge(O, A, O) ≡ A` and
+ * `merge(O, O, B) ≡ B`; those built with `run` skip them, where a side drops keys the merge
+ * carries or the case needs its own schema.
  */
 
 import { describe, expect, it } from 'vitest'

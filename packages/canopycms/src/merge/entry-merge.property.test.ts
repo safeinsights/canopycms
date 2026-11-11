@@ -3,7 +3,8 @@
  * O and random edits of it, `merge(O, A, O) ≡ A`, `merge(O, O, B) ≡ B` and `merge(O, X, X) ≡ X`,
  * each with no conflict. The generator mixes the shapes the merge treats differently: records,
  * keyed and keyless lists, pasted copies that repeat a key, blocks in both shapes, tag lists,
- * multi-line text, dates and empties.
+ * multi-line text, dates and empties. Moves between lists and hand edits that strip or backfill
+ * keys are `entry-merge.ground-truth.test.ts`'s.
  */
 
 import { describe, expect, it } from 'vitest'

@@ -59,7 +59,7 @@ export interface FieldConflict {
   branch?: unknown
   /** Long text: the regions both sides changed; the rest of the text merged. */
   regions?: TextConflictRegion[]
-  /** The line merge of an mdx body did not parse, so the whole body is the conflict. */
+  /** The line merge of an mdx body or field did not parse, so the whole value is the conflict. */
   unparseable?: true
 }
 
@@ -244,8 +244,8 @@ function mergeLeaf(o: unknown, a: unknown, b: unknown, at: At, walk: Walk): unkn
 
 /**
  * diff3 over a list of plain values (tags). Values both sides inserted at the same place are all
- * kept, the base's first, since an insertion loses nothing; any other overlap is undefined, a
- * whole-field conflict.
+ * kept ({@link insertedByBoth}), since an insertion loses nothing; any other overlap is undefined,
+ * a whole-field conflict.
  */
 function mergeScalarList(
   o: readonly unknown[],
@@ -627,8 +627,8 @@ function visitItems(
  * Lists merge one at a time, so an item one side moved to another list survives there although
  * the other side removed it, or is there twice when the other side changed it in its old place.
  * An item the merged entry holds in another list than the ancestor did, which a side no longer has
- * anywhere (by its key as read, so a keyless item by its content), or which the entry now holds
- * twice, is an item conflict.
+ * anywhere (by its key as read, so a keyless item by its content), or a keyed item the entry now
+ * holds twice, is an item conflict.
  */
 function flagItemsMovedAway(
   ancestor: Record<string, unknown>,
@@ -757,9 +757,9 @@ function undoUnparseableMdx(
 }
 
 /**
- * The base's `items` and the branch's merged as ordered sets of distinct values: each side's adds
- * and removes apply, and the order is `mergeOrder`'s. Nothing conflicts: a set entry has no
- * content to change.
+ * `a` (the base's) and `b` (the branch's), both changed from `o`, merged as ordered sets of
+ * distinct values: each side's adds and removes apply, and the order is `mergeOrder`'s. Nothing
+ * conflicts: a set entry has no content to change.
  */
 export function mergeOrderedSet(
   o: readonly unknown[],
