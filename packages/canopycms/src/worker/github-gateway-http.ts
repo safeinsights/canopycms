@@ -354,10 +354,10 @@ class GatewayRequestHandler {
         return {}
       },
       getPullRequest: async ({ number }, signal) => {
-        const { merged, merged_at, state, node_id, body, mergeable_state, baseRef } =
+        const { merged, merged_at, state, node_id, body, mergeable_state, baseRef, headSha } =
           await gateway.getPullRequest(number, signal)
         // A null body is the gateway withholding it (`GitHubPullRequest.body`), and crosses as one.
-        return { merged, merged_at, state, node_id, body, mergeable_state, baseRef }
+        return { merged, merged_at, state, node_id, body, mergeable_state, baseRef, headSha }
       },
       createOrUpdatePullRequest: async (input, signal) => {
         const { number, url, created } = await gateway.createOrUpdatePullRequest(input, signal)

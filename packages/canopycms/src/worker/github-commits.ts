@@ -26,9 +26,10 @@ import { escapeForLog } from '../utils/escape-text'
 import { isCanopyInternalPath } from '../utils/git'
 import { publishesBranch, type BranchPolicyDescription } from './branch-policy'
 import {
-  buildMergeCommit,
+  commitMerge,
   commitsApart,
   isCleanMergeOf,
+  planMerge,
   publishPlainToLocalRemote,
   type BuiltMerge,
 } from './branch-merge'
@@ -514,31 +515,32 @@ export async function mergeIntoBranch(
 ): Promise<GitHubCommitsOutcome> {
   const { git, branchPath, branchDir, branchRef, gatewayPolicy, lockLost } = args
   const { head, other, message, fromGitHub, inReview } = merge
-  const built = await buildMergeCommit(git, branchPath, {
+  const plan = await planMerge(git, branchPath, {
     head,
     other,
-    message,
     contentRoot: ctx.contentRoot,
     timeoutMs: ctx.taskTimeoutMs,
   })
   // Nobody is at the editor of a branch in review to choose: a value or file kept over the other
-  // side's change would stand unseen in the pull request.
+  // side's change would stand unseen in the pull request. Held before any commit is written, as a
+  // branch can stay held for days.
   if (
     inReview &&
-    (built.kind === 'unsettled' || built.conflicts.length > 0 || built.keptPaths.length > 0)
+    (plan.kind === 'unsettled' || plan.conflicts.length > 0 || plan.keptPaths.length > 0)
   ) {
     workerLog(`  ${branchDir}: conflicts with ${other.slice(0, 7)}, so it stays as it is`)
     return { kind: 'wait' }
   }
-  if (built.kind === 'unsettled') {
+  if (plan.kind === 'unsettled') {
     return {
       kind: 'blocked',
       reason:
-        `Git cannot merge ${other} into ${branchRef} by rule: ${built.conflicts.join(', ')}` +
-        `${built.paths.length > 0 ? ` (${listPaths(built.paths)})` : ''}. Nothing was changed. ` +
+        `Git cannot merge ${other} into ${branchRef} by rule: ${plan.conflicts.join(', ')}` +
+        `${plan.paths.length > 0 ? ` (${listPaths(plan.paths)})` : ''}. Nothing was changed. ` +
         `To continue, a developer merges them by hand.`,
     }
   }
+  const built = await commitMerge(git, plan, { head, other, message })
   const { sha, conflicts } = built
   const refused = await refuseIncoming(args, head, sha)
   if (refused) return refused
@@ -572,6 +574,13 @@ export async function mergeIntoBranch(
   // `catchUpWithPublished`.
   if (lockLost()) return { kind: 'wait' }
   await moveClone(git, branchPath, sha)
+  // Again once moved: approving takes no content-write lock, so it can land mid-merge. A failure
+  // here must not skip what follows for the merge that did land.
+  await (async () => {
+    if (await changesWhatWasReviewed(ctx, args, head, sha)) await returnToReview(ctx, args)
+  })().catch((err: unknown) =>
+    workerLogWarn(`  ${branchDir}: could not judge a late approval: ${getErrorMessage(err)}`),
+  )
   // Landed: a failure here leaves the remaps and the stamp for the next cycle's reconcile.
   await landed(ctx, args, sha).catch((err: unknown) =>
     workerLogWarn(
@@ -664,7 +673,7 @@ export async function returnToReview(
 async function recordMerge(
   ctx: GitHubCommitsContext,
   args: GitHubCommitsArgs,
-  built: Extract<BuiltMerge, { kind: 'built' }>,
+  built: BuiltMerge,
   merge: { head: string; fromGitHub: boolean },
 ): Promise<void> {
   const { git, branchPath, branchRef } = args

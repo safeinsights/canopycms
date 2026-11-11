@@ -133,6 +133,7 @@ export const answers = {
       body: pullRequestText.body.nullable(),
       mergeable_state: z.string().max(64).optional(),
       baseRef: z.string().max(256).optional(),
+      headSha: objectId.optional(),
     })
     .strict(),
   createOrUpdatePullRequest: pullRequestRef.extend({ created: z.boolean() }).strict(),

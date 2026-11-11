@@ -976,21 +976,25 @@ async function bringInCommitsForBranchInReview(
 /**
  * What GitHub's answer says keeps this pull request behind its base and needs a person, undefined
  * for nothing, or null for no information: GitHub answers `unknown` until it has computed the
- * state, which it redoes after every push to the base. A base other than the branch's own comes
- * first, because withdrawing resolves nothing there: the worker rebases onto the recorded base.
+ * state, which it redoes after every push to the base. A conflict counts only on the commit the
+ * clone holds: one measured on an older head, as while the worker's own merge is on its way to
+ * GitHub, says nothing about the branch now. A base other than the branch's own comes first,
+ * because withdrawing resolves nothing there: the worker rebases onto the recorded base.
  * Pure.
  */
 function pullRequestHoldOf(
   pullRequest: GitHubPullRequest,
   recordedBase: string,
+  cloneHead: string,
 ): PullRequestHold | undefined | null {
-  const { state, mergeable_state: mergeState, baseRef } = pullRequest
+  const { state, mergeable_state: mergeState, baseRef, headSha } = pullRequest
   if (state !== 'open') return undefined
   if (mergeState === undefined || mergeState === 'unknown') return null
   if (mergeState !== 'behind' && mergeState !== 'dirty') return undefined
   if (baseRef !== undefined && baseRef !== recordedBase)
     return { kind: 'retargeted', base: baseRef }
-  return mergeState === 'dirty' ? { kind: 'conflicts' } : undefined
+  if (mergeState !== 'dirty') return undefined
+  return headSha === cloneHead ? { kind: 'conflicts' } : null
 }
 
 /**
@@ -1008,9 +1012,13 @@ async function recordPullRequestHold(
   tookBase: boolean,
 ): Promise<void> {
   const { name, baseBranch, pullRequestHold, submittedAt } = metaFile.branch
-  const hold = tookBase ? undefined : pullRequestHoldOf(pullRequest, baseBranch ?? ctx.baseBranch)
-  if (hold === null || JSON.stringify(hold) === JSON.stringify(pullRequestHold)) return
   try {
+    await assertSharedRepoConfig(branchPath, 'worktree')
+    const cloneHead = (await sharedRepoGit(branchPath, 'worktree').revparse(['HEAD'])).trim()
+    const hold = tookBase
+      ? undefined
+      : pullRequestHoldOf(pullRequest, baseBranch ?? ctx.baseBranch, cloneHead)
+    if (hold === null || JSON.stringify(hold) === JSON.stringify(pullRequestHold)) return
     await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update(
       // A newer submit's pull request isn't the one measured.
       (current) =>

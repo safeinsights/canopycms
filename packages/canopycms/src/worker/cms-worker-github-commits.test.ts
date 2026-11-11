@@ -318,15 +318,19 @@ const queued = async (s: Setup, action: string) =>
     .filter((t) => t.action === action)
     .map((t) => t.payload.branch)
 
-/** A worker whose gateway answers each pull request read with `mergeableState`. */
+/**
+ * A worker whose gateway answers each pull request read with `mergeableState`, measured on GitHub's
+ * tip unless `headSha` says otherwise.
+ */
 function workerWithPullRequest(
   s: Setup,
   mergeableState: string,
   {
     state = 'open',
     base = BASE,
+    headSha,
     onFetch,
-  }: { state?: string; base?: string; onFetch?: () => Promise<unknown> } = {},
+  }: { state?: string; base?: string; headSha?: string; onFetch?: () => Promise<unknown> } = {},
 ) {
   const worker = makeWorker(s)
   useLocalGitHubGateway(worker, {
@@ -342,7 +346,11 @@ function workerWithPullRequest(
               node_id: 'PR_7',
               body: '',
               mergeable_state: mergeableState,
-              head: { ref: BRANCH, repo: { id: 1 } },
+              head: {
+                ref: BRANCH,
+                sha: headSha ?? (await s.remoteSha(`refs/remotes/github/${BRANCH}`)),
+                repo: { id: 1 },
+              },
               base: { ref: base, repo: { id: 1 } },
             },
           }
@@ -476,6 +484,11 @@ describe('an open pull request GitHub reports behind', () => {
       expect((await readMeta(s))?.pullRequestHold).toEqual({ kind: 'conflicts' })
 
       await cycle(s, workerWithPullRequest(s, 'clean'))
+      expect((await readMeta(s))?.pullRequestHold).toBeUndefined()
+    })
+
+    it('records no conflict GitHub measured on a commit the clone has moved past', async () => {
+      await cycle(s, workerWithPullRequest(s, 'dirty', { headSha: 'a'.repeat(40) }))
       expect((await readMeta(s))?.pullRequestHold).toBeUndefined()
     })
 
@@ -679,6 +692,42 @@ describe('row 42: a pull request in review that GitHub reports dirty', () => {
     expect(await queued(s, 'sync-pr-comments')).toEqual([])
   })
 
+  it('keeps the hold cleared while its merge is on its way to GitHub', async () => {
+    await s.advanceBase({ [ENTRY]: page('seed', 'base') })
+    const worker = workerWithPullRequest(s, 'dirty')
+    await cycle(s, worker)
+    const merged = await s.head()
+
+    const summary = await cycle(s, worker)
+
+    expect(summary.rebased).toEqual([])
+    expect(await s.head()).toBe(merged)
+    expect((await readMeta(s))?.pullRequestHold).toBeUndefined()
+  })
+
+  it('sends a branch approved while its merge was being built back to review', async () => {
+    await s.advanceBase({ [ENTRY]: page('seed', 'base') })
+    const update = MergeConflictStore.prototype.update
+    let approvedMidMerge = false
+    const spy = vi.spyOn(MergeConflictStore.prototype, 'update').mockImplementation(async function (
+      this: MergeConflictStore,
+      ...args
+    ) {
+      spy.mockRestore()
+      await writeMeta(s, approved)
+      approvedMidMerge = true
+      return update.apply(this, args)
+    })
+
+    await cycle(s, workerWithPullRequest(s, 'dirty'))
+
+    expect(approvedMidMerge).toBe(true)
+    expect(await s.file(ENTRY)).toBe(page('editor', 'base'))
+    const meta = await readMeta(s)
+    expect(meta?.status).toBe('submitted')
+    expect(meta?.review).toBeUndefined()
+  })
+
   it('sends an approved branch back to review once a field-clean merge lands', async () => {
     await writeMeta(s, approved)
     await s.advanceBase({ [ENTRY]: page('seed', 'base') })
@@ -693,10 +742,16 @@ describe('row 42: a pull request in review that GitHub reports dirty', () => {
   })
 
   it('leaves a branch with a real field clash as it is, held, approved or not', async () => {
+    const commits = async () =>
+      (await s.clone.raw(['cat-file', '--batch-all-objects', '--batch-check=%(objecttype)']))
+        .split('\n')
+        .filter((type) => type === 'commit').length
     for (const status of [submitted, approved]) {
       await writeMeta(s, status)
       await s.advanceBase({ [ENTRY]: page(`base ${status.status}`, 'base') })
+      await s.clone.raw(['fetch', '-q', 'origin', BASE])
       const before = await s.head()
+      const written = await commits()
 
       const summary = await cycle(s, workerWithPullRequest(s, 'dirty'))
 
@@ -705,6 +760,7 @@ describe('row 42: a pull request in review that GitHub reports dirty', () => {
       expect(await s.head()).toBe(before)
       expect(await s.file(ENTRY)).toBe(page('editor', 'seed'))
       expect(await queued(s, 'push-branch')).toEqual([])
+      expect(await commits()).toBe(written)
       const meta = await readMeta(s)
       expect(meta?.status).toBe(status.status)
       expect(meta?.pullRequestHold).toEqual({ kind: 'conflicts' })

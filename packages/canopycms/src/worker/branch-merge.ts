@@ -118,14 +118,14 @@ export type MergePlan =
   /** Git met conflicts no rule settles safely. Nothing was built. */
   | { kind: 'unsettled'; conflicts: string[]; paths: string[] }
 
-/** What {@link buildMergeCommit} made of the two commits. */
-export type BuiltMerge =
-  /** `sha` is the merge, reachable from no ref yet. */
-  | (Omit<Extract<MergePlan, { kind: 'planned' }>, 'kind' | 'tree' | 'gitTree'> & {
-      kind: 'built'
-      sha: string
-    })
-  | Extract<MergePlan, { kind: 'unsettled' }>
+/** {@link commitMerge}'s commit of a planned merge; `sha` is reachable from no ref yet. */
+export type BuiltMerge = Omit<
+  Extract<MergePlan, { kind: 'planned' }>,
+  'kind' | 'tree' | 'gitTree'
+> & {
+  kind: 'built'
+  sha: string
+}
 
 const NO_FIELD_MERGE: FieldMergeResult = {
   updates: new Map(),
@@ -260,14 +260,11 @@ function keptVersions(
  * {@link planMerge}'s merge as a commit no ref names, with `head` the first parent. The commit takes
  * its identity from the clone's `user.*`, written when the clone is provisioned.
  */
-export async function buildMergeCommit(
+export async function commitMerge(
   git: SimpleGit,
-  clonePath: string,
-  args: { head: string; other: string; message: string; contentRoot: string; timeoutMs: number },
+  plan: Extract<MergePlan, { kind: 'planned' }>,
+  { head, other, message }: { head: string; other: string; message: string },
 ): Promise<BuiltMerge> {
-  const { head, other, message } = args
-  const plan = await planMerge(git, clonePath, args)
-  if (plan.kind === 'unsettled') return plan
   const { tree, gitTree: _gitTree, kind: _kind, ...rest } = plan
   const sha = (
     await git.raw(['commit-tree', '-p', head, '-p', other, '-m', message, '--end-of-options', tree])
