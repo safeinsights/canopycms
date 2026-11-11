@@ -1394,6 +1394,9 @@ describe('bringing commits made on GitHub into a branch clone', () => {
       const result = await readResourceGeneration(s.branchPath, SCHEMA_GENERATION_RESOURCE)
       return result.ok ? result.token : undefined
     }
+    // Merged, the two sides agree; replayed, the branch's first commit conflicts.
+    await s.commit({ 'editor.txt': 'base changed\n' }, 'editor work 2')
+    await s.push()
     await s.advanceBase({ 'editor.txt': 'base changed\n' })
     const worker = makeWorker(s)
     let midRebase: string | null | undefined
@@ -1406,7 +1409,7 @@ describe('bringing commits made on GitHub into a branch clone', () => {
     const summary = await cycle(s, worker)
 
     expect(summary.failed.map((f) => f.branch)).toEqual([BRANCH])
-    expect(await s.file('editor.txt')).toBe('v1\n')
+    expect(await s.file('editor.txt')).toBe('base changed\n')
     expect(await read()).not.toBe(midRebase)
   })
 

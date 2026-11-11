@@ -47,6 +47,41 @@ describe('CommentStore', () => {
     expect(threads[0].createdAt).toBeTruthy()
   })
 
+  it('moves threads to the item keys a merge gave their items, matched before any applies', async () => {
+    const add = (entryPath: string, itemKeys: string[]) =>
+      store.addComment({
+        userId: 'user1',
+        text: 'Note',
+        type: 'field',
+        entryPath,
+        canopyPath: 'steps[0].detail',
+        itemKeys,
+      })
+    const outer = await add('posts/hello', ['a'])
+    const inner = await add('posts/hello', ['a', 'b'])
+    const elsewhere = await add('posts/other', ['a'])
+    const untouched = await add('posts/hello', ['c'])
+
+    const moved = await store.remapItemKeys('posts/hello', [
+      { within: [], from: 'a', to: 'A' },
+      { within: ['a'], from: 'b', to: 'B' },
+      // Named by the outer item's new key, which no thread held: matches nothing.
+      { within: ['A'], from: 'b', to: 'X' },
+    ])
+
+    expect(moved).toBe(2)
+    const keys = async (id: string) => (await store.getThread(id))?.itemKeys
+    expect(await keys(outer.threadId)).toEqual(['A'])
+    expect(await keys(inner.threadId)).toEqual(['A', 'B'])
+    expect(await keys(elsewhere.threadId)).toEqual(['a'])
+    expect(await keys(untouched.threadId)).toEqual(['c'])
+  })
+
+  it('writes nothing when no thread names a remapped item', async () => {
+    expect(await store.remapItemKeys('posts/hello', [{ within: [], from: 'a', to: 'A' }])).toBe(0)
+    await expect(fs.stat(path.join(tmpDir, '.canopy-meta', 'comments.json'))).rejects.toThrow()
+  })
+
   it('creates entry-level comment thread', async () => {
     const result = await store.addComment({
       userId: 'user1',

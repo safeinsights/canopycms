@@ -3,13 +3,13 @@
  * concurrent content writes.
  *
  * `rebaseActiveBranches()` skips branches whose working tree is dirty, but the
- * check is a plain TOCTOU: once `git rebase` has started (fetch, replay, N
- * conflict rounds of awaited git subprocesses on EFS), a content write landing
- * in that window is destroyed two ways --
+ * check is a plain TOCTOU: once `git rebase` has started (fetch, replay and
+ * rounds of awaited git subprocesses on EFS), a content write landing in that
+ * window is destroyed two ways --
  *
- *  - `git checkout --theirs <file>` overwrites the just-saved working-tree
- *    content with the branch's committed version and stages it, after which
- *    the rebase SUCCEEDS and nothing logs a failure at all; and
+ *  - a replayed commit, or the merge the worker falls back to, writes over the
+ *    just-saved working-tree content, after which the sync SUCCEEDS and nothing
+ *    logs a failure at all; and
  *  - `git rebase --abort` hard-resets the tree, discarding the save.
  *
  * Lambda's `ContentStore` and the worker share one EFS working tree and the
@@ -90,9 +90,9 @@ const makeStore = (branchPath: string, contentWriteLockWaitMs = 150) =>
   )
 
 /**
- * CmsWorker subclass that runs `onConflict` exactly once, at the instant the
- * rebase has reported conflicted files and is about to `checkout --theirs`
- * them -- i.e. squarely inside the window the old comment called safe.
+ * CmsWorker subclass that runs `onConflict` exactly once, at the instant a
+ * rebase round has reported conflicted files and is about to abort for a merge
+ * -- squarely inside the window the rebase holds the tree.
  */
 class ConflictHookWorker extends CmsWorker {
   onConflict?: () => Promise<void>
@@ -138,13 +138,19 @@ interface ConflictSetup {
 }
 
 /**
- * A branch clone whose entry file conflicts with the base branch, so the
- * rebase must enter its conflict round. Mirrors cms-worker-rebase.test.ts's
- * `createBranchSetup` (fixture remote is a bare repo at
- * `<workspace>/remote.git`, the path the loop fetches from, fed from an upstream
- * working repository).
+ * A branch clone and a base branch that both edit an entry. Mirrors cms-worker-rebase.test.ts's
+ * `createBranchSetup` (fixture remote is a bare repo at `<workspace>/remote.git`, the path the loop
+ * fetches from, fed from an upstream working repository). The shape:
+ * - `clash`: the two set the title differently, so the base comes in by a merge;
+ * - `replay`: the branch's first commit conflicts with the base, its second sets the title as the
+ *   base does, so a rebase starts, meets a conflict in its first round, and is aborted for a merge;
+ * - `clean`: the base adds another file, so the rebase completes.
  */
-async function createConflictSetup(tmpDir: string, branchName: string): Promise<ConflictSetup> {
+async function createConflictSetup(
+  tmpDir: string,
+  branchName: string,
+  shape: 'clash' | 'replay' | 'clean' = 'clash',
+): Promise<ConflictSetup> {
   const remotePath = path.join(tmpDir, 'remote.git')
   const upstreamPath = path.join(tmpDir, 'upstream')
   const contentBranchesPath = path.join(tmpDir, 'content-branches')
@@ -185,11 +191,20 @@ async function createConflictSetup(tmpDir: string, branchName: string): Promise<
   await writeInto(branchPath, '{\n  "title": "branch version"\n}\n')
   await branchGit.add(['.'])
   await branchGit.commit('branch: update entry')
+  if (shape === 'replay') {
+    await writeInto(branchPath, '{\n  "title": "main version"\n}\n')
+    await branchGit.add(['.'])
+    await branchGit.commit('branch: match the base')
+  }
 
-  // ...and so does the base branch, on the same lines.
-  await writeInto(upstreamPath, '{\n  "title": "main version"\n}\n')
+  // ...and so does the base branch, on the same lines, or another file.
+  if (shape === 'clean') {
+    await fs.writeFile(path.join(upstreamPath, 'other.txt'), 'base\n')
+  } else {
+    await writeInto(upstreamPath, '{\n  "title": "main version"\n}\n')
+  }
   await remoteGit.add(['.'])
-  await remoteGit.commit('main: update same entry')
+  await remoteGit.commit('main: update')
   await publishRemote()
 
   const meta = BranchMetadataFileManager.get(branchPath, contentBranchesPath)
@@ -219,14 +234,14 @@ describe('rebase vs. content write exclusion', () => {
   })
 
   it('never acknowledges a content write that a mid-flight rebase then rolls back', async () => {
-    const setup = await createConflictSetup(tmpDir, 'my-feature')
+    const setup = await createConflictSetup(tmpDir, 'my-feature', 'replay')
     const store = makeStore(setup.branchPath)
 
     const worker = makeWorker(tmpDir)
     let writeOutcome: { ok: true } | { ok: false; err: unknown } | undefined
     worker.onConflict = async () => {
       // The editor saves RIGHT NOW: the rebase has started, conflicts are
-      // reported, and `checkout --theirs` is the next thing that runs.
+      // reported, and the abort and the merge are the next things that run.
       try {
         await store.write(COLLECTION, SLUG, {
           format: 'json',
@@ -246,7 +261,7 @@ describe('rebase vs. content write exclusion', () => {
     if (writeOutcome?.ok) {
       // A write the API answered 200 to must still be on disk. Before the
       // content-write lock existed this is exactly what failed: the write was
-      // acknowledged and then silently reverted by `checkout --theirs`.
+      // acknowledged and then silently reverted by the rebase.
       expect(after).toContain('editor save')
     } else {
       // The other acceptable outcome: the write was refused, retriably, and
@@ -258,7 +273,7 @@ describe('rebase vs. content write exclusion', () => {
   })
 
   it('skips a branch, without recording a failure, when the lock is lost mid-rebase', async () => {
-    const setup = await createConflictSetup(tmpDir, 'my-feature')
+    const setup = await createConflictSetup(tmpDir, 'my-feature', 'replay')
 
     const consoleSpy = mockConsole()
     const worker = makeWorker(tmpDir)
@@ -291,7 +306,7 @@ describe('rebase vs. content write exclusion', () => {
   // short-circuits on `behindCount === 0`. The result would be a permanently
   // wedged published branch, so the skip must apply only when !completed.
   it('finishes the sync when the lock is lost AFTER the rebase completed', async () => {
-    const setup = await createConflictSetup(tmpDir, 'my-feature')
+    const setup = await createConflictSetup(tmpDir, 'my-feature', 'clean')
 
     const consoleSpy = mockConsole()
     const worker = makeWorker(tmpDir)

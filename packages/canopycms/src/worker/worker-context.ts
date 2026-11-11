@@ -131,8 +131,8 @@ export interface WorkerContext {
    */
   takeBranchSyncRequests(): { branches: Set<string>; requested: boolean }
   /**
-   * Test hook: fires when the rebase has reported conflicted files and is about
-   * to `checkout --theirs` them. No-op in production.
+   * Test hook: fires when a rebase round has reported conflicted files, before
+   * the rebase is aborted for a merge. No-op in production.
    */
   afterConflictDetectedForTesting(): Promise<void>
   /**
