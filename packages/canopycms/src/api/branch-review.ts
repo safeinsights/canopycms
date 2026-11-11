@@ -8,6 +8,7 @@ import { defineEndpoint } from './route-builder'
 import { syncConvertToDraft } from './github-sync'
 import { syncPrComments } from './pr-comment-sync'
 import { CommentStore } from '../comment-store'
+import { assertNoOpenConflicts, OpenMergeConflictsError } from '../merge-conflicts'
 import { getErrorMessage } from '../utils/error'
 import { REQUEST_CHANGES_NOTE_MAX_LENGTH } from '../authorization/review-role'
 import { getBranchProtection, isAdmin } from '../authorization'
@@ -179,6 +180,23 @@ const approveBranchHandler = async (
       status: 400,
       error:
         'The pull request was closed on GitHub, so this branch cannot be approved. Withdraw it from review, then submit it again to open a new one.',
+    }
+  }
+
+  // A merge of GitHub's commits can record conflicts on a branch in review; what is approved must
+  // not hold one. The worker sends an approved branch back to review when that merge lands.
+  try {
+    await assertNoOpenConflicts(branchContext.branchRoot)
+  } catch (err) {
+    if (!(err instanceof OpenMergeConflictsError)) throw err
+    return {
+      ok: false,
+      status: 409,
+      code: 'OPEN_CONFLICTS',
+      error:
+        err.count === null
+          ? err.message
+          : `${err.message} It can be approved once its editor chooses what to keep.`,
     }
   }
 

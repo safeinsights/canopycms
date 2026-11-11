@@ -2064,6 +2064,27 @@ export class GitManager {
     }
   }
 
+  /**
+   * The text of the blob `sha`, `'too-large'` when it is over `maxBytes`, or `undefined` when this
+   * clone has no such blob. Any other failure throws.
+   */
+  async readBlob(sha: string, maxBytes: number): Promise<string | 'too-large' | undefined> {
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(sha)) return undefined
+    let size: number
+    try {
+      size = Number((await this.git.raw(['cat-file', '-s', '--end-of-options', sha])).trim())
+    } catch (err) {
+      // LC_ALL=C (gitChildEnv), so git's own wording is stable to match.
+      if (/could not get object info|Not a valid object name/.test(getErrorMessage(err))) {
+        return undefined
+      }
+      throw err
+    }
+    if (!Number.isFinite(size)) return undefined
+    if (size > maxBytes) return 'too-large'
+    return this.git.raw(['cat-file', 'blob', '--end-of-options', sha])
+  }
+
   async ensureAuthor(author: { name: string; email: string }): Promise<void> {
     const config = (await this.git.listConfig()) as ConfigListSummary
 

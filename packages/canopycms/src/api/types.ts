@@ -68,7 +68,10 @@ export interface ApiResponse<TData = unknown> {
  * The other settings 409, a busy file lock, carries no code. `BRANCH_SYNCING`: an entry save was
  * refused because the branch is mid-rebase (a 409); nothing was saved, and a retry soon can pass.
  * `BRANCH_NAME_REFUSED`: a branch create was refused for the name it gave (a 400 or 409), so only
- * another name can pass; no other create failure carries it.
+ * another name can pass; no other create failure carries it. `OPEN_CONFLICTS`: a submit or approval
+ * was refused while a merge's conflicts are open on the branch (a 409, merge-conflicts.ts).
+ * `CONFLICT_CHANGED`: a resolve-entry named a conflict the record no longer holds as shown (a 409);
+ * re-read the branch's conflicts.
  */
 export type ApiErrorCode =
   | 'SCHEMA_UNAVAILABLE'
@@ -79,3 +82,5 @@ export type ApiErrorCode =
   | 'SETTINGS_CHANGED'
   | 'BRANCH_SYNCING'
   | 'BRANCH_NAME_REFUSED'
+  | 'OPEN_CONFLICTS'
+  | 'CONFLICT_CHANGED'
