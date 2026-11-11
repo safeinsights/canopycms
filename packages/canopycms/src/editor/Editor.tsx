@@ -2009,6 +2009,7 @@ const EditorContent: React.FC<EditorProps> = ({
   const confirmEntryChoice = (target: EntryChoiceTarget) => {
     const branch = branchNameState
     const deleting = target.choice === 'delete'
+    let confirmed = false
     openConfirm({
       title: deleting ? 'Delete entry?' : 'Use the latest version?',
       children: (
@@ -2023,11 +2024,14 @@ const EditorContent: React.FC<EditorProps> = ({
         cancel: 'Cancel',
       },
       confirmProps: { color: 'red' },
-      onCancel: () => {
+      // Any way out but Confirm, Escape and the close button included, returns to "Show changes".
+      onClose: () => {
+        if (confirmed) return
         setChangesOpen(true)
         setChangesShown(true)
       },
       onConfirm: () => {
+        confirmed = true
         void resolveEntryConflict(
           target.logicalPath,
           target.id,
@@ -2050,6 +2054,17 @@ const EditorContent: React.FC<EditorProps> = ({
   // A choice made on an earlier merge of a field no longer counts once the record moved on, and
   // an entry whose conflicts are gone keeps none.
   const retainChoices = conflictChoices.retain
+  const keepEntryChoices = conflictChoices.keepEntries
+  // An entry no longer listed with conflicts, resolved elsewhere or by a later merge, keeps none.
+  const listedConflicts = currentBranch?.conflictFiles?.length
+    ? branchConflicts.data?.conflicts
+    : currentBranch
+      ? []
+      : undefined
+  const listedIds = listedConflicts?.map((c) => c.contentId).join(',')
+  useEffect(() => {
+    if (listedIds !== undefined) keepEntryChoices(new Set(listedIds.split(',').filter(Boolean)))
+  }, [listedIds, keepEntryChoices])
   useEffect(() => {
     const id = changesConflictTarget?.id
     if (!id || entryConflict.data === undefined) return

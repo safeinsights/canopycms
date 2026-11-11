@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { EntryConflictChoice, EntryConflictData } from '../../api/merge-conflicts'
 import { buildEntryConflicts, type FieldConflict } from '../conflict-cards'
-import type { EntryChoices, FieldChoice } from '../conflict-choices'
+import { textWithChoices, type EntryChoices, type FieldChoice } from '../conflict-choices'
 import { CanopyCMSProvider } from '../theme'
 import {
   ConflictsGroup,
@@ -715,5 +715,62 @@ describe('ConflictsGroup text saved since the merge', () => {
   it("shows regions while the saved text is the merge's", () => {
     renderGroup({ only: ['body'], builtFrom: savedValue })
     expect(screen.getAllByTestId('conflict-card')).toHaveLength(2)
+  })
+})
+
+describe('round 2 review', () => {
+  const click = (card: HTMLElement, name: RegExp) =>
+    userEvent.click(within(card).getByRole('button', { name }))
+
+  it('keeps a hand edit marked resolved when the choice is taken back', async () => {
+    const { held } = renderGroup({
+      only: ['summary'],
+      value: { ...savedValue, summary: 'My own wording.' },
+    })
+    const card = screen.getByTestId('conflict-card')
+    await click(card, /^Mark resolved:/)
+    await click(card, /^Choose again:/)
+    expect(held.value.summary).toBe('My own wording.')
+  })
+
+  it('keeps a body edited by hand when "Mark resolved" on a region is taken back', async () => {
+    const edited = String(savedValue.body).replace('Middle paragraph', 'My middle paragraph')
+    const { held } = renderGroup({ only: ['body'], value: { ...savedValue, body: edited } })
+    await click(screen.getAllByTestId('conflict-card')[0], /^Mark resolved:/)
+    await click(screen.getAllByTestId('conflict-card')[0], /^Choose again:/)
+    expect(held.value.body).toBe(edited)
+  })
+
+  it('offers "Mark resolved", not "Keep it", once your side was edited by hand', () => {
+    const steps = (savedValue.steps as Array<Record<string, unknown>>).filter(
+      (s) => s._key !== 'k2',
+    )
+    renderGroup({ only: ['step'], value: { ...savedValue, steps } })
+    const card = screen.getByTestId('conflict-card')
+    expect(within(card).queryByRole('button', { name: /^Keep it:/ })).toBeNull()
+    expect(within(card).getByRole('button', { name: /^Mark resolved:/ })).toBeTruthy()
+  })
+
+  it('stands no region choice on text that now shows whole', () => {
+    const first = buildEntryConflicts(
+      fieldsConflictData(['body']),
+      conflictFields,
+      'body',
+      undefined,
+      savedValue,
+    ).fields[0]
+    if (!first.text) throw new Error('the body should merge by region')
+    const saved = { ...savedValue, body: textWithChoices(first.text, { 0: 'latest' }) }
+    renderGroup({
+      only: ['body'],
+      builtFrom: saved,
+      value: saved,
+      choices: {
+        body: { mergeSha: MERGE_SHA, choice: { how: 'regions', regions: { 0: 'latest' } } },
+      },
+    })
+    const card = screen.getByTestId('conflict-card')
+    expect(screen.queryByTestId('conflict-choice-note')).toBeNull()
+    expect(within(card).getByRole('button', { name: /^Keep your version:/ })).toBeTruthy()
   })
 })

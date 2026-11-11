@@ -464,20 +464,23 @@ const FieldCardActions: React.FC<{ card: ConflictCard; actions: CardActions; lab
     const pick = (how: FieldChoice['how']) => () =>
       actions.choose(how === 'latest' ? { how: 'latest' } : { how: 'yours' })
     const copy = copyTextOf(card.yours)
+    // Your side is what the form holds, so once it was edited by hand the edit is what's kept.
+    const side = (verb: string, how: FieldChoice['how'], testId: string) =>
+      how === 'latest'
+        ? btn(verb, pick(how), testId, latestTakes)
+        : held
+          ? btn(verb, pick(how), testId)
+          : null
     return (
       <Group gap="xs" wrap="wrap" align="center">
-        {btn(
-          EDITOR_ACTIONS.removeIt,
-          pick(removeIs),
-          'conflict-remove-it',
-          removeIs === 'latest' ? latestTakes : reason,
-        )}
-        {btn(
-          EDITOR_ACTIONS.keepIt,
-          pick(keepIs),
-          'conflict-keep-it',
-          keepIs === 'latest' ? latestTakes : reason,
-        )}
+        {side(EDITOR_ACTIONS.removeIt, removeIs, 'conflict-remove-it')}
+        {side(EDITOR_ACTIONS.keepIt, keepIs, 'conflict-keep-it')}
+        {!held &&
+          btn(
+            EDITOR_ACTIONS.markResolved,
+            () => actions.choose({ how: 'edited' }),
+            'conflict-mark-resolved',
+          )}
         {copy !== undefined && (
           <CopyButton value={copy}>
             {({ copied, copy: doCopy }) => (
@@ -726,7 +729,11 @@ export const ConflictsGroup: React.FC<ConflictsGroupProps> = ({
   const actionsFor = (field: FieldConflict): CardActions | undefined => {
     if (!form || !editable || !onChoose) return undefined
     const chosen = choices[field.key]
-    const choice = chosen?.mergeSha === field.mergeSha ? chosen.choice : undefined
+    // A region choice on text that now shows whole, as after a save, places nothing: none stands.
+    const choice =
+      chosen?.mergeSha === field.mergeSha && (chosen.choice.how !== 'regions' || field.text)
+        ? chosen.choice
+        : undefined
     const held = holdsChoice(form.value, form.saved, field, choice, form.bodyField)
     const record = (next: FieldChoice | undefined) => onChoose(field, next, isDecided(field, next))
     const latestReason =
@@ -741,8 +748,13 @@ export const ConflictsGroup: React.FC<ConflictsGroupProps> = ({
       choose: (next) => {
         if (next?.how === 'latest') {
           form.update((v) => withLatest(v, field, form.bodyField) ?? v)
-        } else if (next === undefined && held && choice && choice.how !== 'yours') {
-          // Choosing again puts your version back, unless the form was edited since.
+        } else if (
+          next === undefined &&
+          held &&
+          (choice?.how === 'latest' || choice?.how === 'regions')
+        ) {
+          // Choosing again takes back what a choice wrote, unless the form was edited since; an
+          // edit marked resolved stays.
           form.update((v) => withYours(v, form.saved, field, form.bodyField) ?? v)
         }
         record(next)

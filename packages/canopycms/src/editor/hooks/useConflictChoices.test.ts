@@ -92,4 +92,14 @@ describe('useConflictChoices', () => {
     act(() => result.current.retain('e1', []))
     expect(result.current.pendingIds.size).toBe(0)
   })
+
+  it('drops the choices of entries no longer listed with conflicts', () => {
+    const { result } = renderHook(() => useConflictChoices('feature'))
+    act(() => {
+      result.current.choose('e1', 'summary', SHA, { how: 'yours' }, true)
+      result.current.choose('e2', 'title', SHA, { how: 'latest' }, true)
+    })
+    act(() => result.current.keepEntries(new Set(['e2'])))
+    expect([...result.current.pendingIds]).toEqual(['e2'])
+  })
 })

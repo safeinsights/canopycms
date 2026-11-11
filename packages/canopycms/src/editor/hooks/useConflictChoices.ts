@@ -42,6 +42,8 @@ export interface UseConflictChoicesReturn {
   sent: (branch: string, contentId: string, resolved: readonly ResolvedFieldConflict[]) => void
   /** Drops an entry's choices, or every entry's when `contentId` is undefined. */
   clear: (contentId?: string) => void
+  /** Keeps only the choices of the entries `open` names, which have conflicts open. */
+  keepEntries: (open: ReadonlySet<string>) => void
   /** Keeps only an entry's choices for the conflicts `open` names, each on its merge. */
   retain: (contentId: string, open: ReadonlyArray<{ key: string; mergeSha: string }>) => void
 }
@@ -143,10 +145,19 @@ export function useConflictChoices(branch: string): UseConflictChoicesReturn {
     [update],
   )
 
+  const keepEntries = useCallback(
+    (open: ReadonlySet<string>) =>
+      update(latest.current.branch, (current) => {
+        const kept = Object.entries(current).filter(([id]) => open.has(id))
+        return kept.length === Object.keys(current).length ? current : Object.fromEntries(kept)
+      }),
+    [update],
+  )
+
   const choicesFor = useCallback(
     (contentId: string): EntryChoices => choices[contentId] ?? NONE,
     [choices],
   )
 
-  return { choicesFor, choose, pendingIds, pending, sent, clear, retain }
+  return { choicesFor, choose, pendingIds, pending, sent, clear, retain, keepEntries }
 }
