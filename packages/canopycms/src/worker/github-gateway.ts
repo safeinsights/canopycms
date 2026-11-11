@@ -178,7 +178,7 @@ export type GitHubPullRequest = Pick<
   mergeable_state?: string
   /** The branch the pull request merges into on GitHub, which a person can change. */
   baseRef?: string
-  /** The commit GitHub measured `mergeable_state` on, its head when it was read. */
+  /** The pull request's head commit, read with `mergeable_state`. */
   headSha?: string
 }
 

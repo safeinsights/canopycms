@@ -411,9 +411,9 @@ describe('an open pull request GitHub reports behind', () => {
     expect(await queued(s, 'sync-pr-comments')).toEqual([])
   })
 
-  it("leaves a branch whose merge the field merge would decide otherwise than git's", async () => {
-    // The base retypes an entry the branch edited: git follows the rename and merges cleanly, the
-    // field merge keeps the branch's file, and that is not the diff that was reviewed.
+  it('leaves a branch whose merge keeps an entry for a person, though git merges it cleanly', async () => {
+    // The base retypes an entry the branch edited: git follows the rename and merges cleanly, and
+    // the field merge keeps the branch's file as an entry-level conflict.
     const page = (title: string) =>
       JSON.stringify({ title, sub: 'Sub', cta: 'Go', note: 'n', more: 'm' }, null, 2) + '\n'
     await s.advanceBase({ [ENTRY]: page('base') })
@@ -733,7 +733,7 @@ describe('row 42: a pull request in review that GitHub reports dirty', () => {
     expect((await readMeta(s))?.pullRequestHold).toBeUndefined()
   })
 
-  it('sends a branch approved while its merge was being built back to review', async () => {
+  it('sends a branch approved while its merge was landing back to review', async () => {
     await s.advanceBase({ [ENTRY]: page('seed', 'base') })
     const update = MergeConflictStore.prototype.update
     let approvedMidMerge = false

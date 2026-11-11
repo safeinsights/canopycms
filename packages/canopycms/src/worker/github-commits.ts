@@ -498,9 +498,8 @@ async function moveClone(git: SimpleGit, branchPath: string, to: string): Promis
  * `other` merged into the branch: built, recorded, published to `remote.git`, queued for GitHub,
  * and the clone moved to it, in that order, so each step leaves what the next cycle picks up and
  * only the last touches the working tree. `fromGitHub` says `other` is GitHub's tip rather than the
- * base. `inReview` takes only a merge with nothing for a person to choose: a conflict on a branch in
- * review is never recorded, so the branch stays as it is, and GitHub's own conflict notice stands on
- * the pull request. A lock lost before the clone moves leaves it where it was: `wait`.
+ * base. `inReview` takes only a merge with nothing for a person to choose; any other leaves the
+ * branch as it is and records nothing, and GitHub's own conflict notice stands on the pull request. A lock lost before the clone moves leaves it where it was: `wait`.
  */
 export async function mergeIntoBranch(
   ctx: GitHubCommitsContext,
@@ -647,9 +646,10 @@ async function changesWhatWasReviewed(
 }
 
 /**
- * Send an approved branch back to review and clear the verdict from the PR body. Before the clone
- * moves, and a failed save throws, so a crash or a failure leaves the commits for the next cycle
- * to judge again rather than an approval standing over them.
+ * Send an approved branch back to review and clear the verdict from the PR body. Called before the
+ * clone moves, where a failed save throws, so a crash or a failure leaves the commits for the next
+ * cycle to judge again rather than an approval standing over them; `mergeIntoBranch` asks again
+ * once it has moved, for an approval that landed meanwhile.
  */
 export async function returnToReview(
   ctx: GitHubCommitsContext,
