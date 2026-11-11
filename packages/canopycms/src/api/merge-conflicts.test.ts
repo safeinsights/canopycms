@@ -364,6 +364,31 @@ describe('GET /:branch/conflicts', () => {
     ])
   })
 
+  it('judges a conflict where it is now only, once the schema no longer places where it was', async () => {
+    // As after the branch renamed the collection: the recorded directory is named by its shape.
+    await recordAs({
+      [ID.hello]: {
+        ...helloRecord(),
+        path: `content/stories.${BLOG.split('.')[1]}/post.hello.${ID.hello}.json`,
+      },
+    })
+    const storiesClosed: PathPermission[] = [
+      { path: unsafeAsPermissionPath('content/stories/**'), read: { allowedGroups: ['insiders'] } },
+    ]
+    const ctx = createCtx({ rules: storiesClosed })
+    expect((await list(ctx)).data?.conflicts).toEqual([
+      expect.objectContaining({ logicalPath: 'content/blog/hello' }),
+    ])
+    expect((await entryConflict(ctx, 'blog/hello')).status).toBe(200)
+  })
+
+  it('scans nothing when no conflict is open', async () => {
+    await recordAs({})
+    const scan = vi.spyOn(ContentStore.prototype, 'idIndex')
+    expect((await list(createCtx())).data?.openCount).toBe(0)
+    expect(scan).not.toHaveBeenCalled()
+  })
+
   it('names a collection’s settings where the collection is now, by its id', async () => {
     const collectionId = BLOG.split('.')[1]
     await recordAs({

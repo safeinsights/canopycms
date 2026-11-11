@@ -185,7 +185,10 @@ interface LocatedRecord {
    * none for a file outside every collection.
    */
   address?: LogicalPath
-  /** The address of the path the merge recorded, where the versions it compared were. */
+  /**
+   * The address of the path the merge recorded, where the versions it compared were, while the
+   * schema still places it there.
+   */
   recordedAddress?: LogicalPath
 }
 
@@ -213,6 +216,7 @@ const locateRecords = async (
   flatSchema: readonly FlatSchemaItem[],
   contentRoot: string,
 ): Promise<LocatedRecord[]> => {
+  if (Object.keys(entries).length === 0) return []
   const index = await store.idIndex()
   return Object.entries(entries)
     .sort(([a], [b]) => a.localeCompare(b))
@@ -227,7 +231,13 @@ const locateRecords = async (
             : entry.path
       const ref = at === entry.path ? recorded : refOf(at, flatSchema, contentRoot)
       const address = addressOf(ref, at, flatSchema, contentRoot)
-      const recordedAddress = addressOf(recorded, entry.path, flatSchema, contentRoot)
+      // A path the schema no longer places, as after a collection is renamed, is named by its shape
+      // alone, which no path rule may still grant.
+      const placedThen = entryRefFromRepoPath(entry.path, flatSchema, contentRoot)
+      const recordedAddress =
+        placedThen.kind === 'other'
+          ? undefined
+          : addressOf(placedThen, entry.path, flatSchema, contentRoot)
       return {
         contentId,
         entry,
