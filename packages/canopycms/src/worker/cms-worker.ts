@@ -478,6 +478,12 @@ export async function recordWorkerStartupFailure(options: {
   }
 }
 
+/**
+ * The shortest rest before a run `scheduleLoop`'s `early` starts, so a request repeated while a
+ * branch stays locked cannot keep the git sync, and its GitHub fetch, running back to back.
+ */
+const EARLY_RUN_MIN_REST_MS = 10_000
+
 export class CmsWorker {
   // Created by github(), not the constructor, so a credential config error is
   // throwable somewhere start()'s catch can record it. A FIELD because tests
@@ -525,6 +531,12 @@ export class CmsWorker {
   // the lazy-init fallback.
   private statusReport?: WorkerStatusReport
   private warnedDivergences = new Map<string, string>()
+  // Branches asked for since the git sync last took them (requestBranchSync), by directory name.
+  private branchSyncRequests = new Set<string>()
+  // Set by a request with no git sync running to take it; cleared by the cycle that does.
+  private gitSyncRequested = false
+  // Starts the resting git sync now; set only while it rests (scheduleLoop's `early`).
+  private wakeGitSync: (() => void) | undefined
   // Set by a lock compromise that starts the stop, so the drain records it; see selfStopped.
   private lockLostMessage?: string
   // Who wrote worker-status.json when this worker took the lock: until its own first write
@@ -655,6 +667,8 @@ export class CmsWorker {
       ensureStatusReport: () => this.ensureStatusReport(),
       ensureSettingsBranch: () => this.ensureSettingsBranch(),
       warnedDivergences: () => this.warnedDivergences,
+      requestBranchSync: (branchRef) => this.requestBranchSync(branchRef),
+      takeBranchSyncRequests: () => this.takeBranchSyncRequests(),
       afterConflictDetectedForTesting: () => this.afterConflictDetectedForTesting(),
       afterRebaseCompletedForTesting: () => this.afterRebaseCompletedForTesting(),
     }
@@ -805,7 +819,12 @@ export class CmsWorker {
     const gitInterval = this.gitSyncIntervalMs
 
     this.scheduleLoop('task queue', () => this.processTaskQueue(), taskInterval)
-    this.scheduleLoop('git sync', () => this.syncGit(), gitInterval)
+    this.scheduleLoop('git sync', () => this.syncGit(), gitInterval, {
+      requested: () => this.gitSyncRequested,
+      setWake: (wake) => {
+        this.wakeGitSync = wake
+      },
+    })
 
     if (this.config.refreshAuthCache) {
       const cacheInterval = this.config.authCacheRefreshInterval ?? 15 * 60_000
@@ -1037,21 +1056,56 @@ export class CmsWorker {
    * Run `fn` repeatedly, the next invocation starting `interval` ms after the
    * previous one COMPLETES. setTimeout chaining rather than setInterval, so
    * executions cannot overlap when one runs longer than the interval.
+   *
+   * `early` lets a request cut the rest short to {@link EARLY_RUN_MIN_REST_MS}: `setWake`
+   * receives a function that does so while the loop rests, and undefined while a run is in
+   * flight; a request made during a run shows in `requested()` when it ends. Any number of
+   * requests coalesce into one early run.
    */
-  private scheduleLoop(label: string, fn: () => Promise<void>, interval: number): void {
-    const run = () => {
+  private scheduleLoop(
+    label: string,
+    fn: () => Promise<void>,
+    interval: number,
+    early?: { requested: () => boolean; setWake: (wake: (() => void) | undefined) => void },
+  ): void {
+    // `delay` counts from `restStartedAt`, so a later wake never pushes the next run out.
+    const run = (delay: number, restStartedAt = Date.now()) => {
       if (!this.running) return
-      const timeout = setTimeout(async () => {
+      const fire = async () => {
         this.activeTimeouts.delete(timeout)
+        early?.setWake(undefined)
         const operation = fn().catch((err) => {
           workerLogError('Worker loop error:', err instanceof Error ? err.message : err)
         })
         await this.trackOperation(label, operation)
-        run()
-      }, interval)
+        run(early?.requested() ? EARLY_RUN_MIN_REST_MS : interval)
+      }
+      const timeout = setTimeout(fire, Math.max(0, delay - (Date.now() - restStartedAt)))
       this.activeTimeouts.add(timeout)
+      early?.setWake(() => {
+        const rested = Date.now() - restStartedAt
+        const sooner = Math.max(0, EARLY_RUN_MIN_REST_MS - rested)
+        if (sooner >= delay - rested || !this.activeTimeouts.delete(timeout)) return
+        clearTimeout(timeout)
+        run(rested + sooner, restStartedAt)
+      })
     }
-    run()
+    run(early?.requested() ? EARLY_RUN_MIN_REST_MS : interval)
+  }
+
+  /** See {@link WorkerContext.requestBranchSync}. */
+  private requestBranchSync(branchRef?: string): void {
+    if (branchRef !== undefined) this.branchSyncRequests.add(sanitizeBranchName(branchRef))
+    this.gitSyncRequested = true
+    this.wakeGitSync?.()
+  }
+
+  /** See {@link WorkerContext.takeBranchSyncRequests}; called once per git sync cycle. */
+  private takeBranchSyncRequests(): Set<string> {
+    const taken = this.branchSyncRequests
+    this.branchSyncRequests = new Set()
+    this.gitSyncRequested = false
+    return taken
   }
 
   private get baseBranch(): string {
@@ -1671,8 +1725,9 @@ export class CmsWorker {
   private async rebaseActiveBranches(
     gatewayPolicy?: BranchPolicyDescription,
     gitHub?: GitHubSnapshot,
+    requested?: ReadonlySet<string>,
   ): Promise<RebaseSummary> {
-    return runRebaseCycle(this.ctx(), gatewayPolicy, gitHub)
+    return runRebaseCycle(this.ctx(), gatewayPolicy, gitHub, requested)
   }
 
   // --- Git-sync cluster (worker/git-sync.ts) -----------------------------

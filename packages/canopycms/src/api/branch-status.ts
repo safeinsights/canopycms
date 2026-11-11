@@ -6,6 +6,7 @@ import { toBranchListItem, type BranchListItem, type BranchListItemResponse } fr
 import type { StampedEntry } from '../stamp-on-publish'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { withdrawBranch } from './branch-withdraw'
+import { updateFromBase } from './branch-update-from-base'
 import { requestChanges, approveBranch } from './branch-review'
 import { markAsMerged } from './branch-merge'
 import { ARCHIVE_BRANCH_ROUTES } from './archived-branches'
@@ -24,6 +25,7 @@ import { resolveEditorUrl } from '../editor-url'
 // Re-export for client generation
 export type { BranchMergeResponse } from './branch-merge'
 export type { RequestChangesBody } from './branch-review'
+export type { UpdateFromBaseResponse } from './branch-update-from-base'
 
 /**
  * A submit's answer: the branch, plus the entries the submit stamped (stamp-on-publish.ts) when
@@ -338,6 +340,7 @@ export const WORKFLOW_ROUTES = {
   getStatus: getBranchStatus,
   submit: submitBranchForMerge,
   withdraw: withdrawBranch,
+  updateFromBase,
   requestChanges: requestChanges,
   approve: approveBranch,
   markMerged: markAsMerged,

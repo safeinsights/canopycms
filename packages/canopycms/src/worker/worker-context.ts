@@ -118,6 +118,15 @@ export interface WorkerContext {
    */
   warnedDivergences(): Map<string, string>
   /**
+   * Run the git sync early, coalesced: at once while it rests, else as soon as the running cycle
+   * ends. `branchRef`, when given, is synced ahead of the rest. In memory only: a restart loses
+   * it, and the request recorded on the branch's branch.json still gets its answer from the next
+   * regular cycle (worker/rebase.ts).
+   */
+  requestBranchSync(branchRef?: string): void
+  /** The branches requested since the last call, by workspace directory name; clears them. */
+  takeBranchSyncRequests(): Set<string>
+  /**
    * Test hook: fires when the rebase has reported conflicted files and is about
    * to `checkout --theirs` them. No-op in production.
    */

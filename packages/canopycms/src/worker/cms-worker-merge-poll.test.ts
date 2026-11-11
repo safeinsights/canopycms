@@ -176,6 +176,28 @@ describe('CmsWorker.pollMergeState()', () => {
     expect(meta?.pullRequestUrl).toBe('https://github.com/test-owner/test-repo/pull/42')
   })
 
+  it('asks for an early sync cycle when it archives a merged branch, and only then', async () => {
+    const { worker, internals, octokit } = makePollWorker()
+    const requested = () => (worker as unknown as { gitSyncRequested: boolean }).gitSyncRequested
+    const open = await setupBranchMeta('feature-open', { pullRequestNumber: 41 })
+    octokit.pulls.get.mockResolvedValue(pullRequest({ merged: false, state: 'open' }))
+    await internals.pollMergeState(
+      'feature-open',
+      open,
+      await BranchMetadataFileManager.loadOnly(open),
+    )
+    expect(requested()).toBe(false)
+
+    const merged = await setupBranchMeta('feature-merged-now', { pullRequestNumber: 42 })
+    octokit.pulls.get.mockResolvedValue(pullRequest({ merged: true, state: 'closed' }))
+    await internals.pollMergeState(
+      'feature-merged-now',
+      merged,
+      await BranchMetadataFileManager.loadOnly(merged),
+    )
+    expect(requested()).toBe(true)
+  })
+
   it("keeps the branch's stored name, which its directory is only the sanitized form of", async () => {
     const { internals, octokit } = makePollWorker()
     for (const [merged, state] of [

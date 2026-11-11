@@ -17,6 +17,8 @@ export type TaskAction =
   | 'delete-remote-branch'
   | 'push-branch'
   | 'sync-pr-comments'
+  /** Wake the git sync early for `payload.branch` (base-update.ts). */
+  | 'sync-branch'
 
 /** A task with a CMS-specific action. */
 export type WorkerTask = Task & { action: TaskAction }

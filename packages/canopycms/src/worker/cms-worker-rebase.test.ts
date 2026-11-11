@@ -20,7 +20,8 @@ import { simpleGit, type SimpleGit } from 'simple-git'
 import { BranchMetadataFileManager } from '../branch-metadata'
 import { resolveBranchParam } from '../branch-param'
 import { ROOT_COLLECTION_ID } from '../paths/types'
-import { initTestRepo, mockConsole } from '../test-utils'
+import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
+import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import { branchProvisioningLockName, tryAcquireProvisioningLock } from '../utils/provisioning-lock'
 import type { BranchPolicyDescription } from './branch-policy'
 import { CmsWorker } from './cms-worker'
@@ -1256,5 +1257,186 @@ describe('CmsWorker rebaseActiveBranches', () => {
       expect(writeSpy).not.toHaveBeenCalled()
       writeSpy.mockRestore()
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Answering a request for the latest changes (base-update.ts)
+// ---------------------------------------------------------------------------
+
+describe('CmsWorker rebase loop answering a request for the latest changes', () => {
+  let tmpDir: string
+  let consoleSpy: MockConsole
+
+  beforeEach(async () => {
+    consoleSpy = mockConsole()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-base-update-test-'))
+  })
+
+  afterEach(async () => {
+    consoleSpy.restore()
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  const ENTRY_FILE = 'page.about.TESTENTRYabc.json'
+  const REQUESTED_AT = '2026-01-01T00:00:00.000Z'
+  const AFTER_REQUEST = Date.parse(REQUESTED_AT) + 1_000
+
+  /** One cycle of the rebase loop whose base fetch began at `fetchedAt`. */
+  const runCycle = (worker: CmsWorker, fetchedAt: number, requested?: Set<string>) =>
+    (
+      worker as unknown as {
+        rebaseActiveBranches(
+          policy: undefined,
+          gitHub: { tips: Map<string, string>; fetchedAt: number },
+          requested?: Set<string>,
+        ): Promise<void>
+      }
+    ).rebaseActiveBranches(undefined, { tips: new Map(), fetchedAt }, requested)
+
+  const remoteTip = async (setup: BranchSetup) => (await setup.remoteGit.revparse(['HEAD'])).trim()
+
+  it('answers "merged" with the fetch time and the base it took in', async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature')
+    await setup.pushToRemote({ 'new-file.txt': 'from main' })
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      baseUpdateRequestedAt: REQUESTED_AT,
+    })
+
+    await runCycle(makeWorker(tmpDir), AFTER_REQUEST)
+
+    expect((await readMeta(setup.branchPath))?.lastBaseUpdate).toEqual({
+      at: new Date(AFTER_REQUEST).toISOString(),
+      outcome: 'merged',
+      baseSha: await remoteTip(setup),
+    })
+  })
+
+  it('answers "conflicts" with the number of entries that kept the branch version', async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature', {
+      initialFiles: { [ENTRY_FILE]: '{"title":"base content"}' },
+    })
+    await setup.commitToBranch({ [ENTRY_FILE]: '{"title":"branch version"}' })
+    await setup.pushToRemote({ [ENTRY_FILE]: '{"title":"main version"}' })
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      baseUpdateRequestedAt: REQUESTED_AT,
+    })
+
+    await runCycle(makeWorker(tmpDir), AFTER_REQUEST)
+
+    const answer = (await readMeta(setup.branchPath))?.lastBaseUpdate
+    expect(answer?.outcome).toBe('conflicts')
+    expect(answer?.keptEntries).toBe(1)
+  })
+
+  it('answers "up-to-date" for a branch that already has the base', async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature')
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      baseUpdateRequestedAt: REQUESTED_AT,
+    })
+
+    await runCycle(makeWorker(tmpDir), AFTER_REQUEST)
+
+    expect((await readMeta(setup.branchPath))?.lastBaseUpdate).toEqual({
+      at: new Date(AFTER_REQUEST).toISOString(),
+      outcome: 'up-to-date',
+      baseSha: await remoteTip(setup),
+    })
+  })
+
+  it('answers "failed" for a branch saved again since the request, which the sync never commits', async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature')
+    await setup.pushToRemote({ 'new-file.txt': 'from main' })
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      baseUpdateRequestedAt: REQUESTED_AT,
+    })
+    await fs.writeFile(path.join(setup.branchPath, 'unsaved-edit.txt'), 'a later save')
+
+    await runCycle(makeWorker(tmpDir), AFTER_REQUEST)
+
+    expect((await readMeta(setup.branchPath))?.lastBaseUpdate?.outcome).toBe('failed')
+  })
+
+  it('leaves a request made after the fetch began for the next cycle, which answers it', async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature')
+    await setup.pushToRemote({ 'new-file.txt': 'from main' })
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      baseUpdateRequestedAt: REQUESTED_AT,
+    })
+    const worker = makeWorker(tmpDir)
+
+    // A cycle already running when the request arrived: it may have read an older base.
+    await runCycle(worker, Date.parse(REQUESTED_AT) - 1)
+    expect((await readMeta(setup.branchPath))?.lastBaseUpdate).toBeUndefined()
+
+    await runCycle(worker, AFTER_REQUEST)
+    expect((await readMeta(setup.branchPath))?.lastBaseUpdate).toMatchObject({
+      at: new Date(AFTER_REQUEST).toISOString(),
+      outcome: 'up-to-date',
+    })
+  })
+
+  it('writes nothing for a branch nobody asked, or whose request is answered', async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature')
+    await setup.pushToRemote({ 'new-file.txt': 'from main' })
+    const answered = { at: REQUESTED_AT, outcome: 'merged' as const }
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      baseUpdateRequestedAt: REQUESTED_AT,
+      lastBaseUpdate: answered,
+    })
+
+    await runCycle(makeWorker(tmpDir), AFTER_REQUEST)
+
+    expect((await readMeta(setup.branchPath))?.lastBaseUpdate).toEqual(answered)
+  })
+
+  it('leaves the request of a branch in review standing', async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature')
+    await setup.pushToRemote({ 'new-file.txt': 'from main' })
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      status: 'submitted',
+      baseUpdateRequestedAt: REQUESTED_AT,
+    })
+
+    await runCycle(makeWorker(tmpDir), AFTER_REQUEST)
+
+    expect((await readMeta(setup.branchPath))?.lastBaseUpdate).toBeUndefined()
+  })
+
+  it('asks for another early cycle when a save holds the branch, and answers nothing yet', async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature')
+    await setup.pushToRemote({ 'new-file.txt': 'from main' })
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      baseUpdateRequestedAt: REQUESTED_AT,
+    })
+    const release = await tryAcquireContentWriteLock(setup.branchPath)
+    const worker = makeWorker(tmpDir)
+    try {
+      await runCycle(worker, AFTER_REQUEST)
+    } finally {
+      await release()
+    }
+
+    expect((await readMeta(setup.branchPath))?.lastBaseUpdate).toBeUndefined()
+    const internals = worker as unknown as { takeBranchSyncRequests(): Set<string> }
+    expect([...internals.takeBranchSyncRequests()]).toEqual(['my-feature'])
+  })
+
+  it('syncs the requested branches first', async () => {
+    const setup = await createBranchSetup(tmpDir, 'a-first')
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+    const other = path.join(setup.contentBranchesPath, 'z-requested')
+    await simpleGit().clone(path.join(tmpDir, 'remote.git'), other)
+    await simpleGit(other).checkoutLocalBranch('z-requested')
+    await writeMeta(other, setup.contentBranchesPath, {})
+    await setup.pushToRemote({ 'new-file.txt': 'from main' })
+
+    await runCycle(makeWorker(tmpDir), AFTER_REQUEST, new Set(['z-requested']))
+
+    const order = consoleSpy
+      .all()
+      .log.filter((line) => line.includes('Rebasing '))
+      .map((line) => (line.includes('z-requested') ? 'z-requested' : 'a-first'))
+    expect(order).toEqual(['z-requested', 'a-first'])
   })
 })

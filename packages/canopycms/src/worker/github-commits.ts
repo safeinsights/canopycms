@@ -79,8 +79,11 @@ export type GitHubCommitsOutcome =
    * commits GitHub never received, so the base comes in by a merge, which keeps them.
    */
   | { kind: 'unpushed' }
-  /** A merge landed. A rebase now would replace a merge GitHub has not received. */
-  | { kind: 'merged' }
+  /**
+   * A merge landed. A rebase now would replace a merge GitHub has not received. `keptEntries`
+   * counts the entries where it kept this branch's version.
+   */
+  | { kind: 'merged'; keptEntries: number }
   /** Left as it is until a person acts. `reason` says what to do. */
   | { kind: 'blocked'; reason: string }
 
@@ -512,7 +515,10 @@ export async function mergeIntoBranch(
       ? `  ${branchDir}: merged ${other.slice(0, 7)} (kept this branch's version of ${conflicted.length} file(s))`
       : `  ${branchDir}: merged ${other.slice(0, 7)}`,
   )
-  return { kind: 'merged' }
+  return {
+    kind: 'merged',
+    keptEntries: conflictFilesToContentIds(conflicted, ctx.contentRoot).length,
+  }
 }
 
 /**
