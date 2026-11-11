@@ -14,6 +14,7 @@ import {
   type WriteInput,
 } from '../content-store'
 import type {
+  ContentFormat,
   EntrySchema,
   EntryTypeConfig,
   EntryValidationIssue,
@@ -256,6 +257,20 @@ function withoutKey(record: Record<string, unknown>, key: string): Record<string
   if (!(key in record)) return record
   const { [key]: _dropped, ...rest } = record
   return rest
+}
+
+/**
+ * What a save writes for `data`, an entry's form data: an md/mdx file's body-field key dropped
+ * (that field is the file's body), references collapsed to IDs, and every list item and block
+ * keyed. `backfill-item-keys` writes through this too, so its files are a save's.
+ */
+export function entryDataAsSaved(
+  fields: EntrySchema,
+  format: ContentFormat,
+  data: Record<string, unknown>,
+): Record<string, unknown> {
+  const own = isDataOnlyFormat(format) ? data : withoutKey(data, findBodyFieldName(fields))
+  return withItemKeys(fields, normalizeReferenceValues(fields, own), 'content')
 }
 
 /** The policy's issues in the stored entry, which a save may keep. */
@@ -559,9 +574,7 @@ const writeContentHandler = async (
   // thread naming it still finds its item; one missing is filled from the item's content, as a
   // read fills one.
   const normalizedData =
-    requestData === undefined
-      ? undefined
-      : withItemKeys(fields, normalizeReferenceValues(fields, requestData), 'content')
+    requestData === undefined ? undefined : entryDataAsSaved(fields, body.format, requestData)
   // Computed before the validateEntry hook and the entry-link scan too, not just the write, so
   // every consumer agrees on the same bytes — otherwise an adopter's hook could see a resolved
   // object while the file got an ID string, depending on whether the post came from the editor.
