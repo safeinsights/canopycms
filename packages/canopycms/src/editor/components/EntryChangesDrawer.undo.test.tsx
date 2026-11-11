@@ -123,6 +123,36 @@ describe('EntryChangesDrawer undo', () => {
     expect(within(title).getByTestId('entry-change-undone').textContent).toBe('')
   })
 
+  it('redoes to the unsaved edit the undo replaced, not the saved value', async () => {
+    const values: Array<Record<string, unknown>> = []
+    render(<Harness initial={{ ...after, title: 'Typed' }} onValue={(v) => values.push(v)} />)
+    const button = within(await card('Title')).getByRole('button', { name: /^Undo change/ })
+    await userEvent.click(button)
+    expect(values.at(-1)?.title).toBe('Hello')
+    await userEvent.click(button)
+    expect(values.at(-1)?.title).toBe('Typed')
+  })
+
+  it('redoes all to the unsaved edits "Undo all" replaced', async () => {
+    const values: Array<Record<string, unknown>> = []
+    render(<Harness initial={{ ...after, title: 'Typed' }} onValue={(v) => values.push(v)} />)
+    const all = within(await dialog()).getByTestId('entry-changes-undo-all')
+    await userEvent.click(all)
+    expect(values.at(-1)).toEqual(before)
+    await userEvent.click(all)
+    expect(values.at(-1)).toEqual({ ...after, title: 'Typed' })
+  })
+
+  it('announces an undo once, from one status region, not from the card', async () => {
+    render(<Harness />)
+    const title = await card('Title')
+    await userEvent.click(within(title).getByRole('button', { name: 'Undo change to Title' }))
+    expect(within(await dialog()).getByTestId('entry-changes-announcement').textContent).toBe(
+      'Undone in the form. Save to keep it.',
+    )
+    expect(within(title).queryByRole('status')).toBeNull()
+  })
+
   it('takes out an added item and says where its threads went', async () => {
     const values: Array<Record<string, unknown>> = []
     render(<Harness onValue={(v) => values.push(v)} threads={2} />)
@@ -195,6 +225,8 @@ describe('EntryChangesDrawer undo', () => {
     )
     const button = within(await card('Links › One › Label')).getByTestId('entry-change-undo')
     expect(button.getAttribute('aria-disabled')).toBe('true')
+    // Not offered as undone: nothing could redo it.
+    expect(button.textContent).toBe('Undo change')
     await userEvent.click(button)
     expect(onValue).not.toHaveBeenCalled()
   })

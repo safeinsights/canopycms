@@ -141,10 +141,6 @@ export class ContentStoreError extends Error {
   }
 }
 
-/**
- * Thrown when `expectedVersion` on a write doesn't match the file's current mtime.
- * Indicates a cross-process concurrent write — the caller should reload and retry.
- */
 /** Why a restore refuses: another entry took the slug after this one was deleted. */
 export const RESTORE_SLUG_TAKEN_MESSAGE =
   "Another entry now has this entry's URL. Change that entry's URL, then restore this one."
@@ -152,6 +148,10 @@ export const RESTORE_SLUG_TAKEN_MESSAGE =
 export const RESTORE_ID_TAKEN_MESSAGE =
   'This entry is still on the branch under another URL, so there is nothing to restore.'
 
+/**
+ * Thrown when `expectedVersion` on a write doesn't match the file's current mtime.
+ * Indicates a cross-process concurrent write — the caller should reload and retry.
+ */
 export class ContentConflictError extends Error {
   constructor(message = 'Content was modified by another editor') {
     super(message)
@@ -1647,16 +1647,18 @@ export class ContentStore {
    * A create under write()'s locks and create-only guards that never replaces or relocates
    * anything. It refuses with `ContentConflictError` while a file holds the slug, or the index
    * or the target directory holds the ID: unlike write(), it has no index repair, so an ID
-   * found elsewhere is a moved entry, not a deleted one, and is left alone. An ID moved on
-   * another host since the index last read its marker is the one miss; the restore then leaves
-   * a duplicate ID, which the index quarantines ([F1]), never an unlinked file.
+   * found elsewhere is a moved entry, not a deleted one, and is left alone. The index is
+   * rescanned under the content-write lock first, so a move on another host is seen.
    */
   async restore(
     collectionPath: LogicalPath,
     slug: Slug,
     entry: { id: ContentId; entryTypeName: string; raw: string },
+    options: {
+      /** Runs under the content-write lock before anything is written; throwing refuses. */
+      beforeWrite?: () => Promise<void>
+    } = {},
   ): Promise<{ relativePath: PhysicalPath }> {
-    await this.idIndex()
     const collection = this.assertCollection(collectionPath)
     if (!collection.entries?.some((e) => e.name === entry.entryTypeName)) {
       throw new ContentStoreError(
@@ -1665,8 +1667,13 @@ export class ContentStore {
       )
     }
     this.assertEntryTypeAvailable(collection, entry.entryTypeName)
-    return this.withContentWriteExclusion(() =>
-      withLock(this.createLockKey(collection, slug), async () => {
+    return this.withContentWriteExclusion(async () => {
+      // A fresh scan under the lock, which every host's content write takes, so no ID moves
+      // between it and the write. The scan holds no entry lock, which a scan must not.
+      this.invalidateIndex()
+      await this.idIndex()
+      await options.beforeWrite?.()
+      return withLock(this.createLockKey(collection, slug), async () => {
         if ((await this.buildPaths(collection, slug)).existed) {
           throw new ContentConflictError(RESTORE_SLUG_TAKEN_MESSAGE)
         }
@@ -1708,8 +1715,8 @@ export class ContentStore {
         }
         await this.recordOwnMutation(index)
         return { relativePath: target.relativePath }
-      }),
-    )
+      })
+    })
   }
 
   /**

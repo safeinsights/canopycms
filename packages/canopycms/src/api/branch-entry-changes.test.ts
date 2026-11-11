@@ -614,6 +614,96 @@ describe('POST /:branch/restore-entry/...entryPath', () => {
     await expect(fs.access(path.join(branchRoot, files.hello))).rejects.toThrow()
   })
 
+  it('refuses an entry whose type has changed format since, writing nothing', async () => {
+    await fs.rm(path.join(branchRoot, files.memo))
+    const asJson: RootCollectionConfig = {
+      ...schema,
+      collections: schema.collections!.map((c) =>
+        c.name === 'notes'
+          ? { ...c, entries: [{ name: 'note', format: 'json', schema: noteFields }] }
+          : c,
+      ),
+    }
+    expect(
+      await restore(createCtx({ currentSchema: asJson }), 'content/notes/memo', ID.memo),
+    ).toEqual({
+      ok: false,
+      status: 409,
+      error:
+        "This entry's type or format has changed since it was deleted, so it can't be restored.",
+    })
+    await expect(fs.readdir(path.join(branchRoot, `content/${NOTES}`))).resolves.not.toContainEqual(
+      expect.stringContaining('memo'),
+    )
+  })
+
+  it('refuses past its type’s maxItems, as a create does', async () => {
+    await fs.rm(path.join(branchRoot, files.old))
+    await write(`content/${BLOG}/post.newer.${ID.fresh}.json`, JSON.stringify({ title: 'Newer' }))
+    const capped: RootCollectionConfig = {
+      ...schema,
+      collections: schema.collections!.map((c) =>
+        c.name === 'blog'
+          ? { ...c, entries: [{ name: 'post', format: 'json', schema: postFields, maxItems: 2 }] }
+          : c,
+      ),
+    }
+    expect(
+      await restore(createCtx({ currentSchema: capped }), 'content/blog/old-news', ID.old),
+    ).toEqual({
+      ok: false,
+      status: 422,
+      error: 'Cannot restore entry: type "post" allows at most 2 entries',
+    })
+    await expect(fs.access(path.join(branchRoot, files.old))).rejects.toThrow()
+  })
+
+  it('refuses when HEAD moves between the read and the write, writing nothing', async () => {
+    await fs.rm(path.join(branchRoot, files.old))
+    let reads = 0
+    const ctx = createCtx({
+      git: (repoPath) =>
+        new (class extends GitManager {
+          async headSha() {
+            reads++
+            const head = await super.headSha()
+            // The steady read's checks see one HEAD; the write's check sees another.
+            return reads > 3 ? `${head?.slice(0, -1)}0` : head
+          }
+        })({ repoPath, baseBranch: 'main', remote: 'origin' }),
+    })
+    expect(await restore(ctx, 'content/blog/old-news', ID.old)).toEqual({
+      ok: false,
+      status: 409,
+      error: 'This branch is being synced with main. Try again in a moment.',
+      code: 'BRANCH_SYNCING',
+    })
+    await expect(fs.access(path.join(branchRoot, files.old))).rejects.toThrow()
+  })
+
+  it('puts the entry back in its collection’s order beside its base neighbour', async () => {
+    const meta = `content/${BLOG}/.collection.json`
+    const ordered = (order: string[]) => JSON.stringify({ name: 'blog', path: 'blog', order })
+    await write(meta, ordered([ID.old, ID.hello]))
+    await clone.raw(['add', '--', '.'])
+    await clone.raw(['commit', '-q', '-m', 'ordered'])
+    await clone.raw(['push', '-q', 'origin', 'HEAD:main'])
+    await clone.raw(['fetch', '-q', 'origin'])
+    // The delete took it out of the order, as api/entries.ts does.
+    await fs.rm(path.join(branchRoot, files.old))
+    await write(meta, ordered([ID.hello]))
+    const withOrder: RootCollectionConfig = {
+      ...schema,
+      collections: schema.collections!.map((c) =>
+        c.name === 'blog' ? { ...c, order: [ID.hello] } : c,
+      ),
+    }
+    expect(
+      await restore(createCtx({ currentSchema: withOrder }), 'content/blog/old-news', ID.old),
+    ).toMatchObject({ ok: true, data: { contentId: ID.old } })
+    expect(JSON.parse(await read(meta)).order).toEqual([ID.old, ID.hello])
+  })
+
   it('refuses with 403 where the user can’t edit, writing nothing', async () => {
     await fs.rm(path.join(branchRoot, files.old))
     const ctx = createCtx({

@@ -102,6 +102,8 @@ export interface EntryDiffInput {
   after: EntryChangeSide | null
   /** A referenced entry's title, from the entries the editor has listed. */
   referenceTitle?: (id: string) => string | undefined
+  /** False when only which changes there are matters: no text is diffed for its marks. */
+  marks?: boolean
 }
 
 /** Where the walk is: the labels so far and the data path that keys the change. */
@@ -780,13 +782,15 @@ export function computeEntryDiff({
   before,
   after,
   referenceTitle,
+  marks = true,
 }: EntryDiffInput): EntryDiff {
-  // One budget for the whole entry: see DIFF_TIMEOUT_MS and SHORT_DIFF_TIMEOUT_MS.
-  const started = Date.now()
+  // One budget for the whole entry: see DIFF_TIMEOUT_MS and SHORT_DIFF_TIMEOUT_MS. Without
+  // marks, both deadlines have passed before the walk starts.
+  const started = marks ? Date.now() : 0
   const walker = new Walker(
     referenceTitle,
-    started + DIFF_TIMEOUT_MS,
-    started + SHORT_DIFF_TIMEOUT_MS,
+    started + (marks ? DIFF_TIMEOUT_MS : 0),
+    started + (marks ? SHORT_DIFF_TIMEOUT_MS : 0),
   )
   const root: At = { path: [], key: '', segments: [] }
   if (before && after && before.entryType !== after.entryType) {

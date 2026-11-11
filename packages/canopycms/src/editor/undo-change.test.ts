@@ -222,7 +222,7 @@ describe('setChangeBack, edges', () => {
     expect('content' in (value ?? {})).toBe(false)
   })
 
-  it('leaves the list alone when a moved item is no longer in it', () => {
+  it('refuses a move of an item the value no longer has', () => {
     const before = side(baseData)
     const after = side({
       ...baseData,
@@ -230,8 +230,33 @@ describe('setChangeBack, edges', () => {
     })
     const change = diffOf(before, after).find((c) => c.kind === 'moved')!
     const current = { ...formValueOfSide(after), links: [link('b', 'Two'), link('c', 'Three')] }
-    const value = setChangeBack(current, formValueOfSide(before), change, 'body')
-    expect(value?.links).toEqual(current.links)
+    expect(setChangeBack(current, formValueOfSide(before), change, 'body')).toBeUndefined()
+  })
+})
+
+describe('setChangeBack, empty containers', () => {
+  it('redoes a cleared object without leaving it empty', () => {
+    const before = side(baseData)
+    const saved: Record<string, unknown> = { ...baseData }
+    delete saved.seo
+    const after = side(saved)
+    const change = diffOf(before, after).find((c) => c.key === 'seo.description')!
+    const undone = setChangeBack(formValueOfSide(after), formValueOfSide(before), change, 'body')!
+    const redone = setChangeBack(undone, formValueOfSide(after), change, 'body')
+    expect(redone).toEqual(formValueOfSide(after))
+  })
+
+  it('undoes an object and a list the branch added, leaving neither empty', () => {
+    const bare: Record<string, unknown> = { title: 'Home' }
+    const before = side(bare)
+    const after = side({ ...bare, seo: { description: 'New' }, links: [link('a', 'One')] })
+    const value = setAllBack(
+      formValueOfSide(after),
+      formValueOfSide(before),
+      diffOf(before, after),
+      'body',
+    )
+    expect(value).toEqual(formValueOfSide(before))
   })
 })
 

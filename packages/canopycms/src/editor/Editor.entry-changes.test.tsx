@@ -387,14 +387,20 @@ describe('Show changes', () => {
     await waitFor(() =>
       expect(screen.queryByRole('dialog', { name: 'Changes to Hello' })).toBeNull(),
     )
-    expect(await screen.findByRole('dialog', { name: 'Delete entry' })).toBeTruthy()
+    const confirm = await screen.findByRole('dialog', { name: 'Delete entry' })
+    // Cancelled, focus goes to the entry menu's trigger, the drawer's button being gone.
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(confirm.isConnected).toBe(false))
+    await waitFor(() =>
+      expect(document.activeElement?.getAttribute('data-testid')).toBe('entry-show-changes'),
+    )
   })
 
   describe('"Restore entry"', () => {
     /** The API with `gone` deleted on the branch, answering its restore with `restored`. */
     const stubDeleted = (
       restored: { status: number; body: unknown } | 'timeout' | 'lost',
-      options: { noAdd?: boolean } = {},
+      options: { noAdd?: boolean; listedAs?: string } = {},
     ) => {
       const fetch = stubApi([])
       const answered = fetch.getMockImplementation()!
@@ -435,7 +441,7 @@ describe('Show changes', () => {
         }
         if (path.includes('/restore-entry/')) {
           if (restored === 'timeout' || restored === 'lost') {
-            back = restored === 'timeout'
+            back = restored === 'timeout' || options.listedAs !== undefined
             return Promise.resolve(new Response('<html>Bad gateway</html>', { status: 502 }))
           }
           if (restored.status === 200) back = true
@@ -461,7 +467,7 @@ describe('Show changes', () => {
             body.data.entries.push({
               ...body.data.entries[0],
               logicalPath: 'content/posts/gone',
-              contentId: 'zzz999ZZZ999',
+              contentId: options.listedAs ?? 'zzz999ZZZ999',
               slug: 'gone',
               title: 'Gone',
               physicalPath: '/content/posts.abc123XYZ789/post.gone.zzz999ZZZ999.json',
@@ -530,6 +536,27 @@ describe('Show changes', () => {
       const dialog = await openDeleted()
       expect(await within(dialog).findByTestId('entry-changes-no-edit')).toBeTruthy()
       expect(within(dialog).queryByRole('button', { name: 'Restore entry' })).toBeNull()
+    })
+
+    it('settles a restore whose write may have run by the entry list', async () => {
+      stubDeleted({
+        status: 409,
+        body: { ok: false, status: 409, error: 'Lock lost.', code: 'WRITE_OUTCOME_UNKNOWN' },
+      })
+      const dialog = await openDeleted()
+      await userEvent.click(await within(dialog).findByRole('button', { name: 'Restore entry' }))
+      expect(
+        (await within(dialog).findByTestId('entry-changes-restore-refused')).textContent,
+      ).toContain('may have gone through')
+    })
+
+    it('doesn’t take another entry at the path for an unanswered restore', async () => {
+      stubDeleted('lost', { listedAs: 'yyy888YYY888' })
+      const dialog = await openDeleted()
+      await userEvent.click(await within(dialog).findByRole('button', { name: 'Restore entry' }))
+      expect(
+        (await within(dialog).findByTestId('entry-changes-restore-refused')).textContent,
+      ).toContain('may have gone through')
     })
 
     it('treats an unanswered restore as done once the entry is listed', async () => {

@@ -1847,9 +1847,10 @@ const EditorContent: React.FC<EditorProps> = ({
       })
     : undefined
   const changesUndo: EntryChangesUndo | undefined =
-    changesSubjectOpen && currentEntry && effectiveValue
+    changesSubjectOpen && currentEntry && displayValue
       ? {
-          value: effectiveValue,
+          // What the form shows: a draft hidden behind a lock isn't what the cards compare.
+          value: displayValue,
           saved: loadedValues[currentEntry.contentId],
           update: (update) => {
             if (contentReadOnlyRef.current) return
@@ -1889,20 +1890,31 @@ const EditorContent: React.FC<EditorProps> = ({
               return { tone: 'error', message: 'Couldn’t restore this entry. Try again.' }
             }
           }
-          if (answer && !answer.ok && !isGatewayFailure(answer)) {
+          // A 409 whose write may have run is as unanswered as a timeout.
+          const outcomeUnknown =
+            !!answer &&
+            !answer.ok &&
+            (isGatewayFailure(answer) || answer.code === 'WRITE_OUTCOME_UNKNOWN')
+          if (answer && !answer.ok && !outcomeUnknown) {
             return {
               tone: answer.status === 409 ? 'warning' : 'error',
               message: answer.error ?? 'Couldn’t restore this entry. Try again.',
             }
           }
-          // Answered or not, the entry list now says whether it is back.
           const entries = await refreshEntries(branch).catch(() => undefined)
           void branchChanges.reload()
-          if (!entries?.some((e) => e.path === logicalPath)) {
+          // Unanswered, the entry list settles it: this entry, by id, listed again.
+          if (
+            !answer?.ok &&
+            !entries?.some((e) => e.path === logicalPath && e.contentId === contentId)
+          ) {
             return {
               tone: 'warning',
               message: `Restoring "${title}" may have gone through even though the server didn’t answer. Check the "Content" panel for it before trying again.`,
             }
+          }
+          if (answer?.ok && answer.data?.warning) {
+            notifications.show({ message: answer.data.warning, color: 'yellow' })
           }
           setChangesOpen(false)
           openEntry(logicalPath)
@@ -1912,9 +1924,10 @@ const EditorContent: React.FC<EditorProps> = ({
   const changesDeleteEntry =
     changesSubjectOpen && changesSubject?.status === 'added'
       ? () => {
-          // A confirm never opens over the drawer.
+          // A confirm never opens over the drawer. Its opener goes with the drawer, so the confirm
+          // returns focus as one opened from the entry menu does.
           setChangesOpen(false)
-          handleDeleteEntry(changesSubject.logicalPath as LogicalPath)
+          handleDeleteEntry(changesSubject.logicalPath as LogicalPath, true)
         }
       : undefined
   const runSaveAll = () => {

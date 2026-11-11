@@ -728,6 +728,9 @@ interface CardUndo {
 }
 
 const UNDONE_IN_FORM = 'Undone in the form. Save to keep it.'
+const ALL_UNDONE_IN_FORM = 'All changes undone in the form. Save to keep them.'
+/** `redoFrom`'s key for the value "Undo all" found. */
+const ALL_KEY = '*'
 const NOT_IN_FORM_REASON =
   'The form no longer has the item this change is in, so it can’t be undone here.'
 
@@ -792,7 +795,7 @@ const ChangeCard: React.FC<{
           >
             {undo.undone ? EDITOR_ACTIONS.redoChange : EDITOR_ACTIONS.undoChange}
           </ReasonedButton>
-          <Text size="xs" role="status" data-testid="entry-change-undone">
+          <Text size="xs" data-testid="entry-change-undone">
             {undo.undone ? [UNDONE_IN_FORM, undo.note].filter(Boolean).join(' ') : ''}
           </Text>
         </Group>
@@ -873,17 +876,25 @@ export const EntryChangesView: React.FC<
       fields: subject.fields,
       before: data.before,
       after: sideOfFormValue(formValue, data.after),
+      marks: false,
     })
     return new Set(held.changes.map((change) => change.key))
   }, [formValue, data, subject.fields])
   // What taking out an item did to its threads, said beside its undo until it is redone.
   const [notes, setNotes] = useState<Record<string, string>>({})
+  // The form's value as each undo found it, by change key (ALL_KEY for "Undo all"), which its
+  // redo puts back, so an unsaved edit the undo replaced comes back with it.
+  const [redoFrom, setRedoFrom] = useState<Record<string, Record<string, unknown>>>({})
+  // What the last undo or redo did, said once here rather than by every card it touched.
+  const [announcement, setAnnouncement] = useState('')
   const [restoring, setRestoring] = useState(false)
   const [restoreRefusal, setRestoreRefusal] = useState<RestoreRefusal>()
   useEffect(() => {
     setNotes({})
+    setRedoFrom({})
+    setAnnouncement('')
     setRestoreRefusal(undefined)
-  }, [subject.logicalPath])
+  }, [subject.logicalPath, undo?.saved])
 
   // A refusal no retry passes: its reason, and the ways the entry can still be looked at.
   const refusal =
@@ -989,15 +1000,21 @@ export const EntryChangesView: React.FC<
   const savedValue = data.after && (undo?.saved ?? formValueOfSide(data.after))
   const isUndone = (change: EntryChange) => !!heldKeys && !heldKeys.has(change.key)
   const allUndone = undoable && diff.changes.every(isUndone)
+  const redoSource = (key: string) => redoFrom[key] ?? redoFrom[ALL_KEY] ?? savedValue
   const cardUndo = (change: EntryChange): CardUndo | undefined => {
     if (!undoable || !undo || !baseValue || !savedValue) return undefined
-    const undone = isUndone(change)
-    const placeable = setChangeBack(undo.value, undone ? savedValue : baseValue, change, bodyField)
+    const held = isUndone(change)
+    const source = held ? redoSource(change.key) : baseValue
+    const placeable = !!source && !!setChangeBack(undo.value, source, change, bodyField)
+    // A change the form can't take back, such as one inside an item it no longer has, isn't
+    // offered as undone.
+    const undone = held && placeable
     return {
       undone,
       reason: lockedReason ?? (placeable ? undefined : NOT_IN_FORM_REASON),
       note: undone ? notes[change.key] : undefined,
       onToggle: () => {
+        if (!source) return
         // Taking out an item the branch added moves its threads to the entry, as a Remove does.
         const path =
           !undone && change.item && change.kind === 'added'
@@ -1007,7 +1024,12 @@ export const EntryChangesView: React.FC<
         setNotes(({ [change.key]: _dropped, ...rest }) =>
           note ? { ...rest, [change.key]: note } : rest,
         )
-        const source = undone ? savedValue : baseValue
+        setRedoFrom(({ [change.key]: _redone, ...rest }) =>
+          undone ? rest : { ...rest, [change.key]: undo.value },
+        )
+        setAnnouncement(
+          undone ? 'Change redone in the form.' : [UNDONE_IN_FORM, note].filter(Boolean).join(' '),
+        )
         undo.update((value) => setChangeBack(value, source, change, bodyField) ?? value)
       },
     }
@@ -1045,6 +1067,11 @@ export const EntryChangesView: React.FC<
         )}
       </StatusRegion>
       {errorNotice}
+      {undoable && (
+        <VisuallyHidden role="status" data-testid="entry-changes-announcement">
+          {announcement}
+        </VisuallyHidden>
+      )}
       {subject.unsavedEdits && (
         <Alert
           variant="light"
@@ -1079,15 +1106,19 @@ export const EntryChangesView: React.FC<
                 reason={lockedReason}
                 onClick={() => {
                   setNotes({})
-                  const source = allUndone ? savedValue : baseValue
+                  const source = allUndone ? (redoFrom[ALL_KEY] ?? savedValue) : baseValue
+                  setRedoFrom(allUndone ? {} : { [ALL_KEY]: undo.value })
+                  setAnnouncement(
+                    allUndone ? 'All changes redone in the form.' : ALL_UNDONE_IN_FORM,
+                  )
                   undo.update((value) => setAllBack(value, source, diff.changes, bodyField))
                 }}
                 data-testid="entry-changes-undo-all"
               >
                 {allUndone ? EDITOR_ACTIONS.redoAllChanges : EDITOR_ACTIONS.undoAllChanges}
               </ReasonedButton>
-              <Text size="xs" role="status" data-testid="entry-changes-all-undone">
-                {allUndone ? 'All changes undone in the form. Save to keep them.' : ''}
+              <Text size="xs" data-testid="entry-changes-all-undone">
+                {allUndone ? ALL_UNDONE_IN_FORM : ''}
               </Text>
             </>
           )}

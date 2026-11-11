@@ -53,6 +53,9 @@ const step = (value: unknown, segment: DataPathSegment): unknown => {
 const valueAt = (value: unknown, path: readonly DataPathSegment[]): unknown =>
   path.reduce(step, value)
 
+/** What a `replace` returns when the change has nothing to act on, so it can't be placed. */
+const NOT_PLACED = Symbol('not-placed')
+
 /**
  * `value` with what is at `path` replaced by `replace`'s result, copied on the way down; a
  * record missing on the way is made, so a field comes back inside an object the branch cleared.
@@ -64,7 +67,10 @@ const updateAt = (
   path: readonly DataPathSegment[],
   replace: (old: unknown) => unknown,
 ): { value: unknown } | undefined => {
-  if (path.length === 0) return { value: replace(value) }
+  if (path.length === 0) {
+    const next = replace(value)
+    return next === NOT_PLACED ? undefined : { value: next }
+  }
   const [segment, ...rest] = path
   if ('field' in segment) {
     const record = isPlainRecord(value) ? value : value == null ? {} : undefined
@@ -136,7 +142,7 @@ export function setChangeBack(
       const index = indexOfKey(list, last.item)
       if (wanted === undefined) return index < 0 ? old : list.filter((_, i) => i !== index)
       if (change.kind === 'moved') {
-        if (index < 0) return old
+        if (index < 0) return NOT_PLACED
         const without = list.filter((_, i) => i !== index)
         return placeLike(without, list[index], last.item, sourceList)
       }
@@ -148,7 +154,33 @@ export function setChangeBack(
       wanted === undefined ? undefined : structuredClone(wanted),
     )
   }
-  return next && isPlainRecord(next.value) ? next.value : undefined
+  const placed = next && isPlainRecord(next.value) ? next.value : undefined
+  return placed && withoutEmptyContainers(placed, source, path)
+}
+
+const isEmptyContainer = (value: unknown): boolean =>
+  Array.isArray(value)
+    ? value.length === 0
+    : isPlainRecord(value) && Object.keys(value).length === 0
+
+/**
+ * `value` without the records and lists on `path` that setting a change back left empty where
+ * `source` has none, so a value set back matches `source` rather than holding `seo: {}`.
+ */
+const withoutEmptyContainers = (
+  value: FormValue,
+  source: FormValue,
+  path: readonly DataPathSegment[],
+): FormValue => {
+  let out = value
+  for (let end = path.length; end > 0; end--) {
+    const at = path.slice(0, end)
+    if (!('field' in at[at.length - 1])) continue
+    if (valueAt(source, at) !== undefined || !isEmptyContainer(valueAt(out, at))) continue
+    const next = updateAt(out, at, () => undefined)
+    if (next && isPlainRecord(next.value)) out = next.value
+  }
+  return out
 }
 
 /**

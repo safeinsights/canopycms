@@ -21,7 +21,9 @@ import {
 import { resolveCollectionPath } from '../content-id-index'
 import { BaseBranchMissingError } from '../git-manager'
 import { getBranchProtection } from '../authorization/protected-branch'
-import { SchemaUnavailableError } from '../schema/schema-unavailable-error'
+import { SchemaOps, SchemaStoreBusyError } from '../schema/schema-store'
+import { canopyLogWarn } from '../utils/logger'
+import { isRebaseInProgress } from '../utils/git'
 import { baseBranchOf } from '../utils/base-branch'
 import { findBodyFieldName } from '../utils/body-field'
 import { entryAsRead } from '../utils/calendar-day'
@@ -34,6 +36,7 @@ import { branchNameSchema, contentIdSchema, logicalPathSchema } from './validato
 import {
   branchReadFailedResponse,
   readWhileSteady,
+  SYNCING_ERROR,
   unsteadyReadResponse,
   type SteadyRead,
 } from './branch-changes'
@@ -185,6 +188,8 @@ type BaseGit = ReturnType<ApiContext['services']['createGitManagerFor']>
 interface BaseFile {
   path: string
   size: number
+  /** The current schema places it as this entry type, by name and file extension. */
+  placed: boolean
   ref: Extract<ReturnType<typeof entryRefFromRepoPathShape>, { kind: 'entry' }>
 }
 
@@ -218,7 +223,7 @@ const findBaseFile = async (
         placed.kind === 'other' ? entryRefFromRepoPathShape(file.path, contentRoot) : placed
       if (ref?.kind !== 'entry' || ref.logicalPath !== logicalPath) continue
       if (contentId !== undefined && ref.contentId !== contentId) continue
-      return { path: file.path, size: file.size, ref }
+      return { path: file.path, size: file.size, ref, placed: placed.kind === 'entry' }
     }
     // The collection's directory is in the base tree, so an entry not in it is new.
     if (files.length > 0) return undefined
@@ -392,10 +397,51 @@ const restoreBodySchema = z.object({
 interface RestoreEntryData {
   logicalPath: string
   contentId: string
+  /** The entry is back, but its collection's manual order couldn't be updated. */
+  warning?: string
 }
 export type RestoreEntryResponse = ApiResponse<RestoreEntryData>
 
 const NOT_RESTORABLE_ERROR = "This entry isn't on the base branch, so it can't be restored."
+const TYPE_CHANGED_ERROR =
+  "This entry's type or format has changed since it was deleted, so it can't be restored."
+const TOO_LARGE_TO_RESTORE_ERROR = 'This entry is too large to restore here.'
+const UNREADABLE_TO_RESTORE_ERROR = "This entry's saved file doesn't read, so it can't be restored."
+
+/** `order` with `id` put back after its nearest predecessor in `baseOrder` that `order` holds. */
+const orderWith = (order: readonly string[], id: string, baseOrder: readonly string[]) => {
+  const at = baseOrder.indexOf(id)
+  for (let i = at - 1; i >= 0; i--) {
+    const index = order.indexOf(baseOrder[i])
+    if (index >= 0) return [...order.slice(0, index + 1), id, ...order.slice(index + 1)]
+  }
+  return [id, ...order]
+}
+
+/** A collection's `order` in its `.collection.json` at `rev`, or undefined when it has none. */
+const orderAt = async (
+  git: BaseGit,
+  rev: string,
+  collectionRepoDir: string,
+): Promise<string[] | undefined> => {
+  const raw = await git.showFile(rev, `${collectionRepoDir}/.collection.json`)
+  if (raw === undefined) return undefined
+  try {
+    const order: unknown = JSON.parse(raw)?.order
+    return Array.isArray(order) && order.every((id) => typeof id === 'string') ? order : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** The base file a restore writes back, with what it was read against. */
+interface BaseEntry {
+  raw: string
+  entryType: string
+  /** HEAD at the read, which the write checks is still HEAD. */
+  head: string
+  baseOrder?: string[]
+}
 
 const restoreEntryHandler = async (
   gc: { branchContext: BranchContextWithSchema },
@@ -405,10 +451,11 @@ const restoreEntryHandler = async (
   body: z.infer<typeof restoreBodySchema>,
 ): Promise<RestoreEntryResponse> => {
   const { branchContext } = gc
+  const { branchRoot } = branchContext
   const { config } = ctx.services
   const base = branchContext.branch.baseBranch ?? baseBranchOf(config)
   const contentRoot = config.contentRoot || 'content'
-  const store = new ContentStore(branchContext.branchRoot, branchContext.flatSchema, {
+  const store = new ContentStore(branchRoot, branchContext.flatSchema, {
     contentRootName: contentRoot,
   })
   const target = canonicalPath(store, underContentRoot(params.entryPath, contentRoot))
@@ -420,19 +467,23 @@ const restoreEntryHandler = async (
   if (!target.stored) return notRestorable
   const checkAccess = await ctx.services.createContentAccessChecker(
     branchContext,
-    branchContext.branchRoot,
+    branchRoot,
     req.user,
   )
   if (!checkAccess(target.logicalPath, 'edit').allowed) {
     return { ok: false, status: 403, error: 'Forbidden' }
   }
+  const { collectionPath, slug } = target.stored
+  const collectionDir = await resolveCollectionPath(branchRoot, collectionPath)
+  const collectionRepoDir =
+    collectionDir && path.relative(branchRoot, collectionDir).split(path.sep).join('/')
 
-  const git = ctx.services.createGitManagerFor(branchContext.branchRoot, {
+  const git = ctx.services.createGitManagerFor(branchRoot, {
     baseBranch: branchContext.branch.baseBranch,
   })
-  let read: SteadyRead<{ raw: string; entryType: string } | 'too-large' | undefined>
+  let read: SteadyRead<BaseEntry | 'too-large' | 'type-changed' | undefined>
   try {
-    read = await readWhileSteady(branchContext.branchRoot, git, async () => {
+    read = await readWhileSteady(branchRoot, git, async () => {
       const mergeBase = await git.mergeBaseWithBase()
       if (!mergeBase) return undefined
       const file = await findBaseFile(
@@ -444,25 +495,67 @@ const restoreEntryHandler = async (
         contentRoot,
       )
       if (!file) return undefined
+      // Only a file the current schema places as this entry type, by name and extension, goes
+      // back: another format's bytes under this type's extension would not read.
+      if (!file.placed) return 'type-changed'
       if (file.size > MAX_SIDE_BYTES) return 'too-large'
       const raw = await git.showFile(mergeBase, file.path)
-      return raw === undefined ? undefined : { raw, entryType: file.ref.entryType }
+      if (raw === undefined) return undefined
+      const baseOrder = collectionRepoDir
+        ? await orderAt(git, mergeBase, collectionRepoDir)
+        : undefined
+      return {
+        raw,
+        entryType: file.ref.entryType,
+        head: await git.headSha(),
+        ...(baseOrder && { baseOrder }),
+      }
     })
   } catch (err) {
     if (err instanceof BaseBranchMissingError) return notRestorable
     return branchReadFailedResponse(branchContext.branch.name, base, err)
   }
   if (!read.steady) return unsteadyReadResponse(read.reason, base)
-  if (read.value === 'too-large') return { ok: false, status: 413, error: TOO_LARGE_ERROR }
-  if (!read.value) return notRestorable
+  const entry = read.value
+  if (entry === 'too-large') return { ok: false, status: 413, error: TOO_LARGE_TO_RESTORE_ERROR }
+  if (entry === 'type-changed') return { ok: false, status: 409, error: TYPE_CHANGED_ERROR }
+  if (!entry) return notRestorable
 
-  const { collectionPath, slug } = target.stored
+  const entryType = entryTypeIn(branchContext.flatSchema, collectionPath, entry.entryType)
+  if (!entryType) return { ok: false, status: 409, error: TYPE_CHANGED_ERROR }
   try {
-    await store.restore(collectionPath, slug, {
-      id: body.id as ContentId,
-      entryTypeName: read.value.entryType,
-      raw: read.value.raw,
-    })
+    parseEntryParts(entry.raw, entryType.format)
+  } catch {
+    return { ok: false, status: 422, error: UNREADABLE_TO_RESTORE_ERROR }
+  }
+  // As a create checks it (api/content.ts), and as best-effort: count-then-write isn't atomic.
+  const { maxItems } = entryType
+  if (
+    maxItems !== undefined &&
+    (await store.countEntriesOfType(collectionPath, entry.entryType)) >= maxItems
+  ) {
+    return {
+      ok: false,
+      status: 422,
+      error: `Cannot restore entry: type "${entry.entryType}" allows at most ${maxItems} ${maxItems === 1 ? 'entry' : 'entries'}`,
+    }
+  }
+
+  try {
+    await store.restore(
+      collectionPath,
+      slug,
+      { id: body.id as ContentId, entryTypeName: entry.entryType, raw: entry.raw },
+      {
+        // The bytes are the merge base's as HEAD stood at the read; a sync since may have
+        // updated the entry upstream, so a moved HEAD refuses rather than reverting that.
+        beforeWrite: async () => {
+          if ((await isRebaseInProgress(branchRoot)) || (await git.headSha()) !== entry.head) {
+            throw new BranchSyncingError(SYNCING_ERROR(base))
+          }
+        },
+      },
+    )
   } catch (err) {
     if (err instanceof BranchSyncingError) {
       return {
@@ -474,15 +567,57 @@ const restoreEntryHandler = async (
     }
     // A refusal the editor can act on: the slug or the id is taken, or a URL is contested.
     if (err instanceof ContentConflictError) return { ok: false, status: 409, error: err.message }
-    if (err instanceof SchemaUnavailableError) {
-      return { ok: false, status: 409, error: sanitizeErrorMessage(err.message) }
-    }
     if (err instanceof ContentStoreError) {
       return { ok: false, status: 400, error: sanitizeErrorMessage(err.message) }
     }
     throw err
   }
-  return { ok: true, status: 200, data: { logicalPath: target.logicalPath, contentId: body.id } }
+
+  const warning = await restoreOrder(ctx, branchContext, collectionPath, body.id, entry.baseOrder)
+  return {
+    ok: true,
+    status: 200,
+    data: { logicalPath: target.logicalPath, contentId: body.id, ...(warning && { warning }) },
+  }
+}
+
+/**
+ * Puts a restored entry's id back in its collection's manual order, after its nearest neighbour
+ * at the base, undoing what a delete took out (api/entries.ts). Best-effort: the entry is back
+ * either way, so a failure is a warning. Runs after the restore, whose content-write lock a
+ * schema write also takes.
+ */
+const restoreOrder = async (
+  ctx: ApiContext,
+  branchContext: BranchContextWithSchema,
+  collectionPath: LogicalPath,
+  id: string,
+  baseOrder: readonly string[] | undefined,
+): Promise<string | undefined> => {
+  const collection = branchContext.flatSchema.find(
+    (item): item is CollectionSchemaItem =>
+      item.type === 'collection' && item.logicalPath === collectionPath,
+  )
+  const order = collection?.order
+  if (!order || !baseOrder?.includes(id) || order.includes(id)) return undefined
+  const schemaStore = new SchemaOps(
+    path.join(branchContext.branchRoot, ctx.services.config.contentRoot || 'content'),
+    ctx.services.entrySchemaRegistry,
+    ctx.services,
+    branchContext.branchRoot,
+  )
+  try {
+    await schemaStore.updateOrder(collectionPath, orderWith(order, id, baseOrder))
+    return undefined
+  } catch (err) {
+    // An `'unknown'` outcome means the update ran to completion.
+    if (err instanceof SchemaStoreBusyError && err.outcome === 'unknown') return undefined
+    canopyLogWarn(
+      `CanopyCMS: restored ${collectionPath}/${id} but not its place in the order:`,
+      err,
+    )
+    return 'Entry restored, but its place in the collection order couldn’t be put back, so it is listed last.'
+  }
 }
 
 /**

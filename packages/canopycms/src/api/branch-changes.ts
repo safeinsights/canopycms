@@ -61,7 +61,7 @@ const MAX_DELETED_TITLES = 200
 /** Other files listed to an admin; the rest are counted only as `otherFilesTruncated`. */
 const MAX_OTHER_FILES = 200
 
-const SYNCING_ERROR = (base: string) =>
+export const SYNCING_ERROR = (base: string) =>
   `This branch is being synced with ${base}. Try again in a moment.`
 const CHANGED_MID_READ_ERROR =
   'This branch changed while its changes were being read. Try again in a moment.'
