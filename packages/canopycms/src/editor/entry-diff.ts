@@ -6,11 +6,15 @@
  */
 
 import { diffLines, diffWordsWithSpace, type Change } from 'diff'
-import equal from 'fast-deep-equal'
 
 import type { BlockFieldConfig, FieldConfig, ObjectFieldConfig, SelectFieldConfig } from '../config'
 import type { EntryChangeSide } from '../api/branch-entry-changes'
 import { ITEM_KEY } from '../item-keys'
+import {
+  isEmptyValue as isEmpty,
+  normalizedValue as normalized,
+  sameValue,
+} from '../merge/value-equality'
 import { findBodyFieldName } from '../utils/body-field'
 import { isCalendarDay, localMidnight } from '../utils/calendar-day'
 import { flattenGroupFields } from '../utils/flatten-group-fields'
@@ -142,27 +146,6 @@ const formValue = (
   if (side.body === undefined) return side.data
   return { ...side.data, [side.bodyFieldName ?? findBodyFieldName(fields)]: side.body }
 }
-
-const isEmpty = (value: unknown): boolean =>
-  value === undefined ||
-  value === null ||
-  value === '' ||
-  (Array.isArray(value) && value.length === 0) ||
-  (isPlainRecord(value) && Object.keys(value).every((k) => k === ITEM_KEY || isEmpty(value[k])))
-
-/** `value` without item keys and empty members, so equal content compares equal. */
-const normalized = (value: unknown): unknown => {
-  if (Array.isArray(value)) return value.map(normalized)
-  if (!isPlainRecord(value)) return value
-  const out: Record<string, unknown> = {}
-  for (const [k, v] of Object.entries(value)) {
-    if (k !== ITEM_KEY && !isEmpty(v)) out[k] = normalized(v)
-  }
-  return out
-}
-
-const sameValue = (a: unknown, b: unknown): boolean =>
-  (isEmpty(a) && isEmpty(b)) || equal(normalized(a), normalized(b))
 
 const at = (parent: At, label: string, key: string, segment?: DataPathSegment): At => ({
   path: [...parent.path, label],
