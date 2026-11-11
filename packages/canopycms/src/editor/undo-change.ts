@@ -3,7 +3,8 @@
  * value, to how `source` has it: the base's version to undo it, the branch's saved one to redo it.
  * Pure; the editor puts the result in the entry's draft, so an undo is an unsaved edit until saved.
  * List and block items are found by item key, so an undo lands on the item the change named
- * wherever it now sits, and an item put back keeps its key and with it its comment threads.
+ * wherever it now sits, and an item put back keeps its key, which its comment threads are anchored
+ * by (`resolveThreadPath` in item-keys.ts).
  */
 
 import type { EntryChangeSide } from '../api/branch-entry-changes'

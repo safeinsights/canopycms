@@ -535,7 +535,7 @@ const restoreEntryHandler = async (
   } catch {
     return { ok: false, status: 422, error: UNREADABLE_TO_RESTORE_ERROR }
   }
-  // As a create checks it (api/content.ts), and as best-effort: count-then-write isn't atomic.
+  // As a create checks it (SCH-H3, api/content.ts), best-effort: count-then-write isn't atomic.
   const { maxItems } = entryType
   if (
     maxItems !== undefined &&

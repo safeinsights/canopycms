@@ -533,7 +533,7 @@ describe('Show changes', () => {
       await userEvent.click(await within(dialog).findByRole('button', { name: 'Restore entry' }))
       const refused = await within(dialog).findByTestId('entry-changes-restore-refused')
       expect(refused.textContent).toBe(
-        'Restoring "Gone" may have gone through even though the server didn’t answer. Check the "Content" panel for it before trying again.',
+        'Restoring "Gone" may have gone through, but the server couldn’t confirm it. Check the "Content" panel for it before trying again.',
       )
       expect(refused.getAttribute('style')).toContain('yellow')
     })

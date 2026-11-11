@@ -1926,7 +1926,7 @@ const EditorContent: React.FC<EditorProps> = ({
           ) {
             return {
               tone: 'warning',
-              message: `Restoring "${title}" may have gone through even though the server didn’t answer. Check the "Content" panel for it before trying again.`,
+              message: `Restoring "${title}" may have gone through, but the server couldn’t confirm it. Check the "Content" panel for it before trying again.`,
             }
           }
           setChangesOpen(false)

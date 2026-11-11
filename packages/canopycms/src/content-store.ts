@@ -144,9 +144,9 @@ export class ContentStoreError extends Error {
 /** Why a restore refuses: another entry took the slug after this one was deleted. */
 export const RESTORE_SLUG_TAKEN_MESSAGE =
   "Another entry now has this entry's URL. Change that entry's URL, then restore this one."
-/** Why a restore refuses: the entry is still on the branch, under another path. */
+/** Why a restore refuses: the entry, by its content ID, is on the branch already. */
 export const RESTORE_ID_TAKEN_MESSAGE =
-  'This entry is still on the branch under another URL, so there is nothing to restore.'
+  'This entry is already on the branch, so there is nothing to restore. Refresh to see where it is.'
 
 /**
  * Thrown when `expectedVersion` on a write doesn't match the file's current mtime.
@@ -1671,17 +1671,16 @@ export class ContentStore {
     this.assertEntryTypeAvailable(collection, entry.entryTypeName)
     return this.withContentWriteExclusion(async () => {
       await options.beforeWrite?.()
-      // Every host's content write bumps the marker under this lock, so a marker that still
-      // matches the index's means the index is current. Read here unthrottled, unlike
-      // idIndex()'s own probe; a rescan holds no entry lock, which it must not.
+      // Every content write and every git or sync change to the tree bumps the marker
+      // (content-index-generation.ts), so a marker that still matches the index's means the
+      // index is current. Read here unthrottled, unlike idIndex()'s own probe; a rescan holds no
+      // entry lock, which it must not.
       if ((await readContentIndexGeneration(this.root)) !== this.loadedDiskGeneration) {
         this.invalidateIndex()
       }
       await this.idIndex()
       return withLock(this.createLockKey(collection, slug), async () => {
-        if ((await this.buildPaths(collection, slug)).existed) {
-          throw new ContentConflictError(RESTORE_SLUG_TAKEN_MESSAGE)
-        }
+        // The ID first: an entry already back at its own slug is this one, not another.
         const target = await this.buildPaths(collection, slug, {
           existingId: entry.id,
           entryTypeName: entry.entryTypeName,
@@ -1694,6 +1693,9 @@ export class ContentStore {
           (await this.findEntryPathsById(dir, entry.id)).length > 0
         ) {
           throw new ContentConflictError(RESTORE_ID_TAKEN_MESSAGE)
+        }
+        if ((await this.buildPaths(collection, slug)).existed) {
+          throw new ContentConflictError(RESTORE_SLUG_TAKEN_MESSAGE)
         }
         // [SLUG] and [URL], as write() checks a create.
         const routable = parseSlug(target.slug)

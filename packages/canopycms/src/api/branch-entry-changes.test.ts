@@ -551,6 +551,17 @@ describe('POST /:branch/restore-entry/...entryPath', () => {
     ).toBe(ID.old)
   })
 
+  it('says a second restore of the same entry finds it back, not another entry', async () => {
+    await fs.rm(path.join(branchRoot, files.old))
+    expect(await restore(createCtx(), 'content/blog/old-news', ID.old)).toMatchObject({ ok: true })
+    expect(await restore(createCtx(), 'content/blog/old-news', ID.old)).toEqual({
+      ok: false,
+      status: 409,
+      error:
+        'This entry is already on the branch, so there is nothing to restore. Refresh to see where it is.',
+    })
+  })
+
   it('puts back a markdown entry byte for byte', async () => {
     await fs.rm(path.join(branchRoot, files.memo))
     expect(await restore(createCtx(), 'content/notes/memo', ID.memo)).toMatchObject({ ok: true })
@@ -577,7 +588,8 @@ describe('POST /:branch/restore-entry/...entryPath', () => {
     expect(await restore(createCtx(), 'content/blog/hello', ID.hello)).toEqual({
       ok: false,
       status: 409,
-      error: 'This entry is still on the branch under another URL, so there is nothing to restore.',
+      error:
+        'This entry is already on the branch, so there is nothing to restore. Refresh to see where it is.',
     })
     expect(await read(moved)).toBe(seedText.hello)
     await expect(fs.access(path.join(branchRoot, files.hello))).rejects.toThrow()
@@ -611,7 +623,7 @@ describe('POST /:branch/restore-entry/...entryPath', () => {
         entryTypeName: 'post',
         raw: seedText.hello,
       }),
-    ).rejects.toThrow('This entry is still on the branch under another URL')
+    ).rejects.toThrow('This entry is already on the branch')
     await expect(fs.access(path.join(branchRoot, files.hello))).rejects.toThrow()
   })
 
@@ -740,7 +752,7 @@ describe('POST /:branch/restore-entry/...entryPath', () => {
         entryTypeName: 'post',
         raw: seedText.hello,
       }),
-    ).rejects.toThrow('This entry is still on the branch under another URL')
+    ).rejects.toThrow('This entry is already on the branch')
     await expect(fs.access(path.join(branchRoot, files.hello))).rejects.toThrow()
   })
 
