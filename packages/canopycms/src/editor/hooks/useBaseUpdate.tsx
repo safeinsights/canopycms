@@ -63,12 +63,25 @@ function withBranch(data: BranchesData | undefined, branch: BranchListItem) {
 const laterThan = (a: string, b: string | undefined) =>
   b === undefined || Date.parse(a) > Date.parse(b)
 
+/**
+ * A request this tab made or saw answered, by branch: its name and creation, since a branch deleted
+ * and made again under the same name is another branch.
+ */
+interface Recorded {
+  name: string
+  createdAt: string
+  requestedAt: string
+}
+
+const sameBranch = (branch: BranchListItem, record: Recorded | null): record is Recorded =>
+  record?.name === branch.name && record.createdAt === branch.createdAt
+
 /** The listed branch, carrying this tab's newer request. */
 function withAsked(
   branch: BranchListItem | undefined,
-  asked: { name: string; requestedAt: string } | null,
+  asked: Recorded | null,
 ): BranchListItem | undefined {
-  if (!branch || asked?.name !== branch.name) return branch
+  if (!branch || !sameBranch(branch, asked)) return branch
   return laterThan(asked.requestedAt, branch.baseUpdateRequestedAt)
     ? { ...branch, baseUpdateRequestedAt: asked.requestedAt }
     : branch
@@ -77,9 +90,9 @@ function withAsked(
 /** The branch, carrying the answer this tab already reported when the listing hasn't caught up. */
 function withSettled(
   branch: BranchListItem | undefined,
-  settled: { name: string; requestedAt: string; lastBaseUpdate: LastBaseUpdate } | null,
+  settled: (Recorded & { lastBaseUpdate: LastBaseUpdate }) | null,
 ): BranchListItem | undefined {
-  if (!branch || settled?.name !== branch.name || !isBaseUpdatePending(branch)) return branch
+  if (!branch || !sameBranch(branch, settled) || !isBaseUpdatePending(branch)) return branch
   return laterThan(branch.baseUpdateRequestedAt ?? '', settled.requestedAt) &&
     branch.baseUpdateRequestedAt !== undefined
     ? branch
@@ -114,14 +127,12 @@ export function useBaseUpdate(options: UseBaseUpdateOptions): UseBaseUpdateRetur
   const { mutate } = useSWRConfig()
   const [requestingFor, setRequestingFor] = useState<string | null>(null)
   // The last request this tab made, by branch, which a listing that predates it can't undo.
-  const [asked, setAsked] = useState<{ name: string; requestedAt: string } | null>(null)
+  const [asked, setAsked] = useState<Recorded | null>(null)
   // The last answer this tab reported, by branch, which a listing that predates it can't undo:
   // another host can serve the branch list from an older snapshot.
-  const [settled, setSettled] = useState<{
-    name: string
-    requestedAt: string
-    lastBaseUpdate: LastBaseUpdate
-  } | null>(null)
+  const [settled, setSettled] = useState<(Recorded & { lastBaseUpdate: LastBaseUpdate }) | null>(
+    null,
+  )
   const [, setTick] = useState(0)
 
   const listed = options.branch
@@ -138,6 +149,7 @@ export function useBaseUpdate(options: UseBaseUpdateOptions): UseBaseUpdateRetur
   const requestedAt = branch?.baseUpdateRequestedAt
   const answer = branch?.lastBaseUpdate
   const status = branch?.status
+  const createdAt = branch?.createdAt
 
   // The wait changes on its own at the slow and give-up marks; nothing else would re-render then.
   const changeAt = nextBaseUpdateWaitChange(branch, serverNow())
@@ -182,8 +194,8 @@ export function useBaseUpdate(options: UseBaseUpdateOptions): UseBaseUpdateRetur
   }, [])
 
   const report = useCallback(
-    (branchName: string, requestedAt: string, result: LastBaseUpdate) => {
-      setSettled({ name: branchName, requestedAt, lastBaseUpdate: result })
+    (on: Recorded, result: LastBaseUpdate) => {
+      setSettled({ ...on, lastBaseUpdate: result })
       const { color, message } = baseUpdateResultMessage(result)
       // Retry only for someone who may ask; another viewer just learns how it went.
       const canRetry = result.outcome === 'failed' && latest.current.available
@@ -220,12 +232,12 @@ export function useBaseUpdate(options: UseBaseUpdateOptions): UseBaseUpdateRetur
       !isBaseUpdatePending({ baseUpdateRequestedAt: requestedAt, lastBaseUpdate: answer })
     ) {
       watched.current = undefined
-      report(name, requestedAt, answer)
+      report({ name, createdAt: createdAt ?? '', requestedAt }, answer)
     } else if (!seen.gaveUp && status === 'editing') {
       seen.gaveUp = true
       showResult('yellow', GAVE_UP_MESSAGE)
     }
-  }, [name, requestedAt, answer, wait, status, report])
+  }, [name, createdAt, requestedAt, answer, wait, status, report])
 
   const request = useCallback(async () => {
     const target = latest.current.name
@@ -247,15 +259,22 @@ export function useBaseUpdate(options: UseBaseUpdateOptions): UseBaseUpdateRetur
             revalidate: false,
           })
           if (!stillOpen()) return
-          setAsked({ name: target, requestedAt: at })
+          const on = { name: target, createdAt: answered.createdAt, requestedAt: at }
+          setAsked(on)
           if (!isBaseUpdatePending(answered) && answered.lastBaseUpdate) {
-            report(target, at, answered.lastBaseUpdate)
+            report(on, answered.lastBaseUpdate)
           } else {
             watched.current = { name: target, requestedAt: at, gaveUp: false }
           }
           return
         }
-        if (stillOpen()) showResult('red', result.error ?? REQUEST_FAILED_MESSAGE, retry)
+        // A refusal can mean the branch moved on (submitted meanwhile): re-read it, and offer Retry
+        // only if it can still ask.
+        const fresh = await mutate<BranchesData>(BRANCHES_KEY)
+        if (!stillOpen()) return
+        const now = fresh?.branches.find((b) => b.name === target)
+        const canRetry = now === undefined || now.status === 'editing'
+        showResult('red', result.error ?? REQUEST_FAILED_MESSAGE, canRetry ? retry : undefined)
       } catch (err) {
         if (!isUnanswered(err)) throw err
         // It may have gone through, and a reload that shows the wait settles it.

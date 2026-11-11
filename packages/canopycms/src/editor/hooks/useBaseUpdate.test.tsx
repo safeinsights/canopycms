@@ -301,6 +301,18 @@ describe('useBaseUpdate', () => {
     expect(typeof shown()[0]?.message).toBe('string')
   })
 
+  it('offers no Retry when a refusal finds the branch submitted meanwhile', async () => {
+    client.workflow.updateFromBase.mockImplementation(async () => {
+      listed = editing({ status: 'submitted' })
+      return { ok: false, status: 409, error: 'This branch is in review.' }
+    })
+    const { result } = render()
+    await waitFor(() => expect(result.current.branch).toBeDefined())
+    await act(() => result.current.request())
+    expect(shown()[0]).toMatchObject({ color: 'red', message: 'This branch is in review.' })
+    await waitFor(() => expect(result.current.available).toBe(false))
+  })
+
   it('reports a refused request, with Retry', async () => {
     client.workflow.updateFromBase.mockResolvedValue({
       ok: false,

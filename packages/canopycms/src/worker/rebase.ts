@@ -10,7 +10,11 @@ import {
 import { invalidateBranchContentCaches } from '../content-index-generation'
 import { isSettingsBranchName, sanitizeBranchName } from '../paths/branch-name'
 import type { BaseUpdateOutcome, BranchMetadata, PullRequestHold, PullRequestState } from '../types'
-import { BASE_UPDATE_EARLY_RETRY_MS, isBaseUpdatePending } from '../base-update'
+import {
+  BASE_UPDATE_CLOCK_SKEW_MS,
+  BASE_UPDATE_EARLY_RETRY_MS,
+  isBaseUpdatePending,
+} from '../base-update'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import {
   holdProvisionedWorkspace,
@@ -574,10 +578,12 @@ function answerFor(
 function worthAnotherCycle(
   branch: Pick<BranchMetadata, 'status' | 'baseUpdateRequestedAt' | 'lastBaseUpdate'>,
 ): boolean {
+  const age = Date.now() - Date.parse(branch.baseUpdateRequestedAt ?? '')
   return (
     branch.status === 'editing' &&
     isBaseUpdatePending(branch) &&
-    Date.now() - Date.parse(branch.baseUpdateRequestedAt ?? '') < BASE_UPDATE_EARLY_RETRY_MS
+    age >= -BASE_UPDATE_CLOCK_SKEW_MS &&
+    age < BASE_UPDATE_EARLY_RETRY_MS
   )
 }
 

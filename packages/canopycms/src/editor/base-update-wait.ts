@@ -1,4 +1,8 @@
-import { BASE_UPDATE_GIVE_UP_MS, isBaseUpdatePending } from '../base-update'
+import {
+  BASE_UPDATE_CLOCK_SKEW_MS,
+  BASE_UPDATE_GIVE_UP_MS,
+  isBaseUpdatePending,
+} from '../base-update'
 
 import type { BranchMetadata, LastBaseUpdate } from '../types'
 
@@ -38,7 +42,7 @@ type WaitFields = Pick<BranchMetadata, 'status' | 'baseUpdateRequestedAt' | 'las
 export function baseUpdateWait(branch: WaitFields | undefined, now: number): BaseUpdateWait {
   if (!branch || branch.status !== 'editing' || !isBaseUpdatePending(branch)) return 'none'
   const age = now - Date.parse(branch.baseUpdateRequestedAt ?? '')
-  if (!(age < BASE_UPDATE_GIVE_UP_MS)) return 'none'
+  if (!(age < BASE_UPDATE_GIVE_UP_MS) || age < -BASE_UPDATE_CLOCK_SKEW_MS) return 'none'
   return age < BASE_UPDATE_SLOW_MS ? 'waiting' : 'slow'
 }
 

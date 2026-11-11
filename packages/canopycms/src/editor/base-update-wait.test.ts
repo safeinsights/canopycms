@@ -40,6 +40,11 @@ describe('baseUpdateWait', () => {
     expect(baseUpdateWait(asked({ lastBaseUpdate: answer(ASKED) }), ASKED)).toBe('none')
   })
 
+  it('never waits on a request stamped beyond clock skew in the future', () => {
+    expect(baseUpdateWait(asked({ requestedAt: ASKED + 30_000 }), ASKED)).toBe('waiting')
+    expect(baseUpdateWait(asked({ requestedAt: ASKED + 60 * 60_000 }), ASKED)).toBe('none')
+  })
+
   it('never waits on a branch out of editing, nor with no request', () => {
     expect(baseUpdateWait(asked({ status: 'submitted' }), ASKED)).toBe('none')
     expect(baseUpdateWait({ status: 'editing' }, ASKED)).toBe('none')

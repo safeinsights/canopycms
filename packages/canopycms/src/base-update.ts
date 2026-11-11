@@ -20,6 +20,12 @@ export const BASE_UPDATE_GIVE_UP_MS = 10 * 60_000
  */
 export const BASE_UPDATE_EARLY_RETRY_MS = 2 * 60_000
 
+/**
+ * How far in the future a request time may lie and still count: the Lambdas' clocks keep NTP time,
+ * so a later one is corrupt and is never waited on.
+ */
+export const BASE_UPDATE_CLOCK_SKEW_MS = 60_000
+
 /** Whether the branch's latest request for the latest changes is still unanswered. */
 export function isBaseUpdatePending(
   branch: Pick<BranchMetadata, 'baseUpdateRequestedAt' | 'lastBaseUpdate'>,

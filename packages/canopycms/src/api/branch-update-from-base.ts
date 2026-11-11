@@ -134,13 +134,18 @@ const updateFromBaseHandler = async (
       }
       const last = existing.branch.baseUpdateRequestedAt
       const age = last === undefined ? Infinity : now - Date.parse(last)
-      // Only an unanswered request is joined, and not once the editor has stopped waiting on it.
-      if (
-        last !== undefined &&
-        isBaseUpdatePending(existing.branch) &&
-        age < BASE_UPDATE_GIVE_UP_MS &&
-        (queued || age < BASE_UPDATE_REQUEST_INTERVAL_MS)
-      ) {
+      const answer = existing.branch.lastBaseUpdate
+      const pending = isBaseUpdatePending(existing.branch)
+      // An unanswered request is joined until the editor stops waiting on it. An answer under the
+      // interval old stands for a new click too, except a failure, whose Retry must ask again.
+      const joinsPending =
+        pending && age < BASE_UPDATE_GIVE_UP_MS && (queued || age < BASE_UPDATE_REQUEST_INTERVAL_MS)
+      const answeredRecently =
+        !pending &&
+        answer !== undefined &&
+        answer.outcome !== 'failed' &&
+        now - Date.parse(answer.at) < BASE_UPDATE_REQUEST_INTERVAL_MS
+      if (last !== undefined && (joinsPending || answeredRecently)) {
         requestedAt = last
         joined = true
         return null

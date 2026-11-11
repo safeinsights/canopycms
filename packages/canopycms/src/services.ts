@@ -402,6 +402,7 @@ async function _createCanopyServicesInternal(
     // lands on its detached head with the rebase's half-resolved index, and the
     // rebase's `--abort` discards it.
     await withContentWriteLock(options.context.branchRoot, async () => {
+      await refuseDuringRebase(options.context.branchRoot)
       await git.add(options.files)
       await git.commit(options.message)
     })
@@ -485,17 +486,23 @@ async function _createCanopyServicesInternal(
     await git.ensureAuthor({ name: config.gitBotAuthorName, email: config.gitBotAuthorEmail })
     // Names are looked up before taking the lock, so a slow auth provider never holds it.
     const named = await namedEditors(options.context, options.lookupEditor)
-    let uncommitted: CanopyUserId[] = []
     // [SYNC-C1] Locked for the same reason as submitBranch: a commit landing while a rebase is
     // stopped on a conflict is discarded by its abort.
     const committed = await withContentWriteLock(options.context.branchRoot, async () => {
       await refuseDuringRebase(options.context.branchRoot)
       await git.checkoutBranch(options.context.branch.name)
       const status = await git.status()
-      uncommitted = (await readRecordedEditors(options.context))?.uncommittedEditors ?? []
-      return commitSavedChanges(git, status, { message: options.message, uncommitted, named })
+      const uncommitted = (await readRecordedEditors(options.context))?.uncommittedEditors ?? []
+      const done = await commitSavedChanges(git, status, {
+        message: options.message,
+        uncommitted,
+        named,
+      })
+      // Inside the lock, as submitBranch does: a save after it would record its editor as still
+      // uncommitted, and this would then clear them with the save left out of the commit.
+      if (done) await markCommitted(options.context, uncommitted)
+      return done
     })
-    if (committed) await markCommitted(options.context, uncommitted)
     return committed
   }
 

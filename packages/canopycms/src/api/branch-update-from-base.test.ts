@@ -156,6 +156,20 @@ describe('POST /:branch/update-from-base', () => {
     expect(await syncTasks()).toHaveLength(1)
   })
 
+  it('lets a recent answer stand for another click, queueing nothing', async () => {
+    const requestedAt = new Date(Date.now() - 5_000).toISOString()
+    await branchWith({ baseUpdateRequestedAt: requestedAt })
+    await BranchMetadataFileManager.get(branchRoot, baseRoot).save({
+      branch: { lastBaseUpdate: { at: new Date().toISOString(), outcome: 'up-to-date' } },
+    })
+
+    const { res } = await request({ branchRoot, baseRoot, branch: (await loadBranch())! })
+
+    expect(res.data?.requestedAt).toBe(requestedAt)
+    expect(res.data?.branch.lastBaseUpdate?.outcome).toBe('up-to-date')
+    expect(await syncTasks()).toHaveLength(0)
+  })
+
   it('renews a request the editor has stopped waiting on, its queued wake-up serving both', async () => {
     const old = new Date(Date.now() - BASE_UPDATE_GIVE_UP_MS - 1).toISOString()
     await enqueueTask(taskDir, { action: SYNC_BRANCH_ACTION, payload: { branch: BRANCH } })
