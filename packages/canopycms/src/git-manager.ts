@@ -2080,8 +2080,8 @@ export class GitManager {
       }
       throw err
     }
-    // simple-git resolves "" when git exits quietly, as when it is killed, so anything but digits
-    // is a failed read rather than an empty blob.
+    // simple-git resolves "" when git exits non-zero without writing to stderr, so anything but
+    // digits is a failed read rather than an empty blob.
     if (!/^\d+$/.test(sizeText)) throw new Error(`git cat-file -s ${sha} printed no size`)
     const size = Number(sizeText)
     if (size > maxBytes) return 'too-large'

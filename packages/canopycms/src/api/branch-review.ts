@@ -222,7 +222,7 @@ const approveBranchHandler = async (
         error:
           err.count === null
             ? err.message
-            : `${err.message} It can be approved once its editor chooses what to keep.`,
+            : `${err.message} Use "Request changes" so its editor can choose what to keep.`,
       }
     }
     if (err instanceof ContentWriteLockBusyError) {

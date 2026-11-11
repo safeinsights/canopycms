@@ -3,8 +3,10 @@
  * the real path-ACL layer. Plan rows (the field-merge plan's Verification matrix, API layer):
  * 4 scalar, 5 nested, 7/8 removed on one side, 13 item path, 14 item removed vs edited, 21 block,
  * 31 entry deleted vs edited, 33 unreadable, 43 each resolution choice, 44 save without resolving /
- * stale key / version mismatch, 46 a path the user can't read. Rows 23/24/28/30 are named by key
- * and kind here like any field; their values are the engine's (merge/entry-merge.test.ts).
+ * stale key / version mismatch, 46 a path the user can't read. Rows 23 (a body), 28 (a key the
+ * migration removed) and 30 (the location pseudo-key) are named by key and kind here like any
+ * field; their values are the engine's (merge/entry-merge.test.ts). Row 45 is in
+ * merge-conflict-gates.test.ts.
  */
 import fs from 'node:fs/promises'
 import os from 'node:os'

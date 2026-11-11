@@ -174,7 +174,7 @@ describe('approve while conflicts are open', () => {
       status: 409,
       code: 'OPEN_CONFLICTS',
       error:
-        '2 changes on this branch conflict with newer changes on the site. It can be approved once its editor chooses what to keep.',
+        '2 changes on this branch conflict with newer changes on the site. Use "Request changes" so its editor can choose what to keep.',
     })
     expect(await status()).toBe('submitted')
 

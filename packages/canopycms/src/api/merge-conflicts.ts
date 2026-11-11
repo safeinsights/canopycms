@@ -594,7 +594,8 @@ const CHOICE_KINDS: Record<EntryConflictChoice, readonly MergeConflictKind[]> = 
 
 /**
  * Whether the latest version of entry `id`, in the tree the record's merge took in (its second
- * parent), has the entry type and extension of the branch's file at `placed`.
+ * parent, worker/branch-merge.ts `buildMergeCommit`), is in the collection of the branch's file at
+ * `placed`, with its entry type and extension. False when that tree can't be read.
  */
 const sameKindAtLatest = async (
   git: ReturnType<ApiContext['services']['createGitManagerFor']>,
@@ -725,7 +726,7 @@ const resolveHandler = async (
         return { ok: false, status: 413, error: 'The latest version is too large to use here.' }
       }
       // The latest version's bytes go under the branch's filename, so they must be the same entry
-      // type and format: the record keeps one path, the branch's.
+      // type, in the same collection, in the same format: the record keeps one path, the branch's.
       if (
         body.choice === 'use-latest' &&
         !(await sameKindAtLatest(git, entry, body.id, placed, flatSchema, contentRoot))
@@ -734,7 +735,7 @@ const resolveHandler = async (
           ok: false,
           status: 409,
           error:
-            'The latest version is a different type of entry, so it can’t replace this one here.',
+            "The latest version can't replace this entry here: it is another type of entry, or in another collection, or can't be found.",
         }
       }
       const entryType = entryTypeOf(flatSchema, placed)
@@ -770,7 +771,8 @@ const resolveHandler = async (
       return {
         ok: false,
         status: 409,
-        error: "The latest version of this entry isn't available here, so it can't be used.",
+        error:
+          "The latest version of this entry can't be used here: it can't be read, or its entry type is no longer in the schema.",
       }
     }
     if (err instanceof ContentWriteLockBusyError || err instanceof BranchSyncingError) {
@@ -790,7 +792,7 @@ const resolveHandler = async (
         status: 409,
         code: 'ENTRY_GONE',
         error:
-          "This entry isn't on the branch any more, so only keeping the branch as it is resolves this.",
+          'This entry has moved or left the branch since the conflict was shown. Refresh to see what is left to choose; for an entry no longer on the branch, keep the branch as it is.',
       }
     }
     if (err instanceof ContentConflictError) return { ok: false, status: 409, error: err.message }
