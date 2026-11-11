@@ -241,15 +241,16 @@ describe('Show changes', () => {
     await waitFor(() => expect(document.activeElement).toBe(button))
   })
 
-  it('says unsaved edits are left out of the comparison', async () => {
+  it('says unsaved edits apply on save, on the line beside the undo controls', async () => {
     stubApi(['content/posts/hello'])
     renderEditor()
     await waitFor(() => expect(titleInput().value).toBe('Loaded title'))
     await userEvent.type(titleInput(), ' edited')
     await userEvent.click(await screen.findByTestId('entry-show-changes'))
-    expect((await screen.findByTestId('entry-changes-unsaved')).textContent).toContain(
-      'Unsaved edits aren’t included.',
+    expect((await screen.findByTestId('entry-changes-all-undone')).textContent).toBe(
+      'Unsaved edits, undos included, apply when you save.',
     )
+    expect(screen.queryByTestId('entry-changes-unsaved')).toBeNull()
   })
 
   it('offers no "Open the entry" for the entry already open', async () => {

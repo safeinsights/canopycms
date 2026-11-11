@@ -733,9 +733,11 @@ const ALL_UNDONE_IN_FORM = 'All changes undone in the form. Save to keep them.'
 // Undo and redo replace what the form holds at a change with the base's or the saved value, so
 // neither acts on a change the form has edited since: the edit would be lost.
 const UNSAVED_EDIT_REASON =
-  'This change has unsaved edits. Save them, or use "Discard changes", first.'
+  'This change has unsaved edits. Save them, or choose "Discard changes" in the entry\'s menu, on its name, first.'
 const UNSAVED_EDITS_REASON =
-  'Some of these changes have unsaved edits. Save them, or use "Discard changes", first.'
+  'Some of these changes have unsaved edits. Save them, or choose "Discard changes" in the entry\'s menu, on its name, first.'
+/** Beside the undo controls, where an undo makes the entry unsaved, in place of a new notice. */
+const UNSAVED_IN_FORM = 'Unsaved edits, undos included, apply when you save.'
 const NOT_IN_FORM_REASON =
   'The form no longer has the item this change is in, so it can’t be undone here.'
 
@@ -1050,7 +1052,9 @@ export const EntryChangesView: React.FC<
       subject.logicalPath.slice(0, subject.logicalPath.lastIndexOf('/'))
   const editable = !noEditReason
   const restorable = !!data.before && !data.after && !!onRestoreEntry
-  const entryControls = editable && (undoable || (!data.before && onDeleteEntry) || restorable)
+  // With one change, its card's "Undo change" is the whole of "Undo all changes".
+  const undoAll = undoable && count > 1
+  const entryControls = editable && (undoAll || (!data.before && onDeleteEntry) || restorable)
   const restore = async () => {
     if (!onRestoreEntry || restoring) return
     setRestoring(true)
@@ -1082,7 +1086,7 @@ export const EntryChangesView: React.FC<
           {announcement && <span key={announcement.id}>{announcement.text}</span>}
         </VisuallyHidden>
       )}
-      {subject.unsavedEdits && (
+      {subject.unsavedEdits && !undoable && (
         <Alert
           variant="light"
           color="blue"
@@ -1108,29 +1112,45 @@ export const EntryChangesView: React.FC<
           {sameCollection && ` To move it back, use "${EDITOR_ACTIONS.changeUrl}…".`}
         </Text>
       )}
+      {editable && lockedReason && (undoable || entryControls) && (
+        <Text size="sm" data-testid="entry-changes-locked">
+          {lockedReason}
+        </Text>
+      )}
       {entryControls && (
         <Group gap="xs" wrap="wrap" align="center">
-          {undoable && undo && baseValue && savedValue && (
-            <>
-              <ReasonedButton
-                reason={
-                  lockedReason ??
-                  (diff.changes.some(editedSince) ? UNSAVED_EDITS_REASON : undefined)
-                }
-                onClick={() => {
+          {undoAll && undo && baseValue && savedValue && (
+            <ReasonedButton
+              reason={
+                lockedReason ?? (diff.changes.some(editedSince) ? UNSAVED_EDITS_REASON : undefined)
+              }
+              onClick={() => {
+                if (allUndone) {
                   setNotes({})
-                  const source = allUndone ? savedValue : baseValue
-                  announce(allUndone ? 'All changes redone in the form.' : ALL_UNDONE_IN_FORM)
-                  undo.update((value) => setAllBack(value, source, diff.changes, bodyField))
-                }}
-                data-testid="entry-changes-undo-all"
-              >
-                {allUndone ? EDITOR_ACTIONS.redoAllChanges : EDITOR_ACTIONS.undoAllChanges}
-              </ReasonedButton>
-              <Text size="xs" data-testid="entry-changes-all-undone">
-                {allUndone ? ALL_UNDONE_IN_FORM : ''}
-              </Text>
-            </>
+                  announce('All changes redone in the form.')
+                  undo.update((value) => setAllBack(value, savedValue, diff.changes, bodyField))
+                  return
+                }
+                // Taking out the items the branch added moves their threads, as a Remove does.
+                const moved = diff.changes.flatMap((change) => {
+                  if (isUndone(change) || !change.item || change.kind !== 'added') return []
+                  const path = canopyPathOf(undo.value, change, bodyField)
+                  const count = path && undo.threadsWithin ? undo.threadsWithin(path) : 0
+                  return count > 0 ? [{ key: change.key, count }] : []
+                })
+                setNotes(
+                  Object.fromEntries(
+                    moved.map(({ key, count }) => [key, movedThreadsNote(count) ?? '']),
+                  ),
+                )
+                const total = moved.reduce((sum, { count }) => sum + count, 0)
+                announce([ALL_UNDONE_IN_FORM, movedThreadsNote(total)].filter(Boolean).join(' '))
+                undo.update((value) => setAllBack(value, baseValue, diff.changes, bodyField))
+              }}
+              data-testid="entry-changes-undo-all"
+            >
+              {allUndone ? EDITOR_ACTIONS.redoAllChanges : EDITOR_ACTIONS.undoAllChanges}
+            </ReasonedButton>
           )}
           {!data.before && onDeleteEntry && (
             <ReasonedButton
@@ -1153,6 +1173,12 @@ export const EntryChangesView: React.FC<
             </ReasonedButton>
           )}
         </Group>
+      )}
+      {undoable && (
+        // Its own line, held from the start, so the text arriving with an undo shifts nothing.
+        <Text size="xs" mih={20} data-testid="entry-changes-all-undone">
+          {allUndone ? ALL_UNDONE_IN_FORM : subject.unsavedEdits ? UNSAVED_IN_FORM : ''}
+        </Text>
       )}
       {editable && restoreRefusal && (
         <Alert

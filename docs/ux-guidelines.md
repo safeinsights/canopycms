@@ -26,6 +26,7 @@ One word per idea, everywhere. New UI takes the verbs from `EDITOR_ACTIONS` in
 | **Archive branch**        | Ending a branch whose pull request closed unmerged             | Close                                       |
 | **Discard changes**       | Throwing away unsaved edits                                    | Discard drafts, Revert                      |
 | **Undo change**           | Setting a saved change back to the base, as an unsaved edit    | Revert, Reset                               |
+| **Redo change**           | Putting an undone change back as saved                         | Reapply                                     |
 | **Unsaved**               | Not yet saved                                                  | Changed, Dirty                              |
 | **Changed**               | Different from the base branch                                 | Modified, Diff                              |
 | **Show changes**          | Opening an entry's diff against the base                       | Diff, Compare                               |

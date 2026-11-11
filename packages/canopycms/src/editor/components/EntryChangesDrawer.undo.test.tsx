@@ -130,7 +130,7 @@ describe('EntryChangesDrawer undo', () => {
     expect(title.getAttribute('aria-disabled')).toBe('true')
     await userEvent.hover(title)
     expect((await screen.findByRole('tooltip')).textContent).toBe(
-      'This change has unsaved edits. Save them, or use "Discard changes", first.',
+      'This change has unsaved edits. Save them, or choose "Discard changes" in the entry\'s menu, on its name, first.',
     )
     await userEvent.click(title)
     const all = within(await dialog()).getByTestId('entry-changes-undo-all')
@@ -173,6 +173,69 @@ describe('EntryChangesDrawer undo', () => {
     expect(redo.getAttribute('aria-disabled')).toBe('true')
     await userEvent.click(redo)
     expect(onValue).not.toHaveBeenCalled()
+  })
+
+  it('says an undo is unsaved on a line held from the start, with no notice arriving', async () => {
+    const Unsaved: React.FC = () => {
+      const [value, setValue] = useState<Record<string, unknown>>(after)
+      return (
+        <CanopyCMSProvider>
+          <EntryChangesDrawer
+            opened
+            onClose={() => {}}
+            base="main"
+            subject={{ ...subject, unsavedEdits: value !== after }}
+            state={{
+              data: data(before, after),
+              error: undefined,
+              isValidating: false,
+              reload: vi.fn(),
+            }}
+            undo={{ value, update: (update) => setValue(update) }}
+          />
+        </CanopyCMSProvider>
+      )
+    }
+    render(<Unsaved />)
+    const line = within(await dialog()).getByTestId('entry-changes-all-undone')
+    expect(line.textContent).toBe('')
+    await userEvent.click(within(await card('Title')).getByRole('button', { name: /^Undo change/ }))
+    expect(line.isConnected).toBe(true)
+    expect(line.textContent).toBe('Unsaved edits, undos included, apply when you save.')
+    expect(within(await dialog()).queryByTestId('entry-changes-unsaved')).toBeNull()
+  })
+
+  it('says the lock’s reason once, in sight, on a locked branch', async () => {
+    render(<Harness lockedReason="Locked." />)
+    expect(within(await dialog()).getByTestId('entry-changes-locked').textContent).toBe('Locked.')
+  })
+
+  it('offers no "Undo all changes" for a single change', async () => {
+    render(
+      <Harness
+        initial={{ ...before, title: 'Hello there' }}
+        state={{
+          data: data(before, { ...before, title: 'Hello there' }),
+          error: undefined,
+          isValidating: false,
+          reload: vi.fn(),
+        }}
+      />,
+    )
+    const view = await dialog()
+    expect(within(view).queryByTestId('entry-changes-undo-all')).toBeNull()
+    expect(within(view).getByRole('button', { name: 'Undo change to Title' })).toBeTruthy()
+  })
+
+  it('says where "Undo all changes" moved the added items’ threads', async () => {
+    render(<Harness threads={2} />)
+    await userEvent.click(within(await dialog()).getByTestId('entry-changes-undo-all'))
+    expect(within(await dialog()).getByTestId('entry-changes-announcement').textContent).toBe(
+      'All changes undone in the form. Save to keep them. Its 2 comment threads moved to "Comment on this entry".',
+    )
+    expect(
+      within(await card('Links › Two')).getByTestId('entry-change-undone').textContent,
+    ).toContain('Its 2 comment threads moved')
   })
 
   it('announces each undo once, from one status region, not from the card', async () => {
