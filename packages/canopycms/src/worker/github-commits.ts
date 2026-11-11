@@ -690,21 +690,32 @@ async function recordMerge(
 }
 
 /**
- * After the clone moved to `sha`, the merge being landed: its remaps apply, the paths it kept over
- * GitHub's commits go in `keptOverGitHub` for the PR body, and it is no longer landing.
+ * After the clone moved to `sha`, the merge being landed: the remaps of every merge it holds apply,
+ * in the order recorded, the paths it kept over GitHub's commits go in `keptOverGitHub` for the PR
+ * body, and it is no longer landing. A remap that fails waits for the next cycle, and keeps nothing
+ * else from being noted.
  */
 async function landed(
   ctx: GitHubCommitsContext,
   {
+    git,
     branchPath,
     branchRef,
+    branchDir,
     metaFile,
-  }: Pick<GitHubCommitsArgs, 'branchPath' | 'branchRef' | 'metaFile'>,
+  }: Pick<GitHubCommitsArgs, 'git' | 'branchPath' | 'branchRef' | 'branchDir' | 'metaFile'>,
   sha: string,
 ): Promise<void> {
-  await applyRemaps(branchPath, (mergeSha) => mergeSha === sha)
   const store = new MergeConflictStore(branchPath)
-  const landing = (await store.read())?.landing
+  const current = await store.read()
+  if (current === null) return
+  const [inSha] = await mergesHeld(git, current, [sha])
+  await applyRemaps(branchPath, (mergeSha) => inSha.has(mergeSha)).catch((err: unknown) =>
+    workerLogWarn(
+      `  ${branchDir}: comment threads keep their item keys for now: ${getErrorMessage(err)}`,
+    ),
+  )
+  const landing = current.landing
   if (landing?.mergeSha !== sha) return
   const kept = landing.keptOverGitHub ?? []
   if (kept.length > 0) {
@@ -719,9 +730,9 @@ async function landed(
     )
     await enqueueReviewBlockSync(ctx, branchRef, metaFile)
   }
-  await store.update((current) => {
-    if (current?.landing?.mergeSha !== sha) return null
-    const { landing: _done, ...rest } = current
+  await store.update((now) => {
+    if (now?.landing?.mergeSha !== sha) return null
+    const { landing: _done, ...rest } = now
     return rest
   })
 }
@@ -855,7 +866,8 @@ export async function reconcileMergeConflicts(
           const kept = withoutMergesGone(now.entries, held)
           const { landing, ...rest } = now
           // A clone catches up only with a merge `remote.git` holds; one it holds lands below.
-          const stays = landing !== undefined && held(landing.mergeSha)
+          // Without `remote.git`'s head to read, a published merge can't be told from a lost one.
+          const stays = landing !== undefined && (branchRef === null || held(landing.mergeSha))
           if (JSON.stringify(kept) === JSON.stringify(now.entries) && (stays || !landing)) {
             return null
           }
@@ -882,7 +894,13 @@ export async function reconcileMergeConflicts(
     )
     if (current.landing && inHead.has(current.landing.mergeSha) && branchRef !== null) {
       const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
-      if (metaFile) await landed(ctx, { branchPath, branchRef, metaFile }, current.landing.mergeSha)
+      if (metaFile) {
+        await landed(
+          ctx,
+          { git, branchPath, branchRef, branchDir, metaFile },
+          current.landing.mergeSha,
+        )
+      }
     }
   } catch (err) {
     workerLogWarn(

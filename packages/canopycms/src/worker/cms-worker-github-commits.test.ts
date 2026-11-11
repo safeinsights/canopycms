@@ -14,6 +14,8 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { simpleGit, type SimpleGit } from 'simple-git'
 
+import { CommentStore } from '../comment-store'
+import { MergeConflictStore } from '../merge-conflicts'
 import { BranchMetadataFileManager } from '../branch-metadata'
 import { SCHEMA_GENERATION_RESOURCE } from '../branch-schema-cache'
 import { readResourceGeneration } from '../resource-generation'
@@ -800,6 +802,37 @@ describe('bringing commits made on GitHub into a branch clone', () => {
       expect(meta?.conflictFiles).toEqual([CONFLICTED_ID])
       expect(meta?.keptOverGitHub).toEqual([ENTRY])
       expect(await queued(s, 'sync-pr-comments')).toEqual([BRANCH])
+    })
+
+    it("notes what a merge kept over GitHub's commits while its comment remaps keep failing", async () => {
+      // Every merge also changes an item key, and moving the comment threads fails.
+      const update = MergeConflictStore.prototype.update
+      vi.spyOn(MergeConflictStore.prototype, 'update').mockImplementation(function (
+        this: MergeConflictStore,
+        change,
+      ) {
+        return update.call(this, (current) => {
+          const next = change(current)
+          if (!next?.landing || current?.landing?.mergeSha === next.landing.mergeSha) return next
+          const remap = { within: [], from: 'a', to: 'b' }
+          const pending = {
+            mergeSha: next.landing.mergeSha,
+            entryPath: 'content/x',
+            remaps: [remap],
+          }
+          return { ...next, remaps: [...(next.remaps ?? []), pending] }
+        })
+      })
+      vi.spyOn(CommentStore.prototype, 'remapItemKeys').mockRejectedValue(new Error('unreadable'))
+      await s.commit({ [ENTRY]: '{"title":"editor"}\n' }, 'editor entry')
+      await s.clone.raw(['push', 'origin', `${BRANCH}:${BRANCH}`])
+      await writeMeta(s, { pullRequestNumber: 7 })
+      await s.moveGitHubOnly({ [ENTRY]: '{"title":"github"}\n' })
+
+      await cycle(s)
+
+      expect((await readMeta(s))?.keptOverGitHub).toEqual([ENTRY])
+      vi.restoreAllMocks()
     })
 
     it('still has the conflict record when the clone only caught up on the next cycle', async () => {
