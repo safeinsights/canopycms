@@ -146,7 +146,10 @@ export const Empty: Story = {
   },
 }
 
-/** A user who cannot resolve any thread still resolves the ones they started (Alice's). */
+/**
+ * A user who cannot resolve any thread still resolves the ones they started (Alice's); on the
+ * others Resolve is disabled, and its Tooltip says why.
+ */
 export const ViewerOnly: Story = {
   args: {
     branchName: 'feature/review-only',

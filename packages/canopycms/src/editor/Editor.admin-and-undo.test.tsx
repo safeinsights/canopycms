@@ -827,15 +827,26 @@ describe('comments panel', () => {
     await openPanel([])
 
     expect(within(cardOf('Comment in theirs')).getByTestId('reply-thread-button')).toBeTruthy()
-    expect(within(cardOf('Comment in theirs')).queryByTestId('resolve-thread-button')).toBeNull()
-    expect(within(cardOf('Comment in mine')).getByTestId('resolve-thread-button')).toBeTruthy()
+    expect(
+      within(cardOf('Comment in theirs'))
+        .getByTestId('resolve-thread-button')
+        .getAttribute('aria-disabled'),
+    ).toBe('true')
+    expect(
+      within(cardOf('Comment in mine'))
+        .getByTestId('resolve-thread-button')
+        .getAttribute('aria-disabled'),
+    ).toBeNull()
   })
 
   it('lets a reviewer resolve any thread', async () => {
     await openPanel([RESERVED_GROUPS.REVIEWERS])
 
-    expect(within(cardOf('Comment in theirs')).getByTestId('resolve-thread-button')).toBeTruthy()
-    expect(within(cardOf('Comment in mine')).getByTestId('resolve-thread-button')).toBeTruthy()
+    for (const text of ['Comment in theirs', 'Comment in mine']) {
+      expect(
+        within(cardOf(text)).getByTestId('resolve-thread-button').getAttribute('aria-disabled'),
+      ).toBeNull()
+    }
   })
 
   it('keeps a half-written reply when the panel is closed and opened again', async () => {
