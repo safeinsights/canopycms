@@ -392,11 +392,11 @@ describe('Show changes', () => {
     await waitFor(() => expect(confirm.contains(document.activeElement)).toBe(true))
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(confirm.contains(document.activeElement)).toBe(true)
-    // Cancelled, focus goes back to the "Show changes" button.
+    // Cancelled, focus goes to the entry menu's trigger, as for a delete from that menu.
     await userEvent.keyboard('{Escape}')
     await waitFor(() => expect(confirm.isConnected).toBe(false))
     await waitFor(() =>
-      expect(document.activeElement?.getAttribute('data-testid')).toBe('entry-show-changes'),
+      expect(document.activeElement?.getAttribute('data-testid')).toBe('file-dropdown-button'),
     )
   })
 

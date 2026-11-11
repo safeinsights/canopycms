@@ -25,7 +25,6 @@ import {
   useMantineTheme,
 } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
-import equal from 'fast-deep-equal'
 import {
   IconAlertCircle,
   IconAlertTriangle,
@@ -62,6 +61,7 @@ import {
   canSetBack,
   canopyPathOf,
   formValueOfSide,
+  holdsAs,
   setAllBack,
   setChangeBack,
   sideOfFormValue,
@@ -730,12 +730,12 @@ interface CardUndo {
 
 const UNDONE_IN_FORM = 'Undone in the form. Save to keep it.'
 const ALL_UNDONE_IN_FORM = 'All changes undone in the form. Save to keep them.'
-// Undo replaces what the form holds at a change, so a change the form has edited since its save
-// isn't undone: a redo puts back the saved value, which would lose the edit.
+// Undo and redo replace what the form holds at a change with the base's or the saved value, so
+// neither acts on a change the form has edited since: the edit would be lost.
 const UNSAVED_EDIT_REASON =
-  'This change has unsaved edits. Save them, or use "Discard changes", to undo it.'
+  'This change has unsaved edits. Save them, or use "Discard changes", first.'
 const UNSAVED_EDITS_REASON =
-  'Some of these changes have unsaved edits. Save them, or use "Discard changes", to undo them all.'
+  'Some of these changes have unsaved edits. Save them, or use "Discard changes", first.'
 const NOT_IN_FORM_REASON =
   'The form no longer has the item this change is in, so it can’t be undone here.'
 
@@ -1003,13 +1003,13 @@ export const EntryChangesView: React.FC<
   const savedValue = data.after && (undo?.saved ?? formValueOfSide(data.after))
   const isUndone = (change: EntryChange) => !!heldKeys && !heldKeys.has(change.key)
   const allUndone = undoable && diff.changes.every(isUndone)
-  // The form holds an edit to `change` that its save doesn't: setting it to the saved value
-  // would change the form.
+  // The form holds `change` as neither the side it was last set to has it, the saved value
+  // or, once undone, the base's: an edit made since, which an undo or redo would replace.
   const editedSince = (change: EntryChange): boolean =>
     !!undo &&
     !!savedValue &&
-    !isUndone(change) &&
-    !equal(setChangeBack(undo.value, savedValue, change, bodyField) ?? undo.value, undo.value)
+    !!baseValue &&
+    !holdsAs(undo.value, isUndone(change) ? baseValue : savedValue, change, bodyField)
   const cardUndo = (change: EntryChange): CardUndo | undefined => {
     if (!undoable || !undo || !baseValue || !savedValue) return undefined
     const held = isUndone(change)

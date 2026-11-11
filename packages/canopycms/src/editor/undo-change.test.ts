@@ -6,6 +6,7 @@ import { computeEntryDiff, type EntryChange } from './entry-diff'
 import {
   canopyPathOf,
   formValueOfSide,
+  holdsAs,
   setAllBack,
   setChangeBack,
   sideOfFormValue,
@@ -300,5 +301,130 @@ describe('setAllBack', () => {
     const after = side({ ...baseData, links: reversed })
     const value = setAllBack(formValueOfSide(after), formValueOfSide(before), diffOf(before, after))
     expect(value.links).toEqual(baseData.links)
+  })
+})
+
+/**
+ * Every shape of change, held as saved and undone to the base, with an edit made at or inside it
+ * since: `holdsAs` must see the edit, which an undo or a redo would otherwise replace.
+ */
+describe('holdsAs, every change shape with an edit since', () => {
+  const editTitle = (v: Record<string, unknown>) => ({ ...v, title: 'Edited' })
+  const editLink = (key: string) => (v: Record<string, unknown>) => ({
+    ...v,
+    links: (v.links as Array<{ _key: string }>).map((l) =>
+      l._key === key ? { ...l, label: 'Edited' } : l,
+    ),
+  })
+  const editBlock = (v: Record<string, unknown>) => ({
+    ...v,
+    blocks: (v.blocks as Array<{ _key: string; value: Record<string, unknown> }>).map((b) =>
+      b._key === 'h1' ? { ...b, value: { ...b.value, heading: 'Edited', text: 'Edited' } } : b,
+    ),
+  })
+  const cases: Array<{
+    name: string
+    saved: Record<string, unknown>
+    body?: string
+    pick: (c: EntryChange) => boolean
+    edit: (v: Record<string, unknown>) => Record<string, unknown>
+  }> = [
+    {
+      name: 'a field',
+      saved: { ...baseData, title: 'Start' },
+      pick: (c) => c.key === 'title',
+      edit: editTitle,
+    },
+    {
+      name: 'the body',
+      saved: baseData,
+      body: 'Changed\n',
+      pick: (c) => c.key === 'body',
+      edit: (v) => ({ ...v, body: 'Edited\n' }),
+    },
+    {
+      name: 'an object field',
+      saved: { ...baseData, seo: { description: 'New' } },
+      pick: (c) => c.key === 'seo.description',
+      edit: (v) => ({ ...v, seo: { description: 'Edited' } }),
+    },
+    {
+      name: 'an added item',
+      saved: { ...baseData, links: [...baseData.links, link('d', 'Four')] },
+      pick: (c) => c.item === true && c.kind === 'added',
+      edit: editLink('d'),
+    },
+    {
+      name: 'a removed item',
+      saved: { ...baseData, links: baseData.links.slice(1) },
+      pick: (c) => c.item === true && c.kind === 'removed',
+      edit: editLink('a'),
+    },
+    {
+      name: 'an item field',
+      saved: { ...baseData, links: [link('a', 'First'), ...baseData.links.slice(1)] },
+      pick: (c) => c.key === 'links.a.label',
+      edit: editLink('a'),
+    },
+    {
+      name: 'a block field',
+      saved: { ...baseData, blocks: [hero('h1', 'Hey'), baseData.blocks[1]] },
+      pick: (c) => c.key === 'blocks.h1.heading',
+      edit: editBlock,
+    },
+    {
+      name: 'a block template change',
+      saved: {
+        ...baseData,
+        blocks: [{ _key: 'h1', template: 'quote', value: { text: 'Now' } }, baseData.blocks[1]],
+      },
+      pick: (c) => c.key === 'blocks.h1',
+      edit: editBlock,
+    },
+    {
+      name: 'an image',
+      saved: { ...baseData, cover: { src: '/media/new.png', alt: 'New' } },
+      pick: (c) => c.key === 'cover',
+      edit: (v) => ({ ...v, cover: { ...(v.cover as object), alt: 'Edited' } }),
+    },
+  ]
+
+  for (const { name, saved, body, pick, edit } of cases) {
+    it(`sees an edit to ${name}, held as saved and once undone`, () => {
+      const before = side(baseData)
+      const after = side(saved, body)
+      const change = diffOf(before, after).find(pick)!
+      expect(change).toBeDefined()
+      const [baseValue, savedValue] = [formValueOfSide(before), formValueOfSide(after)]
+      const undone = setChangeBack(savedValue, baseValue, change, 'body')!
+      expect(holdsAs(savedValue, savedValue, change, 'body')).toBe(true)
+      expect(holdsAs(undone, baseValue, change, 'body')).toBe(true)
+      // An edit inside an item applies only where the item is: held for an added one, undone
+      // for a removed one, both for the rest.
+      let edited = 0
+      for (const [value, target] of [
+        [savedValue, savedValue],
+        [undone, baseValue],
+      ] as const) {
+        if (JSON.stringify(edit(value)) === JSON.stringify(value)) continue
+        edited++
+        expect(holdsAs(edit(value), target, change, 'body')).toBe(false)
+      }
+      expect(edited).toBeGreaterThan(0)
+    })
+  }
+
+  it('sees a moved item held where the saved order has it, and once moved back', () => {
+    const before = side(baseData)
+    const after = side({
+      ...baseData,
+      links: [link('b', 'Two'), link('c', 'Three'), link('a', 'One')],
+    })
+    const change = diffOf(before, after).find((c) => c.kind === 'moved')!
+    const [baseValue, savedValue] = [formValueOfSide(before), formValueOfSide(after)]
+    expect(holdsAs(savedValue, savedValue, change)).toBe(true)
+    const undone = setChangeBack(savedValue, baseValue, change)!
+    expect(holdsAs(undone, baseValue, change)).toBe(true)
+    expect(holdsAs(undone, savedValue, change)).toBe(false)
   })
 })

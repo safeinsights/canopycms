@@ -1798,6 +1798,7 @@ const EditorContent: React.FC<EditorProps> = ({
         (e) => e.collectionPath === entry.collectionPath && e.entryType === entry.entryType,
       )?.schema ??
       EMPTY_SCHEMA
+    deleteAfterChangesRef.current = undefined
     setChangesSubject({
       logicalPath: entry.logicalPath,
       contentId: entry.contentId,
@@ -1907,6 +1908,9 @@ const EditorContent: React.FC<EditorProps> = ({
           }
           const entries = await refreshEntries(branch).catch(() => undefined)
           void branchChanges.reload()
+          if (answer?.ok && answer.data?.warning) {
+            notifications.show({ message: answer.data.warning, color: 'yellow' })
+          }
           if (answer?.ok && !entries) {
             notifications.show({
               message: `"${title}" is restored. Refresh the page to see it in the "Content" panel.`,
@@ -1924,9 +1928,6 @@ const EditorContent: React.FC<EditorProps> = ({
               tone: 'warning',
               message: `Restoring "${title}" may have gone through even though the server didn’t answer. Check the "Content" panel for it before trying again.`,
             }
-          }
-          if (answer?.ok && answer.data?.warning) {
-            notifications.show({ message: answer.data.warning, color: 'yellow' })
           }
           setChangesOpen(false)
           openEntry(logicalPath)
@@ -2847,7 +2848,10 @@ const EditorContent: React.FC<EditorProps> = ({
                     setChangesShown(false)
                     const deleting = deleteAfterChangesRef.current
                     deleteAfterChangesRef.current = undefined
-                    if (deleting) handleDeleteEntry(deleting)
+                    // Opened as from the entry menu, whose trigger stands in for the gone button.
+                    if (deleting && deleting === changesSubject.logicalPath) {
+                      handleDeleteEntry(deleting, true)
+                    }
                   }}
                   returnFocusTo={changesReturnTarget}
                   base={branchChanges.data?.base ?? currentBranch?.baseBranch ?? 'the base branch'}

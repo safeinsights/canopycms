@@ -130,7 +130,7 @@ describe('EntryChangesDrawer undo', () => {
     expect(title.getAttribute('aria-disabled')).toBe('true')
     await userEvent.hover(title)
     expect((await screen.findByRole('tooltip')).textContent).toBe(
-      'This change has unsaved edits. Save them, or use "Discard changes", to undo it.',
+      'This change has unsaved edits. Save them, or use "Discard changes", first.',
     )
     await userEvent.click(title)
     const all = within(await dialog()).getByTestId('entry-changes-undo-all')
@@ -140,6 +140,39 @@ describe('EntryChangesDrawer undo', () => {
     // A change the edit didn't touch still undoes.
     const summary = within(await card('Summary')).getByRole('button', { name: /^Undo change/ })
     expect(summary.getAttribute('aria-disabled')).toBeNull()
+  })
+
+  it('keeps undo from an added item edited since its save', async () => {
+    const onValue = vi.fn()
+    const edited = { ...after, links: [after.links[0], { _key: 'b', label: 'Two edited' }] }
+    render(<Harness initial={edited} onValue={onValue} />)
+    const button = within(await card('Links › Two')).getByRole('button', { name: /^Undo change/ })
+    expect(button.getAttribute('aria-disabled')).toBe('true')
+    await userEvent.click(button)
+    expect(onValue).not.toHaveBeenCalled()
+  })
+
+  it('keeps redo from a removed item put back and edited since', async () => {
+    const onValue = vi.fn()
+    const removedOnBranch = { ...after, links: [] }
+    // "Undo change" put the item back; the form has edited it since.
+    const putBackThenEdited = { ...after, links: [{ _key: 'a', label: 'One, edited' }] }
+    render(
+      <Harness
+        initial={putBackThenEdited}
+        onValue={onValue}
+        state={{
+          data: data(before, removedOnBranch),
+          error: undefined,
+          isValidating: false,
+          reload: vi.fn(),
+        }}
+      />,
+    )
+    const redo = within(await card('Links › One')).getByRole('button', { name: /^Redo change/ })
+    expect(redo.getAttribute('aria-disabled')).toBe('true')
+    await userEvent.click(redo)
+    expect(onValue).not.toHaveBeenCalled()
   })
 
   it('announces each undo once, from one status region, not from the card', async () => {

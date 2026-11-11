@@ -13,6 +13,7 @@ import { flattenSchema, type PathPermission, type RootCollectionConfig } from '.
 import { createCheckBranchAccess } from '../authorization'
 import { createTestContentAccess, unsafeAsPermissionPath } from '../authorization/test-utils'
 import { ContentStore } from '../content-store'
+import { bumpContentIndexGeneration } from '../content-index-generation'
 import { GitManager } from '../git-manager'
 import {
   createMockApiContext,
@@ -723,6 +724,24 @@ describe('POST /:branch/restore-entry/...entryPath', () => {
       status: 503,
     })
     await expect(fs.access(path.join(branchRoot, files.old))).rejects.toThrow()
+  })
+
+  it('sees an id another host put elsewhere since the index was read, by its marker', async () => {
+    await fs.rm(path.join(branchRoot, files.hello))
+    const store = new ContentStore(branchRoot, flattenSchema(schema, 'content'))
+    await store.idIndex()
+    // Another host restores it into another collection and bumps the marker, as its store does.
+    const elsewhere = `content/${PRIVATE}/post.hello.${ID.hello}.json`
+    await write(elsewhere, seedText.hello)
+    await bumpContentIndexGeneration(branchRoot)
+    await expect(
+      store.restore(unsafeAsLogicalPath('content/blog'), unsafeAsSlug('hello'), {
+        id: unsafeAsContentId(ID.hello),
+        entryTypeName: 'post',
+        raw: seedText.hello,
+      }),
+    ).rejects.toThrow('This entry is still on the branch under another URL')
+    await expect(fs.access(path.join(branchRoot, files.hello))).rejects.toThrow()
   })
 
   it('refuses with 403 where the user can’t edit, writing nothing', async () => {

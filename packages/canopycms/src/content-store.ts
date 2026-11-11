@@ -1648,8 +1648,8 @@ export class ContentStore {
    * anything. It refuses with `ContentConflictError` while a file holds the slug, or the index
    * or the target directory holds the ID: unlike write(), it has no index repair, so an ID
    * found elsewhere is a moved entry, not a deleted one, and is left alone. The index is
-   * warmed outside the lock, as write() warms it, and under the lock idIndex() rescans only
-   * when the generation marker says another host changed the tree.
+   * warmed outside the lock, as write() warms it, and rescanned under the lock only when the
+   * generation marker says another host changed the tree.
    */
   async restore(
     collectionPath: LogicalPath,
@@ -1671,8 +1671,12 @@ export class ContentStore {
     this.assertEntryTypeAvailable(collection, entry.entryTypeName)
     return this.withContentWriteExclusion(async () => {
       await options.beforeWrite?.()
-      // Every host's content write bumps the marker under this lock, so the index is current
-      // here; the lock holds no entry lock, which a rescan must not.
+      // Every host's content write bumps the marker under this lock, so a marker that still
+      // matches the index's means the index is current. Read here unthrottled, unlike
+      // idIndex()'s own probe; a rescan holds no entry lock, which it must not.
+      if ((await readContentIndexGeneration(this.root)) !== this.loadedDiskGeneration) {
+        this.invalidateIndex()
+      }
       await this.idIndex()
       return withLock(this.createLockKey(collection, slug), async () => {
         if ((await this.buildPaths(collection, slug)).existed) {

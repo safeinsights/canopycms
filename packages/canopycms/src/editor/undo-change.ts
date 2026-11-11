@@ -7,6 +7,8 @@
  */
 
 import type { EntryChangeSide } from '../api/branch-entry-changes'
+import equal from 'fast-deep-equal'
+
 import { ITEM_KEY } from '../item-keys'
 import { isPlainRecord } from '../validation/field-traversal'
 import type { CanopyPathSegment } from './canopy-path'
@@ -110,6 +112,28 @@ const placeLike = (list: readonly unknown[], item: unknown, key: string, order: 
     if (index >= 0) return [...list.slice(0, index + 1), item, ...list.slice(index + 1)]
   }
   return [item, ...list]
+}
+
+const isNothing = (value: unknown): boolean => value === undefined || isEmptyContainer(value)
+
+/**
+ * Whether `value` holds `change` as `side` has it, so setting the change to `side` would change
+ * nothing: a moved item placed as `side` places it, anything else the same value at the change's
+ * path, an added or removed item's whole content included.
+ */
+export function holdsAs(
+  value: FormValue,
+  side: FormValue,
+  change: EntryChange,
+  bodyField?: string,
+): boolean {
+  if (change.item && change.kind === 'moved') {
+    const placed = setChangeBack(value, side, change, bodyField)
+    return !!placed && equal(placed, value)
+  }
+  const path = formPath(change, bodyField)
+  const [mine, theirs] = [valueAt(value, path), valueAt(side, path)]
+  return (isNothing(mine) && isNothing(theirs)) || equal(mine, theirs)
 }
 
 /** Whether a change has a place in the form value that an undo can set back. */
