@@ -1436,7 +1436,7 @@ describe('CmsWorker rebase loop answering a request for the latest changes', () 
   it('asks again for a requested branch whose provisioning lock is held elsewhere', async () => {
     const setup = await createBranchSetup(tmpDir, 'my-feature')
     await writeMeta(setup.branchPath, setup.contentBranchesPath, {
-      baseUpdateRequestedAt: REQUESTED_AT,
+      baseUpdateRequestedAt: new Date().toISOString(),
     })
     const release = await tryAcquireProvisioningLock(
       setup.contentBranchesPath,
@@ -1469,6 +1469,29 @@ describe('CmsWorker rebase loop answering a request for the latest changes', () 
     } finally {
       await release()
     }
+  })
+
+  it("answers nothing while the branch's base lags GitHub's, and asks again", async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature')
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      baseUpdateRequestedAt: new Date(Date.now() - 1_000).toISOString(),
+    })
+    const worker = makeWorker(tmpDir)
+    // GitHub's base moved, but remote.git's ref didn't follow (a held or failed update).
+    await (
+      worker as unknown as {
+        rebaseActiveBranches(
+          policy: undefined,
+          gitHub: { tips: Map<string, string>; fetchedAt: number },
+        ): Promise<void>
+      }
+    ).rebaseActiveBranches(undefined, {
+      tips: new Map([['main', 'f'.repeat(40)]]),
+      fetchedAt: Date.now(),
+    })
+
+    expect((await readMeta(setup.branchPath))?.lastBaseUpdate).toBeUndefined()
+    expect([...takeRequests(worker)]).toEqual(['my-feature'])
   })
 
   it('syncs the requested branches first', async () => {

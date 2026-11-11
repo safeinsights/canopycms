@@ -83,7 +83,7 @@ export const GAVE_UP_MESSAGE =
   'The latest changes haven\'t come in yet. They will when the server gets to them; use "Refresh branch" in the branch menu to see them.'
 /** A request the server didn't answer, which may still have gone through. */
 export const UNANSWERED_MESSAGE =
-  "Your request for the latest changes may have gone through even though the server didn't answer. Check the branch bar in a moment."
+  'Your request for the latest changes may have gone through even though the server didn\'t answer. Choose "Refresh branch" in the branch menu to check.'
 export const REQUEST_FAILED_MESSAGE = "The latest changes couldn't be requested."
 
 /** The toast an answer gets: its colour, its text, and whether it stays until dismissed. */

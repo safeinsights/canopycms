@@ -59,6 +59,37 @@ function withBranch(data: BranchesData | undefined, branch: BranchListItem) {
   return { ...data, branches: data.branches.map((b) => (b.name === branch.name ? branch : b)) }
 }
 
+/** Whether `a` is a later request time than `b`, an absent one being earliest. */
+const laterThan = (a: string, b: string | undefined) =>
+  b === undefined || Date.parse(a) > Date.parse(b)
+
+/** The listed branch, carrying this tab's newer request. */
+function withAsked(
+  branch: BranchListItem | undefined,
+  asked: { name: string; requestedAt: string } | null,
+): BranchListItem | undefined {
+  if (!branch || asked?.name !== branch.name) return branch
+  return laterThan(asked.requestedAt, branch.baseUpdateRequestedAt)
+    ? { ...branch, baseUpdateRequestedAt: asked.requestedAt }
+    : branch
+}
+
+/** The branch, carrying the answer this tab already reported when the listing hasn't caught up. */
+function withSettled(
+  branch: BranchListItem | undefined,
+  settled: { name: string; requestedAt: string; lastBaseUpdate: LastBaseUpdate } | null,
+): BranchListItem | undefined {
+  if (!branch || settled?.name !== branch.name || !isBaseUpdatePending(branch)) return branch
+  return laterThan(branch.baseUpdateRequestedAt ?? '', settled.requestedAt) &&
+    branch.baseUpdateRequestedAt !== undefined
+    ? branch
+    : {
+        ...branch,
+        baseUpdateRequestedAt: settled.requestedAt,
+        lastBaseUpdate: settled.lastBaseUpdate,
+      }
+}
+
 /** A toast in the one slot this hook uses, replacing what it showed before. */
 function showResult(color: 'green' | 'yellow' | 'red', message: string, onRetry?: () => void) {
   notifications.hide(RESULT_TOAST_ID)
@@ -84,17 +115,18 @@ export function useBaseUpdate(options: UseBaseUpdateOptions): UseBaseUpdateRetur
   const [requestingFor, setRequestingFor] = useState<string | null>(null)
   // The last request this tab made, by branch, which a listing that predates it can't undo.
   const [asked, setAsked] = useState<{ name: string; requestedAt: string } | null>(null)
+  // The last answer this tab reported, by branch, which a listing that predates it can't undo:
+  // another host can serve the branch list from an older snapshot.
+  const [settled, setSettled] = useState<{
+    name: string
+    requestedAt: string
+    lastBaseUpdate: LastBaseUpdate
+  } | null>(null)
   const [, setTick] = useState(0)
 
   const listed = options.branch
   const name = listed?.name
-  const branch =
-    listed &&
-    asked?.name === listed.name &&
-    (listed.baseUpdateRequestedAt === undefined ||
-      Date.parse(listed.baseUpdateRequestedAt) < Date.parse(asked.requestedAt))
-      ? { ...listed, baseUpdateRequestedAt: asked.requestedAt }
-      : listed
+  const branch = withSettled(withAsked(listed, asked), settled)
 
   const available =
     !!branch &&
@@ -116,20 +148,30 @@ export function useBaseUpdate(options: UseBaseUpdateOptions): UseBaseUpdateRetur
   }, [changeAt])
 
   // Re-read the listing while the branch waits, on a timer of its own: SWR stops polling a key
-  // whose last fetch failed, and one failed read must not end the wait.
+  // whose last fetch failed, and one failed read must not end the wait. Each read starts only once
+  // the last has settled, since SWR drops an in-flight read's result when another starts.
   const pollMs = baseUpdatePollMs(wait)
   useEffect(() => {
     if (pollMs === 0) return
-    const timer = setInterval(() => {
-      if (typeof document === 'undefined' || document.visibilityState !== 'hidden') {
-        void mutate(BRANCHES_KEY)
-      }
-    }, pollMs)
-    return () => clearInterval(timer)
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const next = () => {
+      timer = setTimeout(async () => {
+        if (typeof document === 'undefined' || document.visibilityState !== 'hidden') {
+          await mutate(BRANCHES_KEY).catch(() => undefined)
+        }
+        if (!stopped) next()
+      }, pollMs)
+    }
+    next()
+    return () => {
+      stopped = true
+      clearTimeout(timer)
+    }
   }, [pollMs, mutate])
 
-  const latest = useRef({ name, unsavedCount })
-  latest.current = { name, unsavedCount }
+  const latest = useRef({ name, unsavedCount, available })
+  latest.current = { name, unsavedCount, available }
   const onUpdatedRef = useRef(onUpdated)
   onUpdatedRef.current = onUpdated
   const requestRef = useRef<() => Promise<void>>(async () => {})
@@ -140,9 +182,12 @@ export function useBaseUpdate(options: UseBaseUpdateOptions): UseBaseUpdateRetur
   }, [])
 
   const report = useCallback(
-    (result: LastBaseUpdate) => {
+    (branchName: string, requestedAt: string, result: LastBaseUpdate) => {
+      setSettled({ name: branchName, requestedAt, lastBaseUpdate: result })
       const { color, message } = baseUpdateResultMessage(result)
-      showResult(color, message, result.outcome === 'failed' ? retry : undefined)
+      // Retry only for someone who may ask; another viewer just learns how it went.
+      const canRetry = result.outcome === 'failed' && latest.current.available
+      showResult(color, message, canRetry ? retry : undefined)
       if (result.outcome !== 'failed') onUpdatedRef.current()
     },
     [retry],
@@ -175,7 +220,7 @@ export function useBaseUpdate(options: UseBaseUpdateOptions): UseBaseUpdateRetur
       !isBaseUpdatePending({ baseUpdateRequestedAt: requestedAt, lastBaseUpdate: answer })
     ) {
       watched.current = undefined
-      report(answer)
+      report(name, requestedAt, answer)
     } else if (!seen.gaveUp && status === 'editing') {
       seen.gaveUp = true
       showResult('yellow', GAVE_UP_MESSAGE)
@@ -204,7 +249,7 @@ export function useBaseUpdate(options: UseBaseUpdateOptions): UseBaseUpdateRetur
           if (!stillOpen()) return
           setAsked({ name: target, requestedAt: at })
           if (!isBaseUpdatePending(answered) && answered.lastBaseUpdate) {
-            report(answered.lastBaseUpdate)
+            report(target, at, answered.lastBaseUpdate)
           } else {
             watched.current = { name: target, requestedAt: at, gaveUp: false }
           }

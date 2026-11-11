@@ -243,6 +243,64 @@ describe('useBaseUpdate', () => {
     expect(result.current.wait).toBe('waiting')
   })
 
+  it('ends the wait when each read of the list takes longer than the poll interval', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
+    const requestedAt = new Date().toISOString()
+    listed = editing({ baseUpdateRequestedAt: requestedAt })
+    const { result } = render()
+    await vi.waitFor(() => expect(result.current.wait).toBe('waiting'))
+
+    listed = editing({
+      baseUpdateRequestedAt: requestedAt,
+      lastBaseUpdate: { at: requestedAt, outcome: 'merged' },
+    })
+    client.branches.list.mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve(listing()), 4_000)),
+    )
+    await act(() => vi.advanceTimersByTimeAsync(20_000))
+    expect(result.current.wait).toBe('none')
+  })
+
+  it('stays answered, and reports once, when an older listing arrives after the answer', async () => {
+    const requestedAt = new Date().toISOString()
+    listed = editing({ baseUpdateRequestedAt: requestedAt })
+    const { result, onUpdated } = render()
+    await waitFor(() => expect(result.current.wait).toBe('waiting'))
+
+    const answered = editing({
+      baseUpdateRequestedAt: requestedAt,
+      lastBaseUpdate: { at: requestedAt, outcome: 'merged' },
+    })
+    listed = answered
+    await act(() => result.current.reload())
+    await waitFor(() => expect(result.current.wait).toBe('none'))
+
+    // Another host's older snapshot, then the current one again.
+    listed = editing({ baseUpdateRequestedAt: requestedAt })
+    await act(() => result.current.reload())
+    expect(result.current.wait).toBe('none')
+    listed = answered
+    await act(() => result.current.reload())
+
+    expect(shown().filter((n) => n.message === 'Latest changes added')).toHaveLength(1)
+    expect(onUpdated).toHaveBeenCalledTimes(1)
+  })
+
+  it('offers no Retry on a failure to a viewer who may not ask', async () => {
+    const requestedAt = new Date().toISOString()
+    listed = editing({ baseUpdateRequestedAt: requestedAt })
+    const { result } = render({ permitted: false })
+    await waitFor(() => expect(result.current.wait).toBe('waiting'))
+
+    listed = editing({
+      baseUpdateRequestedAt: requestedAt,
+      lastBaseUpdate: { at: requestedAt, outcome: 'failed' },
+    })
+    await act(() => result.current.reload())
+    await waitFor(() => expect(shown()).toHaveLength(1))
+    expect(typeof shown()[0]?.message).toBe('string')
+  })
+
   it('reports a refused request, with Retry', async () => {
     client.workflow.updateFromBase.mockResolvedValue({
       ok: false,

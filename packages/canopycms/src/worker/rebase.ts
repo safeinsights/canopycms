@@ -9,8 +9,8 @@ import {
 } from '../branch-metadata'
 import { invalidateBranchContentCaches } from '../content-index-generation'
 import { isSettingsBranchName, sanitizeBranchName } from '../paths/branch-name'
-import type { BaseUpdateOutcome, PullRequestHold, PullRequestState } from '../types'
-import { BASE_UPDATE_GIVE_UP_MS, isBaseUpdatePending } from '../base-update'
+import type { BaseUpdateOutcome, BranchMetadata, PullRequestHold, PullRequestState } from '../types'
+import { BASE_UPDATE_EARLY_RETRY_MS, isBaseUpdatePending } from '../base-update'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import {
   holdProvisionedWorkspace,
@@ -570,13 +570,24 @@ function answerFor(
   return undefined
 }
 
+/** Whether a request is unanswered and recent enough for the worker to chase with early cycles. */
+function worthAnotherCycle(
+  branch: Pick<BranchMetadata, 'status' | 'baseUpdateRequestedAt' | 'lastBaseUpdate'>,
+): boolean {
+  return (
+    branch.status === 'editing' &&
+    isBaseUpdatePending(branch) &&
+    Date.now() - Date.parse(branch.baseUpdateRequestedAt ?? '') < BASE_UPDATE_EARLY_RETRY_MS
+  )
+}
+
 /**
  * Answer the branch's request for the latest changes in `lastBaseUpdate`, which ends the editor's
- * wait. Only from a cycle whose GitHub fetch began at or after the request: an earlier one may
- * predate the changes asked for, and the cycle the request woke answers it. While the schema gate
- * holds the base no branch can take the latest in, so the request stands. An outcome that settles
- * nothing, such as a lock held or a GitHub step on its way, asks for another early cycle, for as
- * long as the editor waits. Never throws.
+ * wait. Only from a cycle whose GitHub fetch began at or after the request, and only once the
+ * branch holds the base that fetch found: an earlier fetch may predate the changes asked for, and a
+ * base ref that didn't move (a held or failed update) isn't the latest. While the schema gate holds
+ * the base the request stands. Anything else that settles nothing, a lock or a GitHub step on its
+ * way among them, asks for another early cycle while the request is recent. Never throws.
  */
 async function answerBaseUpdate(
   ctx: RebaseContext,
@@ -590,17 +601,25 @@ async function answerBaseUpdate(
   const { request } = probe
   if (!request) {
     // Skipped before its request was read: a provisioning lock held elsewhere.
-    if (requested && outcome.kind === 'skippedLocked') ctx.requestBranchSync(branchDir)
+    if (requested && outcome.kind === 'skippedLocked') {
+      const meta = await BranchMetadataFileManager.loadOnly(branchPath).catch(() => null)
+      if (meta && worthAnotherCycle(meta.branch)) ctx.requestBranchSync(branchDir)
+    }
     return
   }
   if (!gitHub || ctx.ensureStatusReport().baseHold) return
+  const askAgain = () => {
+    if (worthAnotherCycle({ status: 'editing', baseUpdateRequestedAt: request.requestedAt })) {
+      ctx.requestBranchSync(request.branchRef)
+    }
+  }
   // The request's time is the Lambda's clock and the fetch's this host's: both keep NTP time.
-  const requestedAt = Date.parse(request.requestedAt)
-  if (gitHub.fetchedAt < requestedAt) return
+  if (gitHub.fetchedAt < Date.parse(request.requestedAt)) return askAgain()
   const answer = answerFor(outcome, probe)
-  if (answer === undefined) {
-    if (Date.now() - requestedAt < BASE_UPDATE_GIVE_UP_MS) ctx.requestBranchSync(request.branchRef)
-    return
+  if (answer === undefined) return askAgain()
+  const gitHubBase = gitHub.tips.get(ctx.baseBranch)
+  if (answer !== 'failed' && gitHubBase !== undefined && probe.baseSha !== gitHubBase) {
+    return askAgain()
   }
   const lastBaseUpdate = {
     at: new Date(gitHub.fetchedAt).toISOString(),

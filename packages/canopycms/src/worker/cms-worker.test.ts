@@ -2954,7 +2954,7 @@ describe('CmsWorker.syncGit() worker-status.json bookkeeping', () => {
     const internals = worker as unknown as { requestBranchSync(ref?: string): void }
 
     await worker.syncGit()
-    expect(fetch.mock.calls[0]?.[0]).not.toHaveProperty('fresh')
+    expect(fetch.mock.calls[0]?.[0]).toMatchObject({ fresh: false })
 
     await getBranchMetadataFileManager(
       branchPath,
@@ -2967,6 +2967,20 @@ describe('CmsWorker.syncGit() worker-status.json bookkeeping', () => {
     const { startedAt } = await fetch.mock.results[1]!.value
     const answer = (await BranchMetadataFileManager.loadOnly(branchPath))?.branch.lastBaseUpdate
     expect(answer).toMatchObject({ outcome: 'up-to-date', at: new Date(startedAt).toISOString() })
+  })
+
+  it('takes the requests even when the cycle fails before its fetch, so the loop rests again', async () => {
+    const worker = makeSyncWorker()
+    const gateway = (worker as unknown as { gateway: GitHubGateway }).gateway
+    vi.spyOn(gateway, 'fetch').mockRejectedValue(new Error('GitHub unreachable'))
+    const internals = worker as unknown as {
+      requestBranchSync(ref?: string): void
+      gitSyncRequested: boolean
+    }
+    internals.requestBranchSync('asked')
+
+    await expect(worker.syncGit()).rejects.toThrow('GitHub unreachable')
+    expect(internals.gitSyncRequested).toBe(false)
   })
 
   it('records lastGitSyncAt and a rebase summary after a successful cycle, including a per-branch rebase failure', async () => {

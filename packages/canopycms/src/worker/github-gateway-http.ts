@@ -892,8 +892,7 @@ class GitHubGatewayClient implements GitHubGateway {
     onProgress?: () => void,
   ): Promise<GitHubFetchResult> {
     const have = [...new Set(request.have)]
-    // Sent only when set, so a gateway that predates it still takes every other fetch.
-    const json = request.fresh ? { have, fresh: true } : { have }
+    const json = { have, fresh: request.fresh === true }
     for (let attempt = 1; ; attempt++) {
       const started = await this.send({
         method: 'POST',

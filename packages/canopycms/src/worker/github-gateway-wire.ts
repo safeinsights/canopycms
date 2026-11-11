@@ -217,7 +217,7 @@ export const fetchPoll = z.discriminatedUnion('state', [
       /** Every GitHub branch and its tip, as pairs: a `Map` has no JSON form of its own. */
       refs: z.array(z.tuple([name, objectId])).max(1_000_000),
       bundleId: jobId.nullable(),
-      startedAt: z.number().int().nonnegative().optional(),
+      startedAt: z.number().int().nonnegative(),
     })
     .strict(),
 ])

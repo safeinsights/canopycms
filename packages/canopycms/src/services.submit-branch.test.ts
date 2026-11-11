@@ -1126,6 +1126,20 @@ describe('services submitBranch', () => {
       expect(await localSha()).toBe(before)
     })
 
+    it("refuses while a worker's interrupted rebase is still on disk, committing nothing", async () => {
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'saved', 'utf8')
+      await fs.mkdir(path.join(localPath, '.git', 'rebase-merge'))
+      const before = await localSha()
+
+      await expect(services.commitSavedWork({ context, message: 'unused' })).rejects.toBeInstanceOf(
+        ContentWriteLockBusyError,
+      )
+      await expect(services.submitBranch({ context })).rejects.toBeInstanceOf(
+        ContentWriteLockBusyError,
+      )
+      expect(await localSha()).toBe(before)
+    })
+
     it('refuses while a sync holds the branch', async () => {
       await fs.writeFile(path.join(localPath, 'a.txt'), 'saved', 'utf8')
       const release = await tryAcquireContentWriteLock(localPath)

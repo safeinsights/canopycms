@@ -52,9 +52,8 @@ export interface GitHubFetchResult {
   /**
    * When the GitHub fetch `refs` come from began, by the gateway's clock, which is the worker's:
    * they share the instance. A fetch can be joined or reused, so this can predate the request.
-   * Absent from a gateway that predates it.
    */
-  startedAt?: number
+  startedAt: number
 }
 
 /** The most `have` IDs one fetch takes. */

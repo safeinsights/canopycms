@@ -64,14 +64,12 @@ export async function fetchGitHubIntoRemoteGit(
   needsOperator: string | null
 }> {
   const gitDir = ctx.remoteGitPath
-  // A gateway that reports no start time gets this one, which is later than its fetch's.
-  const calledAt = Date.now()
   const { refs, bundleId, startedAt } = await ctx
     .github()
-    .fetch({ have: await haveOf(gitDir), ...(fresh && { fresh }) }, signal)
+    .fetch({ have: await haveOf(gitDir), fresh }, signal)
   if (bundleId !== null) await unbundle(ctx, gitDir, bundleId, signal)
   const needsOperator = await moveTrackingRefs(ctx, gitDir, refs, signal)
-  return { refs, fetchedAt: startedAt ?? calledAt, needsOperator }
+  return { refs, fetchedAt: startedAt, needsOperator }
 }
 
 /**

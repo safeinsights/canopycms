@@ -40,7 +40,7 @@ import { enqueueTask } from './task-queue/cms-task-queue'
 import { getTaskQueueDir } from './task-queue/task-queue-config'
 import { baseBranchOf } from './utils/base-branch'
 import { shortNameOf } from './branch-param'
-import { detectHeadBranch, isCanopyInternalPath } from './utils/git'
+import { detectHeadBranch, isCanopyInternalPath, isRebaseInProgress } from './utils/git'
 import { readsFromCheckout } from './build-mode'
 import { timeRequestPhase } from './utils/request-timing'
 import {
@@ -54,7 +54,7 @@ import {
 import { getBranchMetadataFileManager, recordBranchEditor } from './branch-metadata'
 import { readBranchMetadataFile } from './branch-metadata-file'
 import { getErrorMessage, redactCredentials } from './utils/error'
-import { withContentWriteLock } from './utils/content-write-lock'
+import { ContentWriteLockBusyError, withContentWriteLock } from './utils/content-write-lock'
 import { ContentStore } from './content-store'
 import { entryLogicalPathOfFile } from './content-id-index'
 import { stampNewEntries, type StampedEntry } from './stamp-on-publish'
@@ -408,6 +408,15 @@ async function _createCanopyServicesInternal(
   }
 
   /**
+   * Inside the content-write lock, before a commit: a rebase left by a worker that died holds no
+   * lock, and its recovery (`rebase --abort`, worker/rebase.ts) would reset the branch past the
+   * commit, silently. The worker clears it on its next cycle, so this is a retry.
+   */
+  const refuseDuringRebase = async (branchRoot: string): Promise<void> => {
+    if (await isRebaseInProgress(branchRoot)) throw new ContentWriteLockBusyError()
+  }
+
+  /**
    * Commit every saved change but canopycms's own state, if there is one, with trailers naming
    * `credited` and then the editors who saved since the last commit. Runs inside the caller's
    * content-write lock. Resolves whether it committed.
@@ -480,6 +489,7 @@ async function _createCanopyServicesInternal(
     // [SYNC-C1] Locked for the same reason as submitBranch: a commit landing while a rebase is
     // stopped on a conflict is discarded by its abort.
     const committed = await withContentWriteLock(options.context.branchRoot, async () => {
+      await refuseDuringRebase(options.context.branchRoot)
       await git.checkoutBranch(options.context.branch.name)
       const status = await git.status()
       uncommitted = (await readRecordedEditors(options.context))?.uncommittedEditors ?? []
@@ -582,6 +592,7 @@ async function _createCanopyServicesInternal(
     let recorded: RecordedEditors = {}
     let stamped: StampedEntry[] = []
     const submitted = await withContentWriteLock(options.context.branchRoot, async () => {
+      await refuseDuringRebase(options.context.branchRoot)
       await git.checkoutBranch(options.context.branch.name)
       // Before the status read, so the stamp joins this commit even when an earlier attempt
       // already committed the entry and only its push failed.

@@ -56,6 +56,7 @@ import {
   WAITING_SUBMIT_REASON,
   getLatestChangesTooltip,
   type BaseUpdateControl,
+  type BaseUpdateWait,
 } from './base-update-wait'
 import { BranchesDrawer } from './components/BranchesDrawer'
 import { CommentsPanel } from './CommentsPanel'
@@ -757,7 +758,11 @@ const EditorContent: React.FC<EditorProps> = ({
   requestLatestRef.current = baseUpdate.request
   modifiedCountRef.current = modifiedCount
   namesBranchRef.current = (branch) => namesBranch(branch, branchNameState)
-  const latestWaiting = baseUpdate.wait === 'waiting'
+  // The request in flight counts as waiting: a save landing before the worker reads the branch
+  // would make it fail.
+  const latestWait: BaseUpdateWait =
+    baseUpdate.requesting && baseUpdate.wait === 'none' ? 'waiting' : baseUpdate.wait
+  const latestWaiting = latestWait === 'waiting'
   const baseUpdateControl: BaseUpdateControl | undefined = baseUpdate.available
     ? {
         wait: baseUpdate.wait,
@@ -2533,7 +2538,7 @@ const EditorContent: React.FC<EditorProps> = ({
               branchMissing={branchMissing}
               branchToggleRef={branchToggleRef}
               baseUpdate={baseUpdateControl}
-              latestWait={baseUpdate.wait}
+              latestWait={latestWait}
               onBranchReloadData={() => {
                 void Promise.all([handleReloadBranchData(), refreshEntries(branchNameState)]).catch(
                   console.error,
@@ -2734,11 +2739,11 @@ const EditorContent: React.FC<EditorProps> = ({
                           <PreviewFollowContext.Provider value={followInPreview ?? null}>
                             <FormRenderer
                               notice={
-                                (baseUpdate.wait !== 'none' || hiddenDraftNotice) && (
+                                (latestWait !== 'none' || hiddenDraftNotice) && (
                                   <>
-                                    {baseUpdate.wait !== 'none' && (
+                                    {latestWait !== 'none' && (
                                       <BaseUpdateNotice
-                                        wait={baseUpdate.wait}
+                                        wait={latestWait}
                                         hidesDraft={draftHidden && latestWaiting}
                                       />
                                     )}

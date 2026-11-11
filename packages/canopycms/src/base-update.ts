@@ -11,11 +11,14 @@ export const SYNC_BRANCH_ACTION = 'sync-branch' satisfies TaskAction
 /** The shortest time between two requests for one branch; a request inside it joins the last. */
 export const BASE_UPDATE_REQUEST_INTERVAL_MS = 30_000
 
-/**
- * How long a request is waited on: the editor polls for its answer this long, and the worker asks
- * itself for early cycles this long while one goes unanswered.
- */
+/** How long the editor waits on a request, polling for its answer. */
 export const BASE_UPDATE_GIVE_UP_MS = 10 * 60_000
+
+/**
+ * How long the worker asks itself for early cycles while a request goes unanswered; its regular
+ * cycles answer it after that. Each cycle reads every branch in review from GitHub, so it is short.
+ */
+export const BASE_UPDATE_EARLY_RETRY_MS = 2 * 60_000
 
 /** Whether the branch's latest request for the latest changes is still unanswered. */
 export function isBaseUpdatePending(
