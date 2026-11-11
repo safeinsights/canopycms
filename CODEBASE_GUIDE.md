@@ -294,7 +294,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md#task-queue-async-github-operations).
 - `generate-ai-content.ts` — the AI static-content generation command
 - `asset-refs.ts` — `collect-asset-refs` / `materialize-assets` over `build/asset-refs.ts` and `assets/materialize.ts`; `resolveStore` (`--bucket`/`--region`/`--allow-local`), `MATERIALIZE_EXIT_CODES`
 - `configured-asset-store.ts` — the config's asset store, which `materialize-assets` imports only without `--bucket`
-- `site-config.ts` — the one jiti loader for a site's config, schema registry and other modules
+- `site-config.ts` — the jiti loader for a site's config, schema registry and other modules
 
 Commands: `init`, `init-deploy aws`, `init-github-app <create|verify>`, `worker run-once`,
 `generate-ai-content`, `collect-asset-refs`, `materialize-assets`, `sync <push|pull|both|abort>`, `migrate`, `backfill-item-keys`. Flags and prompts are in

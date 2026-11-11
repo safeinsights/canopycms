@@ -507,7 +507,7 @@ npx canopycms backfill-item-keys --check   # exit 1 if any file needs keys
 npx canopycms backfill-item-keys
 ```
 
-Each file is written as an editor save of the unedited entry would write it, so the next save adds nothing. Files whose save also changes other lines are listed apart for review. It refuses uncommitted content changes without `--force`, reads `{appDir}/schemas.ts` (`--app-dir`), and exits 2 when anything fails to load.
+Each file is written as an editor save of the unedited entry would write it, so the next save adds nothing (CRLF markdown files aside: [#1234](https://github.com/safeinsights/canopycms/issues/1234)). Files whose save also changes other lines are listed apart for review. It refuses uncommitted content changes without `--force`, reads `{appDir}/schemas.ts` (`--app-dir`), and exits 2 when anything fails to load or write.
 
 ### Field Types
 

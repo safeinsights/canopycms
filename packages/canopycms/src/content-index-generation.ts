@@ -25,7 +25,7 @@ import { SCHEMA_GENERATION_RESOURCE } from './branch-schema-cache'
 
 const RESOURCE = 'content-index'
 
-/** Absolute path of the generation marker for a branch-clone root. */
+/** Absolute path of the generation marker under `root`. */
 export function contentIndexGenerationPath(root: string): string {
   return resourceGenerationPath(root, RESOURCE)
 }

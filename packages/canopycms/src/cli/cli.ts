@@ -555,7 +555,9 @@ async function main() {
     console.log('    --check               Write nothing; exit 1 if any file would change')
     console.log('    --force               Write even with uncommitted changes in the content')
     console.log('    --app-dir <path>      Directory holding schemas.ts (default: app)')
-    console.log('    Exit codes: 0 ok, 1 --check found changes or a run refused, 2 load error')
+    console.log(
+      '    Exit codes: 0 ok, 1 --check found changes or a run refused, 2 a load or write error',
+    )
     process.exit(0)
   }
 }

@@ -541,6 +541,22 @@ describe('a backfill write', () => {
       await fs.rm(saved, { recursive: true, force: true })
     }
   })
+
+  // A CRLF markdown file is the exception, safeinsights/canopycms#1234.
+  it('leaves the next editor save nothing to change', async () => {
+    await fs.writeFile(docPath(root, STRAY.file), STRAY_MD)
+    await run(root, false)
+    const backfilled = await snapshot(path.join(root, 'content'))
+
+    const save = editor(root)
+    for (const slug of ['start', 'intro', 'promo', 'facts', 'compact', STRAY.slug]) {
+      await save(slug)
+    }
+
+    for (const [file, { text }] of await snapshot(path.join(root, 'content'))) {
+      expect({ file, text }).toEqual({ file, text: backfilled.get(file)?.text })
+    }
+  })
 })
 
 describe('backfillItemKeysCLI', () => {

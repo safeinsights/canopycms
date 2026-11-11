@@ -7,13 +7,14 @@
  * Each entry goes through the editor's own save path, with nothing re-derived:
  * `ContentStore.read` keys the items exactly as the editor's form holds them, and
  * `ContentStore.write` writes that data back with the read's version, through the serialiser,
- * content-write lock and version check a save uses. So a written file is byte for byte what an
- * editor save of the unedited entry leaves, a second run finds every item keyed and writes
- * nothing, and the next editor save adds no lines of its own.
+ * content-write lock and version check a save uses, after the content API's own
+ * `entryDataAsSaved`. So a written file is byte for byte what an editor save of the unedited entry
+ * leaves, a second run finds every item keyed and writes nothing, and the next editor save adds no
+ * lines of its own, a CRLF markdown file aside (safeinsights/canopycms#1234).
  *
  * A file is written only when its items lack keys. The write then also carries whatever else an
- * unedited save normalises (calendar days, the serialiser's own spellings), and those files are
- * listed apart for review. Out of scope, as for the editor: list fields the schema does not
+ * unedited save normalises (a one-line JSON file comes out pretty-printed, a stray frontmatter key
+ * named as the body goes), and those files are listed apart for review. Out of scope, as for the editor: list fields the schema does not
  * describe, `.collection.json`, and entries of a type this code's registry lacks.
  */
 
@@ -55,7 +56,7 @@ interface BackfillFileResult {
 interface BackfillResult {
   /** Files written, or with `check`, files a run would write; by path. */
   changed: BackfillFileResult[]
-  /** Entries that could not be read or written. */
+  /** Entries that could not be read or written, and collections that could not be listed. */
   failed: { path: string; error: string }[]
   /** Entries left alone because the registry has no schema for their entry type. */
   unavailable: string[]
@@ -127,11 +128,12 @@ async function backfillEntry(
   check: boolean,
 ): Promise<Omit<BackfillFileResult, 'path'> | null> {
   const doc = await store.read(item.collectionPath, item.slug, { resolveReferences: false })
-  // A slug two entry types share in one collection addresses only one of their files.
+  // The store finds a slug's file by name alone, so a slug another file in the collection also
+  // carries (another entry type's, or a stray copy) addresses only one of them.
   if (doc.absolutePath !== path.resolve(root, item.physicalPath)) {
     throw new Error(
-      `Another entry in its collection has the slug "${item.slug}", so neither a save nor the ` +
-        'backfill can address this file. Rename one of them.',
+      `Another file in its collection has the slug "${item.slug}", so neither a save nor the ` +
+        'backfill can address this one. Rename or remove one of them.',
     )
   }
   // After the read: its version was taken before its own read of the file, so a change landing
@@ -223,8 +225,8 @@ export interface BackfillItemKeysCLIOptions {
 
 /**
  * Exit codes. `--check`: 0 when no file needs keys, 1 when some would change. A run: 0 when done,
- * 1 when it would not write over uncommitted content. Both: 2 when the site's config, schema or
- * an entry could not be loaded, or an entry could not be written.
+ * 1 when it would not write: uncommitted content changes, or no git to ask. Both: 2 when the
+ * site's config or schema could not be loaded, a collection listed, or an entry read or written.
  * @internal Exported for tests.
  */
 export const BACKFILL_EXIT_CODES = { ok: 0, changesOrRefused: 1, loadError: 2 } as const
@@ -285,8 +287,9 @@ export async function backfillItemKeysCLI(options: BackfillItemKeysCLIOptions): 
     )
     return BACKFILL_EXIT_CODES.loadError
   } finally {
-    // Outside a branch workspace nothing reads the store's generation marker, and an adopter's
-    // .gitignore need not cover `.canopy-meta/`: remove what this run created there.
+    // The marker tells other processes to rebuild their ID index, and the backfill moves no file,
+    // so no index goes stale. An adopter's .gitignore need not cover `.canopy-meta/`, so at a
+    // project root that had none, remove what this run created there.
     if (!check && !metaDirExisted) await removeOwnMetaDir(projectDir, metaDir)
   }
 
