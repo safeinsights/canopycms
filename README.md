@@ -41,6 +41,7 @@ Next 16.2.x fork-bombs `next dev --turbopack`: the dev server boots, logs `○ C
 - [Deploying to AWS](#deploying-to-aws)
 - [Local Development Sync](#local-development-sync)
 - [Migrating Existing Content](#migrating-existing-content)
+- [Keying list items](#keying-list-items)
 - [Environment Variables](#environment-variables)
 - [Documentation](#documentation)
 
@@ -479,7 +480,7 @@ npx canopycms sync pull --branch update-homepage   # target one workspace
 
 **Push** copies your working-tree content into a branch workspace and commits it, targeting the workspace matching your current git branch by default and creating it if needed. **Pull** copies content back so you can review, commit and push it yourself. Both accept `--branch` (a full or short branch name, or a workspace directory), and prompt you to choose when several workspaces exist and none is named. **Both** merges the two sides with a 3-way git merge and pulls the result back; **abort** restores the workspace to its pre-merge state.
 
-> All project-bound CLI commands (`sync`, `migrate`, `generate-ai-content`, `materialize-assets`, `worker run-once`) resolve the project root by walking up from the current directory to the nearest `canopycms.config.ts`, like git does — running them from a subdirectory works.
+> All project-bound CLI commands (`sync`, `migrate`, `backfill-item-keys`, `generate-ai-content`, `materialize-assets`, `worker run-once`) resolve the project root by walking up from the current directory to the nearest `canopycms.config.ts`, like git does — running them from a subdirectory works.
 
 ### Migrating Existing Content
 
@@ -496,6 +497,17 @@ npx canopycms migrate --entry-type doc --format md --schema docSchema
 - Entry order is left unset (alphabetical); apply source-specific ordering (e.g. Nextra `_meta.json`) with a follow-up script.
 
 Afterwards, make sure the schema key you chose exists in your entry schema registry.
+
+### Keying list items
+
+Each object-list item and block carries a `_key` that comment threads follow it by. A file without keys gets them on its first editor save, and those lines can conflict with the base branch's edits to the entry. Run this once on a clean checkout of your base branch, then commit the result on its own:
+
+```bash
+npx canopycms backfill-item-keys --check   # exit 1 if any file needs keys
+npx canopycms backfill-item-keys
+```
+
+Each file is written as an editor save of the unedited entry would write it, so the next save adds nothing. Files whose save also changes other lines are listed apart for review. It refuses uncommitted content changes without `--force`, reads `{appDir}/schemas.ts` (`--app-dir`), and exits 2 when anything fails to load.
 
 ### Field Types
 

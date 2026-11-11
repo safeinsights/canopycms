@@ -287,16 +287,17 @@ See [ARCHITECTURE.md](ARCHITECTURE.md#task-queue-async-github-operations).
 - `project-root.ts` — `findProjectRoot`, walks up to the nearest `canopycms.config.ts`
 - `sync.ts` — interactive wrapper over `sync-core.ts` for content sync between working tree and branch workspaces
 - `migrate.ts` — converts a plain content tree to CanopyCMS naming conventions, idempotent
+- `backfill-item-keys.ts` — writes every list item's `_key` through `ContentStore.read`/`write`; `--check`
 - `init-github-app.ts` — registers or verifies the worker's GitHub App; messages in `github-app-output.ts`
 - `github-app-manifest.ts` — App naming, `CANOPY_APP_PERMISSIONS`, and the installation read-back verdict
 - `prompt.ts` — the stdin prompts, sharing one end-of-input flag
 - `generate-ai-content.ts` — the AI static-content generation command
 - `asset-refs.ts` — `collect-asset-refs` / `materialize-assets` over `build/asset-refs.ts` and `assets/materialize.ts`; `resolveStore` (`--bucket`/`--region`/`--allow-local`), `MATERIALIZE_EXIT_CODES`
 - `configured-asset-store.ts` — the config's asset store, which `materialize-assets` imports only without `--bucket`
-- `site-config.ts` — `importSiteServerConfig`, the jiti config import `sync` and `configured-asset-store.ts` share
+- `site-config.ts` — the one jiti loader for a site's config, schema registry and other modules
 
 Commands: `init`, `init-deploy aws`, `init-github-app <create|verify>`, `worker run-once`,
-`generate-ai-content`, `collect-asset-refs`, `materialize-assets`, `sync <push|pull|both|abort>`, `migrate`. Flags and prompts are in
+`generate-ai-content`, `collect-asset-refs`, `materialize-assets`, `sync <push|pull|both|abort>`, `migrate`, `backfill-item-keys`. Flags and prompts are in
 [README.md](README.md#quick-start) and [docs/deploying-to-aws.md](docs/deploying-to-aws.md).
 
 ## CDK Package (canopycms-cdk)
@@ -870,7 +871,7 @@ in `server.ts` and `client.ts`. See
 - `logger.ts` — process-scoped logger shared by the worker and the Lambda
 - `format.ts` — content format helpers: `getFormatExtension`, `isDataOnlyFormat`
 - `atomic-write.ts` — atomic writes via temp file plus rename, for NFS and EFS
-- `content-serialize.ts` — `serializeYaml` / `serializeFrontmatter`, source-preserving writes
+- `content-serialize.ts` — `serializeYaml` / `serializeFrontmatter`, source-preserving writes; `serializeEntry` dispatches by format
 - `calendar-day.ts` — `date` values
 - `markdown-body-splice.ts` — `preserveMarkdownSource`, its body half
 - `markdown-restyle.ts` — `restyleMarkdown`: edited blocks to Prettier's markers, in place

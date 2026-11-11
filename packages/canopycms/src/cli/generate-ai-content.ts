@@ -5,13 +5,14 @@
  */
 
 import path from 'node:path'
-import { createJiti } from 'jiti'
 
 import { generateAIContentFiles } from '../build/generate-ai-content'
 import { getErrorMessage } from '../utils/error'
-
-// jiti lets the CLI import adopter .ts config files under plain node (no tsx needed)
-const jiti = createJiti(import.meta.url)
+import {
+  importSiteEntrySchemaRegistry,
+  importSiteModule,
+  importSiteServerConfig,
+} from './site-config'
 
 interface GenerateAIContentCLIOptions {
   projectDir: string
@@ -25,29 +26,18 @@ export async function generateAIContentCLI(options: GenerateAIContentCLIOptions)
 
   console.log('\nCanopyCMS generate-ai-content\n')
 
-  const canopyConfigPath = path.join(projectDir, 'canopycms.config.ts')
-  let canopyConfigModule: Record<string, unknown>
+  let serverConfig: unknown
   try {
-    canopyConfigModule = (await jiti.import(canopyConfigPath)) as Record<string, unknown>
+    serverConfig = (await importSiteServerConfig(projectDir)).server
   } catch (err) {
-    console.error(`Could not load config from ${canopyConfigPath}`)
+    console.error(`Could not load config from ${path.join(projectDir, 'canopycms.config.ts')}`)
     console.error(getErrorMessage(err))
     process.exit(1)
   }
 
-  // Extract the server config (defineCanopyConfig returns { server, client })
-  const configExport = canopyConfigModule.default ?? canopyConfigModule.config ?? canopyConfigModule
-  const serverConfig =
-    typeof configExport === 'object' && configExport !== null && 'server' in configExport
-      ? (configExport as { server: unknown }).server
-      : configExport
-
-  const schemasPath = path.join(projectDir, appDir, 'schemas.ts')
   let entrySchemaRegistry: Record<string, unknown> = {}
   try {
-    const schemasModule = (await jiti.import(schemasPath)) as Record<string, unknown>
-    entrySchemaRegistry =
-      (schemasModule.entrySchemaRegistry as Record<string, unknown>) ?? schemasModule
+    entrySchemaRegistry = (await importSiteEntrySchemaRegistry(projectDir, appDir)).registry
   } catch {
     console.warn(`  No ${appDir}/schemas.ts found, using empty entry schema registry`)
   }
@@ -55,10 +45,7 @@ export async function generateAIContentCLI(options: GenerateAIContentCLIOptions)
   let aiConfig: unknown
   if (configPath) {
     try {
-      const aiConfigModule = (await jiti.import(path.resolve(configPath))) as Record<
-        string,
-        unknown
-      >
+      const aiConfigModule = await importSiteModule(path.resolve(configPath))
       aiConfig = aiConfigModule.aiContentConfig ?? aiConfigModule.default ?? aiConfigModule.config
     } catch (err) {
       console.error(`Could not load AI config from ${configPath}`)

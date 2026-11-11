@@ -5,7 +5,7 @@
  *
  * Routes commands to their implementations:
  *   init, init-deploy, init-github-app, worker, generate-ai-content, collect-asset-refs,
- *   materialize-assets, sync, migrate
+ *   materialize-assets, sync, migrate, backfill-item-keys
  *
  * Command implementations live in separate files (init.ts, sync.ts, etc.)
  * and are dynamically imported to keep startup fast.
@@ -25,7 +25,15 @@ import type { MigrateFormat } from './migrate'
 /** Parse raw CLI args into structured flags and positional command. Exported for testing. */
 export function parseArgs(rawArgs: string[]) {
   const argv = minimist(rawArgs, {
-    boolean: ['force', 'non-interactive', 'dry-run', 'key-stdin', 'allow-failures', 'allow-local'],
+    boolean: [
+      'force',
+      'non-interactive',
+      'dry-run',
+      'key-stdin',
+      'allow-failures',
+      'allow-local',
+      'check',
+    ],
     string: [
       'app-dir',
       'branch',
@@ -465,6 +473,14 @@ async function main() {
       dryRun: flags['dry-run'] === true,
       force: flags['force'] === true,
     })
+  } else if (command === 'backfill-item-keys') {
+    const { backfillItemKeysCLI } = await import('./backfill-item-keys')
+    process.exitCode = await backfillItemKeysCLI({
+      projectDir: await requireProjectRoot('backfill-item-keys'),
+      appDir: typeof flags['app-dir'] === 'string' ? flags['app-dir'] : undefined,
+      check: flags['check'] === true,
+      force: flags['force'] === true,
+    })
   } else {
     console.log('CanopyCMS CLI')
     console.log('')
@@ -532,6 +548,14 @@ async function main() {
     console.log('    --schema <key>        Entry schema registry key (e.g. docSchema)')
     console.log('    --dry-run             Print the plan without changing anything')
     console.log('    --force               Skip confirmation prompts')
+    console.log('')
+    console.log(
+      '  backfill-item-keys      Write every list item and block its _key, as a save does',
+    )
+    console.log('    --check               Write nothing; exit 1 if any file would change')
+    console.log('    --force               Write even with uncommitted changes in the content')
+    console.log('    --app-dir <path>      Directory holding schemas.ts (default: app)')
+    console.log('    Exit codes: 0 ok, 1 --check found changes or a run refused, 2 load error')
     process.exit(0)
   }
 }
