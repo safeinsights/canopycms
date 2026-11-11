@@ -12,6 +12,7 @@ import { useApiClient } from '../context'
 import { getErrorMessage } from '../../utils/error'
 import { BRANCHES_KEY, type BranchesData } from './useBranchesData'
 import { RetryToastMessage } from '../components/RetryToastMessage'
+import { EDITOR_ACTIONS } from '../copy'
 import {
   GAVE_UP_MESSAGE,
   REQUEST_FAILED_MESSAGE,
@@ -38,6 +39,8 @@ export interface UseBaseUpdateOptions {
   unsavedCount: number
   /** Re-read the branch's entries and the open one, keeping drafts: the worker rewrote them. */
   onUpdated: () => void
+  /** Opens the branch's conflicts, offered by the toast of a merge that left some. */
+  onShowConflicts?: () => void
 }
 
 export interface UseBaseUpdateReturn {
@@ -103,14 +106,26 @@ function withSettled(
       }
 }
 
-/** A toast in the one slot this hook uses, replacing what it showed before. */
-function showResult(color: 'green' | 'yellow' | 'red', message: string, onRetry?: () => void) {
+/**
+ * A toast in the one slot this hook uses, replacing what it showed before. `onAction` offers
+ * Retry, or `actionLabel`.
+ */
+function showResult(
+  color: 'green' | 'yellow' | 'red',
+  message: string,
+  onAction?: () => void,
+  actionLabel?: string,
+) {
   notifications.hide(RESULT_TOAST_ID)
   notifications.show({
     id: RESULT_TOAST_ID,
     color,
     autoClose: color === 'green' ? undefined : false,
-    message: onRetry ? <RetryToastMessage message={message} onRetry={onRetry} /> : message,
+    message: onAction ? (
+      <RetryToastMessage message={message} onRetry={onAction} actionLabel={actionLabel} />
+    ) : (
+      message
+    ),
   })
 }
 
@@ -186,6 +201,8 @@ export function useBaseUpdate(options: UseBaseUpdateOptions): UseBaseUpdateRetur
   latest.current = { name, unsavedCount, available }
   const onUpdatedRef = useRef(onUpdated)
   onUpdatedRef.current = onUpdated
+  const onShowConflictsRef = useRef(options.onShowConflicts)
+  onShowConflictsRef.current = options.onShowConflicts
   const requestRef = useRef<() => Promise<void>>(async () => {})
   // Stable, and reads only refs, so the toasts that carry it keep working.
   const retry = useCallback(() => {
@@ -196,13 +213,35 @@ export function useBaseUpdate(options: UseBaseUpdateOptions): UseBaseUpdateRetur
   const report = useCallback(
     (on: Recorded, result: LastBaseUpdate) => {
       setSettled({ ...on, lastBaseUpdate: result })
+      if (result.outcome !== 'failed') onUpdatedRef.current()
+      if (result.outcome === 'conflicts') {
+        // The toast counts the choices left, which the branch's conflicts hold.
+        void apiClient.conflicts
+          .list({ branch: on.name })
+          .then((answer) => (answer.ok ? answer.data?.openCount : undefined))
+          .catch(() => undefined)
+          .then((count) => {
+            if (latest.current.name !== on.name) return
+            const { color, message } = baseUpdateResultMessage(result, count)
+            const show = () => {
+              notifications.hide(RESULT_TOAST_ID)
+              onShowConflictsRef.current?.()
+            }
+            showResult(
+              color,
+              message,
+              onShowConflictsRef.current ? show : undefined,
+              EDITOR_ACTIONS.showChanges,
+            )
+          })
+        return
+      }
       const { color, message } = baseUpdateResultMessage(result)
       // Retry only for someone who may ask; another viewer just learns how it went.
       const canRetry = result.outcome === 'failed' && latest.current.available
       showResult(color, message, canRetry ? retry : undefined)
-      if (result.outcome !== 'failed') onUpdatedRef.current()
     },
-    [retry],
+    [apiClient, retry],
   )
 
   // A result is about the branch it came from: switching away closes it.

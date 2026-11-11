@@ -35,7 +35,10 @@ const indexOfKey = (list: readonly unknown[], key: string): number =>
   list.findIndex((item) => isPlainRecord(item) && item[ITEM_KEY] === key)
 
 /** A change's data path in form keys: the body field, when it heads the path, is `body`. */
-const formPath = (change: EntryChange, bodyField: string | undefined): DataPathSegment[] => {
+const formPath = (
+  change: Pick<EntryChange, 'dataPath'>,
+  bodyField: string | undefined,
+): DataPathSegment[] => {
   const path = change.dataPath ?? []
   const head = path[0]
   return bodyField && head && 'field' in head && head.field === bodyField
@@ -55,6 +58,27 @@ const step = (value: unknown, segment: DataPathSegment): unknown => {
 
 const valueAt = (value: unknown, path: readonly DataPathSegment[]): unknown =>
   path.reduce(step, value)
+
+/**
+ * `value` with `next` at a change's place, records on the way made as needed; undefined when the
+ * place is inside an item `value` no longer has.
+ */
+export const withValueAt = (
+  value: FormValue,
+  change: Pick<EntryChange, 'dataPath'>,
+  next: unknown,
+  bodyField?: string,
+): FormValue | undefined => {
+  const placed = updateAt(value, formPath(change, bodyField), () => next)
+  return placed && isPlainRecord(placed.value) ? placed.value : undefined
+}
+
+/** What `value` holds at a change's place; undefined where it has nothing there. */
+export const valueAtChange = (
+  value: FormValue,
+  change: Pick<EntryChange, 'dataPath'>,
+  bodyField?: string,
+): unknown => valueAt(value, formPath(change, bodyField))
 
 /** What a `replace` returns when the change has nothing to act on, so it can't be placed. */
 const NOT_PLACED = Symbol('not-placed')

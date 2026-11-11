@@ -89,13 +89,19 @@ describe('baseUpdateResultMessage', () => {
       sticky: false,
     })
     expect(baseUpdateResultMessage({ at, outcome: 'up-to-date' }).sticky).toBe(false)
-    const kept = baseUpdateResultMessage({ at, outcome: 'conflicts', keptEntries: 2 })
-    expect(kept).toMatchObject({ color: 'yellow', sticky: true })
-    expect(kept.message).toContain('2 entries')
-    expect(baseUpdateResultMessage({ at, outcome: 'conflicts', keptEntries: 1 }).message).toContain(
-      '1 entry ',
+    // A merge with conflicts counts the fields left to choose, never claiming whole entries kept.
+    const kept = baseUpdateResultMessage({ at, outcome: 'conflicts', keptEntries: 2 }, 3)
+    expect(kept).toEqual({
+      color: 'yellow',
+      message: 'Latest changes added. 3 fields need your choice.',
+      sticky: true,
+    })
+    expect(baseUpdateResultMessage({ at, outcome: 'conflicts' }, 1).message).toBe(
+      'Latest changes added. 1 field needs your choice.',
     )
-    expect(baseUpdateResultMessage({ at, outcome: 'conflicts' }).message).toContain('Some entries')
+    expect(baseUpdateResultMessage({ at, outcome: 'conflicts', keptEntries: 2 }).message).toBe(
+      'Latest changes added. Some fields need your choice.',
+    )
     expect(baseUpdateResultMessage({ at, outcome: 'failed' })).toMatchObject({
       color: 'red',
       sticky: true,

@@ -99,7 +99,7 @@ export interface EntryNavItem {
   noPage?: boolean
   collectionPath?: LogicalPath
   contentId?: ContentId // 12-char embedded ID for ordering
-  /** True when this entry's file conflicted during rebase */
+  /** The entry has conflicts open: values changed by the branch and the latest version alike. */
   conflictNotice?: boolean
   /** True when the entry's type is unavailable; it shows no menu, since every item in it writes. */
   unavailable?: boolean
@@ -115,7 +115,7 @@ export interface EntryNavCollection {
   order?: readonly string[] // Order array for interleaving entries and children
   entries?: EntryNavItem[]
   children?: EntryNavCollection[]
-  /** True when this collection's .collection.json conflicted during rebase */
+  /** The collection's settings have conflicts open. */
   conflictNotice?: boolean
   /** Registry keys of this collection's unavailable entry types; non-empty shows the message once. */
   unavailableSchemaRefs?: readonly string[]
@@ -1276,13 +1276,13 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                   {showCollectionDirtyDot && <UnsavedDot label="Contains unsaved changes" />}
                   {conflictNotice && (
                     <Tooltip
-                      label="This content was updated on the base branch — a reviewer will reconcile"
+                      label='Changed by you and by someone else. Choose what to keep in "Show changes".'
                       withArrow
                     >
                       <Badge
                         size="xs"
                         variant="light"
-                        color="orange"
+                        color="yellow"
                         data-testid="conflict-badge"
                         style={{ flexShrink: 0 }}
                       >

@@ -191,6 +191,11 @@ export interface UseDraftManagerOptions {
   followMovedEntry?: (entry: EditorEntry) => Promise<EditorEntry | undefined>
   /** Creates a deleted entry again from its draft (useEntryManager's `recreateEntry`). */
   recreateEntry?: (entry: EditorEntry, value: FormValue) => Promise<EditorEntry | undefined>
+  /**
+   * Entries with a conflict choice a save has yet to send (useConflictChoices.ts): unsaved even
+   * when the choice left the value as it was, such as "Keep your version".
+   */
+  pendingIds?: ReadonlySet<string>
 }
 
 /** The unsaved work a branch-level action would leave behind. `labels` names the entries (it may be shorter than `count`). */
@@ -362,15 +367,20 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   //
   // 3. The comparison is `fast-deep-equal`, so key insertion order of a
   //    rehydrated draft does not make it dirty.
-  const dirtyIds = useMemo(
-    () =>
-      Object.keys(drafts).filter((id) => {
-        if (entriesKnown && !entryById.has(id)) return false
-        const baseline = loadedValues[id] ?? verifiedBaselines[id]
-        return baseline === undefined || !equal(drafts[id], baseline)
-      }),
-    [drafts, loadedValues, verifiedBaselines, entriesKnown, entryById],
-  )
+  //
+  // 4. An entry with a conflict choice to send counts, draft or not (`pendingIds`).
+  const pendingIds = options.pendingIds
+  const dirtyIds = useMemo(() => {
+    const dirty = Object.keys(drafts).filter((id) => {
+      if (entriesKnown && !entryById.has(id)) return false
+      const baseline = loadedValues[id] ?? verifiedBaselines[id]
+      return baseline === undefined || !equal(drafts[id], baseline)
+    })
+    const pending = [...(pendingIds ?? [])].filter(
+      (id) => !dirty.includes(id) && (!entriesKnown || entryById.has(id)),
+    )
+    return pending.length > 0 ? [...dirty, ...pending] : dirty
+  }, [drafts, loadedValues, verifiedBaselines, entriesKnown, entryById, pendingIds])
   const modifiedCount = dirtyIds.length
 
   const editedFiles = useMemo(
@@ -1146,7 +1156,11 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     branch: string,
   ): Promise<{ saved: true } | { saved: false; failure: SaveAllFailure } | undefined> => {
     const id = entry.contentId
-    const sent = latestRef.current.drafts[id]
+    const sent =
+      latestRef.current.drafts[id] ??
+      (latestOptionsRef.current.pendingIds?.has(id)
+        ? latestRef.current.loadedValues[id]
+        : undefined)
     if (sent === undefined) return undefined
     const onBranch = () => latestOptionsRef.current.branchName === branch
     const fail = (
@@ -1310,8 +1324,11 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       // Discarded, refreshed or saved mid-run, so neither saved nor failed by this run.
       const { drafts: remaining } = latestRef.current
       const settled = settledDuringRunRef.current
+      const pendingNow = latestOptionsRef.current.pendingIds
       result.failed = result.failed.filter(
-        (failure) => failure.contentId in remaining && !settled.has(failure.contentId),
+        (failure) =>
+          (failure.contentId in remaining || !!pendingNow?.has(failure.contentId)) &&
+          !settled.has(failure.contentId),
       )
       result.total = result.saved.length + result.failed.length
       if (result.saved.length > 0) latestOptionsRef.current.onSaved?.()
@@ -1521,6 +1538,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     if (!entry) return false
 
     const id = entry.contentId
+    if (pendingIds?.has(id)) return true
     if (!drafts[id]) return false
     const baseline = loadedValues[id] ?? verifiedBaselines[id]
     return baseline === undefined || !equal(drafts[id], baseline)
@@ -1528,6 +1546,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
 
   const isSelectedDirty = (): boolean => {
     if (!currentId) return false
+    if (pendingIds?.has(currentId)) return true
     if (!drafts[currentId]) return false
     return !loadedValues[currentId] || !equal(drafts[currentId], loadedValues[currentId])
   }

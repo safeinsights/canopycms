@@ -12,6 +12,8 @@ import { flattenGroupFields } from '../utils/flatten-group-fields'
 import { isBlockStructuralKey } from '../validation/block-structural-keys'
 import { isPlainRecord } from '../validation/field-traversal'
 
+export const LOCATION_CONFLICT_KEY = '@location'
+
 /**
  * A step the merge took: a record's member, a merged list's item by its place, or, for an item no
  * longer in the merged list, the key naming it.

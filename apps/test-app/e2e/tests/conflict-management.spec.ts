@@ -113,7 +113,10 @@ test.describe('Conflict Management', () => {
     await test.step('verify conflict alert in form', async () => {
       const conflictAlert = page.locator('[data-testid="conflict-alert"]')
       await expect(conflictAlert).toBeVisible({ timeout: STANDARD_TIMEOUT })
-      await expect(conflictAlert).toContainText('Page updated since your draft started')
+      // Both sides changed the title; the tagline, changed only upstream, merged by itself.
+      await expect(conflictAlert).toContainText(
+        '1 field changed by you and by someone else. Show changes to choose.',
+      )
     })
 
     // 8. Verify the editor can still edit and save a conflicted entry
