@@ -352,3 +352,46 @@ describe('Editor on a read-only branch', () => {
     expect(screen.getByText(sentence)).toBeTruthy()
   })
 })
+
+describe('Editor while the branch gets the latest changes', () => {
+  const editingMain = {
+    ...protectedMain,
+    isProtected: false,
+    readOnly: false,
+    writeBlocked: false,
+  }
+
+  it('holds the form read-only with one notice, until the answer lands', async () => {
+    const requestedAt = new Date().toISOString()
+    let answered = false
+    stubApi(() => [
+      {
+        ...editingMain,
+        baseUpdateRequestedAt: requestedAt,
+        ...(answered && { lastBaseUpdate: { at: requestedAt, outcome: 'merged' } }),
+      },
+    ])
+    renderEditor()
+
+    const input = await titleInput()
+    await waitFor(() => expect(input.readOnly).toBe(true))
+    expect(screen.getByTestId('base-update-waiting-notice').textContent).toContain(
+      'Getting the latest changes. You can edit again when it finishes.',
+    )
+
+    answered = true
+    // The branch list polls every 3 s while the branch waits.
+    await waitFor(() => expect(screen.queryByTestId('base-update-waiting-notice')).toBeNull(), {
+      timeout: 6000,
+    })
+    expect((await titleInput()).readOnly).toBe(false)
+  }, 15_000)
+
+  it('leaves the form editable when nothing is asked', async () => {
+    stubApi([editingMain])
+    renderEditor()
+    const input = await titleInput()
+    expect(input.readOnly).toBe(false)
+    expect(screen.queryByTestId('base-update-waiting-notice')).toBeNull()
+  })
+})

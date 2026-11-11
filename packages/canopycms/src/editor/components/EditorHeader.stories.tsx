@@ -430,3 +430,39 @@ export const NarrowReviewerOnApproved: Story = {
   parameters: phone,
   args: { ...reviewing, branchStatus: 'approved' },
 }
+
+const getLatest = {
+  wait: 'none' as const,
+  requesting: false,
+  tooltip: 'Bring in changes made on the site since you started this branch.',
+  onRequest: noop,
+}
+
+/** Nothing unsaved, so "Get latest changes" can act. */
+export const GetLatestChanges: Story = {
+  args: { hasUnsavedChanges: false, modifiedCount: 0, baseUpdate: getLatest },
+}
+
+/** Unsaved changes hold it, with the reason in its Tooltip. */
+export const GetLatestChangesSaveFirst: Story = {
+  args: { baseUpdate: { ...getLatest, blockedReason: 'Save your changes first.' } },
+}
+
+/** Waiting on the worker: the button and the bar say so, and Submit for review waits. */
+export const GettingLatestChanges: Story = {
+  args: {
+    hasUnsavedChanges: false,
+    modifiedCount: 0,
+    baseUpdate: { ...getLatest, wait: 'waiting' },
+  },
+}
+
+/** Below `md` it moves into the branch's menu; the bar still shows the wait. */
+export const NarrowGettingLatestChanges: Story = {
+  parameters: phone,
+  args: {
+    hasUnsavedChanges: false,
+    modifiedCount: 0,
+    baseUpdate: { ...getLatest, wait: 'waiting' },
+  },
+}

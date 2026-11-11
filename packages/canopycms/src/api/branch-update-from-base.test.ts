@@ -11,7 +11,13 @@ import { ContentWriteLockBusyError } from '../utils/content-write-lock'
 import type { BranchName } from '../paths/types'
 import type { BranchContext, BranchStatus } from '../types'
 import type { ApiRequest } from './types'
-import { createMockApiContext, mockConsole, type MockConsole } from '../test-utils'
+import type { CanopyServices } from '../services'
+import {
+  createMockApiContext,
+  createMockServices,
+  mockConsole,
+  type MockConsole,
+} from '../test-utils'
 
 const BRANCH = 'content/spring'
 const owner: ApiRequest = { user: { type: 'authenticated', userId: 'u1', groups: [] } }
@@ -64,16 +70,14 @@ describe('POST /:branch/update-from-base', () => {
     options: {
       req?: ApiRequest
       mode?: 'prod' | 'dev'
-      commitSavedWork?: ReturnType<typeof vi.fn>
+      commitSavedWork?: CanopyServices['commitSavedWork']
     } = {},
   ) => {
-    const commitSavedWork = options.commitSavedWork ?? vi.fn().mockResolvedValue(true)
-    const ctx = createMockApiContext({
-      branchContext,
-      services: {
-        config: { mode: options.mode ?? 'prod', defaultBaseBranch: 'main' },
-        commitSavedWork,
-      },
+    const commitSavedWork = vi.fn(options.commitSavedWork ?? (async () => true))
+    const ctx = createMockApiContext({ branchContext })
+    ctx.services = createMockServices({
+      config: { mode: options.mode ?? 'prod', defaultBaseBranch: 'main' },
+      commitSavedWork,
     })
     const res = await updateFromBase.handler(ctx, options.req ?? owner, {
       branch: BRANCH as BranchName,
@@ -155,7 +159,9 @@ describe('POST /:branch/update-from-base', () => {
 
   it('records nothing when a sync or a save holds the branch', async () => {
     const { res } = await request(await branchWith(), {
-      commitSavedWork: vi.fn().mockRejectedValue(new ContentWriteLockBusyError()),
+      commitSavedWork: async () => {
+        throw new ContentWriteLockBusyError()
+      },
     })
 
     expect(res.status).toBe(409)

@@ -137,7 +137,7 @@ export class CanopyApiClient {
 
     /** POST /:branch/update-from-base */
     updateFromBase: (params: Record<string, string>, options?: RequestOptions): Promise<UpdateFromBaseResponse> => {
-      return this.request('POST', this.buildPath('/:branch/update-from-base', params), undefined, 'standard', options)
+      return this.request('POST', this.buildPath('/:branch/update-from-base', params), undefined, 'long', options)
     },
 
     /** POST /:branch/request-changes */

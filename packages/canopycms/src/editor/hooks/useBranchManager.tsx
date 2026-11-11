@@ -6,7 +6,8 @@ import { Alert, Stack, Text } from '@mantine/core'
 import { IconAlertTriangle } from '@tabler/icons-react'
 import { openConfirm } from '../utils/confirm-modal'
 import { focusReturnProps } from '../utils/focus-return'
-import { EDITOR_ACTIONS } from '../copy'
+import { EDITOR_ACTIONS, WITHDRAW_AND_GET_LATEST } from '../copy'
+import { clientOperatingStrategy } from '../../operating-mode/client'
 import { notifications } from '@mantine/notifications'
 import type { BranchHold, ConflictStatus, PullRequestState, SyncStatus } from '../../types'
 import type { OperatingMode } from '../../operating-mode'
@@ -204,11 +205,14 @@ const showWithdrawConfirmation = (
   onConfirm: () => Promise<void>,
   onDismiss: () => void,
   returnFocusTo?: () => HTMLElement | null,
+  /** The branch conflicts with its base, so withdrawing also gets the latest changes. */
+  thenGetLatest = false,
 ) => {
   const bullets = [
     withdrawPullRequestBullet(pr),
     'Change the branch status back to “editing”',
     'Remove from review queue',
+    thenGetLatest ? 'Bring in the latest changes made on the site' : undefined,
   ].filter((b): b is string => b !== undefined)
   openConfirm({
     title: EDITOR_ACTIONS.withdrawFromReview,
@@ -217,7 +221,10 @@ const showWithdrawConfirmation = (
         {`Withdraw “${branchName}” from review?\n\nThis will:\n${bullets.map((b) => `• ${b}`).join('\n')}`}
       </Text>
     ),
-    labels: { confirm: EDITOR_ACTIONS.withdrawFromReview, cancel: 'Cancel' },
+    labels: {
+      confirm: thenGetLatest ? WITHDRAW_AND_GET_LATEST : EDITOR_ACTIONS.withdrawFromReview,
+      cancel: 'Cancel',
+    },
     confirmProps: { color: 'orange', 'data-testid': 'confirm-withdraw-branch' },
     ...confirmModalHandlers(onConfirm, onDismiss),
     ...focusReturnProps(returnFocusTo),
@@ -477,6 +484,12 @@ export interface UseBranchManagerOptions {
 
   /** A request for changes went through; the branch may now carry the reviewer's note as a comment. */
   onChangesRequested?: (branchName: string) => void
+
+  /**
+   * Asks for the latest changes on `branchName` (useBaseUpdate's `request`). With it, withdrawing
+   * a branch that conflicts with its base asks for them right after.
+   */
+  requestLatestChanges?: (branchName: string) => Promise<void>
 }
 
 export interface UseBranchManagerReturn {
@@ -1067,6 +1080,12 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
       branchNameToWithdraw,
       () =>
         new Promise<void>((resolve, reject) => {
+          const requestLatest = options.requestLatestChanges
+          // The conflict that held it in review is what the latest changes settle.
+          const thenGetLatest =
+            !!requestLatest &&
+            clientOperatingStrategy(options.operatingMode).syncsBranchesWithBase() &&
+            listedBranch(branchNameToWithdraw)?.hold?.kind === 'conflicts'
           showWithdrawConfirmation(
             shownName(branchNameToWithdraw),
             pullRequestOf(branchNameToWithdraw),
@@ -1081,6 +1100,9 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 updateCreatedBranch(branchNameToWithdraw, result.data?.branch)
                 await loadBranches()
                 resolve()
+                // Reports its own outcome, so a failure here never reads as a failed withdraw.
+                if (thenGetLatest && requestLatest)
+                  void requestLatest(sendName(branchNameToWithdraw))
               } catch (err) {
                 await reportActionFailure(
                   err,
@@ -1094,6 +1116,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
             },
             () => resolve(),
             returnFocusTo,
+            thenGetLatest,
           )
         }),
     )

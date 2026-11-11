@@ -48,7 +48,15 @@ import { EditorShell } from './shell/EditorShell'
 import { FORM_PANE_ID, PaneLayout } from './shell/PaneLayout'
 import { SidePanelHost } from './shell/SidePanelHost'
 import { CanopyCMSProvider, type CanopyThemeOptions } from './theme'
-import { BranchManager } from './BranchManager'
+import { BranchManager, getBranchPermissions } from './BranchManager'
+import { useBaseUpdate } from './hooks/useBaseUpdate'
+import { BaseUpdateNotice } from './components/BaseUpdateNotice'
+import {
+  WAITING_NOTICE,
+  WAITING_SUBMIT_REASON,
+  getLatestChangesTooltip,
+  type BaseUpdateControl,
+} from './base-update-wait'
 import { BranchesDrawer } from './components/BranchesDrawer'
 import { CommentsPanel } from './CommentsPanel'
 import { GroupManager } from './GroupManager'
@@ -433,6 +441,8 @@ const EditorContent: React.FC<EditorProps> = ({
   // Reloads the open branch's comments after a request for changes, whose note is a comment; the
   // comment system is built further down.
   const reloadCommentsRef = useRef<(branch: string) => void>(() => {})
+  // Set once useBaseUpdate below exists; it depends on the drafts.
+  const requestLatestRef = useRef<(branch: string) => Promise<void>>(async () => {})
   const {
     branchName: branchNameState,
     setBranchName,
@@ -463,6 +473,7 @@ const EditorContent: React.FC<EditorProps> = ({
     getUnsaved: () => resolveUnsavedRef.current(),
     onStamped: (stamped) => applySubmitStampsRef.current(stamped),
     onChangesRequested: (branch) => reloadCommentsRef.current(branch),
+    requestLatestChanges: (branch) => requestLatestRef.current(branch),
   })
 
   // Content mutations (add/delete/rename/reorder entries) are locked whenever the
@@ -718,6 +729,39 @@ const EditorContent: React.FC<EditorProps> = ({
   resolveUnsavedRef.current = resolveUnsaved
   applySubmitStampsRef.current = applySubmitStamps
 
+  // "Get latest changes" on the open branch: the worker rewrites its files meanwhile, so the form
+  // is read-only while it waits (`latestWaiting`), and every clean entry is read again after.
+  const currentSummary = branchSummaries.find((b) => b.name === currentBranch?.name)
+  const baseUpdate = useBaseUpdate({
+    branch: currentBranch,
+    operatingMode,
+    permitted: !!currentSummary && getBranchPermissions(currentSummary, userContext).canSubmit,
+    unsavedCount: modifiedCount,
+    onUpdated: () => {
+      setLoadedValues((prev) =>
+        Object.fromEntries(
+          Object.entries(prev).filter(([contentId]) => draftsRef.current[contentId] !== undefined),
+        ),
+      )
+      void Promise.all([handleReloadBranchData(), refreshEntries(branchNameState)]).catch(
+        console.error,
+      )
+    },
+  })
+  requestLatestRef.current = baseUpdate.request
+  const latestWaiting = baseUpdate.wait === 'waiting'
+  const baseUpdateControl: BaseUpdateControl | undefined = baseUpdate.available
+    ? {
+        wait: baseUpdate.wait,
+        requesting: baseUpdate.requesting,
+        blockedReason: baseUpdate.blockedReason,
+        tooltip: getLatestChangesTooltip(currentBranch?.baseBranch, userIsAdmin),
+        onRequest: () => void baseUpdate.request(),
+      }
+    : undefined
+  // Content writes wait on the branch's lock, and on the latest changes coming in.
+  const contentLocked = branchContentLocked || latestWaiting
+
   // 4. Branch actions (depends on resolveUnsaved, setBranchName)
   const {
     handleBranchChange,
@@ -824,7 +868,7 @@ const EditorContent: React.FC<EditorProps> = ({
 
   // Read-only content shows the saved value, never a draft; a restored draft is kept, unseen,
   // until it is discarded or the branch unlocks.
-  const contentReadOnly = branchContentLocked || currentEntry?.canEdit === false
+  const contentReadOnly = contentLocked || currentEntry?.canEdit === false
   const displayValue = contentReadOnly ? loadedValue : effectiveValue
   // Read when an edit lands, which an upload or other async field work can do renders later.
   const contentReadOnlyRef = useRef(contentReadOnly)
@@ -944,7 +988,7 @@ const EditorContent: React.FC<EditorProps> = ({
   const entryValue = (entry: EditorEntry): FormValue | undefined => {
     if (entry.path === currentEntry?.path) return displayValue
     // As `displayValue` would show it: read-only content shows its saved value, not a draft.
-    const readOnly = branchContentLocked || entry.canEdit === false
+    const readOnly = contentLocked || entry.canEdit === false
     return (readOnly ? undefined : drafts[entry.contentId]) ?? loadedValues[entry.contentId]
   }
   const displayComments = useMemo(() => {
@@ -959,15 +1003,7 @@ const EditorContent: React.FC<EditorProps> = ({
       return path === thread.canopyPath ? thread : { ...thread, canopyPath: path }
     })
     // `entryValue` reads the open entry, its shown value, and the drafts and loads.
-  }, [
-    comments,
-    entriesState,
-    currentEntry,
-    displayValue,
-    drafts,
-    loadedValues,
-    branchContentLocked,
-  ])
+  }, [comments, entriesState, currentEntry, displayValue, drafts, loadedValues, contentLocked])
 
   // A jump into another entry waits for its value to place the thread; the stored path may be stale.
   const [pendingFieldJump, setPendingFieldJump] = useState<{
@@ -1839,18 +1875,20 @@ const EditorContent: React.FC<EditorProps> = ({
     changesSubject.status !== 'deleted' &&
     changesSubject.logicalPath === currentEntry.path &&
     (changesSubject.contentId === undefined || changesSubject.contentId === currentEntry.contentId)
-  const changesLockReason = branchContentLocked
-    ? describeBranchLock({
-        branchStatus: currentBranch?.status,
-        branchReadOnly: currentBranch?.readOnly,
-        branchWriteBlocked: true,
-        branchPending,
-        branchMissing,
-        reviewing: branchReviewing,
-        pullRequestClosed: branchPullRequestClosed,
-        approveBlocked: currentBranch?.approveBlocked,
-      })
-    : undefined
+  const changesLockReason = latestWaiting
+    ? WAITING_NOTICE
+    : branchContentLocked
+      ? describeBranchLock({
+          branchStatus: currentBranch?.status,
+          branchReadOnly: currentBranch?.readOnly,
+          branchWriteBlocked: true,
+          branchPending,
+          branchMissing,
+          reviewing: branchReviewing,
+          pullRequestClosed: branchPullRequestClosed,
+          approveBlocked: currentBranch?.approveBlocked,
+        })
+      : undefined
   const changesUndo: EntryChangesUndo | undefined =
     changesSubjectOpen && currentEntry && displayValue
       ? {
@@ -2301,7 +2339,7 @@ const EditorContent: React.FC<EditorProps> = ({
         <>
           {navCollections &&
             navCollections.length > 0 &&
-            !branchContentLocked &&
+            !contentLocked &&
             (navCollections[0].onAdd || navCollections[0].onAddSubCollection) && (
               <Menu
                 shadow="md"
@@ -2393,19 +2431,21 @@ const EditorContent: React.FC<EditorProps> = ({
           onReorderEntry={userIsAdmin ? handleReorderEntry : undefined}
           hiddenRootPath={hiddenRootPath}
           loading={entriesInitializing}
-          readOnly={branchContentLocked}
+          readOnly={contentLocked}
           readOnlyReason={
             branchPending
               ? undefined
-              : describeBranchLock({
-                  branchStatus: currentBranch?.status,
-                  branchReadOnly: currentBranch?.readOnly,
-                  branchWriteBlocked: branchContentLocked,
-                  branchMissing,
-                  reviewing: branchReviewing,
-                  pullRequestClosed: branchPullRequestClosed,
-                  approveBlocked: currentBranch?.approveBlocked,
-                })
+              : latestWaiting
+                ? WAITING_NOTICE
+                : describeBranchLock({
+                    branchStatus: currentBranch?.status,
+                    branchReadOnly: currentBranch?.readOnly,
+                    branchWriteBlocked: branchContentLocked,
+                    branchMissing,
+                    reviewing: branchReviewing,
+                    pullRequestClosed: branchPullRequestClosed,
+                    approveBlocked: currentBranch?.approveBlocked,
+                  })
           }
           dirtyPaths={dirtyPaths}
           reveal={contentReveal}
@@ -2482,6 +2522,7 @@ const EditorContent: React.FC<EditorProps> = ({
               branchPending={branchPending}
               branchMissing={branchMissing}
               branchToggleRef={branchToggleRef}
+              baseUpdate={baseUpdateControl}
               onBranchReloadData={() => {
                 void Promise.all([handleReloadBranchData(), refreshEntries(branchNameState)]).catch(
                   console.error,
@@ -2681,19 +2722,26 @@ const EditorContent: React.FC<EditorProps> = ({
                           <PreviewFollowContext.Provider value={followInPreview ?? null}>
                             <FormRenderer
                               notice={
-                                hiddenDraftNotice && (
-                                  <ReadOnlyDraftNotice
-                                    permanentlyReadOnly={
-                                      (currentBranch?.isProtected ?? true) ||
-                                      currentBranch?.status === 'archived'
-                                    }
-                                    // A hidden draft's discard changes nothing on screen, so it says so.
-                                    onDiscard={() =>
-                                      handleDiscardFileDraft(() => navigatorToggleRef.current, {
-                                        announce: true,
-                                      })
-                                    }
-                                  />
+                                (baseUpdate.wait !== 'none' || hiddenDraftNotice) && (
+                                  <>
+                                    {baseUpdate.wait !== 'none' && (
+                                      <BaseUpdateNotice wait={baseUpdate.wait} />
+                                    )}
+                                    {hiddenDraftNotice && (
+                                      <ReadOnlyDraftNotice
+                                        permanentlyReadOnly={
+                                          (currentBranch?.isProtected ?? true) ||
+                                          currentBranch?.status === 'archived'
+                                        }
+                                        // A hidden draft's discard changes nothing on screen, so it says so.
+                                        onDiscard={() =>
+                                          handleDiscardFileDraft(() => navigatorToggleRef.current, {
+                                            announce: true,
+                                          })
+                                        }
+                                      />
+                                    )}
+                                  </>
                                 )
                               }
                               fields={schema}
@@ -2791,8 +2839,13 @@ const EditorContent: React.FC<EditorProps> = ({
                   user={userContext}
                   currentBranchName={currentBranch?.name ?? branchNameState}
                   currentWorkflowBlockedReason={
-                    saveAllProgress ? 'Wait for Save all to finish.' : undefined
+                    saveAllProgress
+                      ? 'Wait for Save all to finish.'
+                      : latestWaiting
+                        ? WAITING_SUBMIT_REASON
+                        : undefined
                   }
+                  currentBaseUpdate={baseUpdateControl}
                   onSelect={async (name) => {
                     try {
                       await handleBranchChange(name)
