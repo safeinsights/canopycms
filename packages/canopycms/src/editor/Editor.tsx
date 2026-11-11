@@ -95,7 +95,7 @@ import { useBranchConflictsData, useEntryConflictData } from './hooks/useConflic
 import { useConflictChoices } from './hooks/useConflictChoices'
 import { openConfirm } from './utils/confirm-modal'
 import { canopyPathOf } from './undo-change'
-import type { EntryConflictChoice } from '../api/merge-conflicts'
+import type { EntryConflictChoice, MergeConflictListItem } from '../api/merge-conflicts'
 import type { FieldConflict } from './conflict-cards'
 import { placeOf } from './conflict-choices'
 import { findBodyFieldName } from '../utils/body-field'
@@ -525,6 +525,8 @@ const EditorContent: React.FC<EditorProps> = ({
   const conflictChoices = useConflictChoices(branchNameState)
   // A save that sent choices re-reads what they resolved; set once the readers exist, below.
   const conflictsSavedRef = useRef<() => void>(() => {})
+  // An admin's "Keep your version" on a collection's conflicts; set once the resolver exists, below.
+  const keepConflictsRef = useRef<(items: readonly MergeConflictListItem[]) => void>(() => {})
   // The "Get latest changes" toast's "Show changes"; set once the drawer exists, below.
   const showConflictsRef = useRef<() => void>(() => {})
   // The same inputs EditorHeader gives its own check, for the lock copy that names the way forward.
@@ -1647,6 +1649,14 @@ const EditorContent: React.FC<EditorProps> = ({
       const entries = grouped.get(node.path) ?? []
       const children = node.children?.map((child) => build(child)) ?? []
       const unavailableRefs = unavailableSchemaRefs(node.entryTypes)
+      // Conflicts on the collection's settings or other files, which no entry's "Show changes"
+      // reaches; the API names them to admins only, by the collection's path.
+      const keepable = userIsAdmin
+        ? (branchConflicts.data?.conflicts ?? []).filter(
+            (c) =>
+              c.logicalPath === node.path && !entriesState.some((e) => e.contentId === c.contentId),
+          )
+        : []
       // No entry can be created where every entry type is unavailable.
       const allUnavailable =
         !!node.entryTypes?.length && node.entryTypes.every((et) => et.unavailable)
@@ -1663,9 +1673,17 @@ const EditorContent: React.FC<EditorProps> = ({
         order: node.order,
         entries: entries.length > 0 ? entries : undefined,
         children: children.length > 0 ? children : undefined,
-        conflictNotice: !!(
-          node.contentId && currentBranch?.conflictFiles?.includes(node.contentId)
-        ),
+        conflictNotice:
+          !!(node.contentId && currentBranch?.conflictFiles?.includes(node.contentId)) ||
+          keepable.length > 0,
+        ...(keepable.length > 0 && {
+          conflictKeep: {
+            label: keepable.every((c) => c.path.endsWith('.collection.json'))
+              ? 'Keep your version of its settings'
+              : 'Keep your version of its files',
+            onKeep: () => keepConflictsRef.current(keepable),
+          },
+        }),
         unavailableSchemaRefs: unavailableRefs.length > 0 ? unavailableRefs : undefined,
         addRefused: (addable && node.canAddEntry === false) || undefined,
         onAdd: canAddEntry
@@ -1697,6 +1715,7 @@ const EditorContent: React.FC<EditorProps> = ({
     currentBranch,
     schemaUnavailableKeys,
     userIsAdmin,
+    branchConflicts.data,
   ])
 
   const findShortcut =
@@ -1909,7 +1928,11 @@ const EditorContent: React.FC<EditorProps> = ({
     }
     if (!answer.ok) {
       if (answer.code === 'CONFLICT_CHANGED') void entryConflict.reload()
-      return answer.error ?? 'Couldn’t save your choice. Try again.'
+      const error = answer.error ?? 'Couldn’t save your choice. Try again.'
+      // A latest version that can't replace this entry leaves keeping yours, then editing it.
+      return choice === 'use-latest' && answer.status === 409 && !answer.code
+        ? `${error} Choose "${EDITOR_ACTIONS.keepYourVersion}", then edit it to match.`
+        : error
     }
     // The entry's file may have changed, so its saved copy is read again.
     setLoadedValues((prev) => {
@@ -1924,6 +1947,18 @@ const EditorContent: React.FC<EditorProps> = ({
       refreshEntries(branch),
     ]).catch(console.error)
     return undefined
+  }
+  keepConflictsRef.current = (items) => {
+    void Promise.all(
+      items.map((c) =>
+        c.logicalPath
+          ? resolveEntryConflict(c.logicalPath, c.contentId, c.mergeSha, 'keep')
+          : Promise.resolve(undefined),
+      ),
+    ).then((refusals) => {
+      const refusal = refusals.find((r) => r !== undefined)
+      if (refusal) notifications.show({ message: refusal, color: 'yellow', autoClose: false })
+    })
   }
   const changesResolveEntry =
     changesSubject && entryConflict.data

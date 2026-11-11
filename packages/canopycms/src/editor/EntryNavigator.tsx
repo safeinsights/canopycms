@@ -117,6 +117,11 @@ export interface EntryNavCollection {
   children?: EntryNavCollection[]
   /** The collection's settings have conflicts open. */
   conflictNotice?: boolean
+  /**
+   * An admin's way to keep the branch's version of the collection's conflicting settings or other
+   * files, which no entry's "Show changes" reaches: the menu item's label, and its action.
+   */
+  conflictKeep?: { label: string; onKeep: () => void }
   /** Registry keys of this collection's unavailable entry types; non-empty shows the message once. */
   unavailableSchemaRefs?: readonly string[]
   /** True when this user's path rules refuse a new entry here: the collection says so once. */
@@ -726,6 +731,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
             type: col.type,
             collectionPath: col.path,
             conflictNotice: col.conflictNotice,
+            conflictKeep: col.conflictKeep,
             unavailableSchemaRefs: col.unavailableSchemaRefs,
             addRefused: col.addRefused,
             onAdd: col.onAdd,
@@ -1140,6 +1146,9 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     const onEdit = readOnly ? undefined : rawOnEdit
     const onAddSubCollection = readOnly ? undefined : rawOnAddSubCollection
     const onDelete = readOnly ? undefined : rawOnDelete
+    const conflictKeep = readOnly
+      ? undefined
+      : (node.nodeProps?.conflictKeep as EntryNavCollection['conflictKeep'])
     const entryPath = node.nodeProps?.entryPath as LogicalPath | undefined
     const contentId = node.nodeProps?.contentId as string | undefined
     const parentCollectionPath = node.nodeProps?.parentCollectionPath as LogicalPath | undefined
@@ -1171,7 +1180,8 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
 
     // Collections show menu for add/edit/delete actions OR for reordering (subcollections)
     const hasCollectionMenu =
-      isCollection && (onAdd || onEdit || onAddSubCollection || onDelete || canReorder)
+      isCollection &&
+      (onAdd || onEdit || onAddSubCollection || onDelete || conflictKeep || canReorder)
     // An unavailable entry cannot be written, so its menu (rename, delete, reorder) is not offered.
     const entryUnavailable = node.nodeProps?.unavailable as boolean | undefined
     // The same holds for an entry this user may not edit, on any branch: its own lock stays, since a
@@ -1213,7 +1223,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     const showEntryDirtyDot = isEntry && !!entryPath && !!dirtyPaths?.has(entryPath)
     const showCollectionDirtyDot = !isEntry && dirtyCollections.has(node.value)
 
-    const adminItems = onAddSubCollection || onEdit || onDelete
+    const adminItems = onAddSubCollection || onEdit || onDelete || conflictKeep
     const hasCollectionContentItems = onAdd || canReorder
 
     return (
@@ -1380,6 +1390,18 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                         {hasCollectionContentItems && <Menu.Divider />}
                         <Menu.Label>Admin</Menu.Label>
                       </>
+                    )}
+                    {conflictKeep && (
+                      <Menu.Item
+                        leftSection={<IconAlertTriangle size={14} />}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          conflictKeep.onKeep()
+                        }}
+                        data-testid={`collection-keep-conflicts-${testIdSuffix}`}
+                      >
+                        {conflictKeep.label}
+                      </Menu.Item>
                     )}
                     {onAddSubCollection && (
                       <Menu.Item
