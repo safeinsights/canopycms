@@ -1589,13 +1589,17 @@ export class ContentStore {
   protected async afterPrePassForTesting(): Promise<void> {}
 
   /**
-   * Delete an entry and remove it from the index. `afterDelete` runs once it is gone, under both of
-   * the delete's locks.
+   * Delete an entry and remove it from the index. `beforeDelete` runs under both of the delete's
+   * locks before anything changes, and throwing refuses; `afterDelete` runs once it is gone, under
+   * them too.
    */
   async delete(
     collectionPath: LogicalPath,
     slug: Slug,
-    options: { afterDelete?: (deleted: { id?: string }) => Promise<void> } = {},
+    options: {
+      beforeDelete?: () => Promise<void>
+      afterDelete?: (deleted: { id?: string }) => Promise<void>
+    } = {},
   ): Promise<void> {
     // Warm the index outside the lock (a full scan must not hold the entry lock)
     await this.idIndex()
@@ -1635,6 +1639,7 @@ export class ContentStore {
           }
           const { absolutePath, relativePath } = inLock
 
+          await options.beforeDelete?.()
           await fs.unlink(absolutePath)
 
           // Remove from the LIVE index — lookup and mutation in one synchronous
@@ -1748,14 +1753,15 @@ export class ContentStore {
 
   /**
    * Replace the file of entry `id`, at `slug` in `collectionPath`, with `raw`, verbatim, under
-   * write()'s locks; `afterWrite` runs after, under them too. For a file no parse can be trusted
-   * with, so nothing is re-serialised. `EntryGoneError` when no file of that id is there.
+   * write()'s locks; `beforeWrite` runs under them first, and throwing refuses, and `afterWrite`
+   * after. For a file no parse can be trusted with, so nothing is re-serialised. `EntryGoneError`
+   * when no file of that id is there.
    */
   async replaceRaw(
     collectionPath: LogicalPath,
     slug: Slug,
     entry: { id: ContentId; raw: string },
-    options: { afterWrite?: () => Promise<void> } = {},
+    options: { beforeWrite?: () => Promise<void>; afterWrite?: () => Promise<void> } = {},
   ): Promise<void> {
     await this.idIndex()
     const collection = this.assertCollection(collectionPath)
@@ -1769,6 +1775,7 @@ export class ContentStore {
         if (this.entryLockKey(collection, slug, inLock) !== lockKey) {
           throw new ContentConflictError()
         }
+        await options.beforeWrite?.()
         await atomicWriteFile(inLock.absolutePath, entry.raw)
         await this.recordOwnMutation(this._idIndex)
         await options.afterWrite?.()

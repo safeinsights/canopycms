@@ -56,7 +56,7 @@ import { defineEndpoint } from './route-builder'
 import { branchNameSchema, contentIdSchema, logicalPathSchema } from './validators'
 
 /** One entry's open conflicts, as the list names them. */
-export interface MergeConflictListItem {
+interface MergeConflictListItem {
   contentId: string
   kind: MergeConflictKind
   /** Where the file is in the branch, or was, for one the branch deleted. */
@@ -69,7 +69,7 @@ export interface MergeConflictListItem {
   mergeSha: string
 }
 
-export interface MergeConflictsData {
+interface MergeConflictsData {
   conflicts: MergeConflictListItem[]
   /** Entries with conflicts open that this user may not read: counted, never named. */
   hiddenCount: number
@@ -80,13 +80,13 @@ export interface MergeConflictsData {
 export type MergeConflictsResponse = ApiResponse<MergeConflictsData>
 
 /** A version a conflict compares that can't be shown. */
-export interface UnavailableConflictSide {
+interface UnavailableConflictSide {
   unavailable: 'too-large' | 'unreadable' | 'missing' | 'not-an-entry'
 }
 
-export type ConflictSide = EntryChangeSide | UnavailableConflictSide
+type ConflictSide = EntryChangeSide | UnavailableConflictSide
 
-export interface EntryConflictField {
+interface EntryConflictField {
   /** The record's name for the place: what `resolvedConflicts` sends back. */
   key: string
   /**
@@ -105,7 +105,7 @@ export interface EntryConflictField {
   sides: MergeSides
 }
 
-export interface EntryConflictData {
+interface EntryConflictData {
   contentId: string
   kind: MergeConflictKind
   path: string
@@ -120,7 +120,7 @@ export interface EntryConflictData {
 export type EntryConflictResponse = ApiResponse<EntryConflictData>
 
 /** What an entry-level conflict is resolved by. */
-export type EntryConflictChoice = 'keep' | 'delete' | 'restore' | 'use-latest'
+type EntryConflictChoice = 'keep' | 'delete' | 'restore' | 'use-latest'
 
 export type ResolveEntryConflictResponse = ApiResponse<{ contentId: string; openCount: number }>
 
@@ -322,7 +322,10 @@ const canonicalLogicalPath = (store: ContentStore, requested: string): string =>
   }
 }
 
-/** The record at `entryPath`, matched by `id` when given; an entry wins over collection settings. */
+/**
+ * The record at `entryPath`, matched by `id` when given; an entry wins over collection settings. A
+ * file that is neither is matched by its repo path.
+ */
 const findRecord = (
   entries: Readonly<Record<string, MergeConflictEntry>>,
   target: string,
@@ -337,7 +340,7 @@ const findRecord = (
       entry,
       ref: refOf(entry.path, flatSchema, contentRoot),
     }))
-    .filter(({ ref }) => aclPathOf(ref) === target)
+    .filter(({ entry, ref }) => (aclPathOf(ref) ?? entry.path) === target)
   return found.find(({ ref }) => ref.kind === 'entry') ?? found[0]
 }
 
@@ -404,7 +407,7 @@ const entryHandler = async (
   const entries = await readEntries(branchRoot)
   if (entries === 'unreadable') return { ok: false, status: 503, error: RECORD_UNREADABLE_ERROR }
   const found = findRecord(entries, target, params.id, flatSchema, contentRoot)
-  if (!found) return noConflict
+  if (!found || (found.ref.kind === 'other' && !isAdmin(req.user.groups))) return noConflict
   const { contentId, entry, ref } = found
 
   const shas = new Set<string>()
@@ -540,6 +543,10 @@ const resolveHandler = async (
   if (entries === 'unreadable') return { ok: false, status: 503, error: RECORD_UNREADABLE_ERROR }
   const found = findRecord(entries, target, body.id, flatSchema, contentRoot)
   if (!found) return { ok: false, status: 404, error: NO_CONFLICT_ERROR }
+  // A file that is neither entry nor settings is listed to admins only, so only they resolve it.
+  if (found.ref.kind === 'other' && !isAdmin(req.user.groups)) {
+    return { ok: false, status: 403, error: 'Forbidden' }
+  }
   const { entry, ref } = found
   const changed: ResolveEntryConflictResponse = {
     ok: false,
@@ -556,6 +563,15 @@ const resolveHandler = async (
     }
   }
 
+  // The record as shown, checked under the content-write lock before the tree changes: every writer
+  // of the record holds that lock, so what is checked here is what `clear` then finds.
+  const verify = async () => {
+    const now = await readEntries(branchRoot)
+    const current = now === 'unreadable' ? undefined : now[body.id]
+    if (current?.kind !== entry.kind || current.mergeSha !== body.mergeSha) {
+      throw new ConflictChangedError()
+    }
+  }
   // Clears the record as it stands under its lock, refusing when a merge changed it since.
   const clear = async () => {
     const written = await changeRecord(branchContext, (now) => {
@@ -578,10 +594,13 @@ const resolveHandler = async (
   const slug = placed && (placed.logicalPath.slice(placed.logicalPath.lastIndexOf('/') + 1) as Slug)
   try {
     if (body.choice === 'keep' || !placed || !slug) {
-      await withContentWriteLock(branchRoot, clear)
+      await withContentWriteLock(branchRoot, async () => {
+        await verify()
+        await clear()
+      })
     } else if (body.choice === 'delete' || (body.choice === 'use-latest' && !entry.sides.base)) {
       // For `use-latest`, the latest version has no such entry, so using it deletes the branch's.
-      await store.delete(placed.collectionPath, slug, { afterDelete: clear })
+      await store.delete(placed.collectionPath, slug, { beforeDelete: verify, afterDelete: clear })
     } else {
       const git = ctx.services.createGitManagerFor(branchRoot, {
         baseBranch: branchContext.branch.baseBranch,
@@ -608,14 +627,14 @@ const resolveHandler = async (
           placed.collectionPath,
           slug,
           { id: body.id as ContentId, entryTypeName: placed.entryType, raw: latest },
-          { afterWrite: clear },
+          { beforeWrite: verify, afterWrite: clear },
         )
       } else {
         await store.replaceRaw(
           placed.collectionPath,
           slug,
           { id: body.id as ContentId, raw: latest },
-          { afterWrite: clear },
+          { beforeWrite: verify, afterWrite: clear },
         )
       }
     }
