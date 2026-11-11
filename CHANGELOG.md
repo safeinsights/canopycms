@@ -54,6 +54,16 @@ entries under **Released**.
 
 ## Released
 
+### 0.11.1
+
+#### A comment thread you can't resolve shows Resolve disabled, with the reason
+
+<!-- changeset: resolve-disabled-with-reason -->
+
+_First in 0.11.1._
+
+**What changed.** On a thread someone else started, a user outside Reviewers and Admins used to see Reply but no Resolve, with nothing to say why. Resolve now stays in place, disabled, and its tooltip explains that only the person who started the thread or a reviewer can resolve it, and suggests replying to let them know it's done. Who may resolve a thread is unchanged.
+
 ### 0.11.0
 
 #### The preview follows the form to the field you're on
