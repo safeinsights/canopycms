@@ -845,12 +845,11 @@ parse-versus-create-versus-cast conventions.
 **Location**: `packages/canopycms/src/merge/` —
 [AGENTS.md](packages/canopycms/src/merge/AGENTS.md)
 
-- `entry-merge.ts` — `mergeEntry`, one entry's field-level three-way merge; `mergeCollectionMeta`
-- `list-alignment.ts` — list item identity (`alignToAncestor`) and merged order (`mergeOrder`)
-- `text-merge.ts` — `mergeText`, line-level merge with conflict regions
-- `diff3.ts` — `diff3Regions`, `commonPairs`: diff3 over jsdiff's Myers diff
-- `conflict-path.ts` — `describePath`, a conflict's drawer key and data path
-- `value-equality.ts` — `sameValue`, the equality the drawer shares
+- `entry-merge.ts` — `mergeEntry`, `mergeCollectionMeta`
+- `list-alignment.ts` — list item identity and order
+- `text-merge.ts`, `diff3.ts` — line merge, over jsdiff
+- `conflict-path.ts` — names a conflict as the drawer would
+- `value-equality.ts` — `sameValue`, shared with the drawer
 
 ## Entry Links
 
