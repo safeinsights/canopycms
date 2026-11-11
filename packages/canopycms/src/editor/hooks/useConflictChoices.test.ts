@@ -75,4 +75,21 @@ describe('useConflictChoices', () => {
     expect(result.current.pendingIds.size).toBe(0)
     expect(result.current.pending('other', 'e1')).toEqual([])
   })
+
+  it('keeps only the choices for conflicts still open on their merge', () => {
+    const { result } = renderHook(() => useConflictChoices('feature'))
+    act(() => {
+      result.current.choose('e1', 'summary', SHA, { how: 'yours' }, true)
+      result.current.choose('e1', 'title', SHA, { how: 'latest' }, true)
+    })
+    act(() => {
+      result.current.retain('e1', [
+        { key: 'summary', mergeSha: SHA },
+        { key: 'title', mergeSha: 'e'.repeat(40) },
+      ])
+    })
+    expect(Object.keys(result.current.choicesFor('e1'))).toEqual(['summary'])
+    act(() => result.current.retain('e1', []))
+    expect(result.current.pendingIds.size).toBe(0)
+  })
 })

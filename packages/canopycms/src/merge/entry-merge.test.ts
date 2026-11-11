@@ -603,7 +603,9 @@ describe('long text and the body', () => {
         ancestor: lines('p1', '', 'p2'),
         base: lines('p1', '', 'base'),
         branch: lines('P1', '', 'mine'),
-        regions: [{ ancestor: 'p2', base: 'base', branch: 'mine', line: 2, lines: 1 }],
+        regions: [
+          { ancestor: 'p2', base: 'base', branch: 'mine', line: 2, lines: 1, baseLines: 1 },
+        ],
       },
     ])
   })
@@ -612,7 +614,7 @@ describe('long text and the body', () => {
     const result = body(lines('a', 'b', 'c'), lines('a', 'B', 'c'), lines('a', 'b', 'C'))
     expect(result.body).toBe(lines('a', 'b', 'C'))
     expect(result.conflicts[0].regions).toEqual([
-      { ancestor: 'b\nc', base: 'B\nc', branch: 'b\nC', line: 1, lines: 2 },
+      { ancestor: 'b\nc', base: 'B\nc', branch: 'b\nC', line: 1, lines: 2, baseLines: 2 },
     ])
   })
 
@@ -636,8 +638,8 @@ describe('long text and the body', () => {
     expect(result.body).toBe(lines('uno', '', 'two', '', 'THREE', '', 'cuatro'))
     expect(result.conflicts).toHaveLength(1)
     expect(result.conflicts[0].regions).toEqual([
-      { ancestor: 'one', base: 'ONE', branch: 'uno', line: 0, lines: 1 },
-      { ancestor: 'four', base: 'FOUR', branch: 'cuatro', line: 6, lines: 1 },
+      { ancestor: 'one', base: 'ONE', branch: 'uno', line: 0, lines: 1, baseLines: 1 },
+      { ancestor: 'four', base: 'FOUR', branch: 'cuatro', line: 6, lines: 1, baseLines: 1 },
     ])
     // "Use both" is the latest version's lines, then yours.
     const [first] = result.conflicts[0].regions ?? []

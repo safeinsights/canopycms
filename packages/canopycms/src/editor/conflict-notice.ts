@@ -11,18 +11,20 @@ import type { MergeConflictListItem } from '../api/merge-conflicts'
 const fieldsNeed = (count: number): string =>
   count === 1 ? '1 field needs' : `${count} fields need`
 
+const CHOOSE = 'Choose what to keep in "Show changes".'
+
 /** The notice above an entry's form while it has conflicts; the list item when it is loaded. */
 export function entryConflictNotice(item: MergeConflictListItem | undefined): string {
   switch (item?.kind) {
     case 'deleted-on-base':
-      return 'This entry was deleted in the latest version, but you changed it. Show changes to choose.'
+      return `This entry was deleted in the latest version, but you changed it. ${CHOOSE}`
     case 'unreadable':
     case 'deleted-on-branch':
-      return 'This entry was changed by you and by someone else. Show changes to choose.'
+      return `This entry was changed by you and by someone else. ${CHOOSE}`
     case 'fields':
-      return `${item.fieldCount === 1 ? '1 field' : `${item.fieldCount} fields`} changed by you and by someone else. Show changes to choose.`
+      return `${item.fieldCount === 1 ? '1 field was' : `${item.fieldCount} fields were`} changed by you and by someone else. ${CHOOSE}`
     default:
-      return 'Some fields changed by you and by someone else. Show changes to choose.'
+      return `Some fields were changed by you and by someone else. ${CHOOSE}`
   }
 }
 
@@ -34,6 +36,9 @@ export const conflictsSubmitReason = (count: number): string =>
 export const conflictsHoldMessage = (count: number): string =>
   `${fieldsNeed(count)} your choice: changed by you and by someone else. Choose what to keep in "Show changes" on each flagged entry, then submit.`
 
-/** The "Get latest changes" toast when the merge left choices; undefined: not yet counted. */
+/**
+ * The "Get latest changes" toast when the merge left choices; undefined: not yet counted. None
+ * left is a plain success, which base-update-wait.ts says instead.
+ */
 export const latestChangesConflictsMessage = (count: number | undefined): string =>
-  `Latest changes added. ${count === undefined || count === 0 ? 'Some fields need' : fieldsNeed(count)} your choice.`
+  `Latest changes added. ${count === undefined ? 'Some fields need' : fieldsNeed(count)} your choice.`

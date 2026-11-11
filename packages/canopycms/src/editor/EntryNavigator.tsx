@@ -1297,6 +1297,10 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                         style={{ flexShrink: 0 }}
                       >
                         Conflict
+                        <VisuallyHidden>
+                          . Changed by you and by someone else. Choose what to keep in &quot;Show
+                          changes&quot;.
+                        </VisuallyHidden>
                       </Badge>
                     </Tooltip>
                   )}

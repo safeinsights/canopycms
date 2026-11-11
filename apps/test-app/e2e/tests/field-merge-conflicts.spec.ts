@@ -153,7 +153,7 @@ test.describe('Field-level conflicts', () => {
 
     await test.step('the entry and Submit say what waits (row 45)', async () => {
       await expect(notice).toContainText(
-        '3 fields changed by you and by someone else. Show changes to choose.',
+        '3 fields were changed by you and by someone else. Choose what to keep in "Show changes".',
         { timeout: LONG_TIMEOUT },
       )
       await expect(submit).toHaveAttribute('aria-disabled', 'true')
@@ -188,7 +188,7 @@ test.describe('Field-level conflicts', () => {
         .filter({ hasText: 'Latest version' })
         .first()
         .hover()
-      await expect(page.getByRole('tooltip')).toContainText(/\(from [^)]+\)\.$/)
+      await expect(page.getByRole('tooltip')).toContainText(/It comes from \S+\.$/)
     })
 
     await test.step('choose for each, then save (row 43)', async () => {
@@ -197,7 +197,7 @@ test.describe('Field-level conflicts', () => {
       await drawer.getByRole('button', { name: /^Use latest version: Body/ }).click()
       await expect(drawer.getByTestId('conflict-choice-note')).toHaveCount(3)
       await expect(drawer.getByTestId('conflicts-left')).toHaveText(
-        'All conflicts chosen. Save to keep your choices.',
+        'All chosen. Save to keep your choices.',
       )
       await page.keyboard.press('Escape')
       await expect(drawer).toBeHidden({ timeout: STANDARD_TIMEOUT })

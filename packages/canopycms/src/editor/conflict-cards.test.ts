@@ -6,6 +6,7 @@ import {
   BASE_SHA,
   conflictFields,
   fieldsConflictData,
+  savedValue,
 } from './components/__test__/conflict-fixtures'
 
 const build = (...only: Parameters<typeof fieldsConflictData>[0][]) =>
@@ -160,5 +161,16 @@ describe('buildEntryConflicts', () => {
       before: { kind: 'text', text: 'How to begin.' },
     })
     expect(data.versions[ANCESTOR_SHA]).toBeDefined()
+  })
+
+  it('shows long text whole once your saved text is no longer the text the merge left', () => {
+    const data = fieldsConflictData(['body'])
+    const saved = { ...savedValue, body: `${String(savedValue.body)}Typed since.\n` }
+    const field = buildEntryConflicts(data, conflictFields, 'body', undefined, saved).fields[0]
+    expect(field.text).toBeUndefined()
+    expect(field.cards.map((c) => c.type)).toEqual(['value'])
+    // While your saved text is the merge's, the regions stand.
+    const same = buildEntryConflicts(data, conflictFields, 'body', undefined, savedValue)
+    expect(same.fields[0].cards.map((c) => c.type)).toEqual(['region', 'region'])
   })
 })

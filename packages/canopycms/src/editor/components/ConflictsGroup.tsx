@@ -71,7 +71,7 @@ export const VERSION_LABELS = {
  */
 export const latestTooltip = (adminBaseBranch: string | undefined): string =>
   adminBaseBranch
-    ? `${VERSION_LABELS.latest.tooltip.slice(0, -1)} (from ${adminBaseBranch}).`
+    ? `${VERSION_LABELS.latest.tooltip} It comes from ${adminBaseBranch}.`
     : VERSION_LABELS.latest.tooltip
 
 const CHOICE_NOTES: Record<FieldChoice['how'] | 'remove' | 'keep', string> = {
@@ -102,6 +102,14 @@ const EDITED_IN_FORM = 'Edited in the form.'
  */
 export const SAVE_FIRST_REASON = "Save or discard this entry's unsaved changes first."
 const OPEN_TO_CHOOSE = 'Open this entry to choose.'
+/**
+ * Why a choice that takes the latest version can't: it couldn't be read, or its list items on the
+ * way to the place can't be matched to the ones the merge named.
+ * @internal Exported for tests.
+ */
+export const LATEST_UNPLACEABLE_REASON =
+  'The latest version of this can\'t be found here. Use "Edit" to change it by hand, then "Mark resolved".'
+const LATEST_UNAVAILABLE = "Can't be shown here"
 
 /**
  * A card's heading: where, and what happened there, in plain words.
@@ -223,10 +231,19 @@ const SideLines: React.FC<{ text: Extract<TextDiff, { mode: 'lines' }> }> = ({ t
 )
 
 /** A version's value, marked against Before where it changed text. */
-const VersionValue: React.FC<{ value: DisplayValue | string; marks?: TextDiff }> = ({
-  value,
-  marks,
-}) => {
+const VersionValue: React.FC<{
+  value: DisplayValue | string
+  marks?: TextDiff
+  /** The value couldn't be found, so none shows. */
+  unavailable?: boolean
+}> = ({ value, marks, unavailable }) => {
+  if (unavailable) {
+    return (
+      <Text size="sm" c="dimmed" data-testid="conflict-latest-unavailable">
+        {LATEST_UNAVAILABLE}
+      </Text>
+    )
+  }
   if (marks?.mode === 'words') {
     return (
       <Text size="sm" style={TEXT_STYLE}>
@@ -260,7 +277,11 @@ const Versions: React.FC<{
     </Stack>
     <Stack gap={4} miw={0} data-testid="conflict-latest">
       <VersionLabel label={VERSION_LABELS.latest.label} tooltip={latestTooltip(adminBaseBranch)} />
-      <VersionValue value={card.latest} marks={card.latestText} />
+      <VersionValue
+        value={card.latest}
+        marks={card.latestText}
+        unavailable={card.type === 'value' && card.latestUnavailable}
+      />
     </Stack>
     <Stack gap={4} miw={0} data-testid="conflict-yours">
       <VersionLabel {...VERSION_LABELS.yours} />
@@ -273,6 +294,8 @@ const Versions: React.FC<{
 interface CardActions {
   /** Why the choices can't act now, such as a locked branch. */
   reason?: string
+  /** Why a choice that takes the latest version can't act ({@link LATEST_UNPLACEABLE_REASON}). */
+  latestReason?: string
   choice?: FieldChoice
   /** The form still holds the place as the last choice left it, so a new choice loses nothing. */
   held: boolean
@@ -324,7 +347,7 @@ const FieldCardActions: React.FC<{ card: ConflictCard; actions: CardActions; lab
   actions,
   label,
 }) => {
-  const { reason, choice, held } = actions
+  const { reason, latestReason, choice, held } = actions
   const named = (verb: string) => `${verb}: ${label}`
   const btn = (verb: string, onClick: () => void, testId: string, why = reason) => (
     <ReasonedButton
@@ -338,6 +361,8 @@ const FieldCardActions: React.FC<{ card: ConflictCard; actions: CardActions; lab
     </ReasonedButton>
   )
   const editedReason = reason ?? (held ? undefined : EDITED_IN_FORM_REASON)
+  // A choice taking the latest version waits for both: nothing to lose, and something to take.
+  const latestTakes = reason ?? latestReason ?? editedReason
 
   if (card.type === 'region') {
     const chosen = choice?.how === 'regions' ? choice.regions[card.index] : undefined
@@ -368,7 +393,7 @@ const FieldCardActions: React.FC<{ card: ConflictCard; actions: CardActions; lab
             EDITOR_ACTIONS.useLatestVersion,
             () => actions.chooseRegion(card.index, 'latest'),
             'conflict-use-latest',
-            editedReason,
+            latestTakes,
           )}
           {held
             ? btn(
@@ -385,7 +410,7 @@ const FieldCardActions: React.FC<{ card: ConflictCard; actions: CardActions; lab
             EDITOR_ACTIONS.useBoth,
             () => actions.chooseRegion(card.index, 'both'),
             'conflict-use-both',
-            editedReason,
+            latestTakes,
           )}
           {btn('Edit', actions.edit, 'conflict-edit')}
           {!held && !reason && <Text size="xs">{EDITED_IN_FORM}</Text>}
@@ -445,13 +470,13 @@ const FieldCardActions: React.FC<{ card: ConflictCard; actions: CardActions; lab
           EDITOR_ACTIONS.removeIt,
           pick(removeIs),
           'conflict-remove-it',
-          removeIs === 'latest' ? editedReason : reason,
+          removeIs === 'latest' ? latestTakes : reason,
         )}
         {btn(
           EDITOR_ACTIONS.keepIt,
           pick(keepIs),
           'conflict-keep-it',
-          keepIs === 'latest' ? editedReason : reason,
+          keepIs === 'latest' ? latestTakes : reason,
         )}
         {copy !== undefined && (
           <CopyButton value={copy}>
@@ -477,7 +502,7 @@ const FieldCardActions: React.FC<{ card: ConflictCard; actions: CardActions; lab
         EDITOR_ACTIONS.useLatestVersion,
         () => actions.choose({ how: 'latest' }),
         'conflict-use-latest',
-        editedReason,
+        latestTakes,
       )}
       {held
         ? btn(
@@ -496,6 +521,15 @@ const FieldCardActions: React.FC<{ card: ConflictCard; actions: CardActions; lab
   )
 }
 
+/**
+ * A conflict card's yellow mark (a 409 conflict is yellow: nothing is lost yet) beside its warning
+ * icon and heading, never colour alone. The card keeps the drawer's surface, which the text and
+ * change marks are measured on.
+ */
+const CARD_ACCENT: React.CSSProperties = {
+  borderInlineStart: '4px solid var(--mantine-color-yellow-filled)',
+}
+
 const FieldCard: React.FC<{
   card: ConflictCard
   adminBaseBranch?: string
@@ -508,7 +542,7 @@ const FieldCard: React.FC<{
       p="sm"
       radius="sm"
       component="li"
-      bg="var(--mantine-color-yellow-light)"
+      style={CARD_ACCENT}
       data-testid="conflict-card"
       data-conflict-kind={card.type === 'value' ? (card.item ? 'item' : card.conflict) : card.type}
     >
@@ -540,21 +574,31 @@ const FieldCard: React.FC<{
   )
 }
 
+/**
+ * Why an entry-level choice didn't act: `warning` where nothing is lost or the outcome is unknown,
+ * `error` for a failure a retry may pass.
+ */
+export interface EntryChoiceRefusal {
+  message: string
+  tone: 'warning' | 'error'
+}
+
 const EntryCard: React.FC<{
   kind: Exclude<EntryConflictData['kind'], 'fields'>
   reason?: string
   unsavedEdits?: boolean
-  onResolve?: (choice: EntryConflictChoice) => Promise<string | undefined>
+  onResolve?: (choice: EntryConflictChoice) => Promise<EntryChoiceRefusal | undefined>
 }> = ({ kind, reason, unsavedEdits, onResolve }) => {
   const [working, setWorking] = useState<EntryConflictChoice>()
-  const [refusal, setRefusal] = useState<string>()
+  const [refusal, setRefusal] = useState<EntryChoiceRefusal & { choice: EntryConflictChoice }>()
   const { heading, choices } = ENTRY_KINDS[kind]
   const resolve = async (choice: EntryConflictChoice) => {
     if (!onResolve || working) return
     setWorking(choice)
     setRefusal(undefined)
     try {
-      setRefusal(await onResolve(choice))
+      const refused = await onResolve(choice)
+      setRefusal(refused && { ...refused, choice })
     } finally {
       setWorking(undefined)
     }
@@ -565,7 +609,7 @@ const EntryCard: React.FC<{
       p="sm"
       radius="sm"
       component="li"
-      bg="var(--mantine-color-yellow-light)"
+      style={CARD_ACCENT}
       data-testid="conflict-card"
       data-conflict-kind={kind}
     >
@@ -597,11 +641,29 @@ const EntryCard: React.FC<{
         {refusal && (
           <Alert
             variant="light"
-            color="yellow"
-            icon={<IconAlertCircle size={16} />}
+            color={refusal.tone === 'error' ? 'red' : 'yellow'}
+            icon={
+              refusal.tone === 'error' ? (
+                <IconAlertCircle size={16} />
+              ) : (
+                <IconAlertTriangle size={16} />
+              )
+            }
             data-testid="conflict-entry-refused"
           >
-            <Text size="sm">{refusal}</Text>
+            <Stack gap={4} align="flex-start">
+              <Text size="sm">{refusal.message}</Text>
+              {refusal.tone === 'error' && (
+                <Button
+                  size="compact-sm"
+                  variant="subtle"
+                  loading={working === refusal.choice}
+                  onClick={() => void resolve(refusal.choice)}
+                >
+                  Retry
+                </Button>
+              )}
+            </Stack>
           </Alert>
         )}
       </Stack>
@@ -631,7 +693,7 @@ export interface ConflictsGroupProps {
   /** Closes the drawer and focuses the field in the form. */
   onEdit?: (field: FieldConflict) => void
   /** Settles an entry-level conflict; resolves with why it couldn't, when it couldn't. */
-  onResolveEntry?: (choice: EntryConflictChoice) => Promise<string | undefined>
+  onResolveEntry?: (choice: EntryConflictChoice) => Promise<EntryChoiceRefusal | undefined>
   /** Why this user can't change the entry: the choices are hidden. */
   noEditReason?: string
   /** Why the choices can't act now: they stay, disabled, saying so. */
@@ -660,7 +722,6 @@ export const ConflictsGroup: React.FC<ConflictsGroupProps> = ({
   const open = entryKind
     ? 1
     : conflicts.fields.filter((f) => !isDecided(f, choices[f.key]?.choice)).length
-  const cardCount = conflicts.fields.reduce((n, f) => n + f.cards.length, 0)
 
   const actionsFor = (field: FieldConflict): CardActions | undefined => {
     if (!form || !editable || !onChoose) return undefined
@@ -668,8 +729,13 @@ export const ConflictsGroup: React.FC<ConflictsGroupProps> = ({
     const choice = chosen?.mergeSha === field.mergeSha ? chosen.choice : undefined
     const held = holdsChoice(form.value, form.saved, field, choice, form.bodyField)
     const record = (next: FieldChoice | undefined) => onChoose(field, next, isDecided(field, next))
+    const latestReason =
+      withLatest(form.value, field, form.bodyField) !== undefined
+        ? undefined
+        : LATEST_UNPLACEABLE_REASON
     return {
       reason: lockedReason,
+      latestReason,
       choice,
       held,
       choose: (next) => {
@@ -709,12 +775,12 @@ export const ConflictsGroup: React.FC<ConflictsGroupProps> = ({
       <Text size="sm" data-testid="conflicts-summary">
         {entryKind
           ? 'Changed by you and by someone else. Choose what to keep.'
-          : `${plural(cardCount, 'place', 'places')} changed by you and by someone else. Choose what to keep, then save.`}
+          : `${plural(conflicts.fields.length, 'field', 'fields')} changed by you and by someone else. Choose what to keep, then save.`}
       </Text>
       <VisuallyHidden role="status" data-testid="conflicts-left">
         {open === 0
-          ? 'All conflicts chosen. Save to keep your choices.'
-          : `${plural(open, 'conflict', 'conflicts')} left to choose.`}
+          ? 'All chosen. Save to keep your choices.'
+          : `${plural(open, 'field', 'fields')} left to choose.`}
       </VisuallyHidden>
       {conflicts.incomplete && (
         <Text size="xs" c="dimmed" data-testid="conflicts-incomplete">

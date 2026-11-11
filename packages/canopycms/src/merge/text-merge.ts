@@ -16,6 +16,7 @@ export interface TextConflictRegion {
   /** Where the branch's lines sit in the merged text: the first line, 0-based, and how many. */
   line: number
   lines: number
+  baseLines: number
 }
 
 export interface TextMergeResult {
@@ -73,6 +74,7 @@ export function mergeText(
       branch: bLines.join('\n'),
       line: out.length,
       lines: bLines.length,
+      baseLines: aLines.length,
     })
     out.push(...bLines)
   }

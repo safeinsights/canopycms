@@ -102,6 +102,12 @@ describe('baseUpdateResultMessage', () => {
     expect(baseUpdateResultMessage({ at, outcome: 'conflicts', keptEntries: 2 }).message).toBe(
       'Latest changes added. Some fields need your choice.',
     )
+    // None left to choose is a plain success.
+    expect(baseUpdateResultMessage({ at, outcome: 'conflicts' }, 0)).toEqual({
+      color: 'green',
+      message: 'Latest changes added',
+      sticky: false,
+    })
     expect(baseUpdateResultMessage({ at, outcome: 'failed' })).toMatchObject({
       color: 'red',
       sticky: true,

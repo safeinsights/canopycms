@@ -10,12 +10,15 @@ import { CanopyCMSProvider } from '../theme'
 import {
   ConflictsGroup,
   EDITED_IN_FORM_REASON,
+  LATEST_UNPLACEABLE_REASON,
+  type EntryChoiceRefusal,
   SAVE_FIRST_REASON,
   VERSION_LABELS,
   latestTooltip,
   type ConflictsGroupProps,
 } from './ConflictsGroup'
 import {
+  BASE_SHA,
   MERGE_SHA,
   conflictFields,
   conflictRecordFields,
@@ -32,6 +35,10 @@ type FormValue = Record<string, unknown>
 interface Options {
   only?: FieldName[]
   data?: EntryConflictData
+  /** Adjusts the record's versions before the cards are built. */
+  tweak?: (data: EntryConflictData) => void
+  /** Your saved value as the cards are built from it, when it differs from the merge's. */
+  builtFrom?: FormValue
   value?: FormValue
   choices?: EntryChoices
   /** Render without the open entry's form, as for another entry. */
@@ -44,7 +51,8 @@ interface Options {
 /** Renders the group in a small harness that holds the form value and the choices. */
 function renderGroup(options: Options = {}) {
   const data = options.data ?? fieldsConflictData(options.only)
-  const conflicts = buildEntryConflicts(data, conflictFields, 'body')
+  options.tweak?.(data)
+  const conflicts = buildEntryConflicts(data, conflictFields, 'body', undefined, options.builtFrom)
   const held = { value: options.value ?? { ...savedValue } }
   const onChoose = vi.fn()
   const onEdit = vi.fn()
@@ -54,7 +62,7 @@ function renderGroup(options: Options = {}) {
     const [choices, setChoices] = useState<EntryChoices>(options.choices ?? {})
     const form = {
       value,
-      saved: savedValue,
+      saved: options.builtFrom ?? savedValue,
       bodyField: 'body',
       update: (updater: (v: FormValue) => FormValue) => {
         update(updater)
@@ -192,7 +200,7 @@ describe('ConflictsGroup cards', () => {
     act(() => labelNamed(screen.getByTestId('conflict-card'), 'Latest version').focus())
     const tip = await screen.findByRole('tooltip')
     expect(tip.textContent).toBe(latestTooltip('main'))
-    expect(tip.textContent).toContain('(from main)')
+    expect(tip.textContent).toContain('It comes from main.')
   })
 })
 
@@ -493,27 +501,27 @@ describe('ConflictsGroup states', () => {
     renderGroup({ only: ['summary', 'heading'] })
     const live = screen.getByTestId('conflicts-left')
     expect(live.getAttribute('role')).toBe('status')
-    expect(live.textContent).toBe('2 conflicts left to choose.')
+    expect(live.textContent).toBe('2 fields left to choose.')
     await userEvent.click(
       within(cardStarting(SUMMARY)).getByRole('button', { name: /^Keep your version:/ }),
     )
-    expect(live.textContent).toBe('1 conflict left to choose.')
+    expect(live.textContent).toBe('1 field left to choose.')
     await userEvent.click(
       within(cardStarting('Hero')).getByRole('button', { name: /^Keep your version:/ }),
     )
-    expect(live.textContent).toBe('All conflicts chosen. Save to keep your choices.')
+    expect(live.textContent).toBe('All chosen. Save to keep your choices.')
   })
 
   it('does not count a body as chosen until every region is', async () => {
     renderGroup({ only: ['body'] })
     const live = screen.getByTestId('conflicts-left')
-    expect(live.textContent).toBe('1 conflict left to choose.')
+    expect(live.textContent).toBe('1 field left to choose.')
     await userEvent.click(
       within(cardStarting('Body (part 1 of 2)')).getByRole('button', {
         name: /^Keep your version:/,
       }),
     )
-    expect(live.textContent).toBe('1 conflict left to choose.')
+    expect(live.textContent).toBe('1 field left to choose.')
   })
 })
 
@@ -547,7 +555,7 @@ describe('ConflictsGroup entry-level conflicts', () => {
   const setup = (
     kind: (typeof cases)[number][0],
     props: Partial<ConflictsGroupProps> = {},
-    answer: string | undefined = undefined,
+    answer: EntryChoiceRefusal | undefined = undefined,
   ) => {
     const onResolveEntry = vi.fn(async (_choice: EntryConflictChoice) => answer)
     const view = renderGroup({ data: entryConflictData(kind), props: { onResolveEntry, ...props } })
@@ -570,16 +578,26 @@ describe('ConflictsGroup entry-level conflicts', () => {
   })
 
   it('shows why the API refused a choice', async () => {
-    setup(
-      'deleted-on-branch',
-      {},
-      'Another entry now has this URL. Change it, then restore this one.',
-    )
+    const message = 'Another entry now has this URL. Change it, then restore this one.'
+    setup('deleted-on-branch', {}, { message, tone: 'warning' })
     expect(screen.queryByTestId('conflict-entry-refused')).toBeNull()
     await userEvent.click(screen.getByRole('button', { name: 'Restore entry' }))
-    expect((await screen.findByTestId('conflict-entry-refused')).textContent).toBe(
-      'Another entry now has this URL. Change it, then restore this one.',
-    )
+    const refused = await screen.findByTestId('conflict-entry-refused')
+    expect(refused.textContent).toBe(message)
+    expect(within(refused).queryByRole('button', { name: 'Retry' })).toBeNull()
+  })
+
+  it('offers Retry only for an error, and Retry runs the same choice again', async () => {
+    const { onResolveEntry } = setup('deleted-on-branch')
+    onResolveEntry.mockResolvedValueOnce({ message: 'The save failed.', tone: 'error' })
+    await userEvent.click(screen.getByRole('button', { name: 'Restore entry' }))
+    const refused = await screen.findByTestId('conflict-entry-refused')
+    expect(refused.textContent).toContain('The save failed.')
+    expect(onResolveEntry).toHaveBeenCalledTimes(1)
+    await userEvent.click(within(refused).getByRole('button', { name: 'Retry' }))
+    expect(onResolveEntry).toHaveBeenCalledTimes(2)
+    expect(onResolveEntry).toHaveBeenLastCalledWith('restore')
+    await waitFor(() => expect(screen.queryByTestId('conflict-entry-refused')).toBeNull())
   })
 
   it('holds every choice that rewrites the entry while it has unsaved edits, but not keeping it', async () => {
@@ -611,5 +629,91 @@ describe('ConflictsGroup entry-level conflicts', () => {
     setup('deleted-on-base', { noEditReason: 'No edit access.' })
     await waitFor(() => expect(screen.getByTestId('conflicts-no-edit')).toBeTruthy())
     expect(actionButtons()).toHaveLength(0)
+  })
+})
+
+describe('ConflictsGroup summary', () => {
+  it('counts the fields changed by both sides', () => {
+    renderGroup({ only: ['summary', 'body'] })
+    expect(screen.getByTestId('conflicts-summary').textContent).toBe(
+      '2 fields changed by you and by someone else. Choose what to keep, then save.',
+    )
+  })
+})
+
+describe('ConflictsGroup when the latest version cannot be placed', () => {
+  const unreadable = (data: EntryConflictData) => {
+    data.versions[BASE_SHA] = { unavailable: 'too-large' }
+  }
+
+  it('disables the choices that take the latest version, saying why, and keeps the others', async () => {
+    const { onChoose, onEdit } = renderGroup({ only: ['summary'], tweak: unreadable })
+    const card = screen.getByTestId('conflict-card')
+    const latest = within(card).getByRole('button', { name: /^Use latest version:/ })
+    expect(latest.getAttribute('aria-disabled')).toBe('true')
+    await userEvent.hover(latest)
+    expect((await screen.findByRole('tooltip')).textContent).toBe(LATEST_UNPLACEABLE_REASON)
+    await userEvent.click(latest)
+    expect(onChoose).not.toHaveBeenCalled()
+
+    const keep = within(card).getByRole('button', { name: /^Keep your version:/ })
+    expect(keep.getAttribute('aria-disabled')).toBeNull()
+    await userEvent.click(within(card).getByRole('button', { name: /^Edit:/ }))
+    expect(onEdit).toHaveBeenCalledWith(expect.objectContaining({ key: 'summary' }))
+    await userEvent.click(keep)
+    expect(onChoose).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'summary' }),
+      { how: 'yours' },
+      true,
+    )
+  })
+
+  it("says the latest version can't be shown where it could not be read", () => {
+    renderGroup({ only: ['summary'], tweak: unreadable })
+    expect(
+      within(screen.getByTestId('conflict-latest')).getByTestId('conflict-latest-unavailable')
+        .textContent,
+    ).toBe("Can't be shown here")
+  })
+
+  it('shows no such note while the latest version can be read', () => {
+    renderGroup({ only: ['summary'] })
+    expect(screen.queryByTestId('conflict-latest-unavailable')).toBeNull()
+  })
+
+  it('disables "Remove it" and "Keep it" where they map to the latest version', () => {
+    renderGroup({ only: ['readTime', 'tagline'], tweak: unreadable })
+    const read = cardStarting('Read time was removed')
+    const tag = cardStarting('You removed Tagline')
+    const button = (card: HTMLElement, name: RegExp) => within(card).getByRole('button', { name })
+    expect(button(read, /^Remove it:/).getAttribute('aria-disabled')).toBe('true')
+    expect(button(read, /^Keep it:/).getAttribute('aria-disabled')).toBeNull()
+    expect(button(tag, /^Keep it:/).getAttribute('aria-disabled')).toBe('true')
+    expect(button(tag, /^Remove it:/).getAttribute('aria-disabled')).toBeNull()
+  })
+
+  it('leaves "Remove it" on a removed list item enabled while the latest version is readable', () => {
+    renderGroup({ only: ['step'] })
+    const remove = within(screen.getByTestId('conflict-card')).getByRole('button', {
+      name: /^Remove it:/,
+    })
+    expect(remove.getAttribute('aria-disabled')).toBeNull()
+  })
+})
+
+describe('ConflictsGroup text saved since the merge', () => {
+  it('shows a body as one whole value, with no "Use both", once its text was saved since', () => {
+    const saved = { ...savedValue, body: `${savedValue.body as string}Typed since.\n` }
+    renderGroup({ only: ['body'], builtFrom: saved, value: saved })
+    const cards = screen.getAllByTestId('conflict-card')
+    expect(cards).toHaveLength(1)
+    expect(headingOf(cards[0])).toBe('Body was changed by you and by someone else')
+    expect(cards[0].getAttribute('data-conflict-kind')).toBe('changed')
+    expect(actionsOf(cards[0])).toEqual(['Use latest version', 'Keep your version', 'Edit'])
+  })
+
+  it("shows regions while the saved text is the merge's", () => {
+    renderGroup({ only: ['body'], builtFrom: savedValue })
+    expect(screen.getAllByTestId('conflict-card')).toHaveLength(2)
   })
 })

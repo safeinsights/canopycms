@@ -98,6 +98,7 @@ import { canopyPathOf } from './undo-change'
 import type { EntryConflictChoice, MergeConflictListItem } from '../api/merge-conflicts'
 import type { FieldConflict } from './conflict-cards'
 import { placeOf } from './conflict-choices'
+import type { EntryChoiceRefusal } from './components/ConflictsGroup'
 import { findBodyFieldName } from '../utils/body-field'
 import { entryConflictNotice } from './conflict-notice'
 import type {
@@ -236,6 +237,15 @@ const findCollection = (
     if (found) return found
   }
   return undefined
+}
+
+/** An entry-level choice waiting on its confirm, and the conflict it settles. */
+interface EntryChoiceTarget {
+  logicalPath: string
+  id: string
+  mergeSha: string
+  title: string
+  choice: EntryConflictChoice
 }
 
 export interface EditorProps {
@@ -1883,13 +1893,9 @@ const EditorContent: React.FC<EditorProps> = ({
   }
   // "Edit" on a card closes the drawer, and its exit focuses the field in the form.
   const focusAfterChangesRef = useRef<FieldConflict>()
-  // "Delete entry" on an entry-level card confirms once the drawer has closed.
-  const resolveDeleteAfterChangesRef = useRef<{
-    logicalPath: string
-    id: string
-    mergeSha: string
-    title: string
-  }>()
+  // An entry-level choice that replaces stored work, "Delete entry" or "Use latest version",
+  // confirms once the drawer has closed; Cancel opens the drawer again.
+  const confirmAfterChangesRef = useRef<EntryChoiceTarget>()
   const focusConflictField = (field: FieldConflict) => {
     revealForm()
     requestAnimationFrame(() => {
@@ -1911,8 +1917,12 @@ const EditorContent: React.FC<EditorProps> = ({
     id: string,
     mergeSha: string,
     choice: EntryConflictChoice,
-  ): Promise<string | undefined> => {
+  ): Promise<EntryChoiceRefusal | undefined> => {
     const branch = branchNameState
+    const failed: EntryChoiceRefusal = {
+      tone: 'error',
+      message: 'Couldn’t save your choice. Try again.',
+    }
     let answer: Awaited<ReturnType<typeof apiClient.conflicts.resolveEntry>> | undefined
     try {
       answer = await apiClient.conflicts.resolveEntry(
@@ -1920,19 +1930,29 @@ const EditorContent: React.FC<EditorProps> = ({
         { id: id as ContentId, mergeSha, choice },
       )
     } catch (err) {
-      if (!isUnanswered(err)) return 'Couldn’t save your choice. Try again.'
+      if (!isUnanswered(err)) return failed
     }
     if (!answer || isGatewayFailure(answer) || answer.code === 'WRITE_OUTCOME_UNKNOWN') {
-      void entryConflict.reload()
-      return 'Your choice may have gone through even though the server didn’t answer. Close and reopen "Show changes" to check.'
+      // Reading the conflict again settles it: the card goes if the choice went through.
+      void Promise.all([entryConflict.reload(), branchConflicts.reload()]).catch(console.error)
+      return {
+        tone: 'warning',
+        message:
+          'Your choice may have gone through even though the server didn’t answer. If this card is still here, choose again.',
+      }
     }
     if (!answer.ok) {
       if (answer.code === 'CONFLICT_CHANGED') void entryConflict.reload()
-      const error = answer.error ?? 'Couldn’t save your choice. Try again.'
+      if (answer.status !== 409) return { ...failed, message: answer.error ?? failed.message }
+      const error = answer.error ?? failed.message
       // A latest version that can't replace this entry leaves keeping yours, then editing it.
-      return choice === 'use-latest' && answer.status === 409 && !answer.code
-        ? `${error} Choose "${EDITOR_ACTIONS.keepYourVersion}", then edit it to match.`
-        : error
+      return {
+        tone: 'warning',
+        message:
+          choice === 'use-latest' && !answer.code
+            ? `${error} Choose "${EDITOR_ACTIONS.keepYourVersion}", then edit it to match.`
+            : error,
+      }
     }
     // The entry's file may have changed, so its saved copy is read again.
     setLoadedValues((prev) => {
@@ -1955,22 +1975,30 @@ const EditorContent: React.FC<EditorProps> = ({
           ? resolveEntryConflict(c.logicalPath, c.contentId, c.mergeSha, 'keep')
           : Promise.resolve(undefined),
       ),
-    ).then((refusals) => {
-      const refusal = refusals.find((r) => r !== undefined)
-      if (refusal) notifications.show({ message: refusal, color: 'yellow', autoClose: false })
+    ).then((answers) => {
+      const refusals = answers.filter((r): r is EntryChoiceRefusal => r !== undefined)
+      if (refusals.length === 0) return
+      const more =
+        refusals.length > 1 ? ` (${refusals.length} of ${items.length} weren’t kept.)` : ''
+      notifications.show({
+        message: `${refusals[0].message}${more}`,
+        color: refusals.some((r) => r.tone === 'error') ? 'red' : 'yellow',
+        autoClose: false,
+      })
     })
   }
   const changesResolveEntry =
     changesSubject && entryConflict.data
-      ? async (choice: EntryConflictChoice): Promise<string | undefined> => {
-          const { contentId: id, mergeSha } = entryConflict.data ?? {}
+      ? async (choice: EntryConflictChoice): Promise<EntryChoiceRefusal | undefined> => {
+          const { contentId: id, mergeSha, kind } = entryConflict.data ?? {}
           if (!id || !mergeSha) return undefined
-          if (choice === 'delete') {
-            resolveDeleteAfterChangesRef.current = {
+          if (choice === 'delete' || (choice === 'use-latest' && kind === 'unreadable')) {
+            confirmAfterChangesRef.current = {
               logicalPath: changesSubject.logicalPath,
               id,
               mergeSha,
               title: changesSubject.title,
+              choice,
             }
             setChangesOpen(false)
             return undefined
@@ -1978,36 +2006,55 @@ const EditorContent: React.FC<EditorProps> = ({
           return resolveEntryConflict(changesSubject.logicalPath, id, mergeSha, choice)
         }
       : undefined
-  const confirmResolveDelete = (target: {
-    logicalPath: string
-    id: string
-    mergeSha: string
-    title: string
-  }) => {
+  const confirmEntryChoice = (target: EntryChoiceTarget) => {
     const branch = branchNameState
+    const deleting = target.choice === 'delete'
     openConfirm({
-      title: 'Delete entry?',
+      title: deleting ? 'Delete entry?' : 'Use the latest version?',
       children: (
         <Text size="sm">
-          “{target.title}” was deleted in the latest version. Deleting it here too removes your
-          changes to it.
+          {deleting
+            ? `“${target.title}” was deleted in the latest version. Deleting it here too removes your changes to it.`
+            : `Your saved changes to “${target.title}” are replaced by the latest version.`}
         </Text>
       ),
-      labels: { confirm: EDITOR_ACTIONS.deleteEntry, cancel: 'Cancel' },
+      labels: {
+        confirm: deleting ? EDITOR_ACTIONS.deleteEntry : EDITOR_ACTIONS.useLatestVersion,
+        cancel: 'Cancel',
+      },
       confirmProps: { color: 'red' },
+      onCancel: () => {
+        setChangesOpen(true)
+        setChangesShown(true)
+      },
       onConfirm: () => {
-        void resolveEntryConflict(target.logicalPath, target.id, target.mergeSha, 'delete').then(
-          (refusal) => {
-            if (refusal) {
-              notifications.show({ message: refusal, color: 'yellow', autoClose: false })
-            } else {
-              closeEntry(target.logicalPath, branch)
-            }
-          },
-        )
+        void resolveEntryConflict(
+          target.logicalPath,
+          target.id,
+          target.mergeSha,
+          target.choice,
+        ).then((refusal) => {
+          if (refusal) {
+            notifications.show({
+              message: refusal.message,
+              color: refusal.tone === 'error' ? 'red' : 'yellow',
+              autoClose: false,
+            })
+          } else if (deleting) {
+            closeEntry(target.logicalPath, branch)
+          }
+        })
       },
     })
   }
+  // A choice made on an earlier merge of a field no longer counts once the record moved on, and
+  // an entry whose conflicts are gone keeps none.
+  const retainChoices = conflictChoices.retain
+  useEffect(() => {
+    const id = changesConflictTarget?.id
+    if (!id || entryConflict.data === undefined) return
+    retainChoices(id, entryConflict.data?.fields ?? [])
+  }, [changesConflictTarget?.id, entryConflict.data, retainChoices])
   // The toast's "Show changes" opens the first entry with conflicts, then, once it is open and
   // listed as changed, its drawer.
   const [pendingConflictShow, setPendingConflictShow] = useState<string>()
@@ -3174,9 +3221,9 @@ const EditorContent: React.FC<EditorProps> = ({
                     const editing = focusAfterChangesRef.current
                     focusAfterChangesRef.current = undefined
                     if (editing) focusConflictField(editing)
-                    const resolvingDelete = resolveDeleteAfterChangesRef.current
-                    resolveDeleteAfterChangesRef.current = undefined
-                    if (resolvingDelete) confirmResolveDelete(resolvingDelete)
+                    const confirming = confirmAfterChangesRef.current
+                    confirmAfterChangesRef.current = undefined
+                    if (confirming) confirmEntryChoice(confirming)
                     const deleting = deleteAfterChangesRef.current
                     deleteAfterChangesRef.current = undefined
                     // Opened as from the entry menu, whose trigger stands in for the gone button.

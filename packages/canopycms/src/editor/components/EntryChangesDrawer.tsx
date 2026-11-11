@@ -541,9 +541,11 @@ const ConflictsSection: React.FC<{
       ? (side.bodyFieldName ?? findBodyFieldName(subject.fields))
       : undefined
   }, [data, subject.fields])
+  // Regions apply only to the text your saved value holds, so the cards are built against it.
+  const saved = noEditReason ? undefined : undo?.saved
   const built = useMemo(
-    () => data && buildEntryConflicts(data, subject.fields, bodyField, referenceTitle),
-    [data, subject.fields, bodyField, referenceTitle],
+    () => data && buildEntryConflicts(data, subject.fields, bodyField, referenceTitle, saved),
+    [data, subject.fields, bodyField, referenceTitle, saved],
   )
   if (data === null) return null
   if (error && !data) {

@@ -110,6 +110,8 @@ export function baseUpdateResultMessage(
     case 'up-to-date':
       return { color: 'green', message: 'You already have the latest changes', sticky: false }
     case 'conflicts':
+      if (openConflicts === 0)
+        return { color: 'green', message: 'Latest changes added', sticky: false }
       return {
         color: 'yellow',
         message: latestChangesConflictsMessage(openConflicts),

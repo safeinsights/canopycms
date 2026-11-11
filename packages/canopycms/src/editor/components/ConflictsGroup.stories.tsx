@@ -6,6 +6,7 @@ import { buildEntryConflicts, type FieldConflict } from '../conflict-cards'
 import type { EntryChoices, FieldChoice } from '../conflict-choices'
 import { ConflictsGroup, type ConflictsGroupProps } from './ConflictsGroup'
 import {
+  BASE_SHA,
   conflictFields,
   conflictRecordFields,
   entryConflictData,
@@ -122,6 +123,17 @@ export const AllKindsDark: Story = { globals: { colorScheme: 'dark' } }
 
 /** An admin's Tooltip on "Latest version" names the branch it comes from. */
 export const AdminView: Story = { args: { adminBaseBranch: 'main' } }
+
+/** The latest version couldn't be read: its card says so, and the choices that take it wait. */
+export const LatestUnreadable: Story = {
+  args: {
+    data: (() => {
+      const data = fieldsConflictData(['summary', 'readTime', 'tagline'])
+      data.versions[BASE_SHA] = { unavailable: 'too-large' }
+      return data
+    })(),
+  },
+}
 
 /** A locked branch: the choices stay, disabled, with the lock's reason. */
 export const Locked: Story = {

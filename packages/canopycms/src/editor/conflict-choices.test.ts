@@ -10,6 +10,8 @@ import {
   withYours,
 } from './conflict-choices'
 import {
+  BASE_SHA,
+  MERGE_SHA as MERGE,
   conflictFields,
   conflictRecordFields,
   fieldsConflictData,
@@ -144,5 +146,61 @@ describe('isDecided', () => {
     expect(isDecided(field, { how: 'regions', regions: { 0: 'latest', 1: 'both' } })).toBe(true)
     expect(isDecided(field, undefined)).toBe(false)
     expect(isDecided(field, { how: 'edited' })).toBe(true)
+  })
+})
+
+describe('review fixes', () => {
+  it('replaces a list item both sides kept in place, keeping the others and their order', () => {
+    const field: FieldConflict = {
+      key: 'steps.k2',
+      mergeSha: MERGE,
+      dataPath: [{ field: 'steps' }, { item: 'k2' }],
+      item: true,
+      cards: [],
+      latestPlaceable: true,
+      latest: { steps: [{ _key: 'k2', text: 'From the site' }] },
+    }
+    const next = withLatest(savedValue, field, 'body')
+    expect(next?.steps).toEqual([
+      { _key: 'k1', text: 'Install' },
+      { _key: 'k2', text: 'From the site' },
+    ])
+    expect(withYours(next ?? {}, savedValue, field, 'body')?.steps).toEqual(savedValue.steps)
+  })
+
+  it('places nothing from a latest version that could not be read', () => {
+    const data = fieldsConflictData(['heading'])
+    data.versions[BASE_SHA] = { unavailable: 'too-large' }
+    const field = buildEntryConflicts(data, conflictFields, 'body').fields[0]
+    expect(field.latestPlaceable).toBe(false)
+    expect(withLatest(savedValue, field, 'body')).toBeUndefined()
+  })
+
+  it('places nothing where the latest version lacks an item the place is inside', () => {
+    // The latest version holds no item k2, as when the base left its list keyless.
+    const data = fieldsConflictData([])
+    data.fields = [
+      {
+        key: 'steps.k2.text',
+        drawerKey: 'steps.k2.text',
+        dataPath: [{ field: 'steps' }, { item: 'k2' }, { field: 'text' }],
+        kind: 'changed',
+        mergeSha: MERGE,
+        sides: data.sides,
+      },
+    ]
+    const built = buildEntryConflicts(data, conflictFields, 'body').fields[0]
+    expect(built.latestPlaceable).toBe(false)
+    expect(withLatest(savedValue, built, 'body')).toBeUndefined()
+    expect(built.cards[0]).toMatchObject({ type: 'value', latestUnavailable: true })
+  })
+
+  it('keeps a region of one blank line as a line, not as nothing', () => {
+    const text = {
+      merged: 'a\ny\nb\n',
+      regions: [{ ancestor: 'x', base: '', branch: 'y', line: 1, lines: 1, baseLines: 1 }],
+    }
+    expect(textWithChoices(text, { 0: 'latest' })).toBe('a\n\nb\n')
+    expect(textWithChoices(text, { 0: 'both' })).toBe('a\n\ny\nb\n')
   })
 })

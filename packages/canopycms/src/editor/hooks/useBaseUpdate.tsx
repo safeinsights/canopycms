@@ -230,7 +230,7 @@ export function useBaseUpdate(options: UseBaseUpdateOptions): UseBaseUpdateRetur
             showResult(
               color,
               message,
-              onShowConflictsRef.current ? show : undefined,
+              onShowConflictsRef.current && count !== 0 ? show : undefined,
               EDITOR_ACTIONS.showChanges,
             )
           })

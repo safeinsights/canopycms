@@ -49,8 +49,10 @@ const linesOf = (text: string, count?: number): string[] =>
 /** A region's lines under `choice`; undecided, they are yours, as the merge left them. */
 const regionLines = (region: TextConflictRegion, choice: RegionChoice | undefined): string[] => {
   const yours = linesOf(region.branch, region.lines)
-  if (choice === 'latest') return linesOf(region.base)
-  if (choice === 'both') return [...linesOf(region.base), ...yours]
+  // Counted, as the branch's are: joined, one blank line reads as none.
+  const latest = linesOf(region.base, region.baseLines)
+  if (choice === 'latest') return latest
+  if (choice === 'both') return [...latest, ...yours]
   return yours
 }
 
@@ -108,12 +110,40 @@ export function holdsChoice(
   return holdsAs(current, expected.from, placeOf(field), bodyField)
 }
 
-/** `current` with the latest version at the conflict's place; undefined when it can't be placed. */
+/**
+ * `current` with the conflict's place as `source` has it: a list item `source` lacks taken out, or
+ * one `current` lacks put in where `source` has it, through `undo-change.ts`; anything else, an item
+ * both hold included, replaced where it is, by key. Undefined when it can't be placed.
+ */
+const placeFrom = (
+  current: FormValue,
+  source: FormValue,
+  field: FieldConflict,
+  bodyField: string | undefined,
+): FormValue | undefined => {
+  const place = placeOf(field)
+  const wanted = valueAtChange(source, place, bodyField)
+  if (
+    wanted === undefined ||
+    (field.item && valueAtChange(current, place, bodyField) === undefined)
+  )
+    return setChangeBack(current, source, place, bodyField)
+  return withValueAt(current, place, structuredClone(wanted), bodyField)
+}
+
+/**
+ * `current` with the latest version at the conflict's place; undefined when it can't be placed, as
+ * where the latest version couldn't be read or doesn't hold the items on the place's path
+ * ({@link FieldConflict.latestPlaceable}).
+ */
 export const withLatest = (
   current: FormValue,
   field: FieldConflict,
   bodyField: string | undefined,
-): FormValue | undefined => setChangeBack(current, field.latest ?? {}, placeOf(field), bodyField)
+): FormValue | undefined =>
+  field.latest && field.latestPlaceable
+    ? placeFrom(current, field.latest, field, bodyField)
+    : undefined
 
 /** `current` with your saved value back at the conflict's place, as before any choice. */
 export const withYours = (
@@ -121,7 +151,7 @@ export const withYours = (
   saved: FormValue,
   field: FieldConflict,
   bodyField: string | undefined,
-): FormValue | undefined => setChangeBack(current, saved, placeOf(field), bodyField)
+): FormValue | undefined => placeFrom(current, saved, field, bodyField)
 
 /** `current` with long text as `regions` chooses it. */
 export const withRegions = (

@@ -115,7 +115,7 @@ test.describe('Conflict Management', () => {
       await expect(conflictAlert).toBeVisible({ timeout: STANDARD_TIMEOUT })
       // Both sides changed the title; the tagline, changed only upstream, merged by itself.
       await expect(conflictAlert).toContainText(
-        '1 field changed by you and by someone else. Show changes to choose.',
+        '1 field was changed by you and by someone else. Choose what to keep in "Show changes".',
       )
     })
 

@@ -51,6 +51,8 @@ interface ValueConflictCard extends CardBase {
   /** Word or line marks from Before to the latest version, and from Before to yours. */
   latestText?: TextDiff
   yoursText?: TextDiff
+  /** The latest version's value here can't be found ({@link FieldConflict.latestPlaceable}). */
+  latestUnavailable?: true
 }
 
 /** Lines of long text both sides changed, one card per region of a field. */
@@ -82,6 +84,12 @@ export interface FieldConflict {
   cards: ConflictCard[]
   /** The latest version as a form value, which "Use latest version" takes from. */
   latest?: FormValue
+  /**
+   * The latest version was read and holds every list item on the place's path, other than the item
+   * a removal on its side took out, so its value there can be found and placed. A list the base
+   * left keyless reads with keys of its own content, which needn't be the ones the merge named.
+   */
+  latestPlaceable: boolean
   /**
    * Long text found again by region from its three versions: the text the merge left, and its
    * regions, each holding your lines there. Absent when the text is one whole value.
@@ -165,6 +173,7 @@ export function buildEntryConflicts(
   fields: readonly FieldConfig[],
   bodyField: string | undefined,
   referenceTitle?: (id: string) => string | undefined,
+  saved?: FormValue,
 ): EntryConflicts {
   const diffs = new Map<string, Map<string, EntryChange>>()
   const diff = (from: string | undefined, to: string | undefined): Map<string, EntryChange> => {
@@ -190,12 +199,23 @@ export function buildEntryConflicts(
       yours: versionOf(data.versions, branch),
     }
     if (Object.values(versions).some((v) => v === undefined)) incomplete = true
+    const latest = versions.latest ? formValueOfSide(versions.latest) : undefined
+    const latestPlaceable =
+      !!latest &&
+      field.dataPath.every(
+        (segment, i) =>
+          !('item' in segment) ||
+          (field.item && field.kind === 'removed-on-base' && i === field.dataPath.length - 1) ||
+          valueAtChange(latest, { dataPath: field.dataPath.slice(0, i + 1) }, bodyField) !==
+            undefined,
+      )
     const common = {
       key: field.key,
       mergeSha: field.mergeSha,
       dataPath: field.dataPath,
       item: !!field.item,
-      ...(versions.latest && { latest: formValueOfSide(versions.latest) }),
+      latestPlaceable,
+      ...(latest && { latest }),
     }
     const card = { key: field.key, mergeSha: field.mergeSha }
     if (field.key === LOCATION_CONFLICT_KEY) {
@@ -214,8 +234,17 @@ export function buildEntryConflicts(
       )
       const [o, a, b] = texts
       const merged =
-        o !== undefined && a !== undefined && b !== undefined ? mergeText(o, a, b) : undefined
-      if (merged && merged.regions.length > 0) {
+        latestPlaceable && o !== undefined && a !== undefined && b !== undefined
+          ? mergeText(o, a, b)
+          : undefined
+      // Regions place their lines in the text the merge left, so they apply only while your saved
+      // text is that text: not once you saved since, nor where the merge kept your text whole.
+      const regionsApply =
+        !!merged &&
+        merged.regions.length > 0 &&
+        (saved === undefined ||
+          valueAtChange(saved, { dataPath: field.dataPath }, bodyField) === merged.text)
+      if (merged && regionsApply) {
         return {
           ...common,
           text: { merged: merged.text, regions: merged.regions },
@@ -272,6 +301,7 @@ export function buildEntryConflicts(
             path,
             before,
             latest: latestValue,
+            ...(!latestPlaceable && { latestUnavailable: true as const }),
             yours: yoursValue,
             ...(latestText && { latestText }),
             ...(yoursText && { yoursText }),
@@ -291,6 +321,7 @@ export function buildEntryConflicts(
           path,
           before: fromLatest?.before ?? fromYours?.before ?? EMPTY,
           latest: fromLatest ? (fromLatest.after ?? EMPTY) : (across?.before ?? EMPTY),
+          ...(!latestPlaceable && { latestUnavailable: true as const }),
           yours: fromYours ? (fromYours.after ?? EMPTY) : (across?.after ?? EMPTY),
           ...(fromLatest?.text && { latestText: fromLatest.text }),
           ...(fromYours?.text && { yoursText: fromYours.text }),
