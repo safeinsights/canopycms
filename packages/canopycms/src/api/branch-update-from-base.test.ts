@@ -106,11 +106,13 @@ describe('POST /:branch/update-from-base', () => {
 
   it('joins a request made within the interval, queueing nothing more', async () => {
     const first = await request(await branchWith())
+    // The worker has taken the first wake-up, so only the interval holds the second.
+    await fs.rm(path.join(taskDir, 'pending'), { recursive: true })
     const second = await request(await branchWith({ baseUpdateRequestedAt: await recorded() }))
 
     expect(second.res.status).toBe(202)
     expect(second.res.data?.requestedAt).toBe(first.res.data?.requestedAt)
-    expect(await syncTasks()).toHaveLength(1)
+    expect(await syncTasks()).toHaveLength(0)
   })
 
   it('joins a request whose wake-up is still queued, however old', async () => {
