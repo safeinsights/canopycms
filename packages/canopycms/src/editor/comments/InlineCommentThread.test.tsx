@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll } from 'vitest'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MantineProvider } from '@mantine/core'
 import { InlineCommentThread } from './InlineCommentThread'
@@ -459,11 +459,37 @@ describe('InlineCommentThread', () => {
     expect(resolveButtons.length).toBeGreaterThan(0)
   })
 
-  it('hides Resolve from a user who cannot resolve any thread and did not start this one', () => {
-    renderThread({ canResolve: false })
+  it('disables Resolve, with its reason, for a user who cannot resolve any thread and did not start this one', async () => {
+    const onResolve = vi.fn().mockResolvedValue(undefined)
+    renderThread({ canResolve: false, onResolve })
 
     expect(screen.getByTestId('reply-thread-button')).toBeTruthy()
-    expect(screen.queryByTestId('resolve-thread-button')).toBeNull()
+    const resolve = screen.getByTestId('resolve-thread-button')
+    expect(resolve.getAttribute('aria-disabled')).toBe('true')
+    expect(resolve.hasAttribute('data-disabled')).toBe(true)
+    expect(resolve.hasAttribute('disabled')).toBe(false)
+    fireEvent.click(resolve)
+    expect(onResolve).not.toHaveBeenCalled()
+
+    act(() => resolve.focus())
+    expect((await screen.findByRole('tooltip')).textContent).toBe(
+      "Only the person who started this thread or a reviewer can resolve it. Reply to let them know it's done.",
+    )
+  })
+
+  it('keeps the disabled Resolve label when a reply is drafted, and posts nothing from it', async () => {
+    const user = userEvent.setup()
+    const onAddReply = vi.fn().mockResolvedValue(undefined)
+    const onResolve = vi.fn().mockResolvedValue(undefined)
+    renderThread({ canResolve: false, onAddReply, onResolve })
+
+    await user.click(screen.getByTestId('reply-thread-button'))
+    await user.type(screen.getByLabelText('Reply to this thread'), 'Done')
+    const resolve = screen.getByTestId('resolve-thread-button')
+    expect(resolve.textContent).toBe('Resolve')
+    fireEvent.click(resolve)
+    expect(onAddReply).not.toHaveBeenCalled()
+    expect(onResolve).not.toHaveBeenCalled()
   })
 
   it('shows Resolve to the thread author even without the right to resolve any thread', () => {
