@@ -1,0 +1,812 @@
+/**
+ * Three-way merge of one entry, field by field: the version the branch started from (ancestor),
+ * the base branch's version now (base), and the branch's own (branch). A value changed on one side
+ * takes that change; a value changed alike on both takes it once; a value changed differently on
+ * both is a conflict, and the merged entry holds the branch's value there until a person chooses.
+ *
+ * Pure and client-safe. Schema-light: the input is the RAW parsed data (`parseEntryParts`), never
+ * filtered by a schema, so a key the schema doesn't know merges like any other and a base's schema
+ * migration survives. The schema, when given, only names conflicts as the "Show changes" drawer
+ * names its changes.
+ */
+
+import type { ContentFormat, FieldConfig } from '../config'
+import type { DataPathSegment } from '../editor/entry-diff'
+import { ITEM_KEY, isItemKey, itemKeysAsRead } from '../item-keys'
+import { findBodyFieldName } from '../utils/body-field'
+import { entryAsRead } from '../utils/calendar-day'
+import { parseMarkdownBody } from '../utils/markdown-parse'
+import { isPlainRecord } from '../validation/field-traversal'
+import { describePath, type RawSegment } from './conflict-path'
+import { diff3Regions } from './diff3'
+import { alignToAncestor, isNewIdentity, mergeOrder, pairNewItems } from './list-alignment'
+import { mergeText, type TextConflictRegion } from './text-merge'
+import { exactToken, isEmptyValue, sameValue, valueToken } from './value-equality'
+
+/** One version of an entry: its raw data, its md/mdx body, and its entry type (from its name). */
+export interface MergeSide {
+  data: Record<string, unknown>
+  body?: string
+  entryType?: string
+}
+
+export interface EntryMergeInput {
+  format: ContentFormat
+  ancestor: MergeSide
+  base: MergeSide
+  branch: MergeSide
+  /** The branch's entry type's fields, when the caller has them. */
+  fields?: readonly FieldConfig[]
+}
+
+/**
+ * - `changed`: changed differently on both sides, or added on both with different values;
+ * - `removed-on-base`: the base removed it and the branch changed it;
+ * - `removed-by-you`: the branch removed it and the base changed it.
+ */
+export type FieldConflictKind = 'changed' | 'removed-on-base' | 'removed-by-you'
+
+export interface FieldConflict {
+  /** The drawer's `EntryChange.key` for this place: list items named by key. */
+  key: string
+  dataPath: DataPathSegment[]
+  kind: FieldConflictKind
+  /** A whole list item or block, rather than a field's value. */
+  item?: true
+  /** Each version's value; absent where that version doesn't have it. */
+  ancestor?: unknown
+  base?: unknown
+  branch?: unknown
+  /** Long text: the regions both sides changed; the rest of the text merged. */
+  regions?: TextConflictRegion[]
+  /** The line merge of an mdx body or field did not parse, so the whole value is the conflict. */
+  unparseable?: true
+}
+
+/**
+ * A list item whose key the merge changed from the branch's to the base's: the branch's comment
+ * threads that name `from` inside the items `within` (the branch's keys, outermost first) now
+ * name `to`.
+ */
+export interface KeyRemap {
+  within: string[]
+  from: string
+  to: string
+}
+
+export type EntryMergeResult =
+  | {
+      kind: 'merged'
+      data: Record<string, unknown>
+      body?: string
+      conflicts: FieldConflict[]
+      keyRemaps: KeyRemap[]
+    }
+  /** The entry type changed on one side and the content on the other: no field merge applies. */
+  | { kind: 'entry-conflict'; reason: 'entry-type' }
+
+/** The three versions of one value. */
+interface Versions {
+  o: unknown
+  a: unknown
+  b: unknown
+}
+
+type RawConflict = Omit<FieldConflict, 'key' | 'dataPath'> & {
+  at: RawSegment[]
+  /** Each step's versions, so a conflict can be lifted to an enclosing value. */
+  trail?: Versions[]
+}
+
+interface At {
+  segments: RawSegment[]
+  /** The versions of the value at each step of `segments`. */
+  trail: Versions[]
+  /** The branch's keys of the list items enclosing this place, outermost first. */
+  branchKeys: string[]
+  /** This place is a list item. */
+  item: boolean
+}
+
+/** A line merge of a string member, kept so a schema-aware check can undo it afterwards. */
+interface TextMerge {
+  at: RawSegment[]
+  versions: { o: unknown; a: string; b: string }
+  conflict?: RawConflict
+}
+
+interface Walk {
+  conflicts: RawConflict[]
+  keyRemaps: KeyRemap[]
+  texts: TextMerge[]
+  /** Every key the ancestor's read gives its list items, across the entry. */
+  ancestorKeys: ReadonlySet<string>
+}
+
+const ROOT: At = { segments: [], trail: [], branchKeys: [], item: false }
+
+const child = (at: At, segment: RawSegment, versions: Versions): At => ({
+  segments: [...at.segments, segment],
+  trail: [...at.trail, versions],
+  branchKeys: at.branchKeys,
+  item: false,
+})
+
+/** `record`'s own member `name`: never one it inherits, and `__proto__` as a member. */
+const member = (record: Record<string, unknown>, name: string): unknown =>
+  Object.getOwnPropertyDescriptor(record, name)?.value
+
+/** Sets `name` as an own member, so `__proto__` is a member like any other. */
+const setMember = (record: Record<string, unknown>, name: string, value: unknown): void => {
+  Object.defineProperty(record, name, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  })
+}
+
+const isRecordList = (value: unknown): value is unknown[] =>
+  Array.isArray(value) && value.every(isPlainRecord)
+
+/** A list of plain values (tags): no records or lists inside, which merge only as a whole. */
+const isPlainList = (value: unknown): value is unknown[] =>
+  Array.isArray(value) && !value.some((v) => isPlainRecord(v) || Array.isArray(v))
+
+const asList = (value: unknown): readonly unknown[] => (Array.isArray(value) ? value : [])
+
+const usableKey = (item: unknown): string | undefined =>
+  isPlainRecord(item) && isItemKey(item[ITEM_KEY]) ? item[ITEM_KEY] : undefined
+
+const versions = (o: unknown, a: unknown, b: unknown) => ({
+  ...(o !== undefined && { ancestor: o }),
+  ...(a !== undefined && { base: a }),
+  ...(b !== undefined && { branch: b }),
+})
+
+/** A block item whose template one side changed: the whole item is one value. */
+const templateChanged = (o: unknown, a: unknown, b: unknown): boolean => {
+  const discriminator = (v: unknown, key: string) => (isPlainRecord(v) ? v[key] : undefined)
+  return ['template', '_type'].some(
+    (key) =>
+      discriminator(o, key) !== discriminator(a, key) ||
+      discriminator(o, key) !== discriminator(b, key),
+  )
+}
+
+const kindOf = (a: unknown, b: unknown): FieldConflictKind =>
+  isEmptyValue(a) ? 'removed-on-base' : isEmptyValue(b) ? 'removed-by-you' : 'changed'
+
+function conflict(o: unknown, a: unknown, b: unknown, at: At, walk: Walk): void {
+  walk.conflicts.push({
+    at: at.segments,
+    trail: at.trail,
+    kind: kindOf(a, b),
+    ...(at.item && { item: true as const }),
+    ...versions(o, a, b),
+  })
+}
+
+/**
+ * Records and lists always merge member by member and item by item, even where two sides compare
+ * equal: equality ignores item keys, and taking one side's whole record or list would drop the
+ * keys the other side's items carry, and the comment threads anchored on them.
+ */
+function mergeValue(o: unknown, a: unknown, b: unknown, at: At, walk: Walk) {
+  const absentOrEmpty = o === undefined || isEmptyValue(o)
+  if (isPlainRecord(a) && isPlainRecord(b) && (isPlainRecord(o) || absentOrEmpty)) {
+    if (!(at.item && templateChanged(o, a, b))) return mergeRecord(o, a, b, at, walk)
+  } else if (isRecordList(a) && isRecordList(b) && (isRecordList(o) || absentOrEmpty)) {
+    const merged = mergeList(o, a, b, at, walk)
+    if (merged) return merged
+  }
+  return mergeLeaf(o, a, b, at, walk)
+}
+
+/**
+ * A side left exactly as the ancestor had it yields to the other side, byte for byte, before any
+ * looser equality decides, so `merge(O, A, O)` is A and `merge(O, O, B)` is B.
+ */
+function mergeLeaf(o: unknown, a: unknown, b: unknown, at: At, walk: Walk): unknown {
+  if (exactToken(o) === exactToken(b)) return a
+  if (exactToken(o) === exactToken(a) || sameValue(a, b) || sameValue(o, a)) return b
+  if (sameValue(o, b)) return a
+  const empty = o === undefined || isEmptyValue(o)
+  if (isPlainList(a) && isPlainList(b) && (isPlainList(o) || empty)) {
+    const merged = mergeScalarList(asList(o), a, b)
+    if (merged) return merged
+  } else if (
+    typeof a === 'string' &&
+    typeof b === 'string' &&
+    (typeof o === 'string' || empty) &&
+    `${typeof o === 'string' ? o : ''}${a}${b}`.includes('\n')
+  ) {
+    const merged = mergeText(typeof o === 'string' ? o : '', a, b)
+    if (merged) {
+      const text: TextMerge = { at: at.segments, versions: { o, a, b } }
+      if (merged.regions.length > 0) {
+        text.conflict = {
+          at: at.segments,
+          trail: at.trail,
+          kind: 'changed',
+          ...versions(o, a, b),
+          regions: merged.regions,
+        }
+        walk.conflicts.push(text.conflict)
+      }
+      walk.texts.push(text)
+      return merged.text
+    }
+  }
+  conflict(o, a, b, at, walk)
+  return b
+}
+
+/**
+ * diff3 over a list of plain values (tags). Values both sides inserted at the same place are all
+ * kept ({@link insertedByBoth}), since an insertion loses nothing; any other overlap is undefined,
+ * a whole-field conflict.
+ */
+function mergeScalarList(
+  o: readonly unknown[],
+  a: readonly unknown[],
+  b: readonly unknown[],
+): unknown[] | undefined {
+  const lists = { ancestor: o, base: a, branch: b }
+  const [oT, aT, bT] = [o, a, b].map((list) => list.map(valueToken))
+  const regions = diff3Regions(oT, aT, bT)
+  if (!regions) return undefined
+  const out: unknown[] = []
+  for (const region of regions) {
+    if (region.stable) {
+      out.push(...lists[region.side].slice(...region.span))
+      continue
+    }
+    const [aPart, bPart] = [a.slice(...region.base), b.slice(...region.branch)]
+    const [aTokens, bTokens] = [aT.slice(...region.base), bT.slice(...region.branch)]
+    if (aTokens.length === bTokens.length && aTokens.every((t, n) => t === bTokens[n])) {
+      out.push(...bPart)
+    } else if (region.ancestor[0] === region.ancestor[1]) {
+      out.push(...insertedByBoth(aPart, aTokens, bPart, bTokens))
+    } else {
+      return undefined
+    }
+  }
+  return withoutExtraRepeats(out, a, b)
+}
+
+/**
+ * `merged` holding each value no more often than the side holding it most: a value both sides
+ * added at different places is one value, at the first place.
+ */
+function withoutExtraRepeats(
+  merged: readonly unknown[],
+  a: readonly unknown[],
+  b: readonly unknown[],
+): unknown[] {
+  const count = (list: readonly unknown[]) => {
+    const counts = new Map<string, number>()
+    for (const v of list) counts.set(valueToken(v), (counts.get(valueToken(v)) ?? 0) + 1)
+    return counts
+  }
+  const [inA, inB] = [count(a), count(b)]
+  const kept = new Map<string, number>()
+  return merged.filter((v) => {
+    const token = valueToken(v)
+    const n = (kept.get(token) ?? 0) + 1
+    kept.set(token, n)
+    return n <= Math.max(inA.get(token) ?? 0, inB.get(token) ?? 0)
+  })
+}
+
+/** True when `x` appears in `y` in order, not necessarily side by side. */
+const isSubsequence = (x: readonly string[], y: readonly string[]): boolean => {
+  let n = 0
+  for (const token of y) if (token === x[n]) n++
+  return n === x.length
+}
+
+/**
+ * Values both sides inserted at one place: the side whose insert holds the other's in order,
+ * else the base's then the branch's, each repeat of a base value counted once.
+ */
+function insertedByBoth(
+  aPart: readonly unknown[],
+  aTokens: readonly string[],
+  bPart: readonly unknown[],
+  bTokens: readonly string[],
+): unknown[] {
+  if (isSubsequence(aTokens, bTokens)) return [...bPart]
+  if (isSubsequence(bTokens, aTokens)) return [...aPart]
+  const fromBase = new Map<string, number>()
+  for (const token of aTokens) fromBase.set(token, (fromBase.get(token) ?? 0) + 1)
+  const rest = bPart.filter((_, n) => {
+    const left = fromBase.get(bTokens[n]) ?? 0
+    if (left === 0) return true
+    fromBase.set(bTokens[n], left - 1)
+    return false
+  })
+  return [...aPart, ...rest]
+}
+
+function mergeRecord(
+  o: unknown,
+  a: Record<string, unknown>,
+  b: Record<string, unknown>,
+  at: At,
+  walk: Walk,
+): Record<string, unknown> {
+  const ancestor = isPlainRecord(o) ? o : {}
+  const out: Record<string, unknown> = {}
+  for (const name of new Set([...Object.keys(b), ...Object.keys(a), ...Object.keys(ancestor)])) {
+    if (name === ITEM_KEY) continue
+    const [om, am, bm] = [member(ancestor, name), member(a, name), member(b, name)]
+    const v = mergeValue(om, am, bm, child(at, { field: name }, { o: om, a: am, b: bm }), walk)
+    if (v !== undefined) setMember(out, name, v)
+  }
+  // A list item's key is chosen by its list; any other record's is carried.
+  const key = member(b, ITEM_KEY) ?? member(a, ITEM_KEY)
+  if (!at.item && key !== undefined) setMember(out, ITEM_KEY, key)
+  return out
+}
+
+/**
+ * Items are matched across the three versions by identity (`list-alignment.ts`), merged item by
+ * item, and ordered by `mergeOrder`. A matched item takes the base's key, else the branch's, so
+ * the merged file converges on the base's keys; an item neither side keyed gets no key. An item
+ * removed on one side and changed on the other is an item conflict, and the branch's state holds.
+ */
+function mergeList(
+  o: unknown,
+  a: readonly unknown[],
+  b: readonly unknown[],
+  at: At,
+  walk: Walk,
+  namedBy?: string,
+): unknown[] | undefined {
+  const O = asList(o)
+  const identities =
+    namedBy === undefined
+      ? identifyByKey(O, a, b, walk.ancestorKeys)
+      : identifyByName(O, a, b, namedBy)
+  // A list too far apart to align in time is one value.
+  if (!identities) return undefined
+  const { oKeys, aIds, bIds, aByPlace, bByPlace } = identities
+  const bReadKeys = itemKeysAsRead(b)
+  const index = (ids: readonly string[]) => new Map(ids.map((id, n) => [id, n]))
+  const [oAt, aAt, bAt] = [index(oKeys), index(aIds), index(bIds)]
+  const used = new Set<string>()
+  const out: unknown[] = []
+  for (const id of mergeOrder(oKeys, aIds, bIds)) {
+    const i = isNewIdentity(id) ? undefined : oAt.get(id)
+    const ja = aAt.get(id)
+    const jb = bAt.get(id)
+    const [oi, ai, bi] = [
+      i === undefined ? undefined : O[i],
+      ja === undefined ? undefined : a[ja],
+      jb === undefined ? undefined : b[jb],
+    ]
+    const itemVersions = { o: oi, a: ai, b: bi }
+    const itemAt: At = {
+      segments: [...at.segments, { index: out.length }],
+      trail: [...at.trail, itemVersions],
+      branchKeys: [...at.branchKeys, (jb !== undefined && bReadKeys[jb]) || id],
+      item: true,
+    }
+    if (i !== undefined && ja === undefined && jb === undefined) continue
+    if (i !== undefined && ja === undefined) {
+      if (sameValue(oi, bi)) continue
+      conflict(oi, ai, bi, itemAt, walk)
+    } else if (i !== undefined && jb === undefined) {
+      if (sameValue(oi, ai)) continue
+      // Named as the drawer names an item the branch removed: by the ancestor's key.
+      conflict(oi, ai, bi, { ...itemAt, segments: [...at.segments, { item: id }] }, walk)
+      continue
+    }
+    if (ja === undefined || jb === undefined) {
+      out.push(ja === undefined ? bi : ai)
+      continue
+    }
+    // Matched by place alone, it may be another item: one side's change stands whole, two conflict.
+    const placeOnly = aByPlace.has(ja) || bByPlace.has(jb)
+    if (placeOnly && !sameValue(ai, bi)) {
+      const [aChanged, bChanged] = [!sameValue(oi, ai), !sameValue(oi, bi)]
+      if (aChanged && bChanged) conflict(oi, ai, bi, itemAt, walk)
+      out.push(aChanged && !bChanged ? ai : bi)
+      continue
+    }
+    const merged = mergeValue(oi, ai, bi, itemAt, walk)
+    out.push(
+      withListKey(merged, ai, bi, (jb !== undefined && bReadKeys[jb]) || undefined, used, at, walk),
+    )
+  }
+  return out
+}
+
+function identifyByKey(
+  O: readonly unknown[],
+  a: readonly unknown[],
+  b: readonly unknown[],
+  inEntry: ReadonlySet<string>,
+) {
+  const oKeys = itemKeysAsRead(O).map((key, i) => key ?? `${i}`)
+  const aligned = alignToAncestor(a, O, oKeys, 'a', inEntry)
+  const bAligned = alignToAncestor(b, O, oKeys, 'b', inEntry)
+  if (!aligned || !bAligned) return undefined
+  pairNewItems(a, aligned.ids, b, bAligned.ids)
+  return {
+    oKeys,
+    aIds: aligned.ids,
+    bIds: bAligned.ids,
+    aByPlace: aligned.byPlace,
+    bByPlace: bAligned.byPlace,
+  }
+}
+
+/**
+ * Identities by the string member `name`. A version with an item that has no name, or a name two
+ * items share, leaves no way to tell its items apart: undefined, and the list is one value.
+ */
+function identifyByName(
+  O: readonly unknown[],
+  a: readonly unknown[],
+  b: readonly unknown[],
+  name: string,
+) {
+  const ids = (items: readonly unknown[]) => {
+    const names = items.map((item) => (isPlainRecord(item) ? member(item, name) : undefined))
+    const distinct = new Set(names)
+    const usable = names.every((n) => typeof n === 'string' && !isNewIdentity(n))
+    return usable && distinct.size === names.length ? (names as string[]) : undefined
+  }
+  const [oKeys, aIds, bIds] = [ids(O), ids(a), ids(b)]
+  if (!oKeys || !aIds || !bIds) return undefined
+  return { oKeys, aIds, bIds, aByPlace: new Set<number>(), bByPlace: new Set<number>() }
+}
+
+/** `merged` with the key its list gives it, recording the remap when the branch's key changes. */
+function withListKey(
+  merged: unknown,
+  ai: unknown,
+  bi: unknown,
+  branchReadKey: string | undefined,
+  used: Set<string>,
+  at: At,
+  walk: Walk,
+): unknown {
+  if (!isPlainRecord(merged)) return merged
+  const key = [usableKey(ai), usableKey(bi)].find((k) => k !== undefined && !used.has(k))
+  if (key === undefined) {
+    const carried = isPlainRecord(bi) ? bi[ITEM_KEY] : undefined
+    return carried === undefined ? merged : { ...merged, [ITEM_KEY]: carried }
+  }
+  used.add(key)
+  if (branchReadKey !== undefined && branchReadKey !== key) {
+    walk.keyRemaps.push({ within: at.branchKeys, from: branchReadKey, to: key })
+  }
+  return { ...merged, [ITEM_KEY]: key }
+}
+
+const mdxParses = (text: string): boolean => parseMarkdownBody(text, 'mdx') !== undefined
+
+const sameContent = (x: MergeSide, y: MergeSide): boolean =>
+  sameValue(x.data, y.data) && (x.body ?? '') === (y.body ?? '')
+
+function mergeBody(
+  o: string,
+  a: string,
+  b: string,
+  format: ContentFormat,
+  at: At,
+  walk: Walk,
+): string {
+  if (a === b || o === a) return b
+  if (o === b) return a
+  const merged = mergeText(o, a, b)
+  if (!merged) {
+    conflict(o, a, b, at, walk)
+    return b
+  }
+  const { text, regions } = merged
+  const parses = (body: string) => format !== 'mdx' || mdxParses(body)
+  if (!parses(text) && parses(a) && parses(b)) {
+    walk.conflicts.push({
+      at: at.segments,
+      kind: 'changed',
+      ...versions(o, a, b),
+      unparseable: true,
+    })
+    return b
+  }
+  if (regions.length > 0) {
+    walk.conflicts.push({ at: at.segments, kind: 'changed', ...versions(o, a, b), regions })
+  }
+  return text
+}
+
+export function mergeEntry({
+  format,
+  ancestor,
+  base,
+  branch,
+  fields,
+}: EntryMergeInput): EntryMergeResult {
+  if (base.entryType !== branch.entryType) {
+    const baseRetyped = base.entryType !== ancestor.entryType
+    const branchRetyped = branch.entryType !== ancestor.entryType
+    const unchanged = baseRetyped ? branch : base
+    if (baseRetyped && branchRetyped) return { kind: 'entry-conflict', reason: 'entry-type' }
+    if (!sameContent(ancestor, unchanged)) return { kind: 'entry-conflict', reason: 'entry-type' }
+    const retyped = baseRetyped ? base : branch
+    return {
+      kind: 'merged',
+      data: retyped.data,
+      ...(retyped.body !== undefined && { body: retyped.body }),
+      conflicts: [],
+      keyRemaps: [],
+    }
+  }
+  const ancestorKeys = new Set<string>()
+  visitItems(ancestor.data, (_item, key) => ancestorKeys.add(key))
+  const walk: Walk = { conflicts: [], keyRemaps: [], texts: [], ancestorKeys }
+  const data = mergeRecord(ancestor.data, base.data, branch.data, ROOT, walk)
+  if (fields) undoUnparseableMdx(fields, data, walk)
+  flagItemsMovedAway(ancestor.data, base.data, branch.data, data, walk)
+  const hasBody = [ancestor, base, branch].some((side) => side.body !== undefined)
+  const bodyName = findBodyFieldName(fields ?? [])
+  const body = hasBody
+    ? mergeBody(
+        ancestor.body ?? '',
+        base.body ?? '',
+        branch.body ?? '',
+        format,
+        child(ROOT, { field: bodyName }, { o: ancestor.body, a: base.body, b: branch.body }),
+        walk,
+      )
+    : undefined
+  const read = fields ? entryAsRead(fields, data) : data
+  return {
+    kind: 'merged',
+    data,
+    ...(body !== undefined && { body }),
+    conflicts: named(walk.conflicts, fields, read, {
+      o: ancestor.data,
+      a: base.data,
+      b: branch.data,
+    }),
+    keyRemaps: walk.keyRemaps,
+  }
+}
+
+interface KeyedItem {
+  item: unknown
+  /** The list holding it: field names, and each enclosing item by its key. */
+  list: string
+}
+
+/**
+ * Each item in `data`, at any depth, by the key a read gives it, so a keyless item is found by its
+ * content; null for a key held more than once in the entry.
+ */
+function keyedItems(data: unknown): Map<string, KeyedItem | null> {
+  const found = new Map<string, KeyedItem | null>()
+  visitItems(data, (item, key, list) => {
+    for (const name of [key, contentName(item)]) {
+      found.set(name, found.has(name) ? null : { item, list })
+    }
+  })
+  return found
+}
+
+/** An item's content as a name, so an item a side moved without its key is still found. */
+const contentName = (item: unknown): string => `${ITEM_KEY}:${valueToken(item)}`
+
+/** Calls `onItem` for every record in a list in `node`, with its read key, list and path. */
+function visitItems(
+  node: unknown,
+  onItem: (item: unknown, key: string, list: string, at: RawSegment[]) => void,
+  at: RawSegment[] = [],
+  list = '',
+): void {
+  if (Array.isArray(node)) {
+    const keys = itemKeysAsRead(node)
+    node.forEach((item, index) => {
+      const key = keys[index]
+      const itemAt = [...at, { index }]
+      if (key !== undefined) onItem(item, key, list, itemAt)
+      visitItems(item, onItem, itemAt, `${list}[${key ?? `#${index}`}]`)
+    })
+  } else if (isPlainRecord(node)) {
+    for (const [name, value] of Object.entries(node)) {
+      visitItems(value, onItem, [...at, { field: name }], `${list}.${name}`)
+    }
+  }
+}
+
+/**
+ * Lists merge one at a time, so an item one side moved to another list survives there although
+ * the other side removed it, or is there twice when the other side changed it in its old place.
+ * An item the merged entry holds in another list than the ancestor did, which a side no longer has
+ * anywhere (by its key as read, so a keyless item by its content), or a keyed item the entry now
+ * holds twice, is an item conflict.
+ */
+function flagItemsMovedAway(
+  ancestor: Record<string, unknown>,
+  base: Record<string, unknown>,
+  branch: Record<string, unknown>,
+  merged: Record<string, unknown>,
+  walk: Walk,
+): void {
+  const [o, a, b] = [keyedItems(ancestor), keyedItems(base), keyedItems(branch)]
+  const named = new Set(walk.conflicts.map((c) => JSON.stringify(c.at)))
+  const seen = new Set<string>()
+  visitItems(merged, (item, key, list, at) => {
+    // A keyed item is found by its key alone: another item reading alike is not it. A keyless
+    // one, by its content too, which finds an item a side moved without its key.
+    const keyed = usableKey(item) !== undefined
+    const content = contentName(item)
+    const find = (found: Map<string, KeyedItem | null>) =>
+      found.has(key) || keyed ? found.get(key) : found.get(content)
+    const holds = (found: Map<string, KeyedItem | null>) =>
+      found.has(key) || (!keyed && found.has(content))
+    const [inO, inA, inB] = [find(o), find(a), find(b)]
+    // A side holding it twice copied it: no move to judge.
+    if (inA === null || inB === null) return
+    const twice = keyed && seen.has(key)
+    seen.add(key)
+    const moved = inO && inO.list !== list
+    const kind = twice
+      ? 'changed'
+      : moved && !holds(a)
+        ? 'removed-on-base'
+        : moved && !holds(b)
+          ? 'removed-by-you'
+          : undefined
+    if (!kind || named.has(JSON.stringify(at))) return
+    walk.conflicts.push({ at, kind, item: true, ...versions(inO?.item, inA?.item, inB?.item) })
+  })
+}
+
+/**
+ * The conflicts as the drawer names them. Where the drawer shows a whole value (an image, a field
+ * the schema doesn't know) a conflict inside it is lifted to that value: its versions become the
+ * whole value's, and the conflicts inside it are one. The merged entry keeps what merged there.
+ */
+function named(
+  conflicts: readonly RawConflict[],
+  fields: readonly FieldConfig[] | undefined,
+  read: unknown,
+  sides: Versions,
+): FieldConflict[] {
+  const seen = new Set<string>()
+  const out: FieldConflict[] = []
+  for (const { at, trail, ...rest } of conflicts) {
+    const { key, dataPath, depth } = describePath(fields, read, at)
+    if (seen.has(key)) continue
+    seen.add(key)
+    if (depth === at.length) {
+      out.push({ key, dataPath, ...rest })
+      continue
+    }
+    // The whole value's versions: from the merge's own trail, else by member names when the way
+    // there passes no list item (whose place differs between versions), else none to offer.
+    const prefix = at.slice(0, depth)
+    const byName = prefix.every((segment) => 'field' in segment)
+    const whole =
+      trail?.[depth - 1] ??
+      (byName
+        ? { o: valueAt(sides.o, prefix), a: valueAt(sides.a, prefix), b: valueAt(sides.b, prefix) }
+        : undefined)
+    out.push({
+      key,
+      dataPath,
+      kind: whole ? kindOf(whole.a, whole.b) : 'changed',
+      ...(!('field' in at[depth - 1]) && { item: true as const }),
+      ...(whole && versions(whole.o, whole.a, whole.b)),
+    })
+  }
+  return out
+}
+
+/** The value at `at` in `data`. */
+function valueAt(data: unknown, at: readonly RawSegment[]): unknown {
+  let node = data
+  for (const segment of at) {
+    node =
+      'index' in segment
+        ? asList(node)[segment.index]
+        : 'field' in segment && isPlainRecord(node)
+          ? member(node, segment.field)
+          : undefined
+  }
+  return node
+}
+
+/** The member at `at` in `data`, which the merge built along every such path, set to `value`. */
+function setAt(data: Record<string, unknown>, at: readonly RawSegment[], value: unknown): void {
+  const holder = valueAt(data, at.slice(0, -1))
+  const last = at.at(-1)
+  if (last && 'field' in last && isPlainRecord(holder)) setMember(holder, last.field, value)
+}
+
+/**
+ * An `mdx` field whose line merge does not parse, where both sides' texts do: the branch's text
+ * goes back in, and the whole field is one conflict, as for an mdx body.
+ */
+function undoUnparseableMdx(
+  fields: readonly FieldConfig[],
+  data: Record<string, unknown>,
+  walk: Walk,
+): void {
+  for (const text of walk.texts) {
+    if (describePath(fields, data, text.at).field?.type !== 'mdx') continue
+    const { o, a, b } = text.versions
+    if (mdxParses(String(valueAt(data, text.at))) || !mdxParses(a) || !mdxParses(b)) continue
+    setAt(data, text.at, b)
+    const whole: RawConflict = {
+      at: text.at,
+      trail: text.conflict?.trail,
+      kind: 'changed',
+      ...versions(o, a, b),
+      unparseable: true,
+    }
+    const at = text.conflict ? walk.conflicts.indexOf(text.conflict) : -1
+    if (at === -1) walk.conflicts.push(whole)
+    else walk.conflicts[at] = whole
+  }
+}
+
+/**
+ * `a` (the base's) and `b` (the branch's), both changed from `o`, merged as ordered sets of
+ * distinct values: each side's adds and removes apply, and the order is `mergeOrder`'s. Nothing
+ * conflicts: a set entry has no content to change.
+ */
+export function mergeOrderedSet(
+  o: readonly unknown[],
+  a: readonly unknown[],
+  b: readonly unknown[],
+): unknown[] {
+  const ids = (list: readonly unknown[]) => [...new Set(list.map(valueToken))]
+  const [oIds, aIds, bIds] = [ids(o), ids(a), ids(b)]
+  const value = new Map([...o, ...a, ...b].map((v) => [valueToken(v), v]))
+  const [inO, inA, inB] = [new Set(oIds), new Set(aIds), new Set(bIds)]
+  return mergeOrder(oIds, aIds, bIds)
+    .filter((id) => (inO.has(id) ? inA.has(id) && inB.has(id) : inA.has(id) || inB.has(id)))
+    .map((id) => value.get(id))
+}
+
+/**
+ * Three-way merge of a collection's `.collection.json`: `order` as an ordered set of content IDs,
+ * so two branches that each add an entry both keep theirs; `entries` matched by `name`; every
+ * other member by the entry rules.
+ */
+export function mergeCollectionMeta(
+  ancestor: Record<string, unknown>,
+  base: Record<string, unknown>,
+  branch: Record<string, unknown>,
+): { data: Record<string, unknown>; conflicts: FieldConflict[] } {
+  const walk: Walk = { conflicts: [], keyRemaps: [], texts: [], ancestorKeys: new Set() }
+  const data: Record<string, unknown> = {}
+  for (const name of new Set([
+    ...Object.keys(branch),
+    ...Object.keys(base),
+    ...Object.keys(ancestor),
+  ])) {
+    const [o, a, b] = [member(ancestor, name), member(base, name), member(branch, name)]
+    const at = child(ROOT, { field: name }, { o, a, b })
+    const lists = [o, a, b].every((v) => v === undefined || Array.isArray(v))
+    let v: unknown
+    if (name === 'order' && lists && !sameValue(o, b) && !sameValue(o, a)) {
+      v = mergeOrderedSet(asList(o), asList(a), asList(b))
+    } else if (name === 'entries' && [o, a, b].every((x) => x === undefined || isRecordList(x))) {
+      v = mergeList(o, asList(a), asList(b), at, walk, 'name') ?? mergeLeaf(o, a, b, at, walk)
+    } else {
+      v = mergeValue(o, a, b, at, walk)
+    }
+    if (v !== undefined) setMember(data, name, v)
+  }
+  return {
+    data,
+    conflicts: named(walk.conflicts, undefined, data, { o: ancestor, a: base, b: branch }),
+  }
+}

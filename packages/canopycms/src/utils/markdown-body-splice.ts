@@ -24,22 +24,17 @@
  * or the edit as sent when it did not read back: the worst case is never different content.
  */
 
-import { fromMarkdown } from 'mdast-util-from-markdown'
-import { gfmFromMarkdown } from 'mdast-util-gfm'
-import { mdxFromMarkdown } from 'mdast-util-mdx'
-import { gfm } from 'micromark-extension-gfm'
-import { mdxjs } from 'micromark-extension-mdxjs'
-
 import { createDebugLogger } from './debug'
 import { getErrorMessage } from './error'
+import {
+  parseMarkdownBody as parse,
+  type MarkdownBodyFormat,
+  type MarkdownRoot as Root,
+} from './markdown-parse'
 import { orderedNumber, restyleMarkdown, type MdNode } from './markdown-restyle'
 import { withSourceLineEndings } from './yaml-source-splice'
 
 const log = createDebugLogger({ prefix: 'MarkdownBodySplice' })
-
-export type MarkdownBodyFormat = 'md' | 'mdx'
-
-type Root = ReturnType<typeof fromMarkdown>
 
 /** One side's source text, and the indentation its continuation lines carry at this depth. */
 interface Side {
@@ -55,20 +50,6 @@ interface Piece {
 
 /** Above this many LCS cells the middle of a sequence is treated as one changed run. */
 const MAX_LCS_CELLS = 4_000_000
-
-function parse(text: string, format: MarkdownBodyFormat): Root | undefined {
-  try {
-    return format === 'mdx'
-      ? fromMarkdown(text, {
-          extensions: [gfm(), mdxjs()],
-          mdastExtensions: [gfmFromMarkdown(), mdxFromMarkdown()],
-        })
-      : fromMarkdown(text, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] })
-  } catch (err: unknown) {
-    log.debug('markdown-body-splice', 'body does not parse', { error: getErrorMessage(err) })
-    return undefined
-  }
-}
 
 /**
  * A node's meaning as a string: its tree without source positions. `data` goes too, because

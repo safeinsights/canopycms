@@ -58,6 +58,7 @@ is the map of maps.
 | `config/`         | Configuration types, schemas, validation                                                              | —                                                                           |
 | `editor/`         | React editor UI: components, hooks, fields, block editor, preview bridge                              | [editor/AGENTS.md](packages/canopycms/src/editor/AGENTS.md)                 |
 | `http/`           | Request handler and router: the composition root behind the catch-all route, mounting `api/routes.ts` | —                                                                           |
+| `merge/`          | Pure field-level three-way merge of an entry, and the value equality the drawer shares                | [merge/AGENTS.md](packages/canopycms/src/merge/AGENTS.md)                   |
 | `operating-mode/` | prod/dev strategies; single resolution points for mode + deployment name                              | [operating-mode/AGENTS.md](packages/canopycms/src/operating-mode/AGENTS.md) |
 | `paths/`          | Path utilities with branded types (LogicalPath, PhysicalPath)                                         | see below                                                                   |
 | `schema/`         | Schema loading and resolution                                                                         | —                                                                           |

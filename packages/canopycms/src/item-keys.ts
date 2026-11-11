@@ -105,6 +105,20 @@ export function withFreshItemKeys<T>(field: ListField, item: T): T {
 }
 
 function keyList(field: ListField, items: readonly unknown[], fill: ItemKeyFill): unknown[] {
+  const keys = listKeys(items, fill)
+  let changed = false
+  const out = items.map((item, i) => {
+    if (!isPlainRecord(item)) return item
+    let next = keyInside(field, item, fill)
+    if (keys[i] !== item[ITEM_KEY]) next = { ...next, [ITEM_KEY]: keys[i] }
+    if (next !== item) changed = true
+    return next
+  })
+  return changed ? out : (items as unknown[])
+}
+
+/** The key each record of `items` ends with under `fill`; undefined for an item that isn't one. */
+function listKeys(items: readonly unknown[], fill: ItemKeyFill): Array<string | undefined> {
   const held = new Set<string>()
   if (fill !== 'fresh') {
     for (const item of items) {
@@ -112,24 +126,26 @@ function keyList(field: ListField, items: readonly unknown[], fill: ItemKeyFill)
     }
   }
   const kept = new Set<string>()
-  let changed = false
-  const out = items.map((item) => {
-    if (!isPlainRecord(item)) return item
-    let next = keyInside(field, item, fill)
+  return items.map((item) => {
+    if (!isPlainRecord(item)) return undefined
     const own = item[ITEM_KEY]
     if (fill !== 'fresh' && isItemKey(own) && !kept.has(own)) {
       kept.add(own)
-    } else {
-      const key = fill === 'content' ? unheld(contentKey(item), held) : mintItemKey()
-      held.add(key)
-      kept.add(key)
-      next = { ...next, [ITEM_KEY]: key }
+      return own
     }
-    if (next !== item) changed = true
-    return next
+    const key = fill === 'content' ? unheld(contentKey(item), held) : mintItemKey()
+    held.add(key)
+    kept.add(key)
+    return key
   })
-  return changed ? out : (items as unknown[])
 }
+
+/**
+ * The key a read gives each item of a list, as `withItemKeys` with `content` does: its own usable
+ * key, else a hash of its content. Undefined for an item that isn't a record.
+ */
+export const itemKeysAsRead = (items: readonly unknown[]): Array<string | undefined> =>
+  listKeys(items, 'content')
 
 /** `key`, or with a suffix when another item of the list already holds it (identical items). */
 function unheld(key: string, held: ReadonlySet<string>): string {
