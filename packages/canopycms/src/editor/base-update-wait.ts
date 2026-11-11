@@ -1,4 +1,5 @@
-import { isBaseUpdatePending } from '../base-update'
+import { BASE_UPDATE_GIVE_UP_MS, isBaseUpdatePending } from '../base-update'
+
 import type { BranchMetadata, LastBaseUpdate } from '../types'
 
 /**
@@ -13,11 +14,6 @@ import type { BranchMetadata, LastBaseUpdate } from '../types'
  * @internal Exported for tests.
  */
 export const BASE_UPDATE_SLOW_MS = 2 * 60_000
-/**
- * How long the editor keeps polling for an answer at all.
- * @internal Exported for tests.
- */
-export const BASE_UPDATE_GIVE_UP_MS = 10 * 60_000
 /**
  * The poll while the form is read-only.
  * @internal Exported for tests.
@@ -57,11 +53,9 @@ export function nextBaseUpdateWaitChange(
   return requestedAt + (wait === 'waiting' ? BASE_UPDATE_SLOW_MS : BASE_UPDATE_GIVE_UP_MS)
 }
 
-/** The branch list's poll while any listed branch is waiting; 0 when none is. */
-export function baseUpdatePollMs(branches: readonly WaitFields[], now: number): number {
-  const waits = branches.map((b) => baseUpdateWait(b, now))
-  if (waits.includes('waiting')) return BASE_UPDATE_POLL_MS
-  return waits.includes('slow') ? BASE_UPDATE_SLOW_POLL_MS : 0
+/** How often the open branch's listing is re-read while it waits; 0 when it doesn't. */
+export function baseUpdatePollMs(wait: BaseUpdateWait): number {
+  return wait === 'waiting' ? BASE_UPDATE_POLL_MS : wait === 'slow' ? BASE_UPDATE_SLOW_POLL_MS : 0
 }
 
 /** @internal Exported for tests. */
@@ -82,6 +76,15 @@ export const SLOW_NOTICE =
   'This is taking longer than usual. You can keep editing; the latest changes will come in when the server gets to them.'
 /** Why Submit for review waits while the latest changes come in. */
 export const WAITING_SUBMIT_REASON = 'Wait for the latest changes to come in.'
+/** The waiting notice's addition for a viewer whose unsaved changes it hides meanwhile. */
+export const WAITING_DRAFT_NOTE = 'Your unsaved changes come back when it finishes.'
+/** When the editor stops waiting on a request the server hasn't answered. */
+export const GAVE_UP_MESSAGE =
+  'The latest changes haven\'t come in yet. They will when the server gets to them; use "Refresh branch" in the branch menu to see them.'
+/** A request the server didn't answer, which may still have gone through. */
+export const UNANSWERED_MESSAGE =
+  "Your request for the latest changes may have gone through even though the server didn't answer. Check the branch bar in a moment."
+export const REQUEST_FAILED_MESSAGE = "The latest changes couldn't be requested."
 
 /** The toast an answer gets: its colour, its text, and whether it stays until dismissed. */
 export function baseUpdateResultMessage(answer: LastBaseUpdate): {
@@ -95,11 +98,11 @@ export function baseUpdateResultMessage(answer: LastBaseUpdate): {
     case 'up-to-date':
       return { color: 'green', message: 'You already have the latest changes', sticky: false }
     case 'conflicts': {
-      const n = answer.keptEntries ?? 0
-      const entries = n === 1 ? '1 entry' : `${n} entries`
+      const n = answer.keptEntries
+      const entries = !n ? 'Some entries' : n === 1 ? '1 entry' : `${n} entries`
       return {
         color: 'yellow',
-        message: `Latest changes added. ${entries} you also changed kept your version; ${n === 1 ? "it's" : "they're"} flagged in the content panel.`,
+        message: `Latest changes added. ${entries} you also changed kept your version; ${n === 1 ? "it's" : "they're"} flagged in the "Content" panel.`,
         sticky: true,
       }
     }

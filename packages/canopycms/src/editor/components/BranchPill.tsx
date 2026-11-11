@@ -8,7 +8,8 @@ import { EDITOR_ACTIONS } from '../copy'
 import { DestructiveMenuItem } from './DestructiveMenuItem'
 import { ReasonedMenuItem } from './ReasonedMenuItem'
 import { useMenuItemFocusReturn } from '../utils/focus-return'
-import { GETTING_LATEST_CHANGES, type BaseUpdateControl } from '../base-update-wait'
+import type { BaseUpdateControl } from '../base-update-wait'
+import { getLatestChangesReason } from './GetLatestChangesButton'
 
 export interface BranchPillProps {
   branchName: string
@@ -89,7 +90,7 @@ export function BranchPill({
             onClick={getLatest.onRequest}
             blockedReason={
               getLatest.requesting || getLatest.wait !== 'none'
-                ? GETTING_LATEST_CHANGES
+                ? getLatestChangesReason(getLatest)
                 : getLatest.blockedReason
             }
             data-testid="get-latest-changes-menu-item"

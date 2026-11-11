@@ -32,8 +32,10 @@ import { DraftStorageWarning, HIDDEN_STYLE, SaveAllButton } from './SaveAllButto
 import { GetLatestChangesButton } from './GetLatestChangesButton'
 import {
   GETTING_LATEST_CHANGES,
+  WAITING_NOTICE,
   WAITING_SUBMIT_REASON,
   type BaseUpdateControl,
+  type BaseUpdateWait,
 } from '../base-update-wait'
 import { useFocusHandOff, useMenuItemFocusReturn } from '../utils/focus-return'
 
@@ -105,8 +107,10 @@ export interface EditorHeaderProps {
   branchPending?: boolean
   /** The branch list answered without this branch. */
   branchMissing?: boolean
-  /** "Get latest changes", when it applies to the open branch (hooks/useBaseUpdate.tsx). */
+  /** "Get latest changes", when this user may ask on the open branch (hooks/useBaseUpdate.tsx). */
   baseUpdate?: BaseUpdateControl
+  /** The open branch's wait for the latest changes, whoever asked: every viewer waits. */
+  latestWait?: BaseUpdateWait
 }
 
 /**
@@ -149,6 +153,7 @@ export function EditorHeader({
   branchPending = false,
   branchMissing = false,
   baseUpdate,
+  latestWait = 'none',
 }: EditorHeaderProps) {
   const reviewRole = reviewRoleOf(
     {
@@ -173,7 +178,7 @@ export function EditorHeader({
     savingAll: !!saveAllProgress,
     rewritten: branchHold?.kind === 'rewritten',
     approveBlocked: branchApproveBlocked,
-    waitingForLatest: baseUpdate?.wait === 'waiting',
+    waitingForLatest: latestWait === 'waiting',
   })
   const lock = {
     branchStatus,
@@ -249,7 +254,9 @@ export function EditorHeader({
             status={branchName ? status : { value: 'none', readOnly: false }}
             reason={branchLockReason}
             holdMessage={holdMessage}
-            working={baseUpdate && baseUpdate.wait !== 'none' ? GETTING_LATEST_CHANGES : undefined}
+            working={latestWait !== 'none' ? GETTING_LATEST_CHANGES : undefined}
+            // The bar's button carries the spinner where it shows.
+            workingSpinner={narrow || !baseUpdate}
           />
           {modifiedCount > 0 && (
             <Tooltip
@@ -292,9 +299,11 @@ export function EditorHeader({
                 branchLockReason ??
                 (!branchName
                   ? 'Open a branch first.'
-                  : entryListFailed && modifiedCount > 0
-                    ? 'The list of entries couldn\'t be loaded, so these changes can\'t be saved yet. Choose "Refresh branch" in the branch menu to try again.'
-                    : undefined)
+                  : latestWait === 'waiting'
+                    ? WAITING_NOTICE
+                    : entryListFailed && modifiedCount > 0
+                      ? 'The list of entries couldn\'t be loaded, so these changes can\'t be saved yet. Choose "Refresh branch" in the branch menu to try again.'
+                      : undefined)
               }
               saveAllProgress={saveAllProgress}
               singleSaving={singleSaving}
@@ -370,12 +379,15 @@ function BranchStatusLabel({
   reason,
   holdMessage,
   working,
+  workingSpinner = true,
 }: {
   status: BranchBarStatus
   reason?: string
   holdMessage?: string
   /** Work the branch waits on, such as getting the latest changes, shown and announced. */
   working?: string
+  /** A spinner beside `working`, unless the control doing the work shows one. */
+  workingSpinner?: boolean
 }) {
   const spoken = [
     status.label && status.value !== 'loading'
@@ -394,7 +406,7 @@ function BranchStatusLabel({
       <Group gap="xs" wrap="nowrap">
         {working && (
           <Group gap={4} wrap="nowrap" aria-hidden="true" data-testid="branch-working-status">
-            <Loader size={12} />
+            {workingSpinner && <Loader size={12} />}
             <Text span size="sm">
               {working}
             </Text>

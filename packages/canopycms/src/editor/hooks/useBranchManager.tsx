@@ -486,10 +486,10 @@ export interface UseBranchManagerOptions {
   onChangesRequested?: (branchName: string) => void
 
   /**
-   * Asks for the latest changes on `branchName` (useBaseUpdate's `request`). With it, withdrawing
-   * a branch that conflicts with its base asks for them right after.
+   * How to ask for the latest changes on `branchName` once it is withdrawn, or undefined where
+   * that can't apply. With it, withdrawing a branch that conflicts with its base asks right after.
    */
-  requestLatestChanges?: (branchName: string) => Promise<void>
+  latestChangesAfterWithdraw?: (branchName: string) => (() => Promise<void>) | undefined
 }
 
 export interface UseBranchManagerReturn {
@@ -1080,12 +1080,13 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
       branchNameToWithdraw,
       () =>
         new Promise<void>((resolve, reject) => {
-          const requestLatest = options.requestLatestChanges
           // The conflict that held it in review is what the latest changes settle.
-          const thenGetLatest =
-            !!requestLatest &&
+          const requestLatest =
             clientOperatingStrategy(options.operatingMode).syncsBranchesWithBase() &&
             listedBranch(branchNameToWithdraw)?.hold?.kind === 'conflicts'
+              ? options.latestChangesAfterWithdraw?.(branchNameToWithdraw)
+              : undefined
+          const thenGetLatest = !!requestLatest
           showWithdrawConfirmation(
             shownName(branchNameToWithdraw),
             pullRequestOf(branchNameToWithdraw),
@@ -1101,8 +1102,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
                 await loadBranches()
                 resolve()
                 // Reports its own outcome, so a failure here never reads as a failed withdraw.
-                if (thenGetLatest && requestLatest)
-                  void requestLatest(sendName(branchNameToWithdraw))
+                if (requestLatest) void requestLatest()
               } catch (err) {
                 await reportActionFailure(
                   err,

@@ -491,6 +491,11 @@ describe('EditorHeader - breadcrumb', () => {
       { entryUnavailable: true },
       "This entry's content type isn't known to this editor version yet.",
     ],
+    [
+      'a branch getting the latest changes',
+      { writesWaitReason: 'Getting the latest changes. You can edit again when it finishes.' },
+      'Getting the latest changes.',
+    ],
   ])('blocks Change URL… and Delete entry for %s, saying why', async (_what, props, reason) => {
     const onEntryRename = vi.fn()
     const onEntryDelete = vi.fn()
@@ -2283,10 +2288,12 @@ describe('EditorHeader - Get latest changes', () => {
   })
 
   it('shows and announces the wait, and holds Submit for review meanwhile', () => {
-    renderHeader({ ...owner, baseUpdate: control({ wait: 'waiting' }) })
+    renderHeader({ ...owner, baseUpdate: control({ wait: 'waiting' }), latestWait: 'waiting' })
     const button = screen.getByTestId('get-latest-changes-button')
     expect(button.getAttribute('data-working')).toBe('true')
     expect(button.getAttribute('aria-disabled')).toBe('true')
+    // Progress, read at full contrast: only a block dims it.
+    expect(button.getAttribute('data-disabled')).toBeNull()
     expect(screen.getByTestId('branch-working-status').textContent).toBe('Getting latest changes…')
     expect(
       screen.getAllByRole('status').some((s) => s.textContent?.includes('Getting latest changes…')),
@@ -2296,9 +2303,23 @@ describe('EditorHeader - Get latest changes', () => {
   })
 
   it('lets Submit for review act again once the wait is slow and the form editable', () => {
-    renderHeader({ ...owner, baseUpdate: control({ wait: 'slow' }) })
+    renderHeader({ ...owner, baseUpdate: control({ wait: 'slow' }), latestWait: 'slow' })
     expect(screen.getByTestId('submit-button').getAttribute('aria-disabled')).toBeNull()
     expect(screen.getByTestId('branch-working-status')).toBeTruthy()
+  })
+
+  it('holds Save all and Save, for every viewer, while the form waits', async () => {
+    renderHeader({
+      latestWait: 'waiting',
+      writesWaitReason: 'Getting the latest changes. You can edit again when it finishes.',
+      modifiedCount: 2,
+      hasUnsavedChanges: true,
+    })
+    expect(screen.getByTestId('save-all-button').getAttribute('aria-disabled')).toBe('true')
+    expect(screen.getByTestId('save-button').getAttribute('aria-disabled')).toBe('true')
+    // No button for someone who may not ask, but the bar still shows the wait.
+    expect(screen.queryByTestId('get-latest-changes-button')).toBeNull()
+    expect(screen.getByTestId('branch-working-status').textContent).toBe('Getting latest changes…')
   })
 
   it("moves into the branch's menu below md", async () => {

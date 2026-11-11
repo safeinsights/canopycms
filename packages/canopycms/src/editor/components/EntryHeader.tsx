@@ -89,6 +89,8 @@ export interface EntryHeaderProps {
   branchPullRequestClosed?: boolean
   /** The server refuses Approve on this branch (`describeBranchLock`). */
   branchApproveBlocked?: boolean
+  /** Why content writes wait though the branch isn't locked: the latest changes coming in. */
+  writesWaitReason?: string
 }
 
 /**
@@ -182,17 +184,19 @@ export function EntryHeader({
   branchReviewing = false,
   branchPullRequestClosed = false,
   branchApproveBlocked = false,
+  writesWaitReason,
 }: EntryHeaderProps) {
-  const branchLockReason = describeBranchLock({
-    branchStatus,
-    branchReadOnly,
-    branchWriteBlocked,
-    branchPending,
-    branchMissing,
-    reviewing: branchReviewing,
-    pullRequestClosed: branchPullRequestClosed,
-    approveBlocked: branchApproveBlocked,
-  })
+  const branchLockReason =
+    describeBranchLock({
+      branchStatus,
+      branchReadOnly,
+      branchWriteBlocked,
+      branchPending,
+      branchMissing,
+      reviewing: branchReviewing,
+      pullRequestClosed: branchPullRequestClosed,
+      approveBlocked: branchApproveBlocked,
+    }) ?? writesWaitReason
   const entryLockReason = entryReadOnly ? NO_EDIT_ACCESS_REASON : undefined
   // The Tooltip hides it while the editor is busy.
   const saveBlockedReason =

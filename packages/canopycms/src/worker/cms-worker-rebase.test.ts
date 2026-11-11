@@ -22,6 +22,7 @@ import { resolveBranchParam } from '../branch-param'
 import { ROOT_COLLECTION_ID } from '../paths/types'
 import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
+import { BASE_UPDATE_GIVE_UP_MS } from '../base-update'
 import { branchProvisioningLockName, tryAcquireProvisioningLock } from '../utils/provisioning-lock'
 import type { BranchPolicyDescription } from './branch-policy'
 import { CmsWorker } from './cms-worker'
@@ -1403,23 +1404,71 @@ describe('CmsWorker rebase loop answering a request for the latest changes', () 
     expect((await readMeta(setup.branchPath))?.lastBaseUpdate).toBeUndefined()
   })
 
-  it('asks for another early cycle when a save holds the branch, and answers nothing yet', async () => {
+  const takeRequests = (worker: CmsWorker) =>
+    (
+      worker as unknown as { takeBranchSyncRequests(): { branches: Set<string> } }
+    ).takeBranchSyncRequests().branches
+
+  it('leaves the request standing while the schema gate holds the base', async () => {
     const setup = await createBranchSetup(tmpDir, 'my-feature')
-    await setup.pushToRemote({ 'new-file.txt': 'from main' })
     await writeMeta(setup.branchPath, setup.contentBranchesPath, {
       baseUpdateRequestedAt: REQUESTED_AT,
+    })
+    const worker = makeWorker(tmpDir)
+    const report = (
+      worker as unknown as { ensureStatusReport(): { baseHold?: unknown } }
+    ).ensureStatusReport()
+    report.baseHold = {
+      since: REQUESTED_AT,
+      firstSeen: {},
+      incomingSha: 'a'.repeat(40),
+      missingSchemas: ['post'],
+      files: [],
+      fileCount: 0,
+    }
+
+    await runCycle(worker, AFTER_REQUEST)
+
+    expect((await readMeta(setup.branchPath))?.lastBaseUpdate).toBeUndefined()
+    expect(takeRequests(worker).size).toBe(0)
+  })
+
+  it('asks again for a requested branch whose provisioning lock is held elsewhere', async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature')
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      baseUpdateRequestedAt: REQUESTED_AT,
+    })
+    const release = await tryAcquireProvisioningLock(
+      setup.contentBranchesPath,
+      branchProvisioningLockName('my-feature'),
+    )
+    const worker = makeWorker(tmpDir)
+    await runCycle(worker, AFTER_REQUEST, new Set(['my-feature'])).finally(release)
+
+    expect((await readMeta(setup.branchPath))?.lastBaseUpdate).toBeUndefined()
+    expect([...takeRequests(worker)]).toEqual(['my-feature'])
+  })
+
+  it('asks again while a save holds a requested branch, and stops once the editor gives up', async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature')
+    // A save in progress holds the branch, which settles nothing.
+    const recent = new Date(Date.now() - 1_000).toISOString()
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      baseUpdateRequestedAt: recent,
     })
     const release = await tryAcquireContentWriteLock(setup.branchPath)
     const worker = makeWorker(tmpDir)
     try {
-      await runCycle(worker, AFTER_REQUEST)
+      await runCycle(worker, Date.now())
+      expect([...takeRequests(worker)]).toEqual(['my-feature'])
+
+      const old = new Date(Date.now() - BASE_UPDATE_GIVE_UP_MS - 1_000).toISOString()
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, { baseUpdateRequestedAt: old })
+      await runCycle(worker, Date.now())
+      expect(takeRequests(worker).size).toBe(0)
     } finally {
       await release()
     }
-
-    expect((await readMeta(setup.branchPath))?.lastBaseUpdate).toBeUndefined()
-    const internals = worker as unknown as { takeBranchSyncRequests(): Set<string> }
-    expect([...internals.takeBranchSyncRequests()]).toEqual(['my-feature'])
   })
 
   it('syncs the requested branches first', async () => {

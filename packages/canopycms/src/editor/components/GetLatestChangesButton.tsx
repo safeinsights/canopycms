@@ -11,12 +11,21 @@ import {
   type BaseUpdateControl,
 } from '../base-update-wait'
 
-const TOOLTIP_EVENTS = { hover: true, focus: true, touch: false }
+const TOOLTIP_EVENTS = { hover: true, focus: true, touch: true }
+
+/** The Tooltip's text: why it waits, why it can't act, or what it does. */
+export function getLatestChangesReason(control: BaseUpdateControl): string {
+  if (control.requesting || control.wait !== 'none') {
+    return control.wait === 'slow' ? SLOW_NOTICE : WAITING_NOTICE
+  }
+  return control.blockedReason ?? control.tooltip
+}
 
 /**
  * "Get latest changes", or "Getting latest changes…" with a spinner while the request stands. It
- * takes the wider label's width either way, so the bar never shifts. Blocked, it stays focusable
- * (`aria-disabled`) and its Tooltip says why.
+ * takes the wider label's width either way, so the bar never shifts. It can't act while it works
+ * or while something blocks it, and stays focusable (`aria-disabled`) with its Tooltip saying why.
+ * Only a block dims it: the working label is progress, read at full contrast.
  */
 export function GetLatestChangesButton({
   control,
@@ -29,11 +38,7 @@ export function GetLatestChangesButton({
 }) {
   const working = control.requesting || control.wait !== 'none'
   const blocked = working || !!control.blockedReason
-  const tooltip = working
-    ? control.wait === 'slow'
-      ? SLOW_NOTICE
-      : WAITING_NOTICE
-    : (control.blockedReason ?? control.tooltip)
+  const tooltip = getLatestChangesReason(control)
   return (
     <Tooltip label={tooltip} events={TOOLTIP_EVENTS} multiline maw={320}>
       <Button
@@ -51,7 +56,7 @@ export function GetLatestChangesButton({
         onClick={() => {
           if (!blocked) control.onRequest()
         }}
-        data-disabled={blocked ? true : undefined}
+        data-disabled={blocked && !working ? true : undefined}
         aria-disabled={blocked ? true : undefined}
         data-working={working || undefined}
         data-testid={testId}

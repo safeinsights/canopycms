@@ -13,12 +13,17 @@ import { getErrorMessage } from '../../utils/error'
 import { BRANCHES_KEY, type BranchesData } from './useBranchesData'
 import { RetryToastMessage } from '../components/RetryToastMessage'
 import {
+  GAVE_UP_MESSAGE,
+  REQUEST_FAILED_MESSAGE,
   SAVE_FIRST_REASON,
+  UNANSWERED_MESSAGE,
+  baseUpdatePollMs,
   baseUpdateResultMessage,
   baseUpdateWait,
   nextBaseUpdateWaitChange,
   type BaseUpdateWait,
 } from '../base-update-wait'
+import { serverNow } from '../server-clock'
 import { UnansweredError, isGatewayFailure, isUnanswered } from '../unanswered'
 
 const RESULT_TOAST_ID = 'canopy-base-update-result'
@@ -40,12 +45,12 @@ export interface UseBaseUpdateReturn {
   available: boolean
   /** The open branch's wait; `waiting` makes its form read-only. */
   wait: BaseUpdateWait
-  /** The request itself is in flight. */
+  /** The open branch's request itself is in flight. */
   requesting: boolean
   /** Why it can't be asked now; undefined when it can. */
   blockedReason?: string
-  /** Asks for `target`, the open branch by default; a withdraw asks for the branch it withdrew. */
-  request: (target?: string) => Promise<void>
+  /** Asks for the open branch, unless unsaved changes hold it. */
+  request: () => Promise<void>
 }
 
 /** Writes the branch a request answered into the listing, so its wait shows at once. */
@@ -54,17 +59,42 @@ function withBranch(data: BranchesData | undefined, branch: BranchListItem) {
   return { ...data, branches: data.branches.map((b) => (b.name === branch.name ? branch : b)) }
 }
 
+/** A toast in the one slot this hook uses, replacing what it showed before. */
+function showResult(color: 'green' | 'yellow' | 'red', message: string, onRetry?: () => void) {
+  notifications.hide(RESULT_TOAST_ID)
+  notifications.show({
+    id: RESULT_TOAST_ID,
+    color,
+    autoClose: color === 'green' ? undefined : false,
+    message: onRetry ? <RetryToastMessage message={message} onRetry={onRetry} /> : message,
+  })
+}
+
 /**
- * "Get latest changes" for the open branch: asks, then waits for the worker's answer, which the
- * branch list's poll (useBranchesData) brings in, and reports it in a toast once it lands. Only a
- * wait this tab saw end reports, so a reload onto an answered request stays quiet.
+ * "Get latest changes" for the open branch: asks, then re-reads the branch list while the branch
+ * waits, and reports the worker's answer in a toast once it lands. Only a wait this tab saw end
+ * reports, so a reload onto an answered request stays quiet. The wait is timed by the server's
+ * clock (server-clock.ts), and a request this tab made counts even when a listing fetched before
+ * it lands after it.
  */
 export function useBaseUpdate(options: UseBaseUpdateOptions): UseBaseUpdateReturn {
-  const { branch, operatingMode, permitted, unsavedCount, onUpdated } = options
+  const { operatingMode, permitted, unsavedCount, onUpdated } = options
   const apiClient = useApiClient()
   const { mutate } = useSWRConfig()
-  const [requesting, setRequesting] = useState(false)
-  const [now, setNow] = useState(() => Date.now())
+  const [requestingFor, setRequestingFor] = useState<string | null>(null)
+  // The last request this tab made, by branch, which a listing that predates it can't undo.
+  const [asked, setAsked] = useState<{ name: string; requestedAt: string } | null>(null)
+  const [, setTick] = useState(0)
+
+  const listed = options.branch
+  const name = listed?.name
+  const branch =
+    listed &&
+    asked?.name === listed.name &&
+    (listed.baseUpdateRequestedAt === undefined ||
+      Date.parse(listed.baseUpdateRequestedAt) < Date.parse(asked.requestedAt))
+      ? { ...listed, baseUpdateRequestedAt: asked.requestedAt }
+      : listed
 
   const available =
     !!branch &&
@@ -72,127 +102,150 @@ export function useBaseUpdate(options: UseBaseUpdateOptions): UseBaseUpdateRetur
     branch.status === 'editing' &&
     branch.isProtected === false &&
     permitted
-  const wait = baseUpdateWait(branch, Math.max(now, Date.now()))
+  const wait = baseUpdateWait(branch, serverNow())
+  const requestedAt = branch?.baseUpdateRequestedAt
+  const answer = branch?.lastBaseUpdate
+  const status = branch?.status
 
   // The wait changes on its own at the slow and give-up marks; nothing else would re-render then.
-  const changeAt = nextBaseUpdateWaitChange(branch, Date.now())
+  const changeAt = nextBaseUpdateWaitChange(branch, serverNow())
   useEffect(() => {
     if (changeAt === undefined) return
-    const timer = setTimeout(() => setNow(Date.now()), Math.max(0, changeAt - Date.now()) + 50)
+    const timer = setTimeout(() => setTick((n) => n + 1), Math.max(0, changeAt - serverNow()) + 50)
     return () => clearTimeout(timer)
   }, [changeAt])
 
+  // Re-read the listing while the branch waits, on a timer of its own: SWR stops polling a key
+  // whose last fetch failed, and one failed read must not end the wait.
+  const pollMs = baseUpdatePollMs(wait)
+  useEffect(() => {
+    if (pollMs === 0) return
+    const timer = setInterval(() => {
+      if (typeof document === 'undefined' || document.visibilityState !== 'hidden') {
+        void mutate(BRANCHES_KEY)
+      }
+    }, pollMs)
+    return () => clearInterval(timer)
+  }, [pollMs, mutate])
+
+  const latest = useRef({ name, unsavedCount })
+  latest.current = { name, unsavedCount }
   const onUpdatedRef = useRef(onUpdated)
   onUpdatedRef.current = onUpdated
   const requestRef = useRef<() => Promise<void>>(async () => {})
-
-  const report = useCallback((answer: LastBaseUpdate) => {
-    const { color, message, sticky } = baseUpdateResultMessage(answer)
+  // Stable, and reads only refs, so the toasts that carry it keep working.
+  const retry = useCallback(() => {
     notifications.hide(RESULT_TOAST_ID)
-    notifications.show({
-      id: RESULT_TOAST_ID,
-      color,
-      autoClose: sticky ? false : undefined,
-      message:
-        answer.outcome === 'failed' ? (
-          <RetryToastMessage
-            message={message}
-            onRetry={() => {
-              notifications.hide(RESULT_TOAST_ID)
-              void requestRef.current()
-            }}
-          />
-        ) : (
-          message
-        ),
-    })
-    if (answer.outcome !== 'failed') onUpdatedRef.current()
+    void requestRef.current()
   }, [])
 
-  // A wait this tab saw, by branch and request, reports when the answer lands.
-  const watched = useRef<{ name: string; requestedAt: string } | undefined>(undefined)
-  const name = branch?.name
-  const requestedAt = branch?.baseUpdateRequestedAt
-  const answer = branch?.lastBaseUpdate
+  const report = useCallback(
+    (result: LastBaseUpdate) => {
+      const { color, message } = baseUpdateResultMessage(result)
+      showResult(color, message, result.outcome === 'failed' ? retry : undefined)
+      if (result.outcome !== 'failed') onUpdatedRef.current()
+    },
+    [retry],
+  )
+
+  // A result is about the branch it came from: switching away closes it.
+  useEffect(
+    () => () => {
+      notifications.hide(RESULT_TOAST_ID)
+    },
+    [name],
+  )
+
+  // A wait this tab saw, by branch and request, reports when its answer lands, even after the
+  // editor stopped waiting on it; giving up says so, once.
+  const watched = useRef<{ name: string; requestedAt: string; gaveUp: boolean } | undefined>(
+    undefined,
+  )
   useEffect(() => {
     if (!name || !requestedAt) return
+    const seen = watched.current
+    const same = seen?.name === name && seen.requestedAt === requestedAt
     if (wait !== 'none') {
-      watched.current = { name, requestedAt }
+      if (!same) watched.current = { name, requestedAt, gaveUp: false }
       return
     }
-    const seen = watched.current
-    if (seen?.name !== name || seen.requestedAt !== requestedAt) return
-    watched.current = undefined
+    if (!seen || !same) return
     if (
       answer &&
       !isBaseUpdatePending({ baseUpdateRequestedAt: requestedAt, lastBaseUpdate: answer })
-    )
+    ) {
+      watched.current = undefined
       report(answer)
-  }, [name, requestedAt, answer, wait, report])
+    } else if (!seen.gaveUp && status === 'editing') {
+      seen.gaveUp = true
+      showResult('yellow', GAVE_UP_MESSAGE)
+    }
+  }, [name, requestedAt, answer, wait, status, report])
 
-  const request = useCallback(
-    async (target = name) => {
-      if (!target) return
-      const open = target === name
-      setRequesting(open)
+  const request = useCallback(async () => {
+    const target = latest.current.name
+    if (!target) return
+    if (latest.current.unsavedCount > 0) {
+      showResult('yellow', SAVE_FIRST_REASON)
+      return
+    }
+    // What lands after the user moved to another branch is about that one, not this.
+    const stillOpen = () => latest.current.name === target
+    setRequestingFor(target)
+    try {
       try {
-        let failure: string
-        try {
-          const result = await apiClient.workflow.updateFromBase({ branch: target })
-          if (isGatewayFailure(result)) throw new UnansweredError()
-          if (result.ok && result.data) {
-            const asked = result.data.branch
-            await mutate(BRANCHES_KEY, (data?: BranchesData) => withBranch(data, asked), {
-              revalidate: false,
-            })
-            setNow(Date.now())
-            // Joined to a request already answered: report that answer now.
-            if (asked.lastBaseUpdate && !isBaseUpdatePending(asked)) report(asked.lastBaseUpdate)
-            else if (open) watched.current = { name: target, requestedAt: result.data.requestedAt }
-            return
+        const result = await apiClient.workflow.updateFromBase({ branch: target })
+        if (isGatewayFailure(result)) throw new UnansweredError()
+        if (result.ok && result.data) {
+          const { branch: answered, requestedAt: at } = result.data
+          await mutate(BRANCHES_KEY, (data?: BranchesData) => withBranch(data, answered), {
+            revalidate: false,
+          })
+          if (!stillOpen()) return
+          setAsked({ name: target, requestedAt: at })
+          if (!isBaseUpdatePending(answered) && answered.lastBaseUpdate) {
+            report(answered.lastBaseUpdate)
+          } else {
+            watched.current = { name: target, requestedAt: at, gaveUp: false }
           }
-          failure = result.error ?? "The latest changes couldn't be requested."
-        } catch (err) {
-          if (!isUnanswered(err)) throw err
-          // It may have gone through, and a reload that shows the wait settles it.
-          const fresh = await mutate<BranchesData>(BRANCHES_KEY)
-          const reloaded = fresh?.branches.find((b) => b.name === target)
-          if (baseUpdateWait(reloaded, Date.now()) !== 'none' && reloaded?.baseUpdateRequestedAt) {
-            if (open)
-              watched.current = { name: target, requestedAt: reloaded.baseUpdateRequestedAt }
-            return
-          }
-          failure = "The server didn't answer, so the latest changes may not have been requested."
+          return
         }
-        notifications.hide(RESULT_TOAST_ID)
-        notifications.show({
-          id: RESULT_TOAST_ID,
-          color: 'red',
-          autoClose: false,
-          message: (
-            <RetryToastMessage
-              message={failure}
-              onRetry={() => {
-                notifications.hide(RESULT_TOAST_ID)
-                void requestRef.current()
-              }}
-            />
-          ),
-        })
+        if (stillOpen()) showResult('red', result.error ?? REQUEST_FAILED_MESSAGE, retry)
       } catch (err) {
-        notifications.show({ color: 'red', autoClose: false, message: getErrorMessage(err) })
-      } finally {
-        setRequesting(false)
+        if (!isUnanswered(err)) throw err
+        // It may have gone through, and a reload that shows the wait settles it.
+        const fresh = await mutate<BranchesData>(BRANCHES_KEY)
+        if (!stillOpen()) return
+        const reloaded = fresh?.branches.find((b) => b.name === target)
+        if (baseUpdateWait(reloaded, serverNow()) === 'none') {
+          showResult('yellow', UNANSWERED_MESSAGE, retry)
+        }
       }
-    },
-    [apiClient, mutate, name, report],
-  )
+    } catch (err) {
+      if (!stillOpen()) return
+      notifications.hide(RESULT_TOAST_ID)
+      notifications.show({
+        id: RESULT_TOAST_ID,
+        color: 'red',
+        autoClose: false,
+        message: (
+          <RetryToastMessage
+            message={REQUEST_FAILED_MESSAGE}
+            onRetry={retry}
+            details={getErrorMessage(err)}
+          />
+        ),
+      })
+    } finally {
+      setRequestingFor((current) => (current === target ? null : current))
+    }
+  }, [apiClient, mutate, report, retry])
   requestRef.current = request
 
   return {
     available,
     wait,
-    requesting,
+    requesting: !!name && requestingFor === name,
     blockedReason: unsavedCount > 0 ? SAVE_FIRST_REASON : undefined,
     request,
   }

@@ -19,7 +19,7 @@ import type { ApiClient } from '../context'
 import type { BranchListItem } from '../../api/branch'
 import { isNonApiResponse } from '../../api/client'
 import { seedUserProfiles } from './useUserMetadata'
-import { baseUpdatePollMs } from '../base-update-wait'
+import { noteServerTime } from '../server-clock'
 
 /** Cache key for the branches list. */
 export const BRANCHES_KEY = 'canopy:branches'
@@ -56,6 +56,7 @@ export async function fetchBranches(
   if (!result.ok) {
     throw new Error(result.error ?? `Failed to load branches: ${result.status}`)
   }
+  if (result.data?.serverTime !== undefined) noteServerTime(result.data.serverTime)
   const users = result.data?.users ?? []
   await seedUserProfiles(swr, users)
   return {
@@ -95,7 +96,7 @@ export function hasInFlightBranch(data: BranchesData | undefined): boolean {
  * mounts into a single request (see the module doc comment above).
  *
  * Polls ONLY while a branch is waiting on the worker (see
- * `hasInFlightBranch` and `baseUpdatePollMs`); once everything has settled the interval returns to
+ * `hasInFlightBranch`); once everything has settled the interval returns to
  * 0 and the list goes quiet again. This is strictly narrower than a blanket
  * `refreshInterval`, and narrower than the pre-SWR behavior it replaces.
  */
@@ -104,11 +105,7 @@ export function useBranchesData(
 ): SWRResponse<BranchesData, Error> {
   const { cache, mutate } = useSWRConfig()
   return useSWR(BRANCHES_KEY, () => fetchBranches(apiClient, { cache, mutate }), {
-    refreshInterval: (data: BranchesData | undefined) => {
-      // A branch waiting on the latest changes polls faster, and gives up after a while.
-      const waiting = baseUpdatePollMs(data?.branches ?? [], Date.now())
-      if (waiting > 0) return waiting
-      return hasInFlightBranch(data) ? IN_FLIGHT_POLL_MS : 0
-    },
+    refreshInterval: (data: BranchesData | undefined) =>
+      hasInFlightBranch(data) ? IN_FLIGHT_POLL_MS : 0,
   })
 }

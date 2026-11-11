@@ -11,6 +11,12 @@ export const SYNC_BRANCH_ACTION = 'sync-branch' satisfies TaskAction
 /** The shortest time between two requests for one branch; a request inside it joins the last. */
 export const BASE_UPDATE_REQUEST_INTERVAL_MS = 30_000
 
+/**
+ * How long a request is waited on: the editor polls for its answer this long, and the worker asks
+ * itself for early cycles this long while one goes unanswered.
+ */
+export const BASE_UPDATE_GIVE_UP_MS = 10 * 60_000
+
 /** Whether the branch's latest request for the latest changes is still unanswered. */
 export function isBaseUpdatePending(
   branch: Pick<BranchMetadata, 'baseUpdateRequestedAt' | 'lastBaseUpdate'>,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { BASE_UPDATE_GIVE_UP_MS } from '../base-update'
 import {
-  BASE_UPDATE_GIVE_UP_MS,
   BASE_UPDATE_POLL_MS,
   BASE_UPDATE_SLOW_MS,
   BASE_UPDATE_SLOW_POLL_MS,
@@ -58,11 +58,10 @@ describe('nextBaseUpdateWaitChange', () => {
 })
 
 describe('baseUpdatePollMs', () => {
-  it('polls fast while any branch waits read-only, slower once slow, and not at all otherwise', () => {
-    const slow = asked({ requestedAt: ASKED - BASE_UPDATE_SLOW_MS })
-    expect(baseUpdatePollMs([slow, asked()], ASKED)).toBe(BASE_UPDATE_POLL_MS)
-    expect(baseUpdatePollMs([slow], ASKED)).toBe(BASE_UPDATE_SLOW_POLL_MS)
-    expect(baseUpdatePollMs([asked({ status: 'approved' })], ASKED)).toBe(0)
+  it('polls fast while the form is read-only, slower once slow, and not at all otherwise', () => {
+    expect(baseUpdatePollMs('waiting')).toBe(BASE_UPDATE_POLL_MS)
+    expect(baseUpdatePollMs('slow')).toBe(BASE_UPDATE_SLOW_POLL_MS)
+    expect(baseUpdatePollMs('none')).toBe(0)
   })
 })
 
@@ -91,6 +90,7 @@ describe('baseUpdateResultMessage', () => {
     expect(baseUpdateResultMessage({ at, outcome: 'conflicts', keptEntries: 1 }).message).toContain(
       '1 entry ',
     )
+    expect(baseUpdateResultMessage({ at, outcome: 'conflicts' }).message).toContain('Some entries')
     expect(baseUpdateResultMessage({ at, outcome: 'failed' })).toMatchObject({
       color: 'red',
       sticky: true,

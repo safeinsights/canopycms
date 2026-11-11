@@ -10,7 +10,7 @@ import {
 import { invalidateBranchContentCaches } from '../content-index-generation'
 import { isSettingsBranchName, sanitizeBranchName } from '../paths/branch-name'
 import type { BaseUpdateOutcome, PullRequestHold, PullRequestState } from '../types'
-import { isBaseUpdatePending } from '../base-update'
+import { BASE_UPDATE_GIVE_UP_MS, isBaseUpdatePending } from '../base-update'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import {
   holdProvisionedWorkspace,
@@ -555,12 +555,28 @@ interface BaseUpdateProbe {
   keptEntries?: number
 }
 
+/** What an outcome answers a request with; undefined when it settles nothing. */
+function answerFor(
+  outcome: BranchRebaseOutcome,
+  probe: BaseUpdateProbe,
+): BaseUpdateOutcome | undefined {
+  // `rebased` on a failure: the base came in, and only publishing the rewrite failed.
+  if (outcome.kind === 'rebased' || (outcome.kind === 'failed' && outcome.rebased)) {
+    return probe.keptEntries ? 'conflicts' : 'merged'
+  }
+  if (outcome.kind === 'none') return probe.upToDate ? 'up-to-date' : undefined
+  // A save since the request, which the sync never commits: the editor's Retry commits it.
+  if (outcome.kind === 'failed' || outcome.kind === 'skippedDirty') return 'failed'
+  return undefined
+}
+
 /**
  * Answer the branch's request for the latest changes in `lastBaseUpdate`, which ends the editor's
- * wait. Only from a cycle whose base fetch began at or after the request: a cycle already running
- * when it arrived may have read an older base, and its follow-up (requestBranchSync) answers it.
- * An outcome that settles nothing, such as a lock held or a base held by the schema gate, leaves
- * it standing; a locked branch asks for the follow-up again. Never throws.
+ * wait. Only from a cycle whose GitHub fetch began at or after the request: an earlier one may
+ * predate the changes asked for, and the cycle the request woke answers it. While the schema gate
+ * holds the base no branch can take the latest in, so the request stands. An outcome that settles
+ * nothing, such as a lock held or a GitHub step on its way, asks for another early cycle, for as
+ * long as the editor waits. Never throws.
  */
 async function answerBaseUpdate(
   ctx: RebaseContext,
@@ -569,17 +585,21 @@ async function answerBaseUpdate(
   probe: BaseUpdateProbe,
   outcome: BranchRebaseOutcome,
   gitHub: GitHubSnapshot | undefined,
+  requested: boolean,
 ): Promise<void> {
   const { request } = probe
+  if (!request) {
+    // Skipped before its request was read: a provisioning lock held elsewhere.
+    if (requested && outcome.kind === 'skippedLocked') ctx.requestBranchSync(branchDir)
+    return
+  }
+  if (!gitHub || ctx.ensureStatusReport().baseHold) return
   // The request's time is the Lambda's clock and the fetch's this host's: both keep NTP time.
-  if (!request || !gitHub || gitHub.fetchedAt < Date.parse(request.requestedAt)) return
-  let answer: BaseUpdateOutcome
-  if (outcome.kind === 'rebased') answer = probe.keptEntries ? 'conflicts' : 'merged'
-  else if (outcome.kind === 'none' && probe.upToDate) answer = 'up-to-date'
-  // A save since the request, which the sync never commits: Retry commits it and asks again.
-  else if (outcome.kind === 'failed' || outcome.kind === 'skippedDirty') answer = 'failed'
-  else {
-    if (outcome.kind === 'skippedLocked') ctx.requestBranchSync(request.branchRef)
+  const requestedAt = Date.parse(request.requestedAt)
+  if (gitHub.fetchedAt < requestedAt) return
+  const answer = answerFor(outcome, probe)
+  if (answer === undefined) {
+    if (Date.now() - requestedAt < BASE_UPDATE_GIVE_UP_MS) ctx.requestBranchSync(request.branchRef)
     return
   }
   const lastBaseUpdate = {
@@ -593,6 +613,7 @@ async function answerBaseUpdate(
     const saved = await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update(
       (existing) =>
         existing?.branch.name === request.branchRef &&
+        existing.branch.status === 'editing' &&
         existing.branch.baseUpdateRequestedAt === request.requestedAt
           ? { branch: { lastBaseUpdate } }
           : null,
@@ -694,7 +715,15 @@ export async function runRebaseCycle(
       gitHub,
       probe,
     )
-    await answerBaseUpdate(ctx, branchDir, branchPath, probe, outcome, gitHub)
+    await answerBaseUpdate(
+      ctx,
+      branchDir,
+      branchPath,
+      probe,
+      outcome,
+      gitHub,
+      requested.has(branchDir),
+    )
     if (outcome.kind === 'rebased') rebased.push(branchDir)
     else if (outcome.kind === 'skippedDirty') skippedDirty.push(branchDir)
     else if (outcome.kind === 'skippedLocked') skippedLocked.push(branchDir)

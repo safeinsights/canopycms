@@ -49,6 +49,12 @@ export interface GitHubFetchResult {
    * request's `have` and their history; null when that leaves nothing to send.
    */
   bundleId: string | null
+  /**
+   * When the GitHub fetch `refs` come from began, by the gateway's clock, which is the worker's:
+   * they share the instance. A fetch can be joined or reused, so this can predate the request.
+   * Absent from a gateway that predates it.
+   */
+  startedAt?: number
 }
 
 /** The most `have` IDs one fetch takes. */
@@ -65,6 +71,8 @@ const FETCH_COALESCE_MS = 30_000
 interface FetchSnapshot {
   generation: number
   pushes: number
+  /** When the GitHub fetch began, by this host's clock. */
+  startedAt: number
 }
 
 /** A GitHub fetch operations join ({@link LocalGitHubGateway.joinGitHubFetch}). */
@@ -75,6 +83,8 @@ interface GitHubFetchJob {
   completedAt: number | null
   /** Set when it succeeded. */
   snapshot: FetchSnapshot | null
+  /** When it began. */
+  readonly startedAt: number
 }
 
 /**
@@ -207,10 +217,11 @@ export interface GitHubGateway {
    * Fetch every GitHub branch, and answer with all of them and a bundle of the commits `have`
    * lacks. `have` is the caller's own tips, at most {@link MAX_FETCH_HAVE} object IDs; any the
    * gateway does not hold as a commit is ignored. A new fetch replaces a bundle not yet opened.
-   * `onProgress` is told of each sign of life from the gateway's git while the caller waits.
+   * `fresh` takes no GitHub fetch begun before the request arrived. `onProgress` is told of each
+   * sign of life from the gateway's git while the caller waits.
    */
   fetch(
-    request: { have: readonly string[] },
+    request: { have: readonly string[]; fresh?: boolean },
     signal?: AbortSignal,
     onProgress?: () => void,
   ): Promise<GitHubFetchResult>
@@ -527,12 +538,15 @@ class LocalGitHubGateway implements GitHubGateway {
   private async joinGitHubFetch(
     resolve: () => Promise<GitHubCredential>,
     signal?: AbortSignal,
+    /** Join or reuse only a fetch that began at or after this time. */
+    notBefore?: number,
   ): Promise<FetchSnapshot> {
     const current = this.githubFetch
     const window = this.options.fetchCoalesceMs ?? FETCH_COALESCE_MS
     const reusable =
       current !== null &&
       !current.failed &&
+      (notBefore === undefined || current.startedAt >= notBefore) &&
       (current.completedAt === null ||
         (Date.now() - current.completedAt < window && this.isCurrent(current.snapshot)))
     const job = reusable ? current : this.startGitHubFetch(resolve)
@@ -557,12 +571,12 @@ class LocalGitHubGateway implements GitHubGateway {
    */
   private async afterGitHubFetch<T>(
     join: () => Promise<FetchSnapshot>,
-    fn: (session: MirrorSession) => Promise<T>,
+    fn: (session: MirrorSession, snapshot: FetchSnapshot) => Promise<T>,
   ): Promise<T> {
     for (let attempt = 1; ; attempt++) {
       const snapshot = await join()
       const result = await this.mirror.exclusive(async (session) =>
-        this.isCurrent(snapshot) ? { value: await fn(session) } : null,
+        this.isCurrent(snapshot) ? { value: await fn(session, snapshot) } : null,
       )
       if (result !== null) return result.value
       if (attempt === 2) {
@@ -577,6 +591,7 @@ class LocalGitHubGateway implements GitHubGateway {
   /** Start a GitHub fetch, taking its place at once, before the credential resolves. */
   private startGitHubFetch(resolve: () => Promise<GitHubCredential>): GitHubFetchJob {
     let reachedGitHub = false
+    const startedAt = Date.now()
     const run = async () => {
       const credential = await resolve()
       const own: GitHubCredential = {
@@ -591,12 +606,18 @@ class LocalGitHubGateway implements GitHubGateway {
         const pushes = this.pushes
         await this.mirror.heal(mirror, own)
         await this.mirror.fetchFromGitHub(mirror, own)
-        return { generation: this.mirror.generation, pushes }
+        return { generation: this.mirror.generation, pushes, startedAt }
       })
       await this.mirror.afterFetch()
       return snapshot
     }
-    const job: GitHubFetchJob = { failed: false, completedAt: null, snapshot: null, done: run() }
+    const job: GitHubFetchJob = {
+      failed: false,
+      completedAt: null,
+      snapshot: null,
+      startedAt,
+      done: run(),
+    }
     job.done.then(
       (snapshot) => {
         job.completedAt = Date.now()
@@ -835,7 +856,7 @@ class LocalGitHubGateway implements GitHubGateway {
   }
 
   async fetch(
-    request: { have: readonly string[] },
+    request: { have: readonly string[]; fresh?: boolean },
     signal?: AbortSignal,
     onProgress?: () => void,
   ): Promise<GitHubFetchResult> {
@@ -848,9 +869,10 @@ class LocalGitHubGateway implements GitHubGateway {
   }
 
   private fetchOnce(
-    request: { have: readonly string[] },
+    request: { have: readonly string[]; fresh?: boolean },
     signal?: AbortSignal,
   ): Promise<GitHubFetchResult> {
+    const notBefore = request.fresh ? Date.now() : undefined
     const have = [...new Set(request.have)]
     if (have.length > MAX_FETCH_HAVE) {
       throw new Error(`A fetch takes at most ${MAX_FETCH_HAVE} have IDs, not ${have.length}`)
@@ -858,14 +880,14 @@ class LocalGitHubGateway implements GitHubGateway {
     for (const id of have) assertObjectId(id)
     return this.credentialed(signal, (reach) =>
       this.afterGitHubFetch(
-        () => this.joinGitHubFetch(() => this.credential(reach), signal),
-        async (mirror) => {
+        () => this.joinGitHubFetch(() => this.credential(reach), signal, notBefore),
+        async (mirror, snapshot) => {
           this.mirror.assertUsable()
           const refs = await mirror.heads()
           const file = await this.mirror.outgoingBundlePath()
           const created = await mirror.createBundle(have, file, signal)
           const bundleId = await this.mirror.setPendingBundle(created ? file : null)
-          return { refs, bundleId }
+          return { refs, bundleId, startedAt: snapshot.startedAt }
         },
       ),
     )

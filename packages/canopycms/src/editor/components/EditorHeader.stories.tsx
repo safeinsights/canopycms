@@ -454,7 +454,23 @@ export const GettingLatestChanges: Story = {
     hasUnsavedChanges: false,
     modifiedCount: 0,
     baseUpdate: { ...getLatest, wait: 'waiting' },
+    latestWait: 'waiting',
   },
+}
+
+/** Two minutes on: the form is editable again and Submit for review can act; the request stands. */
+export const LatestChangesSlow: Story = {
+  args: {
+    hasUnsavedChanges: false,
+    modifiedCount: 0,
+    baseUpdate: { ...getLatest, wait: 'slow' },
+    latestWait: 'slow',
+  },
+}
+
+/** Another viewer of a waiting branch, who may not ask: the bar shows the wait, with its spinner. */
+export const LatestChangesOtherViewer: Story = {
+  args: { hasUnsavedChanges: false, modifiedCount: 0, latestWait: 'waiting' },
 }
 
 /** Below `md` it moves into the branch's menu; the bar still shows the wait. */
@@ -464,5 +480,12 @@ export const NarrowGettingLatestChanges: Story = {
     hasUnsavedChanges: false,
     modifiedCount: 0,
     baseUpdate: { ...getLatest, wait: 'waiting' },
+    latestWait: 'waiting',
   },
+}
+
+/** Below `md`, with unsaved changes: the menu item says to save first. */
+export const NarrowGetLatestChangesSaveFirst: Story = {
+  parameters: phone,
+  args: { baseUpdate: { ...getLatest, blockedReason: 'Save your changes first.' } },
 }

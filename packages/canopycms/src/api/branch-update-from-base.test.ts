@@ -5,7 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { updateFromBase } from './branch-update-from-base'
 import { BranchMetadataFileManager } from '../branch-metadata'
-import { BASE_UPDATE_REQUEST_INTERVAL_MS, SYNC_BRANCH_ACTION } from '../base-update'
+import {
+  BASE_UPDATE_GIVE_UP_MS,
+  BASE_UPDATE_REQUEST_INTERVAL_MS,
+  SYNC_BRANCH_ACTION,
+} from '../base-update'
 import { enqueueTask, listTasks } from '../task-queue/cms-task-queue'
 import { ContentWriteLockBusyError } from '../utils/content-write-lock'
 import type { BranchName } from '../paths/types'
@@ -88,6 +92,8 @@ describe('POST /:branch/update-from-base', () => {
   const syncTasks = async () =>
     (await listTasks(taskDir, 'pending')).filter((t) => t.action === SYNC_BRANCH_ACTION)
 
+  const loadBranch = async () => (await BranchMetadataFileManager.loadOnly(branchRoot))?.branch
+
   const recorded = async () =>
     (await BranchMetadataFileManager.loadOnly(branchRoot))?.branch.baseUpdateRequestedAt
 
@@ -133,6 +139,45 @@ describe('POST /:branch/update-from-base', () => {
     expect(res.data?.requestedAt).not.toBe(old)
     expect(await recorded()).toBe(res.data?.requestedAt)
     expect(await syncTasks()).toHaveLength(1)
+  })
+
+  it('takes a new request after an answered one, as a Retry after a failure is', async () => {
+    const first = await request(await branchWith())
+    const requestedAt = first.res.data!.requestedAt
+    await BranchMetadataFileManager.get(branchRoot, baseRoot).save({
+      branch: { lastBaseUpdate: { at: requestedAt, outcome: 'failed' } },
+    })
+    await fs.rm(path.join(taskDir, 'pending'), { recursive: true })
+    await new Promise((resolve) => setTimeout(resolve, 5))
+
+    const { res } = await request({ branchRoot, baseRoot, branch: (await loadBranch())! })
+
+    expect(res.data?.requestedAt).not.toBe(requestedAt)
+    expect(await syncTasks()).toHaveLength(1)
+  })
+
+  it('renews a request the editor has stopped waiting on, its queued wake-up serving both', async () => {
+    const old = new Date(Date.now() - BASE_UPDATE_GIVE_UP_MS - 1).toISOString()
+    await enqueueTask(taskDir, { action: SYNC_BRANCH_ACTION, payload: { branch: BRANCH } })
+
+    const { res } = await request(await branchWith({ baseUpdateRequestedAt: old }))
+
+    expect(res.data?.requestedAt).not.toBe(old)
+    expect(await recorded()).toBe(res.data?.requestedAt)
+    expect(await syncTasks()).toHaveLength(1)
+  })
+
+  it('records nothing for a branch submitted since the guard read it', async () => {
+    const context = await branchWith()
+    await BranchMetadataFileManager.get(branchRoot, baseRoot).save({
+      branch: { status: 'submitted' },
+    })
+
+    const { res } = await request(context)
+
+    expect(res.status).toBe(409)
+    expect(await recorded()).toBeUndefined()
+    expect(await syncTasks()).toHaveLength(0)
   })
 
   it('refuses a branch in review, saying to withdraw it', async () => {

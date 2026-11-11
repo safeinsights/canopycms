@@ -124,8 +124,11 @@ export interface WorkerContext {
    * regular cycle (worker/rebase.ts).
    */
   requestBranchSync(branchRef?: string): void
-  /** The branches requested since the last call, by workspace directory name; clears them. */
-  takeBranchSyncRequests(): Set<string>
+  /**
+   * What was asked since the last call, which clears it: the branches, by workspace directory name,
+   * and whether anything asked at all (a request with no branch wakes the sync too).
+   */
+  takeBranchSyncRequests(): { branches: Set<string>; requested: boolean }
   /**
    * Test hook: fires when the rebase has reported conflicted files and is about
    * to `checkout --theirs` them. No-op in production.

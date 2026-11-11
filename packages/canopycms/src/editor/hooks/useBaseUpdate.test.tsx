@@ -40,7 +40,11 @@ describe('useBaseUpdate', () => {
   let client: MockApiClient
   let listed: BranchListItem
 
-  const listing = () => ({ ok: true, status: 200, data: { branches: [listed], users: [] } })
+  const listing = () => ({
+    ok: true,
+    status: 200,
+    data: { branches: [listed], users: [], serverTime: Date.now() },
+  })
   const render = (over: Partial<Omit<UseBaseUpdateOptions, 'branch'>> = {}) => {
     const onUpdated = vi.fn()
     const hook = renderHook(
@@ -156,6 +160,87 @@ describe('useBaseUpdate', () => {
 
     await act(() => vi.advanceTimersByTimeAsync(2 * 60_000 + 100))
     expect(result.current.wait).toBe('slow')
+  })
+
+  it('keeps polling through a failed read of the branch list', async () => {
+    const requestedAt = new Date().toISOString()
+    listed = editing({ baseUpdateRequestedAt: requestedAt })
+    let calls = 0
+    client.branches.list.mockImplementation(async () => {
+      calls++
+      if (calls === 2) return { ok: false, status: 502, error: 'Bad gateway' }
+      return listing()
+    })
+    const { result } = render()
+    await waitFor(() => expect(result.current.wait).toBe('waiting'))
+
+    listed = editing({
+      baseUpdateRequestedAt: requestedAt,
+      lastBaseUpdate: { at: requestedAt, outcome: 'merged' },
+    })
+    // The second read fails; the third, 3 s later, brings the answer.
+    await waitFor(() => expect(result.current.wait).toBe('none'), { timeout: 9000 })
+    expect(calls).toBeGreaterThanOrEqual(3)
+  }, 15_000)
+
+  it("times the wait by the server's clock, not the browser's", async () => {
+    // The browser runs 20 minutes ahead of the server that stamped the request.
+    const serverNow = Date.now() - 20 * 60_000
+    const requestedAt = new Date(serverNow).toISOString()
+    listed = editing({ baseUpdateRequestedAt: requestedAt })
+    client.branches.list.mockImplementation(async () => ({
+      ...listing(),
+      data: { ...listing().data, serverTime: serverNow },
+    }))
+    const { result } = render()
+    await waitFor(() => expect(result.current.branch).toBeDefined())
+    expect(result.current.wait).toBe('waiting')
+  })
+
+  it('says when it stops waiting, and still reports an answer that lands later', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
+    const requestedAt = new Date().toISOString()
+    listed = editing({ baseUpdateRequestedAt: requestedAt })
+    const { result, onUpdated } = render()
+    await vi.waitFor(() => expect(result.current.wait).toBe('waiting'))
+
+    await act(() => vi.advanceTimersByTimeAsync(10 * 60_000 + 100))
+    expect(result.current.wait).toBe('none')
+    expect(shown()).toContainEqual(expect.objectContaining({ color: 'yellow' }))
+
+    listed = editing({
+      baseUpdateRequestedAt: requestedAt,
+      lastBaseUpdate: { at: requestedAt, outcome: 'merged' },
+    })
+    await act(() => result.current.reload())
+    await vi.waitFor(() =>
+      expect(shown()).toContainEqual(expect.objectContaining({ message: 'Latest changes added' })),
+    )
+    expect(onUpdated).toHaveBeenCalledTimes(1)
+  })
+
+  it('asks nothing while there are unsaved changes, whatever calls it', async () => {
+    const { result } = render({ unsavedCount: 1 })
+    await waitFor(() => expect(result.current.branch).toBeDefined())
+    await act(() => result.current.request())
+    expect(client.workflow.updateFromBase).not.toHaveBeenCalled()
+    expect(shown()[0]).toMatchObject({ color: 'yellow', message: 'Save your changes first.' })
+  })
+
+  it('keeps waiting when a listing fetched before the request lands after it', async () => {
+    const requestedAt = new Date().toISOString()
+    client.workflow.updateFromBase.mockResolvedValue({
+      ok: true,
+      status: 202,
+      data: { requestedAt, branch: editing({ baseUpdateRequestedAt: requestedAt }) },
+    })
+    const { result } = render()
+    await waitFor(() => expect(result.current.branch).toBeDefined())
+    await act(() => result.current.request())
+
+    // The stale listing still lacks the request.
+    await act(() => result.current.reload())
+    expect(result.current.wait).toBe('waiting')
   })
 
   it('reports a refused request, with Retry', async () => {

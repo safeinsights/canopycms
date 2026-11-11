@@ -23,6 +23,9 @@ type Story = StoryObj<typeof BaseUpdateNotice>
 /** Above the form while it is read-only, for the first two minutes of the wait. */
 export const Waiting: Story = { args: { wait: 'waiting' } }
 
+/** A viewer with an unsaved draft, which the read-only form hides until it finishes. */
+export const WaitingWithDraft: Story = { args: { wait: 'waiting', hidesDraft: true } }
+
 /** After two minutes the form is editable again, and the notice turns yellow. */
 export const Slow: Story = { args: { wait: 'slow' } }
 

@@ -1258,7 +1258,7 @@ describe('useBranchManager', () => {
         const requestLatestChanges = vi.fn().mockResolvedValue(undefined)
         const { result } = await loaded(listing, {
           operatingMode: 'prod',
-          requestLatestChanges,
+          latestChangesAfterWithdraw: () => requestLatestChanges,
         })
 
         await act(async () => {
@@ -1272,13 +1272,15 @@ describe('useBranchManager', () => {
         })
         expect(body).toContain('• Bring in the latest changes made on the site')
         expect(mockClient.workflow.withdraw).toHaveBeenCalled()
-        expect(requestLatestChanges).toHaveBeenCalledWith('feature')
+        expect(requestLatestChanges).toHaveBeenCalledTimes(1)
       })
 
       it('only withdraws in dev mode, where no worker answers', async () => {
         mockClient.workflow.withdraw.mockResolvedValueOnce({ ok: true, status: 200 })
         const requestLatestChanges = vi.fn().mockResolvedValue(undefined)
-        const { result } = await loaded(listing, { requestLatestChanges })
+        const { result } = await loaded(listing, {
+          latestChangesAfterWithdraw: () => requestLatestChanges,
+        })
 
         await act(async () => {
           await result.current.handleWithdraw('feature')
@@ -1289,12 +1291,27 @@ describe('useBranchManager', () => {
         expect(requestLatestChanges).not.toHaveBeenCalled()
       })
 
+      it("only withdraws where the editor says it can't apply, as for a branch not open", async () => {
+        mockClient.workflow.withdraw.mockResolvedValueOnce({ ok: true, status: 200 })
+        const { result } = await loaded(listing, {
+          operatingMode: 'prod',
+          latestChangesAfterWithdraw: () => undefined,
+        })
+
+        await act(async () => {
+          await result.current.handleWithdraw('feature')
+        })
+
+        const { options } = await lastDialog()
+        expect(options.labels).toEqual({ confirm: 'Withdraw from review', cancel: 'Cancel' })
+      })
+
       it('asks for nothing when the withdraw fails', async () => {
         mockClient.workflow.withdraw.mockResolvedValueOnce({ ok: false, status: 500, error: 'x' })
         const requestLatestChanges = vi.fn().mockResolvedValue(undefined)
         const { result } = await loaded(listing, {
           operatingMode: 'prod',
-          requestLatestChanges,
+          latestChangesAfterWithdraw: () => requestLatestChanges,
         })
 
         await act(async () => {

@@ -50,18 +50,28 @@ export interface TransferContext {
 /**
  * Fetch every GitHub branch into `remote.git`'s tracking namespace (`GITHUB_TRACKING_REF_PREFIX`),
  * which then holds exactly GitHub's branches. `have` is every tip `remote.git` holds, so the
- * bundle carries only what it lacks. Returns GitHub's branches, and what an operator must fix in
- * remote.git for the namespace to keep up, if anything (see {@link moveTrackingRefs}).
+ * bundle carries only what it lacks. `fresh` takes no GitHub fetch the gateway began before this
+ * call. Returns GitHub's branches, when the GitHub fetch they come from began, and what an operator
+ * must fix in remote.git for the namespace to keep up, if anything (see {@link moveTrackingRefs}).
  */
 export async function fetchGitHubIntoRemoteGit(
   ctx: TransferContext,
   signal?: AbortSignal,
-): Promise<{ refs: ReadonlyMap<string, string>; needsOperator: string | null }> {
+  fresh = false,
+): Promise<{
+  refs: ReadonlyMap<string, string>
+  fetchedAt: number
+  needsOperator: string | null
+}> {
   const gitDir = ctx.remoteGitPath
-  const { refs, bundleId } = await ctx.github().fetch({ have: await haveOf(gitDir) }, signal)
+  // A gateway that reports no start time gets this one, which is later than its fetch's.
+  const calledAt = Date.now()
+  const { refs, bundleId, startedAt } = await ctx
+    .github()
+    .fetch({ have: await haveOf(gitDir), ...(fresh && { fresh }) }, signal)
   if (bundleId !== null) await unbundle(ctx, gitDir, bundleId, signal)
   const needsOperator = await moveTrackingRefs(ctx, gitDir, refs, signal)
-  return { refs, needsOperator }
+  return { refs, fetchedAt: startedAt ?? calledAt, needsOperator }
 }
 
 /**

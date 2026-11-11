@@ -9,7 +9,12 @@ import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../bran
 import { clientOperatingStrategy } from '../operating-mode'
 import { enqueueTask, listTasks } from '../task-queue/cms-task-queue'
 import { getTaskQueueDir } from '../task-queue/task-queue-config'
-import { BASE_UPDATE_REQUEST_INTERVAL_MS, SYNC_BRANCH_ACTION } from '../base-update'
+import {
+  BASE_UPDATE_GIVE_UP_MS,
+  BASE_UPDATE_REQUEST_INTERVAL_MS,
+  SYNC_BRANCH_ACTION,
+  isBaseUpdatePending,
+} from '../base-update'
 import { ContentWriteLockBusyError } from '../utils/content-write-lock'
 import { getErrorMessage, redactCredentials } from '../utils/error'
 import { baseBranchOf } from '../utils/base-branch'
@@ -27,8 +32,9 @@ export type UpdateFromBaseResponse = ApiResponse<{ requestedAt: string; branch: 
  *
  * The request is recorded on branch.json, which is what the worker answers, so a lost task or a
  * worker restart costs only the wait for its next regular cycle. The task only wakes it early.
- * One request per branch per BASE_UPDATE_REQUEST_INTERVAL_MS, and none while one is queued: a
- * request inside either answers with the earlier one's time.
+ * An unanswered request joins the last one when that is under BASE_UPDATE_REQUEST_INTERVAL_MS old,
+ * or still queued, and answers with its time. An answered one, such as a failure being retried,
+ * is a new request.
  */
 const updateFromBaseHandler = async (
   gc: { branchContext: BranchContext },
@@ -116,14 +122,24 @@ const updateFromBaseHandler = async (
   const now = Date.now()
   let requestedAt = new Date(now).toISOString()
   let joined = false
+  let leftEditing = false
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
   const saved = await meta.update(
     (existing) => {
       if (existing?.branch.name !== branch.name) return null
+      // A submit since the guard read: the worker would leave the request standing until a withdraw.
+      if (existing.branch.status !== 'editing') {
+        leftEditing = true
+        return null
+      }
       const last = existing.branch.baseUpdateRequestedAt
+      const age = last === undefined ? Infinity : now - Date.parse(last)
+      // Only an unanswered request is joined, and not once the editor has stopped waiting on it.
       if (
         last !== undefined &&
-        (queued || now - Date.parse(last) < BASE_UPDATE_REQUEST_INTERVAL_MS)
+        isBaseUpdatePending(existing.branch) &&
+        age < BASE_UPDATE_GIVE_UP_MS &&
+        (queued || age < BASE_UPDATE_REQUEST_INTERVAL_MS)
       ) {
         requestedAt = last
         joined = true
@@ -133,12 +149,20 @@ const updateFromBaseHandler = async (
     },
     { keepUpdatedAt: true },
   )
+  if (leftEditing) {
+    return {
+      ok: false,
+      status: 409,
+      error: 'This branch is in review. Withdraw it from review to get the latest changes.',
+    }
+  }
   const current = saved ?? (await BranchMetadataFileManager.loadOnly(branchContext.branchRoot))
   if (current?.branch.name !== branch.name) {
     return { ok: false, status: 404, error: 'This branch no longer exists.' }
   }
 
-  if (!joined) {
+  // A wake-up already queued serves the new request too.
+  if (!joined && !queued) {
     try {
       await enqueueTask(taskDir, { action: SYNC_BRANCH_ACTION, payload: { branch: branch.name } })
     } catch (err) {

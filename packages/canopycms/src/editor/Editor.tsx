@@ -442,7 +442,9 @@ const EditorContent: React.FC<EditorProps> = ({
   // comment system is built further down.
   const reloadCommentsRef = useRef<(branch: string) => void>(() => {})
   // Set once useBaseUpdate below exists; it depends on the drafts.
-  const requestLatestRef = useRef<(branch: string) => Promise<void>>(async () => {})
+  const requestLatestRef = useRef<() => Promise<void>>(async () => {})
+  const modifiedCountRef = useRef(0)
+  const namesBranchRef = useRef<(branch: string) => boolean>(() => false)
   const {
     branchName: branchNameState,
     setBranchName,
@@ -473,7 +475,11 @@ const EditorContent: React.FC<EditorProps> = ({
     getUnsaved: () => resolveUnsavedRef.current(),
     onStamped: (stamped) => applySubmitStampsRef.current(stamped),
     onChangesRequested: (branch) => reloadCommentsRef.current(branch),
-    requestLatestChanges: (branch) => requestLatestRef.current(branch),
+    // Only the open branch, with nothing unsaved: its wait and answer show where the user is.
+    latestChangesAfterWithdraw: (branch) =>
+      namesBranchRef.current(branch) && modifiedCountRef.current === 0
+        ? () => requestLatestRef.current()
+        : undefined,
   })
 
   // Content mutations (add/delete/rename/reorder entries) are locked whenever the
@@ -749,6 +755,8 @@ const EditorContent: React.FC<EditorProps> = ({
     },
   })
   requestLatestRef.current = baseUpdate.request
+  modifiedCountRef.current = modifiedCount
+  namesBranchRef.current = (branch) => namesBranch(branch, branchNameState)
   const latestWaiting = baseUpdate.wait === 'waiting'
   const baseUpdateControl: BaseUpdateControl | undefined = baseUpdate.available
     ? {
@@ -975,8 +983,10 @@ const EditorContent: React.FC<EditorProps> = ({
   }
   useEffect(() => () => dismissUndoToasts(), [currentEntry?.contentId, branchNameState])
   // Only once the branch has answered, so the fail-closed lock while it loads raises no notice.
-  const hiddenDraftNotice =
+  const draftHidden =
     contentReadOnly && currentBranch !== undefined && !!currentEntry && isSelectedDirty()
+  // While the latest changes come in, the waiting notice says the draft comes back; it is the one notice.
+  const hiddenDraftNotice = draftHidden && !latestWaiting
 
   const collectionLabels = useMemo(
     () => buildCollectionLabels(activeCollections),
@@ -2523,6 +2533,7 @@ const EditorContent: React.FC<EditorProps> = ({
               branchMissing={branchMissing}
               branchToggleRef={branchToggleRef}
               baseUpdate={baseUpdateControl}
+              latestWait={baseUpdate.wait}
               onBranchReloadData={() => {
                 void Promise.all([handleReloadBranchData(), refreshEntries(branchNameState)]).catch(
                   console.error,
@@ -2619,6 +2630,7 @@ const EditorContent: React.FC<EditorProps> = ({
                 branchStatus={currentBranch?.status}
                 branchReadOnly={currentBranch?.readOnly}
                 branchWriteBlocked={branchContentLocked}
+                writesWaitReason={latestWaiting ? WAITING_NOTICE : undefined}
                 branchLoading={branchLoading}
                 branchPending={branchPending}
                 branchMissing={branchMissing}
@@ -2725,7 +2737,10 @@ const EditorContent: React.FC<EditorProps> = ({
                                 (baseUpdate.wait !== 'none' || hiddenDraftNotice) && (
                                   <>
                                     {baseUpdate.wait !== 'none' && (
-                                      <BaseUpdateNotice wait={baseUpdate.wait} />
+                                      <BaseUpdateNotice
+                                        wait={baseUpdate.wait}
+                                        hidesDraft={draftHidden && latestWaiting}
+                                      />
                                     )}
                                     {hiddenDraftNotice && (
                                       <ReadOnlyDraftNotice

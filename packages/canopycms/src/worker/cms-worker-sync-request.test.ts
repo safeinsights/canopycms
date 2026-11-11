@@ -20,7 +20,7 @@ type Internals = {
     early?: { requested: () => boolean; setWake: (wake: (() => void) | undefined) => void },
   ): void
   requestBranchSync(branchRef?: string): void
-  takeBranchSyncRequests(): Set<string>
+  takeBranchSyncRequests(): { branches: Set<string>; requested: boolean }
   gitSyncRequested: boolean
   wakeGitSync: (() => void) | undefined
   executeTask(task: Task, signal: AbortSignal): Promise<Record<string, unknown>>
@@ -55,7 +55,7 @@ describe('the git sync woken by a request', () => {
   })
 
   /** Drive the git sync's loop as start() schedules it, counting its runs. */
-  const startLoop = (worker: CmsWorker, runFor = 0) => {
+  const startLoop = (worker: CmsWorker, runFor = 0, interval = INTERVAL) => {
     const internals = internalsOf(worker)
     internals.running = true
     const runs: number[] = []
@@ -67,7 +67,7 @@ describe('the git sync woken by a request', () => {
         internals.takeBranchSyncRequests()
         if (runFor > 0) await new Promise<void>((resolve) => (finishRun = resolve))
       },
-      INTERVAL,
+      interval,
       {
         requested: () => internals.gitSyncRequested,
         setWake: (wake) => {
@@ -114,6 +114,14 @@ describe('the git sync woken by a request', () => {
     stopLoop(internals)
   })
 
+  it('never rests longer for a request than its own interval when that is shorter', async () => {
+    const { internals, runs } = startLoop(makeWorker(), 0, 2_000)
+    internals.requestBranchSync('content/a')
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(runs).toHaveLength(1)
+    stopLoop(internals)
+  })
+
   it('coalesces requests made during a run into one more run once it ends', async () => {
     const { internals, runs, finishRun } = startLoop(makeWorker(), 1)
     await vi.advanceTimersByTimeAsync(INTERVAL)
@@ -146,9 +154,9 @@ describe('the requests a sync cycle takes', () => {
     internals.requestBranchSync('canopycms/prod/content/a')
     internals.requestBranchSync()
     expect(internals.gitSyncRequested).toBe(true)
-    expect([...internals.takeBranchSyncRequests()]).toEqual(['canopycms-prod-content-a'])
+    expect([...internals.takeBranchSyncRequests().branches]).toEqual(['canopycms-prod-content-a'])
     expect(internals.gitSyncRequested).toBe(false)
-    expect(internals.takeBranchSyncRequests().size).toBe(0)
+    expect(internals.takeBranchSyncRequests()).toEqual({ branches: new Set(), requested: false })
   })
 })
 
@@ -166,7 +174,7 @@ describe('the sync-branch task', () => {
       new AbortController().signal,
     )
     expect(result).toEqual({ requested: true })
-    expect([...internals.takeBranchSyncRequests()]).toEqual(['content-a'])
+    expect([...internals.takeBranchSyncRequests().branches]).toEqual(['content-a'])
   })
 
   it('fails for good without a branch', async () => {

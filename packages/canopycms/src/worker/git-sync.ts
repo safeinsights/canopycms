@@ -608,6 +608,9 @@ function warnOnce(
 
 export async function syncGit(ctx: GitSyncContext): Promise<void> {
   if (!ctx.isRunning()) return
+  // Taken first, so a cycle that fails before its fetch can't leave the loop waking early for good.
+  // A request made later in the cycle waits for the next one, whose fetch begins after it.
+  const requested = ctx.takeBranchSyncRequests()
 
   // The CDK worker-down alarm counts this line (WORKER_SYNC_LOG_PHRASE in
   // canopycms-cdk worker-lifecycle.ts); changing its text breaks the alarm.
@@ -657,13 +660,13 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     // deadline: the wait for the gateway's GitHub fetch, which runs on detached, then the gateway's
     // bundle, the unbundle and the ref update; a killed ref update leaves each ref as it was or
     // fully moved.
-    // Taken just before the fetch: a request made after it waits for the next cycle's fetch.
-    const requested = ctx.takeBranchSyncRequests()
-    const fetchedAt = Date.now()
-    const { refs: githubTips, needsOperator } = await fetchGitHubIntoRemoteGit(
-      ctx,
-      ctx.shutdownSignal(),
-    )
+    // A woken cycle takes no GitHub fetch the gateway began earlier: answers to a request for the
+    // latest changes are timed by this fetch's start (worker/rebase.ts, answerBaseUpdate).
+    const {
+      refs: githubTips,
+      fetchedAt,
+      needsOperator,
+    } = await fetchGitHubIntoRemoteGit(ctx, ctx.shutdownSignal(), requested.requested)
     workerLog('Fetched from GitHub')
     if (needsOperator !== null) workerLogError(needsOperator)
 
@@ -715,7 +718,7 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
       ctx,
       branchPolicy,
       { tips: githubTips, fetchedAt },
-      requested,
+      requested.branches,
     )
     if (stoppedForDrain(ctx, 'the cleanup sweeps')) return
 

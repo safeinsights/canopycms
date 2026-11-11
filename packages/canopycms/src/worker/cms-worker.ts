@@ -1078,19 +1078,19 @@ export class CmsWorker {
           workerLogError('Worker loop error:', err instanceof Error ? err.message : err)
         })
         await this.trackOperation(label, operation)
-        run(early?.requested() ? EARLY_RUN_MIN_REST_MS : interval)
+        run(early?.requested() ? Math.min(interval, EARLY_RUN_MIN_REST_MS) : interval)
       }
       const timeout = setTimeout(fire, Math.max(0, delay - (Date.now() - restStartedAt)))
       this.activeTimeouts.add(timeout)
       early?.setWake(() => {
         const rested = Date.now() - restStartedAt
-        const sooner = Math.max(0, EARLY_RUN_MIN_REST_MS - rested)
+        const sooner = Math.max(0, Math.min(interval, EARLY_RUN_MIN_REST_MS) - rested)
         if (sooner >= delay - rested || !this.activeTimeouts.delete(timeout)) return
         clearTimeout(timeout)
         run(rested + sooner, restStartedAt)
       })
     }
-    run(early?.requested() ? EARLY_RUN_MIN_REST_MS : interval)
+    run(early?.requested() ? Math.min(interval, EARLY_RUN_MIN_REST_MS) : interval)
   }
 
   /** See {@link WorkerContext.requestBranchSync}. */
@@ -1101,8 +1101,8 @@ export class CmsWorker {
   }
 
   /** See {@link WorkerContext.takeBranchSyncRequests}; called once per git sync cycle. */
-  private takeBranchSyncRequests(): Set<string> {
-    const taken = this.branchSyncRequests
+  private takeBranchSyncRequests(): { branches: Set<string>; requested: boolean } {
+    const taken = { branches: this.branchSyncRequests, requested: this.gitSyncRequested }
     this.branchSyncRequests = new Set()
     this.gitSyncRequested = false
     return taken
