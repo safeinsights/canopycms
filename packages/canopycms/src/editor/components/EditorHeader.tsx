@@ -109,7 +109,7 @@ export interface EditorHeaderProps {
   branchMissing?: boolean
   /** "Get latest changes", when this user may ask on the open branch (hooks/useBaseUpdate.tsx). */
   baseUpdate?: BaseUpdateControl
-  /** The open branch's wait for the latest changes, whoever asked: every viewer waits. */
+  /** The open branch's wait for the latest changes, whoever asked: every viewer who sees it waits. */
   latestWait?: BaseUpdateWait
 }
 

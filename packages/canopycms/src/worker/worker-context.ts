@@ -118,8 +118,9 @@ export interface WorkerContext {
    */
   warnedDivergences(): Map<string, string>
   /**
-   * Run the git sync early, coalesced: at once while it rests, else as soon as the running cycle
-   * ends. `branchRef`, when given, is synced ahead of the rest. In memory only: a restart loses
+   * Run the git sync early, coalesced: once it has rested `EARLY_RUN_MIN_REST_MS` (cms-worker.ts),
+   * or its own interval if shorter, counting from when the last cycle ended, so a request during a
+   * cycle waits that long after it. `branchRef`, when given, is synced ahead of the rest. In memory only: a restart loses
    * it, and the request recorded on the branch's branch.json still gets its answer from the next
    * regular cycle (worker/rebase.ts).
    */

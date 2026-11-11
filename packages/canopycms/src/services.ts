@@ -411,7 +411,7 @@ async function _createCanopyServicesInternal(
   /**
    * Inside the content-write lock, before a commit: a rebase left by a worker that died holds no
    * lock, and its recovery (`rebase --abort`, worker/rebase.ts) would reset the branch past the
-   * commit, silently. The worker clears it on its next cycle, so this is a retry.
+   * commit, silently. In prod the worker clears it on its next cycle, so this is a retry.
    */
   const refuseDuringRebase = async (branchRoot: string): Promise<void> => {
     if (await isRebaseInProgress(branchRoot)) throw new ContentWriteLockBusyError()

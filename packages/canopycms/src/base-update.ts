@@ -8,7 +8,10 @@ import type { TaskAction } from './task-queue/cms-task-queue'
  */
 export const SYNC_BRANCH_ACTION = 'sync-branch' satisfies TaskAction
 
-/** The shortest time between two requests for one branch; a request inside it joins the last. */
+/**
+ * How long a request, or an answer that didn't fail, stands for the next request on the branch,
+ * which joins it instead (api/branch-update-from-base.ts).
+ */
 export const BASE_UPDATE_REQUEST_INTERVAL_MS = 30_000
 
 /** How long the editor waits on a request, polling for its answer. */

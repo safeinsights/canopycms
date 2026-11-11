@@ -9,8 +9,8 @@ import type { BranchMetadata, LastBaseUpdate } from '../types'
 /**
  * The editor's side of a request for the latest changes (base-update.ts): whether the open
  * branch is waiting on one, how often to poll meanwhile, and what to say. The request and the
- * answer both live on branch.json, so every viewer of the branch waits, and a reload keeps
- * waiting.
+ * answer both live on branch.json, so every viewer whose branch list shows the request waits,
+ * and a reload keeps waiting.
  */
 
 /**

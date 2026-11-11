@@ -533,7 +533,7 @@ export class CmsWorker {
   private warnedDivergences = new Map<string, string>()
   // Branches asked for since the git sync last took them (requestBranchSync), by directory name.
   private branchSyncRequests = new Set<string>()
-  // Set by a request with no git sync running to take it; cleared by the cycle that does.
+  // Set by any request; cleared by the next cycle, which takes it.
   private gitSyncRequested = false
   // Starts the resting git sync now; set only while it rests (scheduleLoop's `early`).
   private wakeGitSync: (() => void) | undefined
@@ -1057,7 +1057,8 @@ export class CmsWorker {
    * previous one COMPLETES. setTimeout chaining rather than setInterval, so
    * executions cannot overlap when one runs longer than the interval.
    *
-   * `early` lets a request cut the rest short to {@link EARLY_RUN_MIN_REST_MS}: `setWake`
+   * `early` lets a request cut the rest short to {@link EARLY_RUN_MIN_REST_MS}, or `interval` if
+   * shorter: `setWake`
    * receives a function that does so while the loop rests, and undefined while a run is in
    * flight; a request made during a run shows in `requested()` when it ends. Any number of
    * requests coalesce into one early run.

@@ -216,8 +216,9 @@ export type BaseUpdateOutcome = 'merged' | 'up-to-date' | 'conflicts' | 'failed'
 
 export interface LastBaseUpdate {
   /**
-   * When the base fetch began that the branch was brought up to: a request answers only from a
-   * fetch that began at or after it, so a cycle already running when it arrived never ends it.
+   * When the GitHub fetch began that the branch was brought up to, as the gateway reports it
+   * (worker/github-gateway.ts, `GitHubFetchResult.startedAt`): a request is answered only from a
+   * fetch begun at or after it, so a cycle already running when it arrived never ends it.
    */
   at: string
   outcome: BaseUpdateOutcome

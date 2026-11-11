@@ -32,9 +32,10 @@ export type UpdateFromBaseResponse = ApiResponse<{ requestedAt: string; branch: 
  *
  * The request is recorded on branch.json, which is what the worker answers, so a lost task or a
  * worker restart costs only the wait for its next regular cycle. The task only wakes it early.
- * An unanswered request joins the last one when that is under BASE_UPDATE_REQUEST_INTERVAL_MS old,
- * or still queued, and answers with its time. An answered one, such as a failure being retried,
- * is a new request.
+ * A request joins the last one, answering with its time: while that is unanswered, under
+ * BASE_UPDATE_GIVE_UP_MS old and either under BASE_UPDATE_REQUEST_INTERVAL_MS old or still queued;
+ * or once it was answered under BASE_UPDATE_REQUEST_INTERVAL_MS ago without failing. Anything
+ * else, a Retry after a failure among them, is a new request.
  */
 const updateFromBaseHandler = async (
   gc: { branchContext: BranchContext },
@@ -101,7 +102,9 @@ const updateFromBaseHandler = async (
         ok: false,
         status: 409,
         error:
-          'This branch is being synced, or a save is in progress. Nothing changed; try again in a moment.',
+          err.outcome === 'not-run'
+            ? 'This branch is being synced, or a save is in progress. Nothing changed; try again in a moment.'
+            : "This branch was being synced while your saved work was prepared, so the latest changes weren't requested. Try again.",
       }
     }
     console.error(
@@ -122,14 +125,14 @@ const updateFromBaseHandler = async (
   const now = Date.now()
   let requestedAt = new Date(now).toISOString()
   let joined = false
-  let leftEditing = false
+  let leftEditing: string | undefined
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
   const saved = await meta.update(
     (existing) => {
       if (existing?.branch.name !== branch.name) return null
       // A submit since the guard read: the worker would leave the request standing until a withdraw.
       if (existing.branch.status !== 'editing') {
-        leftEditing = true
+        leftEditing = existing.branch.status
         return null
       }
       const last = existing.branch.baseUpdateRequestedAt
@@ -158,7 +161,10 @@ const updateFromBaseHandler = async (
     return {
       ok: false,
       status: 409,
-      error: 'This branch is in review. Withdraw it from review to get the latest changes.',
+      error:
+        leftEditing === 'submitted' || leftEditing === 'approved'
+          ? 'This branch is in review. Withdraw it from review to get the latest changes.'
+          : "This branch can't be edited, so it can't get the latest changes.",
     }
   }
   const current = saved ?? (await BranchMetadataFileManager.loadOnly(branchContext.branchRoot))
