@@ -9,6 +9,7 @@ import { syncConvertToDraft } from './github-sync'
 import { syncPrComments } from './pr-comment-sync'
 import { CommentStore } from '../comment-store'
 import { assertNoOpenConflicts, OpenMergeConflictsError } from '../merge-conflicts'
+import { ContentWriteLockBusyError, withContentWriteLock } from '../utils/content-write-lock'
 import { getErrorMessage } from '../utils/error'
 import { REQUEST_CHANGES_NOTE_MAX_LENGTH } from '../authorization/review-role'
 import { getBranchProtection, isAdmin } from '../authorization'
@@ -183,45 +184,59 @@ const approveBranchHandler = async (
     }
   }
 
-  // A merge of GitHub's commits can record conflicts on a branch in review; what is approved must
-  // not hold one. The worker sends an approved branch back to review when that merge lands.
-  try {
-    await assertNoOpenConflicts(branchContext.branchRoot)
-  } catch (err) {
-    if (!(err instanceof OpenMergeConflictsError)) throw err
-    return {
-      ok: false,
-      status: 409,
-      code: 'OPEN_CONFLICTS',
-      error:
-        err.count === null
-          ? err.message
-          : `${err.message} It can be approved once its editor chooses what to keep.`,
-    }
-  }
-
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
 
   // As for request changes, the status on disk decides, in the step that writes. So does an
-  // unfinished submit: what's approved may not be what the pull request holds.
+  // unfinished submit: what's approved may not be what the pull request holds. So do conflicts: a
+  // merge of GitHub's commits can record some on a branch in review, under the content-write lock
+  // held here, so none lands between the check and the write.
   let found: string | undefined
   let unfinished = false
   let notQueued = false
-  const updated = await meta.saveIf(
-    {
-      branch: {
-        name: branchContext.branch.name,
-        status: 'approved',
-        review: reviewBy(req.user, 'approved'),
-      },
-    },
-    (existing) => {
-      found = existing?.branch.status
-      unfinished = existing?.branch.submitUnfinished === true
-      notQueued = existing?.branch.submitNotQueued === true
-      return found === 'submitted' && !unfinished
-    },
-  )
+  let updated: Awaited<ReturnType<typeof meta.saveIf>>
+  try {
+    updated = await withContentWriteLock(branchContext.branchRoot, async () => {
+      await assertNoOpenConflicts(branchContext.branchRoot)
+      return meta.saveIf(
+        {
+          branch: {
+            name: branchContext.branch.name,
+            status: 'approved',
+            review: reviewBy(req.user, 'approved'),
+          },
+        },
+        (existing) => {
+          found = existing?.branch.status
+          unfinished = existing?.branch.submitUnfinished === true
+          notQueued = existing?.branch.submitNotQueued === true
+          return found === 'submitted' && !unfinished
+        },
+      )
+    })
+  } catch (err) {
+    if (err instanceof OpenMergeConflictsError) {
+      return {
+        ok: false,
+        status: 409,
+        code: 'OPEN_CONFLICTS',
+        error:
+          err.count === null
+            ? err.message
+            : `${err.message} It can be approved once its editor chooses what to keep.`,
+      }
+    }
+    if (err instanceof ContentWriteLockBusyError) {
+      return {
+        ok: false,
+        status: 409,
+        error:
+          err.outcome === 'not-run'
+            ? 'This branch is being synced, or a save is in flight, so it was not approved. Try again in a moment.'
+            : 'This branch was being synced while it was approved, so the approval may not have been recorded. Refresh to check.',
+      }
+    }
+    throw err
+  }
   if (unfinished && found === 'submitted') {
     return {
       ok: false,

@@ -352,6 +352,36 @@ describe('GET /:branch/conflicts', () => {
     ])
   })
 
+  it('hides an entry moved out of a place the user may not read, whose versions came from there', async () => {
+    await recordAs({
+      [ID.hello]: { ...helloRecord(), path: `content/${PRIVATE}/post.hello.${ID.hello}.json` },
+    })
+    const ctx = createCtx({ rules: insidersOnly })
+    expect((await list(ctx)).data).toMatchObject({ conflicts: [], hiddenCount: 1 })
+    expect((await entryConflict(ctx, 'blog/hello')).status).toBe(404)
+    expect((await list(createCtx())).data?.conflicts).toEqual([
+      expect.objectContaining({ logicalPath: 'content/blog/hello' }),
+    ])
+  })
+
+  it('names a collection’s settings where the collection is now, by its id', async () => {
+    const collectionId = BLOG.split('.')[1]
+    await recordAs({
+      [collectionId]: {
+        path: `content/stories.${collectionId}/.collection.json`,
+        mergeSha: MERGE,
+        kind: 'unreadable',
+        sides: {},
+      },
+    })
+    expect((await list(createCtx())).data?.conflicts).toEqual([
+      expect.objectContaining({
+        path: `content/${BLOG}/.collection.json`,
+        logicalPath: 'content/blog',
+      }),
+    ])
+  })
+
   it('names an entry the branch renamed since the merge where it is now', async () => {
     const renamed = `content/${BLOG}/post.renamed.${ID.hello}.json`
     await fs.rename(path.join(branchRoot, files.hello), path.join(branchRoot, renamed))
@@ -756,7 +786,7 @@ describe('POST /:branch/resolve-entry/...entryPath', () => {
       mergeSha: MERGE,
       choice: 'delete',
     })
-    expect(res).toMatchObject({ ok: false, status: 409, code: 'CONFLICT_CHANGED' })
+    expect(res).toMatchObject({ ok: false, status: 409, code: 'ENTRY_GONE' })
     await expect(fs.stat(path.join(branchRoot, other))).resolves.toBeTruthy()
     expect(Object.keys(await recorded())).toEqual([ID.old])
   })
@@ -797,6 +827,47 @@ describe('POST /:branch/resolve-entry/...entryPath', () => {
     })
     expect(res).toMatchObject({ ok: false, status: 400 })
     expect(Object.keys(await recorded())).toEqual([ID.hello])
+  })
+
+  it('refuses the latest version from another collection, whose type shares the name', async () => {
+    const moved = `content/${PRIVATE}/post.hello.${ID.hello}.json`
+    const { merge, blobs } = await mergeTaking({ [moved]: json({ title: 'Moved' }) }, [files.hello])
+    await recordAs({
+      [ID.hello]: {
+        path: files.hello,
+        mergeSha: merge,
+        kind: 'unreadable',
+        sides: { base: blobs[moved], branch: helloSides.branch },
+      },
+    })
+    const res = await resolveEntry(createCtx(), 'blog/hello', {
+      id: ID.hello,
+      mergeSha: merge,
+      choice: 'use-latest',
+    })
+    expect(res).toMatchObject({ ok: false, status: 409 })
+    expect(Object.keys(await recorded())).toEqual([ID.hello])
+  })
+
+  it('lets only admins resolve a conflict in a collection’s settings, as only they edit them', async () => {
+    const collectionId = BLOG.split('.')[1]
+    await recordAs({
+      [collectionId]: {
+        path: `content/${BLOG}/.collection.json`,
+        mergeSha: MERGE,
+        kind: 'unreadable',
+        sides: {},
+      },
+    })
+    const body = { id: collectionId, mergeSha: MERGE, choice: 'keep' as const }
+    expect(await resolveEntry(createCtx(), 'content/blog', body)).toMatchObject({ status: 403 })
+    const res = await MERGE_CONFLICT_ROUTES.resolveEntry.handler(
+      createCtx(),
+      { user: adminUser },
+      { branch, entryPath: unsafeAsLogicalPath('content/blog') },
+      { ...body, id: unsafeAsContentId(collectionId) },
+    )
+    expect(res).toMatchObject({ ok: true, status: 200 })
   })
 
   it('lets an admin keep a conflict on a file that is neither entry nor settings, and no one else', async () => {

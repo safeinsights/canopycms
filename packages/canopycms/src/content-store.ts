@@ -1776,6 +1776,7 @@ export class ContentStore {
     const collection = this.assertCollection(collectionPath)
     const prePass = await this.buildPaths(collection, slug)
     if (!prePass.existed || prePass.id !== entry.id) throw new EntryGoneError()
+    this.assertEntryTypeAvailable(collection, prePass.entryTypeName)
     const lockKey = this.entryLockKey(collection, slug, prePass)
     return this.withContentWriteExclusion(() =>
       withLock(lockKey, async () => {

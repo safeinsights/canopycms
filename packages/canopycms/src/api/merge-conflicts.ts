@@ -185,11 +185,27 @@ interface LocatedRecord {
    * none for a file outside every collection.
    */
   address?: LogicalPath
+  /** The address of the path the merge recorded, where the versions it compared were. */
+  recordedAddress?: LogicalPath
+}
+
+/** The path the editor addresses `ref` by; `at` is the file's repo path. */
+const addressOf = (
+  ref: RepoPathRef,
+  at: string,
+  flatSchema: readonly FlatSchemaItem[],
+  contentRoot: string,
+): LogicalPath | undefined => {
+  if (ref.kind === 'entry') return ref.logicalPath
+  if (ref.kind === 'collection-meta') return ref.collectionPath
+  const settings = refOf(`${path.posix.dirname(at)}/.collection.json`, flatSchema, contentRoot)
+  return settings.kind === 'collection-meta' ? settings.collectionPath : undefined
 }
 
 /**
- * Every record, located: an entry where its content ID is now, since the branch may have renamed or
- * moved it since the merge recorded its path, and anything else where the record says.
+ * Every record, located: an entry, or a collection's settings, where its content ID is now, since
+ * the branch may have renamed or moved it since the merge recorded its path, and anything else
+ * where the record says.
  */
 const locateRecords = async (
   store: ContentStore,
@@ -202,39 +218,45 @@ const locateRecords = async (
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([contentId, entry]) => {
       const recorded = refOf(entry.path, flatSchema, contentRoot)
-      const now = recorded.kind === 'entry' ? index.findById(contentId) : null
-      const ref =
-        now?.type === 'entry' && now.relativePath !== entry.path
-          ? refOf(now.relativePath, flatSchema, contentRoot)
-          : recorded
-      const settings =
-        ref.kind === 'other'
-          ? refOf(`${path.posix.dirname(entry.path)}/.collection.json`, flatSchema, contentRoot)
-          : undefined
-      const address =
-        ref.kind === 'entry'
-          ? ref.logicalPath
-          : ref.kind === 'collection-meta'
-            ? ref.collectionPath
-            : settings?.kind === 'collection-meta'
-              ? settings.collectionPath
-              : undefined
-      return { contentId, entry, ref, ...(address !== undefined && { address }) }
+      const now = recorded.kind === 'other' ? null : index.findById(contentId)
+      const at =
+        recorded.kind === 'entry' && now?.type === 'entry'
+          ? now.relativePath
+          : recorded.kind === 'collection-meta' && now?.type === 'collection'
+            ? `${now.relativePath}/.collection.json`
+            : entry.path
+      const ref = at === entry.path ? recorded : refOf(at, flatSchema, contentRoot)
+      const address = addressOf(ref, at, flatSchema, contentRoot)
+      const recordedAddress = addressOf(recorded, entry.path, flatSchema, contentRoot)
+      return {
+        contentId,
+        entry,
+        ref,
+        ...(address !== undefined && { address }),
+        ...(recordedAddress !== undefined && { recordedAddress }),
+      }
     })
 }
 
 /**
- * Whether `user` may read or edit the record: by the path rules at its address, and, for a file
- * that is neither entry nor settings, which only admins are shown, as an admin.
+ * Whether `user` may read or edit the record. The path rules judge it where it is and where the
+ * merge recorded it, whose versions it shows. A file that is neither entry nor settings is shown
+ * to admins only, and collection settings, like any schema change, are edited by admins only.
  */
 const mayAccess = (
   record: LocatedRecord,
   checkAccess: (path: LogicalPath, level: 'read' | 'edit') => { allowed: boolean },
   user: ApiRequest['user'],
   level: 'read' | 'edit',
-): boolean =>
-  (record.ref.kind !== 'other' || isAdmin(user.groups)) &&
-  (record.address === undefined ? isAdmin(user.groups) : checkAccess(record.address, level).allowed)
+): boolean => {
+  const admin = isAdmin(user.groups)
+  if (record.ref.kind === 'other' && !admin) return false
+  if (level === 'edit' && record.ref.kind === 'collection-meta' && !admin) return false
+  if (record.address === undefined) return admin
+  return [record.address, record.recordedAddress ?? record.address].every(
+    (at) => checkAccess(at, level).allowed,
+  )
+}
 
 /**
  * Change the record's entries by `change`, under the record's locks, then `branch.json`
@@ -569,6 +591,7 @@ const sameKindAtLatest = async (
   entry: MergeConflictEntry,
   id: string,
   placed: Extract<RepoPathRef, { kind: 'entry' }>,
+  flatSchema: readonly FlatSchemaItem[],
   contentRoot: string,
 ): Promise<boolean> => {
   const own = parseTypedFilename(path.posix.basename(placed.physicalPath))
@@ -580,8 +603,11 @@ const sameKindAtLatest = async (
   }
   const latest = files.find((f) => parseTypedFilename(path.posix.basename(f.path))?.id === id)
   if (!latest || !own) return false
+  const latestRef = entryRefFromRepoPath(latest.path, flatSchema, contentRoot)
   return (
-    parseTypedFilename(path.posix.basename(latest.path))?.type === own.type &&
+    latestRef.kind === 'entry' &&
+    latestRef.collectionPath === placed.collectionPath &&
+    latestRef.entryType === own.type &&
     path.posix.extname(latest.path) === path.posix.extname(placed.physicalPath)
   )
 }
@@ -692,7 +718,7 @@ const resolveHandler = async (
       // type and format: the record keeps one path, the branch's.
       if (
         body.choice === 'use-latest' &&
-        !(await sameKindAtLatest(git, entry, body.id, placed, contentRoot))
+        !(await sameKindAtLatest(git, entry, body.id, placed, flatSchema, contentRoot))
       ) {
         return {
           ok: false,
@@ -748,7 +774,15 @@ const resolveHandler = async (
         code: err.outcome === 'unknown' ? 'WRITE_OUTCOME_UNKNOWN' : 'BRANCH_SYNCING',
       }
     }
-    if (err instanceof EntryGoneError) return changed
+    if (err instanceof EntryGoneError) {
+      return {
+        ok: false,
+        status: 409,
+        code: 'ENTRY_GONE',
+        error:
+          "This entry isn't on the branch any more, so only keeping the branch as it is resolves this.",
+      }
+    }
     if (err instanceof ContentConflictError) return { ok: false, status: 409, error: err.message }
     if (err instanceof ContentStoreError) {
       return { ok: false, status: 400, error: sanitizeErrorMessage(err.message) }

@@ -21,6 +21,7 @@ import {
   openBareRepo,
 } from '../test-utils'
 import type { BranchContext } from '../types'
+import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import type { BranchName, ContentId } from '../paths/types'
 import { WORKFLOW_ROUTES } from './branch-status'
 
@@ -180,6 +181,20 @@ describe('approve while conflicts are open', () => {
     await recordResolved()
     expect(await approve()).toMatchObject({ ok: true, status: 200 })
     expect(await status()).toBe('approved')
+  })
+
+  it('waits for a merge holding the branch’s content-write lock, then refuses the conflicts it recorded', async () => {
+    // The worker's merge of GitHub's commits holds this lock from before it records conflicts
+    // until the merge lands; approve must not decide on the record in between.
+    const release = await tryAcquireContentWriteLock(branchRoot)
+    const reads = vi.spyOn(MergeConflictStore.prototype, 'read')
+    const pending = approve()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(reads).not.toHaveBeenCalled()
+    await recordOpen()
+    await release()
+    expect(await pending).toMatchObject({ ok: false, status: 409, code: 'OPEN_CONFLICTS' })
+    expect(await status()).toBe('submitted')
   })
 
   it('refuses while the record does not parse', async () => {

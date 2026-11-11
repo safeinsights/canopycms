@@ -313,7 +313,7 @@ token for (api/content.ts, editor/hooks/useEntryManager.ts).
 `ContentStore` `write`/`delete`/`renameEntry`/`restore`; the admin repair-content-duplicates action;
 schema mutations (`SchemaOps`, and CLI migrate in a branch clone, via `withBranchSchemaLock`);
 `submitBranch` from checkout through push, since a commit made while the rebase is stopped
-on a conflict lands on the branch and its `--abort` resets the branch past it; `commitFiles`;
+on a conflict lands on the branch and its `--abort` resets the branch past it; `commitFiles`; approve, so it never reads a half-recorded merge;
 CLI sync's content
 replace, merge and merge abort; and, try-only, the worker's rebase, base-branch refresh,
 sparse-cone re-apply and GitHub-commit step.
