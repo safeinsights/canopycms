@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 
+import type { KeyRemap } from './merge/entry-merge'
 import { withLock } from './utils/async-mutex'
 import { isNotFoundError } from './utils/error'
 import {
@@ -205,6 +206,37 @@ export class CommentStore {
       }
       throw err
     }
+  }
+
+  /**
+   * Point the threads on `entryPath` at the item keys a merge gave their items. A remap names its
+   * item by the keys of the items holding it, outermost first, as the threads held them before the
+   * merge, so every remap is matched against a thread's keys before any of them is applied.
+   * Resolves how many threads moved.
+   */
+  async remapItemKeys(entryPath: string, remaps: readonly KeyRemap[]): Promise<number> {
+    if (remaps.length === 0) return 0
+    return this.withMutation(async (data, version) => {
+      let moved = 0
+      for (const thread of Object.values(data.threads)) {
+        const keys = thread.itemKeys
+        if (thread.entryPath !== entryPath || !keys) continue
+        const remapped = keys.map(
+          (key, depth) =>
+            remaps.find(
+              (r) =>
+                r.from === key &&
+                r.within.length === depth &&
+                r.within.every((outer, i) => outer === keys[i]),
+            )?.to ?? key,
+        )
+        if (remapped.every((key, i) => key === keys[i])) continue
+        thread.itemKeys = remapped
+        moved++
+      }
+      if (moved > 0) await this.writeData(data, version)
+      return moved
+    })
   }
 
   async addComment(options: {

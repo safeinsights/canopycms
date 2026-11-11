@@ -1691,9 +1691,9 @@ export class CmsWorker {
   }
 
   /**
-   * Test-only seam: awaited inside `rebaseActiveBranches()`'s conflict round,
-   * after `git rebase` reported conflicted files and BEFORE the
-   * `checkout --theirs` resolution loop overwrites them. No-op in production.
+   * Test-only seam: awaited inside `rebaseActiveBranches()`'s rebase round,
+   * after `git rebase` reported conflicted files and BEFORE the rebase is
+   * aborted for a merge. No-op in production.
    *
    * A test subclass overrides this to land a real `ContentStore` write at
    * exactly the instant the rebase is mid-flight, with no sleeps or shell

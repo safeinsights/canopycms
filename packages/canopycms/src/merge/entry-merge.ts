@@ -761,7 +761,7 @@ function undoUnparseableMdx(
  * distinct values: each side's adds and removes apply, and the order is `mergeOrder`'s. Nothing
  * conflicts: a set entry has no content to change.
  */
-export function mergeOrderedSet(
+function mergeOrderedSet(
   o: readonly unknown[],
   a: readonly unknown[],
   b: readonly unknown[],

@@ -103,9 +103,12 @@ export interface BranchMetadata {
   editorUrl?: string
   /** Sync status for async GitHub operations (used when Lambda has no internet) */
   syncStatus?: SyncStatus
-  /** Whether any rebase of this branch kept its version of an entry base also changed */
+  /** Whether {@link conflictFiles} names any entry */
   conflictStatus?: ConflictStatus
-  /** ContentIds of the entries where a rebase kept the branch's version; cleared when it merges */
+  /**
+   * ContentIds of the entries with a merge conflict a person has yet to resolve, derived from the
+   * clone's merge-conflicts.json (merge-conflicts.ts); cleared when the branch merges
+   */
   conflictFiles?: ContentId[]
   /**
    * Lifecycle state of the branch's PR as last observed by the worker's merge-poll
@@ -224,7 +227,7 @@ export interface LastBaseUpdate {
   outcome: BaseUpdateOutcome
   /** The base commit the branch now contains; absent when it failed before reading one. */
   baseSha?: string
-  /** For `conflicts`: how many entries kept this branch's version. */
+  /** For `conflicts`: how many entries the merge left a conflict in for a person. */
   keptEntries?: number
 }
 

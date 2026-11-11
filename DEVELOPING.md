@@ -731,13 +731,6 @@ const runRebase = (worker: CmsWorker): Promise<void> =>
 
 Tests also _assign_ through the same cast, over an instance member, which constrains any later refactor of the class — see [Extracting from a Class Whose Tests Reach Through the Instance](#extracting-from-a-class-whose-tests-reach-through-the-instance).
 
-**`--ours` and `--theirs` are reversed during a rebase**, which is why the rebase conflict resolution keeps the editor's version with `git checkout --theirs <file>`: during a rebase the editor's branch commits are "theirs". A test caught this — a good argument for real git here.
-
-| Context      | `--ours`                                 | `--theirs`                            |
-| ------------ | ---------------------------------------- | ------------------------------------- |
-| `git merge`  | Current branch (your work)               | The branch being merged in            |
-| `git rebase` | The upstream commits being replayed onto | The branch being replayed (your work) |
-
 **Assert working-tree state by porcelain status column.** `git status --porcelain` (what simple-git's `status()` parses) reports **two independent columns per file** — index and working tree — and conflating them produces a false data-loss report. `cms-worker-rebase-wedge.test.ts` classifies files around a `rebase --abort` keyed on the working-tree column only:
 
 | Status | Columns               | What it means here                                                         |

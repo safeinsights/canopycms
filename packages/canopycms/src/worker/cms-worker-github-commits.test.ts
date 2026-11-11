@@ -14,6 +14,8 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { simpleGit, type SimpleGit } from 'simple-git'
 
+import { CommentStore } from '../comment-store'
+import { MergeConflictStore } from '../merge-conflicts'
 import { BranchMetadataFileManager } from '../branch-metadata'
 import { SCHEMA_GENERATION_RESOURCE } from '../branch-schema-cache'
 import { readResourceGeneration } from '../resource-generation'
@@ -44,7 +46,7 @@ interface Setup {
   clone: SimpleGit
   /** A repository with its own view of remote.git: stands in for a person working on GitHub. */
   outside: SimpleGit
-  advanceBase(files: Record<string, string>, options?: { force?: boolean }): Promise<void>
+  advanceBase(files: Record<string, string | null>, options?: { force?: boolean }): Promise<void>
   /** A commit in the clone, as submit makes, without the push. */
   commit(files: Record<string, string>, message?: string): Promise<void>
   /** What submit's push does. */
@@ -120,9 +122,13 @@ async function createSetup(workspace: string): Promise<Setup> {
   await outside.addConfig('user.name', 'Maintainer')
   await outside.addConfig('user.email', 'maintainer@canopycms.test')
 
-  const write = async (root: string, files: Record<string, string>) => {
+  const write = async (root: string, files: Record<string, string | null>) => {
     for (const [name, content] of Object.entries(files)) {
       const full = path.join(root, name)
+      if (content === null) {
+        await fs.rm(full, { force: true })
+        continue
+      }
       await fs.mkdir(path.dirname(full), { recursive: true })
       await fs.writeFile(full, content)
     }
@@ -395,6 +401,27 @@ describe('an open pull request GitHub reports behind', () => {
     expect(meta?.status).toBe('approved')
     expect(meta?.review?.state).toBe('approved')
     expect(await queued(s, 'sync-pr-comments')).toEqual([])
+  })
+
+  it("leaves a branch whose merge the field merge would decide otherwise than git's", async () => {
+    // The base retypes an entry the branch edited: git follows the rename and merges cleanly, the
+    // field merge keeps the branch's file, and that is not the diff that was reviewed.
+    const page = (title: string) =>
+      JSON.stringify({ title, sub: 'Sub', cta: 'Go', note: 'n', more: 'm' }, null, 2) + '\n'
+    await s.advanceBase({ [ENTRY]: page('base') })
+    await s.clone.raw(['fetch', '-q', 'origin', 'main'])
+    await s.clone.raw(['merge', '-q', '--no-edit', 'FETCH_HEAD'])
+    await s.commit({ [ENTRY]: page('editor') })
+    await s.push()
+    await s.advanceBase({ [ENTRY]: null, [ENTRY.replace('/post.', '/page.')]: page('base') })
+    const before = await s.head()
+
+    const summary = await cycle(s, workerWithPullRequest(s, 'behind'))
+
+    expect(summary.rebased).toEqual([])
+    expect(await s.head()).toBe(before)
+    expect(await queued(s, 'push-branch')).toEqual([])
+    expect((await readMeta(s))?.conflictFiles ?? []).toEqual([])
   })
 
   it('does nothing when GitHub reports anything else, so no adopter gets commits unasked', async () => {
@@ -775,6 +802,37 @@ describe('bringing commits made on GitHub into a branch clone', () => {
       expect(meta?.conflictFiles).toEqual([CONFLICTED_ID])
       expect(meta?.keptOverGitHub).toEqual([ENTRY])
       expect(await queued(s, 'sync-pr-comments')).toEqual([BRANCH])
+    })
+
+    it("notes what a merge kept over GitHub's commits while its comment remaps keep failing", async () => {
+      // Every merge also changes an item key, and moving the comment threads fails.
+      const update = MergeConflictStore.prototype.update
+      vi.spyOn(MergeConflictStore.prototype, 'update').mockImplementation(function (
+        this: MergeConflictStore,
+        change,
+      ) {
+        return update.call(this, (current) => {
+          const next = change(current)
+          if (!next?.landing || current?.landing?.mergeSha === next.landing.mergeSha) return next
+          const remap = { within: [], from: 'a', to: 'b' }
+          const pending = {
+            mergeSha: next.landing.mergeSha,
+            entryPath: 'content/x',
+            remaps: [remap],
+          }
+          return { ...next, remaps: [...(next.remaps ?? []), pending] }
+        })
+      })
+      vi.spyOn(CommentStore.prototype, 'remapItemKeys').mockRejectedValue(new Error('unreadable'))
+      await s.commit({ [ENTRY]: '{"title":"editor"}\n' }, 'editor entry')
+      await s.clone.raw(['push', 'origin', `${BRANCH}:${BRANCH}`])
+      await writeMeta(s, { pullRequestNumber: 7 })
+      await s.moveGitHubOnly({ [ENTRY]: '{"title":"github"}\n' })
+
+      await cycle(s)
+
+      expect((await readMeta(s))?.keptOverGitHub).toEqual([ENTRY])
+      vi.restoreAllMocks()
     })
 
     it('still has the conflict record when the clone only caught up on the next cycle', async () => {
@@ -1394,6 +1452,9 @@ describe('bringing commits made on GitHub into a branch clone', () => {
       const result = await readResourceGeneration(s.branchPath, SCHEMA_GENERATION_RESOURCE)
       return result.ok ? result.token : undefined
     }
+    // Merged, the two sides agree; replayed, the branch's first commit conflicts.
+    await s.commit({ 'editor.txt': 'base changed\n' }, 'editor work 2')
+    await s.push()
     await s.advanceBase({ 'editor.txt': 'base changed\n' })
     const worker = makeWorker(s)
     let midRebase: string | null | undefined
@@ -1406,7 +1467,7 @@ describe('bringing commits made on GitHub into a branch clone', () => {
     const summary = await cycle(s, worker)
 
     expect(summary.failed.map((f) => f.branch)).toEqual([BRANCH])
-    expect(await s.file('editor.txt')).toBe('v1\n')
+    expect(await s.file('editor.txt')).toBe('base changed\n')
     expect(await read()).not.toBe(midRebase)
   })
 

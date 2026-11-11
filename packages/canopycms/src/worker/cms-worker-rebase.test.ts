@@ -6,8 +6,10 @@
  * - Branches with uncommitted changes (dirty working tree) are not rebased
  * - Already-in-sync branches get their stale conflict state cleared
  * - Clean rebases mark the branch as clean
- * - Conflicting files keep the branch version (--theirs during rebase), ContentIds recorded in conflictFiles
+ * - A conflicting file the field merge does not read keeps the branch version, by a merge,
+ *   with its ContentId on record and in conflictFiles
  * - Non-entry files (no embedded ContentId) are excluded from conflictFiles
+ * (The field merge's own cases: cms-worker-field-merge.test.ts.)
  */
 
 import fs from 'node:fs/promises'
@@ -450,7 +452,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
       // Metadata should reflect clean state
       const meta = await readMeta(setup.branchPath)
       expect(meta?.conflictStatus).toBe('clean')
-      expect(meta?.conflictFiles).toEqual([])
+      expect(meta?.conflictFiles ?? []).toEqual([])
     })
   })
 
@@ -669,7 +671,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
     const ENTRY_FILE = 'page.about.TESTENTRYabc.json'
     const ENTRY_ID = 'TESTENTRYabc'
 
-    it('applies --theirs for conflicting entry files, keeps branch version, records ContentId', async () => {
+    it('keeps the branch version of a conflicting file outside the content root, recording its ContentId', async () => {
       const setup = await createBranchSetup(tmpDir, 'my-feature', {
         initialFiles: { [ENTRY_FILE]: '{"title":"base content"}' },
       })
@@ -694,7 +696,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
       const status = await setup.branchGit.status()
       expect(status.behind).toBe(0)
 
-      // Branch version should be preserved (--theirs during rebase)
+      // Not an entry the field merge reads: the branch's version stands, as a conflict on record
       const fileContent = await fs.readFile(path.join(setup.branchPath, ENTRY_FILE), 'utf8')
       expect(fileContent).toBe('{"title":"branch version"}')
 
@@ -704,7 +706,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
       expect(meta?.conflictFiles).toContain(ENTRY_ID)
     })
 
-    it("adds a rebase's conflicts to the ones already recorded", async () => {
+    it('derives conflictFiles from the conflict record once a merge writes one', async () => {
       const setup = await createBranchSetup(tmpDir, 'my-feature', {
         initialFiles: { [ENTRY_FILE]: '{"title":"base content"}' },
       })
@@ -719,7 +721,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
 
       const meta = await readMeta(setup.branchPath)
       expect(meta?.conflictStatus).toBe('conflicts-detected')
-      expect(meta?.conflictFiles).toEqual(['EARLIERabcde', ENTRY_ID])
+      expect(meta?.conflictFiles).toEqual([ENTRY_ID])
     })
 
     it('keeps an earlier conflict through a later clean rebase', async () => {
@@ -756,15 +758,15 @@ describe('CmsWorker rebaseActiveBranches', () => {
 
       const meta = await readMeta(setup.branchPath)
       // No entry ContentIds were involved, so conflict is invisible to the editor
-      expect(meta?.conflictStatus).toBe('clean')
-      expect(meta?.conflictFiles).toEqual([])
+      expect(meta?.conflictStatus ?? 'clean').toBe('clean')
+      expect(meta?.conflictFiles ?? []).toEqual([])
+      expect(await fs.readFile(path.join(setup.branchPath, 'README.md'), 'utf8')).toBe(
+        '# Branch heading',
+      )
     })
 
-    it('records parent collection ContentId when .collection.json conflicts in a subcollection', async () => {
-      // Subcollection directory has an embedded ID: posts.cNbR5xFm2Kpd
-      const COLLECTION_DIR = 'content/posts.cNbR5xFm2Kpd'
-      const COLLECTION_ID = 'cNbR5xFm2Kpd'
-      const META_FILE = `${COLLECTION_DIR}/.collection.json`
+    it('merges entries both sides added to a .collection.json order, with no conflict', async () => {
+      const META_FILE = 'content/posts.cNbR5xFm2Kpd/.collection.json'
 
       const setup = await createBranchSetup(tmpDir, 'my-feature', {
         initialFiles: { [META_FILE]: '{"name":"posts","order":[]}' },
@@ -777,6 +779,37 @@ describe('CmsWorker rebaseActiveBranches', () => {
       await setup.pushToRemote(
         { [META_FILE]: '{"name":"posts","order":["main-order"]}' },
         'main: reorder collection',
+      )
+
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+
+      await runRebase(makeWorker(tmpDir))
+
+      const meta = await readMeta(setup.branchPath)
+      expect(meta?.conflictFiles ?? []).toEqual([])
+      const merged: unknown = JSON.parse(
+        await fs.readFile(path.join(setup.branchPath, META_FILE), 'utf8'),
+      )
+      expect(merged).toEqual({ name: 'posts', order: ['main-order', 'branch-order'] })
+    })
+
+    it('records parent collection ContentId when .collection.json conflicts in a subcollection', async () => {
+      // Subcollection directory has an embedded ID: posts.cNbR5xFm2Kpd
+      const COLLECTION_DIR = 'content/posts.cNbR5xFm2Kpd'
+      const COLLECTION_ID = 'cNbR5xFm2Kpd'
+      const META_FILE = `${COLLECTION_DIR}/.collection.json`
+
+      const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        initialFiles: { [META_FILE]: '{"name":"posts","label":"Posts"}' },
+      })
+
+      await setup.commitToBranch(
+        { [META_FILE]: '{"name":"posts","label":"Branch posts"}' },
+        'branch: relabel collection',
+      )
+      await setup.pushToRemote(
+        { [META_FILE]: '{"name":"posts","label":"Main posts"}' },
+        'main: relabel collection',
       )
 
       await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
@@ -794,15 +827,15 @@ describe('CmsWorker rebaseActiveBranches', () => {
       const META_FILE = 'content/.collection.json'
 
       const setup = await createBranchSetup(tmpDir, 'my-feature', {
-        initialFiles: { [META_FILE]: '{"entries":[]}' },
+        initialFiles: { [META_FILE]: '{"entries":[],"label":"Base"}' },
       })
 
       await setup.commitToBranch(
-        { [META_FILE]: '{"entries":[],"order":["branch"]}' },
+        { [META_FILE]: '{"entries":[],"label":"Branch"}' },
         'branch: update root schema',
       )
       await setup.pushToRemote(
-        { [META_FILE]: '{"entries":[],"order":["main"]}' },
+        { [META_FILE]: '{"entries":[],"label":"Main"}' },
         'main: update root schema',
       )
 
@@ -825,15 +858,15 @@ describe('CmsWorker rebaseActiveBranches', () => {
       const META_FILE = 'cms/content/.collection.json'
 
       const setup = await createBranchSetup(tmpDir, 'my-feature', {
-        initialFiles: { [META_FILE]: '{"entries":[]}' },
+        initialFiles: { [META_FILE]: '{"entries":[],"label":"Base"}' },
       })
 
       await setup.commitToBranch(
-        { [META_FILE]: '{"entries":[],"order":["branch"]}' },
+        { [META_FILE]: '{"entries":[],"label":"Branch"}' },
         'branch: update root schema',
       )
       await setup.pushToRemote(
-        { [META_FILE]: '{"entries":[],"order":["main"]}' },
+        { [META_FILE]: '{"entries":[],"label":"Main"}' },
         'main: update root schema',
       )
 
@@ -854,16 +887,16 @@ describe('CmsWorker rebaseActiveBranches', () => {
       const META_FILE = 'content/docs/.collection.json'
 
       const setup = await createBranchSetup(tmpDir, 'my-feature', {
-        initialFiles: { [META_FILE]: '{"name":"docs","order":[]}' },
+        initialFiles: { [META_FILE]: '{"name":"docs","label":"Docs"}' },
       })
 
       await setup.commitToBranch(
-        { [META_FILE]: '{"name":"docs","order":["branch"]}' },
-        'branch: reorder docs',
+        { [META_FILE]: '{"name":"docs","label":"Branch docs"}' },
+        'branch: relabel docs',
       )
       await setup.pushToRemote(
-        { [META_FILE]: '{"name":"docs","order":["main"]}' },
-        'main: reorder docs',
+        { [META_FILE]: '{"name":"docs","label":"Main docs"}' },
+        'main: relabel docs',
       )
 
       await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
@@ -874,8 +907,8 @@ describe('CmsWorker rebaseActiveBranches', () => {
       const meta = await readMeta(setup.branchPath)
       // No entry ContentIds, no root-collection match -- conflict is invisible to
       // the editor, same as the pre-existing "excludes non-entry files" case.
-      expect(meta?.conflictStatus).toBe('clean')
-      expect(meta?.conflictFiles).toEqual([])
+      expect(meta?.conflictStatus ?? 'clean').toBe('clean')
+      expect(meta?.conflictFiles ?? []).toEqual([])
     })
 
     it('records both entry and collection ContentIds for mixed conflicts', async () => {
@@ -886,21 +919,21 @@ describe('CmsWorker rebaseActiveBranches', () => {
 
       const setup = await createBranchSetup(tmpDir, 'my-feature', {
         initialFiles: {
-          [META_FILE]: '{"name":"posts","order":[]}',
+          [META_FILE]: '{"name":"posts","label":"Posts"}',
           [ENTRY_FILE]: '{"title":"base"}',
         },
       })
 
       await setup.commitToBranch(
         {
-          [META_FILE]: '{"name":"posts","order":["branch"]}',
+          [META_FILE]: '{"name":"posts","label":"Branch posts"}',
           [ENTRY_FILE]: '{"title":"branch version"}',
         },
         'branch: update both',
       )
       await setup.pushToRemote(
         {
-          [META_FILE]: '{"name":"posts","order":["main"]}',
+          [META_FILE]: '{"name":"posts","label":"Main posts"}',
           [ENTRY_FILE]: '{"title":"main version"}',
         },
         'main: update both',
@@ -975,10 +1008,12 @@ describe('CmsWorker rebaseActiveBranches', () => {
       expect(meta?.name).toBe(REF)
     })
 
-    it('is kept when a rebase records conflicts', async () => {
+    it('is kept when a merge records conflicts', async () => {
       const setup = await createBranchSetup(tmpDir, 'canopycms-prod-my-feature', {
         initialFiles: { [ENTRY_FILE]: '{"title":"base content"}' },
       })
+      // A merge publishes the clone's own ref, which is the name.
+      await setup.branchGit.raw(['branch', '-m', REF])
       await setup.commitToBranch({ [ENTRY_FILE]: '{"title":"branch version"}' })
       await setup.pushToRemote({ [ENTRY_FILE]: '{"title":"main version"}' })
       await writeMeta(setup.branchPath, setup.contentBranchesPath, { name: REF })

@@ -15,8 +15,7 @@
         ".storybook/*.{ts,tsx}!",
         "src/**/*.stories.tsx!",
         "src/config/index.ts!",
-        "src/authorization/groups/index.ts!",
-        "src/merge/entry-merge.ts!"
+        "src/authorization/groups/index.ts!"
       ],
       "project": ["src/**/*.{ts,tsx}!", "scripts/**/*.{ts,mjs}!", ".storybook/**/*.{ts,tsx}!"],
       "ignore": [
