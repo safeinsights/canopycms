@@ -7,9 +7,8 @@
  * healthy. Editors meanwhile read -- and could save over -- conflict-marker
  * content. Recovery meant an operator running `git rebase --abort` on EFS.
  *
- *  1. A modify/delete conflict, which a per-file resolution inside the round
- *     loop's own catch can turn into a throw past both `rebase --abort` sites.
- *     The merge decides it, and these tests pin the outcome.
+ *  1. A modify/delete conflict, which no rule in a rebase round settles: the
+ *     rebase is aborted and the merge decides it. These tests pin the outcome.
  *
  *  2. A rebase interrupted by worker termination -- SIGKILL, OOM on the 512MB
  *     t4g.nano, spot interruption, or the ASG rolling the instance, which
