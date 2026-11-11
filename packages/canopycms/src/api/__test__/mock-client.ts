@@ -10,7 +10,7 @@ import { createLogicalPath, createPhysicalPath } from '../../paths'
 import type { ContentId } from '../../paths'
 import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, CreateBranchBody, UpdateBranchAccessBody } from '../branch'
 import type { BranchChangesResponse } from '../branch-changes'
-import type { BranchEntryChangeResponse } from '../branch-entry-changes'
+import type { BranchEntryChangeResponse, RestoreEntryBody, RestoreEntryResponse } from '../branch-entry-changes'
 import type { BranchMergeResponse, RequestChangesBody, SubmitBranchBody, SubmitBranchResponse } from '../branch-status'
 import type { AdminDeleteTaskResponse, AdminRetryTaskResponse, AdminStatusResponse, AdminTasksResponse, BranchHealthResponse, DeleteArchivedBranchesBody, DeleteArchivedBranchesResponse, DismissUnpublishedResponse, PurgeBranchDirResponse, RepairBranchDirResponse, RepairContentDuplicatesResponse } from '../admin'
 import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from '../comments'
@@ -53,6 +53,7 @@ export function createMockApiClient(): MockApiClient {
   changes: {
     list: vi.fn().mockResolvedValue(mockSuccess({"base":"main","entries":[],"collections":[],"hiddenChanges":false})),
     entry: vi.fn().mockResolvedValue(mockSuccess({"before":null,"after":null,"mergeBaseSha":""})),
+    restore: vi.fn().mockResolvedValue(mockSuccess({"logicalPath":"","contentId":""})),
   },
 
   workflow: {
@@ -175,6 +176,10 @@ export function mockBranchChangesResponse(): BranchChangesResponse {
 
 export function mockBranchEntryChangeResponse(): BranchEntryChangeResponse {
   return mockSuccess({"before":null,"after":null,"mergeBaseSha":""})
+}
+
+export function mockRestoreEntryResponse(): RestoreEntryResponse {
+  return mockSuccess({"logicalPath":"","contentId":""})
 }
 
 export function mockBranchMergeResponse(): BranchMergeResponse {

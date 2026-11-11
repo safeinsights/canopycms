@@ -18,6 +18,7 @@ import {
   SimpleGrid,
   Stack,
   Text,
+  Tooltip,
   VisuallyHidden,
   em,
   getBreakpointValue,
@@ -39,7 +40,9 @@ import {
 import type { BranchChangeEntry } from '../../api/branch-changes'
 import type { FieldConfig } from '../../config'
 import { EDITOR_THUMBNAIL_WIDTHS } from '../../assets/editor-thumbnail-widths'
+import type { CanopyPathSegment } from '../canopy-path'
 import { useAssetContext } from '../context'
+import { EDITOR_ACTIONS } from '../copy'
 import {
   computeEntryDiff,
   type DiffPart,
@@ -50,8 +53,19 @@ import {
 } from '../entry-diff'
 import type { EntryChangeState } from '../hooks/useBranchChangesData'
 import { editorImageSrc } from '../media/editor-image-src'
+import { findBodyFieldName } from '../../utils/body-field'
 import { formatRelativeTime } from '../relative-time'
 import { OverlayDrawer } from '../shell/OverlayHeader'
+import { movedThreadsNote } from '../undo-removal'
+import {
+  canSetBack,
+  canopyPathOf,
+  formValueOfSide,
+  holdsAs,
+  setAllBack,
+  setChangeBack,
+  sideOfFormValue,
+} from '../undo-change'
 import { focusReturnProps } from '../utils/focus-return'
 import { LoadingCards, LoadingSummary } from './EntryChangesSkeleton'
 
@@ -90,6 +104,43 @@ export interface EntryChangesDrawerProps {
   onOpenEntry?: () => void
   /** The branch's pull request, offered where this drawer can't compare. */
   pullRequestUrl?: string
+  /** Undoing the entry's changes in its form; given only for the open entry. */
+  undo?: EntryChangesUndo
+  /**
+   * Why this user can't change the entry at all, such as a path rule: its undo, delete and
+   * restore controls are hidden and this one line says why.
+   */
+  noEditReason?: string
+  /**
+   * Why those controls can't act now, such as a locked branch: they stay, disabled, saying so,
+   * as the form's do.
+   */
+  lockedReason?: string
+  /** Opens the confirm that deletes an entry added on the branch, closing the drawer first. */
+  onDeleteEntry?: () => void
+  /** Puts back an entry deleted on the branch; resolves with why it couldn't, when it couldn't. */
+  onRestoreEntry?: () => Promise<RestoreRefusal | undefined>
+}
+
+/** Why "Restore entry" didn't: `warning` where nothing is lost, or the outcome is unknown. */
+export interface RestoreRefusal {
+  message: string
+  tone: 'warning' | 'error'
+}
+
+/** The open entry's form value, and the way to change its draft; see `undo-change.ts`. */
+export interface EntryChangesUndo {
+  /** The entry's value as its form holds it, unsaved edits included. */
+  value: Record<string, unknown>
+  /**
+   * Its saved value as the form loaded it, which a redo puts back: references resolved, so a
+   * redone entry matches its saved state and isn't left unsaved. Else the comparison's saved side.
+   */
+  saved?: Record<string, unknown>
+  /** Sets the entry's draft to what `update` makes of its value at that moment. */
+  update: (update: (value: Record<string, unknown>) => Record<string, unknown>) => void
+  /** Open field threads inside a canopy path, which taking out an item there moves to the entry. */
+  threadsWithin?: (path: CanopyPathSegment[]) => number
 }
 
 const KIND_BADGES: Record<EntryChange['kind'], { label: string; icon: React.ReactNode }> = {
@@ -639,11 +690,63 @@ const SideColumn: React.FC<{ label: string; change: EntryChange; side: Side }> =
   )
 }
 
+/**
+ * A drawer control that, given a `reason`, stays focusable but doesn't act, its Tooltip saying
+ * why (`data-disabled` keeps the Tooltip working on focus and touch).
+ */
+const ReasonedButton: React.FC<{
+  reason?: string
+  onClick: () => void
+  children: React.ReactNode
+  danger?: boolean
+  loading?: boolean
+  'aria-label'?: string
+  'data-testid'?: string
+}> = ({ reason, onClick, danger, ...props }) => (
+  <Tooltip label={reason} disabled={!reason} multiline maw={280} position="bottom-start">
+    <Button
+      size="compact-sm"
+      variant="subtle"
+      {...(danger && { color: 'red', c: 'var(--canopy-danger-text)' })}
+      {...props}
+      onClick={() => {
+        if (!reason) onClick()
+      }}
+      data-disabled={reason ? true : undefined}
+      aria-disabled={reason ? true : undefined}
+    />
+  </Tooltip>
+)
+
+/** A change's undo control and, once undone, what that did. */
+interface CardUndo {
+  undone: boolean
+  /** Why it can't act, when it can't. */
+  reason?: string
+  /** What else undoing it did, such as comment threads moved. */
+  note?: string
+  onToggle: () => void
+}
+
+const UNDONE_IN_FORM = 'Undone in the form. Save to keep it.'
+const ALL_UNDONE_IN_FORM = 'All changes undone in the form. Save to keep them.'
+// Undo and redo replace what the form holds at a change with the base's or the saved value, so
+// neither acts on a change the form has edited since: the edit would be lost.
+const UNSAVED_EDIT_REASON =
+  'This change has unsaved edits. Save them, or choose "Discard changes" in the entry\'s menu, on its name, first.'
+const UNSAVED_EDITS_REASON =
+  'Some of these changes have unsaved edits. Save them, or choose "Discard changes" in the entry\'s menu, on its name, first.'
+/** Beside the undo controls, where an undo makes the entry unsaved, in place of a new notice. */
+const UNSAVED_IN_FORM = 'Unsaved edits, undos included, apply when you save.'
+const NOT_IN_FORM_REASON =
+  'The form no longer has the item this change is in, so it can’t be undone here.'
+
 /** One change: its labelled breadcrumb, its kind in a word, and the values on each side. */
-const ChangeCard: React.FC<{ change: EntryChange; wholeEntry: Side | undefined }> = ({
-  change,
-  wholeEntry,
-}) => {
+const ChangeCard: React.FC<{
+  change: EntryChange
+  wholeEntry: Side | undefined
+  undo?: CardUndo
+}> = ({ change, wholeEntry, undo }) => {
   const moved =
     change.kind === 'moved' &&
     change.before?.kind === 'position' &&
@@ -689,6 +792,21 @@ const ChangeCard: React.FC<{ change: EntryChange; wholeEntry: Side | undefined }
           Too many changes to highlight.
         </Text>
       )}
+      {undo && (
+        <Group gap="xs" mt="xs" wrap="wrap" align="center">
+          <ReasonedButton
+            reason={undo.reason}
+            onClick={undo.onToggle}
+            aria-label={`${undo.undone ? EDITOR_ACTIONS.redoChange : EDITOR_ACTIONS.undoChange} to ${change.path.join(' › ')}`}
+            data-testid="entry-change-undo"
+          >
+            {undo.undone ? EDITOR_ACTIONS.redoChange : EDITOR_ACTIONS.undoChange}
+          </ReasonedButton>
+          <Text size="xs" data-testid="entry-change-undone">
+            {undo.undone ? [UNDONE_IN_FORM, undo.note].filter(Boolean).join(' ') : ''}
+          </Text>
+        </Group>
+      )}
     </Paper>
   )
 }
@@ -731,7 +849,19 @@ const changeSummary = (changes: readonly EntryChange[], base: string): string =>
 /** The drawer's body: its states, then the summary and one card per change. */
 export const EntryChangesView: React.FC<
   Omit<EntryChangesDrawerProps, 'opened' | 'onClose' | 'onExited' | 'returnFocusTo'>
-> = ({ base, subject, state, referenceTitle, onOpenEntry, pullRequestUrl }) => {
+> = ({
+  base,
+  subject,
+  state,
+  referenceTitle,
+  onOpenEntry,
+  pullRequestUrl,
+  undo,
+  noEditReason,
+  lockedReason,
+  onDeleteEntry,
+  onRestoreEntry,
+}) => {
   const { data, error } = state
   const diff = useMemo(
     () =>
@@ -744,6 +874,32 @@ export const EntryChangesView: React.FC<
       }),
     [data, subject.fields, referenceTitle],
   )
+  // The changes the form still holds: the base against the form's value. A saved change missing
+  // from them is undone in the form, so the drawer keeps no undo state of its own.
+  const formValue = noEditReason ? undefined : undo?.value
+  const heldKeys = useMemo(() => {
+    if (!formValue || !data?.before || !data.after) return undefined
+    const held = computeEntryDiff({
+      fields: subject.fields,
+      before: data.before,
+      after: sideOfFormValue(formValue, data.after),
+      marks: false,
+    })
+    return new Set(held.changes.map((change) => change.key))
+  }, [formValue, data, subject.fields])
+  // What taking out an item did to its threads, said beside its undo until it is redone.
+  const [notes, setNotes] = useState<Record<string, string>>({})
+  // What the last undo or redo did, said once here rather than by every card it touched. `id`
+  // re-keys the text, so a second action with the same words is announced too.
+  const [announcement, setAnnouncement] = useState<{ id: number; text: string }>()
+  const announce = (text: string) => setAnnouncement((last) => ({ id: (last?.id ?? 0) + 1, text }))
+  const [restoring, setRestoring] = useState(false)
+  const [restoreRefusal, setRestoreRefusal] = useState<RestoreRefusal>()
+  useEffect(() => {
+    setNotes({})
+    setAnnouncement(undefined)
+    setRestoreRefusal(undefined)
+  }, [subject.logicalPath, undo?.saved])
 
   // A refusal no retry passes: its reason, and the ways the entry can still be looked at.
   const refusal =
@@ -835,6 +991,81 @@ export const EntryChangesView: React.FC<
           ? undefined
           : 'Only formatting changed; no field values differ.'
 
+  // Undo sets an edited entry's values back; an entry type change has no field to set back.
+  const typeChanged = diff.changes.some((change) => !canSetBack(change))
+  const undoable =
+    !!undo && !!heldKeys && !!data.before && !!data.after && count > 0 && !typeChanged
+  // The field the diff keys an md/mdx body under, as `computeEntryDiff` picks it.
+  const bodySide = data.after ?? data.before
+  const bodyField =
+    bodySide?.body === undefined
+      ? undefined
+      : (bodySide.bodyFieldName ?? findBodyFieldName(subject.fields))
+  const baseValue = data.before && formValueOfSide(data.before)
+  const savedValue = data.after && (undo?.saved ?? formValueOfSide(data.after))
+  const isUndone = (change: EntryChange) => !!heldKeys && !heldKeys.has(change.key)
+  const allUndone = undoable && diff.changes.every(isUndone)
+  // The form holds `change` as neither the side it was last set to has it, the saved value
+  // or, once undone, the base's: an edit made since, which an undo or redo would replace.
+  const editedSince = (change: EntryChange): boolean =>
+    !!undo &&
+    !!savedValue &&
+    !!baseValue &&
+    !holdsAs(undo.value, isUndone(change) ? baseValue : savedValue, change, bodyField)
+  const cardUndo = (change: EntryChange): CardUndo | undefined => {
+    if (!undoable || !undo || !baseValue || !savedValue) return undefined
+    const held = isUndone(change)
+    const source = held ? savedValue : baseValue
+    const placeable = !!setChangeBack(undo.value, source, change, bodyField)
+    // A change the form can't take back, such as one inside an item it no longer has, isn't
+    // offered as undone.
+    const undone = held && placeable
+    return {
+      undone,
+      reason:
+        lockedReason ??
+        (!placeable ? NOT_IN_FORM_REASON : editedSince(change) ? UNSAVED_EDIT_REASON : undefined),
+      note: undone ? notes[change.key] : undefined,
+      onToggle: () => {
+        // Taking out an item the branch added moves its threads to the entry, as a Remove does.
+        const path =
+          !undone && change.item && change.kind === 'added'
+            ? canopyPathOf(undo.value, change, bodyField)
+            : undefined
+        const note = path && undo.threadsWithin && movedThreadsNote(undo.threadsWithin(path))
+        setNotes(({ [change.key]: _dropped, ...rest }) =>
+          note ? { ...rest, [change.key]: note } : rest,
+        )
+        const where = change.path.join(' › ')
+        announce(
+          undone
+            ? `Redone: ${where}.`
+            : [`Undone: ${where}. Save to keep it.`, note].filter(Boolean).join(' '),
+        )
+        undo.update((value) => setChangeBack(value, source, change, bodyField) ?? value)
+      },
+    }
+  }
+  const sameCollection =
+    !!subject.from &&
+    subject.from.slice(0, subject.from.lastIndexOf('/')) ===
+      subject.logicalPath.slice(0, subject.logicalPath.lastIndexOf('/'))
+  const editable = !noEditReason
+  const restorable = !!data.before && !data.after && !!onRestoreEntry
+  // With one change, its card's "Undo change" is the whole of "Undo all changes".
+  const undoAll = undoable && count > 1
+  const entryControls = editable && (undoAll || (!data.before && onDeleteEntry) || restorable)
+  const restore = async () => {
+    if (!onRestoreEntry || restoring) return
+    setRestoring(true)
+    setRestoreRefusal(undefined)
+    try {
+      setRestoreRefusal(await onRestoreEntry())
+    } finally {
+      setRestoring(false)
+    }
+  }
+
   return (
     <Stack gap="sm">
       <StatusRegion>
@@ -850,7 +1081,12 @@ export const EntryChangesView: React.FC<
         )}
       </StatusRegion>
       {errorNotice}
-      {subject.unsavedEdits && (
+      {undoable && (
+        <VisuallyHidden role="status" data-testid="entry-changes-announcement">
+          {announcement && <span key={announcement.id}>{announcement.text}</span>}
+        </VisuallyHidden>
+      )}
+      {subject.unsavedEdits && !undoable && (
         <Alert
           variant="light"
           color="blue"
@@ -860,10 +1096,115 @@ export const EntryChangesView: React.FC<
           <Text size="sm">Unsaved edits aren’t included. Save to include them.</Text>
         </Alert>
       )}
+      {noEditReason && (
+        <Text size="sm" data-testid="entry-changes-no-edit">
+          {noEditReason}
+        </Text>
+      )}
+      {editable && undo && typeChanged && (
+        <Text size="sm" data-testid="entry-changes-type-changed">
+          This entry’s type changed on this branch, so its changes can’t be undone here.
+        </Text>
+      )}
+      {editable && undo && movedFrom && (
+        <Text size="sm" data-testid="entry-changes-move-hint">
+          Undoing changes doesn’t move the entry back.
+          {sameCollection && ` To move it back, use "${EDITOR_ACTIONS.changeUrl}…".`}
+        </Text>
+      )}
+      {editable && lockedReason && (undoable || entryControls) && (
+        <Text size="sm" data-testid="entry-changes-locked">
+          {lockedReason}
+        </Text>
+      )}
+      {entryControls && (
+        <Group gap="xs" wrap="wrap" align="center">
+          {undoAll && undo && baseValue && savedValue && (
+            <ReasonedButton
+              reason={
+                lockedReason ?? (diff.changes.some(editedSince) ? UNSAVED_EDITS_REASON : undefined)
+              }
+              onClick={() => {
+                if (allUndone) {
+                  setNotes({})
+                  announce('All changes redone in the form.')
+                  undo.update((value) => setAllBack(value, savedValue, diff.changes, bodyField))
+                  return
+                }
+                // Taking out the items the branch added moves their threads, as a Remove does.
+                const moved = diff.changes.flatMap((change) => {
+                  if (isUndone(change) || !change.item || change.kind !== 'added') return []
+                  const path = canopyPathOf(undo.value, change, bodyField)
+                  const count = path && undo.threadsWithin ? undo.threadsWithin(path) : 0
+                  return count > 0 ? [{ key: change.key, count }] : []
+                })
+                setNotes(
+                  Object.fromEntries(
+                    moved.map(({ key, count }) => [key, movedThreadsNote(count) ?? '']),
+                  ),
+                )
+                const total = moved.reduce((sum, { count }) => sum + count, 0)
+                announce([ALL_UNDONE_IN_FORM, movedThreadsNote(total)].filter(Boolean).join(' '))
+                undo.update((value) => setAllBack(value, baseValue, diff.changes, bodyField))
+              }}
+              data-testid="entry-changes-undo-all"
+            >
+              {allUndone ? EDITOR_ACTIONS.redoAllChanges : EDITOR_ACTIONS.undoAllChanges}
+            </ReasonedButton>
+          )}
+          {!data.before && onDeleteEntry && (
+            <ReasonedButton
+              reason={lockedReason}
+              onClick={onDeleteEntry}
+              danger
+              data-testid="entry-changes-delete"
+            >
+              {EDITOR_ACTIONS.deleteEntry}
+            </ReasonedButton>
+          )}
+          {restorable && (
+            <ReasonedButton
+              reason={lockedReason}
+              onClick={() => void restore()}
+              loading={restoring}
+              data-testid="entry-changes-restore"
+            >
+              {EDITOR_ACTIONS.restoreEntry}
+            </ReasonedButton>
+          )}
+        </Group>
+      )}
+      {undoable && (
+        // Its own line, held from the start, so the text arriving with an undo shifts nothing.
+        <Text size="xs" mih={20} data-testid="entry-changes-all-undone">
+          {allUndone ? ALL_UNDONE_IN_FORM : subject.unsavedEdits ? UNSAVED_IN_FORM : ''}
+        </Text>
+      )}
+      {editable && restoreRefusal && (
+        <Alert
+          variant="light"
+          color={restoreRefusal.tone === 'warning' ? 'yellow' : 'red'}
+          icon={
+            restoreRefusal.tone === 'warning' ? (
+              <IconAlertTriangle size={16} />
+            ) : (
+              <IconAlertCircle size={16} />
+            )
+          }
+          data-testid="entry-changes-restore-refused"
+        >
+          <Text size="sm">{restoreRefusal.message}</Text>
+        </Alert>
+      )}
       {count > 0 && (
         <Stack component="ul" gap="sm" p={0} m={0} style={{ listStyle: 'none' }}>
           {diff.changes.map((change) => (
-            <ChangeCard key={change.key} change={change} wholeEntry={wholeEntry} />
+            <ChangeCard
+              key={change.key}
+              change={change}
+              wholeEntry={wholeEntry}
+              undo={editable ? cardUndo(change) : undefined}
+            />
           ))}
         </Stack>
       )}

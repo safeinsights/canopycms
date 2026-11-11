@@ -82,7 +82,11 @@ import {
 import { useBranchActions } from './hooks/useBranchActions'
 import { branchAddress, displayBranchName } from './branch-names'
 import { useBranchChangesData, useEntryChangeData } from './hooks/useBranchChangesData'
-import type { EntryChangesSubject } from './components/EntryChangesDrawer'
+import type {
+  EntryChangesSubject,
+  EntryChangesUndo,
+  RestoreRefusal,
+} from './components/EntryChangesDrawer'
 import { LazyEntryChangesDrawer } from './components/LazyEntryChangesDrawer'
 import type { BranchChangeEntry } from '../api/branch-changes'
 import type { UnsavedSummary } from './hooks/useDraftManager'
@@ -97,6 +101,7 @@ import { useEntryLinkResolution } from './hooks/useEntryLinkResolution'
 import { useReferenceResolution } from './hooks/useReferenceResolution'
 import { usePreviewMarks } from './hooks/usePreviewMarks'
 import { branchBarStatus, describeBranchLock } from './branch-lock'
+import { NO_EDIT_ACCESS_REASON } from './copy'
 import { EditorHeader, EditorRail, EntryHeader } from './components'
 import { showSaveAllResult } from './components/SaveAllResult'
 import { RenameEntryModal } from './components/RenameEntryModal'
@@ -148,7 +153,7 @@ import { findFieldTarget, focusFieldTarget } from './field-target'
 import { PreviewFollowContext, usePreviewFollow } from './hooks/usePreviewFollow'
 import { UndoToastMessage } from './components/UndoToastMessage'
 import { getNotificationDuration } from './utils/env'
-import { MayHaveLandedError } from './unanswered'
+import { MayHaveLandedError, isGatewayFailure, isUnanswered } from './unanswered'
 
 export interface EditorEntry {
   path: LogicalPath // Logical path (no IDs/extensions)
@@ -199,6 +204,20 @@ export interface EditorCollection {
   children?: EditorCollection[]
   /** False when this user's path permissions refuse a new entry here (the entries listing). */
   canAddEntry?: boolean
+}
+
+/** The collection at `path` in a collection tree. */
+const findCollection = (
+  cols: EditorCollection[] | undefined,
+  path: string,
+): EditorCollection | undefined => {
+  if (!cols) return undefined
+  for (const col of cols) {
+    if (col.path === path) return col
+    const found = findCollection(col.children, path)
+    if (found) return found
+  }
+  return undefined
 }
 
 export interface EditorProps {
@@ -1448,18 +1467,6 @@ const EditorContent: React.FC<EditorProps> = ({
     contentId: string,
     direction: 'up' | 'down',
   ) => {
-    const findCollection = (
-      cols: EditorCollection[] | undefined,
-      path: string,
-    ): EditorCollection | undefined => {
-      if (!cols) return undefined
-      for (const col of cols) {
-        if (col.path === path) return col
-        const found = findCollection(col.children, path)
-        if (found) return found
-      }
-      return undefined
-    }
     // Resolve against `collectionsFromApi`, NOT `activeCollections`: the latter
     // falls back to the build-time `collections` prop whenever the fetch is
     // still empty -- exactly the state mid-branch-switch. A write resolved
@@ -1732,7 +1739,11 @@ const EditorContent: React.FC<EditorProps> = ({
     standIn: () => null,
   })
   const showChangesRef = useRef<HTMLButtonElement>(null)
+  // A confirm never opens over the drawer, nor while it closes: its focus return would take
+  // focus out of the confirm. So "Delete entry" closes the drawer, and its exit opens the confirm.
+  const deleteAfterChangesRef = useRef<LogicalPath>()
   useEffect(() => {
+    deleteAfterChangesRef.current = undefined
     setChangesOpen(false)
     setChangesShown(false)
   }, [branchNameState])
@@ -1787,6 +1798,7 @@ const EditorContent: React.FC<EditorProps> = ({
         (e) => e.collectionPath === entry.collectionPath && e.entryType === entry.entryType,
       )?.schema ??
       EMPTY_SCHEMA
+    deleteAfterChangesRef.current = undefined
     setChangesSubject({
       logicalPath: entry.logicalPath,
       contentId: entry.contentId,
@@ -1818,6 +1830,117 @@ const EditorContent: React.FC<EditorProps> = ({
   const changesPullRequestUrl = isReviewer(userContext?.groups)
     ? currentBranch?.pullRequestUrl
     : undefined
+  // The drawer's undo, delete and restore follow the form's rules: hidden without edit access,
+  // disabled with the branch lock's reason while the branch takes no writes. Undo writes the open
+  // entry's draft, through the functional update the remove-Undo uses, so it is an unsaved edit.
+  const changesSubjectOpen =
+    !!changesSubject &&
+    !!currentEntry &&
+    changesSubject.status !== 'deleted' &&
+    changesSubject.logicalPath === currentEntry.path &&
+    (changesSubject.contentId === undefined || changesSubject.contentId === currentEntry.contentId)
+  const changesLockReason = branchContentLocked
+    ? describeBranchLock({
+        branchStatus: currentBranch?.status,
+        branchReadOnly: currentBranch?.readOnly,
+        branchWriteBlocked: true,
+        branchPending,
+        branchMissing,
+        reviewing: branchReviewing,
+        pullRequestClosed: branchPullRequestClosed,
+        approveBlocked: currentBranch?.approveBlocked,
+      })
+    : undefined
+  const changesUndo: EntryChangesUndo | undefined =
+    changesSubjectOpen && currentEntry && displayValue
+      ? {
+          // What the form shows: a draft hidden behind a lock isn't what the cards compare.
+          value: displayValue,
+          saved: loadedValues[currentEntry.contentId],
+          update: (update) => {
+            if (contentReadOnlyRef.current) return
+            const contentId = currentEntry.contentId
+            setDrafts((prev) => {
+              const value = prev[contentId] ?? loadedValuesRef.current[contentId]
+              if (!value) return prev
+              const next = update(value)
+              return next === value ? prev : { ...prev, [contentId]: next }
+            })
+          },
+          threadsWithin: (path) => openThreadsWithin(displayComments, currentEntry.path, path),
+        }
+      : undefined
+  // An entry the branch deleted has no row to carry `canEdit`; its collection's `canAddEntry`
+  // stands in, and the server judges the entry's own path.
+  const deletedSubjectCollection =
+    changesSubject?.status === 'deleted'
+      ? changesSubject.logicalPath.slice(0, changesSubject.logicalPath.lastIndexOf('/'))
+      : undefined
+  const restoreRefusedByPath =
+    deletedSubjectCollection !== undefined &&
+    findCollection(collectionsFromApi, deletedSubjectCollection)?.canAddEntry === false
+  const changesRestoreEntry =
+    changesSubject?.status === 'deleted' && changesSubject.contentId
+      ? async (): Promise<RestoreRefusal | undefined> => {
+          const { logicalPath, contentId, title } = changesSubject
+          const branch = branchNameState
+          let answer: Awaited<ReturnType<typeof apiClient.changes.restore>> | undefined
+          try {
+            answer = await apiClient.changes.restore(
+              { branch, entryPath: logicalPath },
+              { id: contentId as ContentId },
+            )
+          } catch (err) {
+            if (!isUnanswered(err)) {
+              return { tone: 'error', message: 'Couldn’t restore this entry. Try again.' }
+            }
+          }
+          // A 409 whose write may have run is as unanswered as a timeout.
+          const outcomeUnknown =
+            !!answer &&
+            !answer.ok &&
+            (isGatewayFailure(answer) || answer.code === 'WRITE_OUTCOME_UNKNOWN')
+          if (answer && !answer.ok && !outcomeUnknown) {
+            return {
+              tone: answer.status === 409 ? 'warning' : 'error',
+              message: answer.error ?? 'Couldn’t restore this entry. Try again.',
+            }
+          }
+          const entries = await refreshEntries(branch).catch(() => undefined)
+          void branchChanges.reload()
+          if (answer?.ok && answer.data?.warning) {
+            notifications.show({ message: answer.data.warning, color: 'yellow' })
+          }
+          if (answer?.ok && !entries) {
+            notifications.show({
+              message: `"${title}" is restored. Refresh the page to see it in the "Content" panel.`,
+              color: 'yellow',
+            })
+            setChangesOpen(false)
+            return undefined
+          }
+          // Unanswered, the entry list settles it: this entry, by id, listed again.
+          if (
+            !answer?.ok &&
+            !entries?.some((e) => e.path === logicalPath && e.contentId === contentId)
+          ) {
+            return {
+              tone: 'warning',
+              message: `Restoring "${title}" may have gone through, but the server couldn’t confirm it. Check the "Content" panel for it before trying again.`,
+            }
+          }
+          setChangesOpen(false)
+          openEntry(logicalPath)
+          return undefined
+        }
+      : undefined
+  const changesDeleteEntry =
+    changesSubjectOpen && changesSubject?.status === 'added'
+      ? () => {
+          deleteAfterChangesRef.current = changesSubject.logicalPath as LogicalPath
+          setChangesOpen(false)
+        }
+      : undefined
   const runSaveAll = () => {
     void handleSaveAll()
       .then((result) => {
@@ -2721,7 +2844,15 @@ const EditorContent: React.FC<EditorProps> = ({
                 <LazyEntryChangesDrawer
                   opened={changesOpen}
                   onClose={() => setChangesOpen(false)}
-                  onExited={() => setChangesShown(false)}
+                  onExited={() => {
+                    setChangesShown(false)
+                    const deleting = deleteAfterChangesRef.current
+                    deleteAfterChangesRef.current = undefined
+                    // Opened as from the entry menu, whose trigger stands in for the gone button.
+                    if (deleting && deleting === changesSubject.logicalPath) {
+                      handleDeleteEntry(deleting, true)
+                    }
+                  }}
                   returnFocusTo={changesReturnTarget}
                   base={branchChanges.data?.base ?? currentBranch?.baseBranch ?? 'the base branch'}
                   subject={{
@@ -2733,6 +2864,15 @@ const EditorContent: React.FC<EditorProps> = ({
                   referenceTitle={referenceTitle}
                   onOpenEntry={changesOpenEntry}
                   pullRequestUrl={changesPullRequestUrl}
+                  undo={changesUndo}
+                  noEditReason={
+                    (changesSubjectOpen && currentEntry?.canEdit === false) || restoreRefusedByPath
+                      ? NO_EDIT_ACCESS_REASON
+                      : undefined
+                  }
+                  lockedReason={changesLockReason}
+                  onDeleteEntry={changesDeleteEntry}
+                  onRestoreEntry={changesRestoreEntry}
                 />
               )}
               {branchNameState && (

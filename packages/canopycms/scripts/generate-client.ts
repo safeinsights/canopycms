@@ -185,6 +185,8 @@ function typeNameToModule(typeName: string): string | null {
     ResolveReferencesBody: 'resolve-references',
     ReferenceOptionsResponse: 'reference-options',
     BranchEntryChangeResponse: 'branch-entry-changes',
+    RestoreEntryBody: 'branch-entry-changes',
+    RestoreEntryResponse: 'branch-entry-changes',
     // Schema types come from the schema-store-types module (client-safe)
     CreateCollectionInput: '../schema/schema-store-types',
     UpdateCollectionInput: '../schema/schema-store-types',
