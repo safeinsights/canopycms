@@ -425,17 +425,43 @@ describe('CmsWorker.rebaseActiveBranches() publishes rewritten history', () => {
     expect((await setup.branchGit.revparse(['HEAD'])).trim()).toBe(saved)
     expect(await setup.remoteSha('refs/heads/feature-blocked')).toBe(published)
     expect(await queuedPushBranches(setup.workspacePath)).toEqual([])
+    expect((await readMeta(setup.branchPath))?.rebaseFailure?.message).toContain(
+      'could not be published',
+    )
 
+    // Once it can, the self-heal publishes the rewrite alone, and the base comes in by a merge
+    // that holds the saved commit back.
     await fs.rm(lock)
     await runRebase(makeWorker(setup.workspacePath))
-    expect(await setup.remoteSha('refs/heads/feature-blocked')).toBe(rewrittenTip)
 
-    // The base then comes in by a merge that holds the saved commit back.
-    await runRebase(makeWorker(setup.workspacePath))
     expect(await setup.remoteSha('refs/heads/feature-blocked')).toBe(rewrittenTip)
     expect(await setup.remoteLog('refs/heads/feature-blocked')).not.toContain('Save changes')
+    const parents = (await setup.branchGit.raw(['rev-list', '--parents', '-n1', 'HEAD']))
+      .trim()
+      .split(' ')
+    expect(parents).toHaveLength(3)
+    expect(parents[1]).toBe(saved)
     expect(await fs.readFile(path.join(setup.branchPath, 'base2.txt'), 'utf8')).toBe('moved on\n')
-    expect(await setup.branchGit.raw(['log', '--format=%s'])).toContain('Save changes')
+    expect((await readMeta(setup.branchPath))?.rebaseFailure).toBeUndefined()
+  })
+
+  it('publishes nothing to a recorded tip that is not a commit ID', async () => {
+    const setup = await createPublishSetup(tmpDir, 'feature-bad-target')
+    await setup.commitToBranch({ 'entry.md': 'v1\n' }, 'editor work')
+    await setup.submit()
+    const published = await setup.remoteSha('refs/heads/feature-bad-target')
+    await setup.branchGit.raw(['commit', '--amend', '-m', 'editor work (rewritten)'])
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      historyRewrittenFrom: published,
+      historyRewrittenTo: 'HEAD',
+    })
+
+    await runRebase(makeWorker(setup.workspacePath))
+
+    expect(await setup.remoteSha('refs/heads/feature-bad-target')).toBe(published)
+    expect((await readMeta(setup.branchPath))?.rebaseFailure?.message).toContain(
+      'recorded without the commit to publish',
+    )
   })
 
   it('self-heals a queued push that was lost, without re-pushing remote.git', async () => {

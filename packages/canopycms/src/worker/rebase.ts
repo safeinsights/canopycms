@@ -271,11 +271,6 @@ async function recordRebaseFailure(
 /** Safety limit against a rebase that never converges. */
 const MAX_REBASE_ROUNDS = 50
 
-/** Why a branch whose rewrite was recorded without its rebased tip takes nothing in. */
-const REWRITE_TIP_UNKNOWN =
-  `this branch's rebased history was recorded without the commit to publish, so neither it nor the ` +
-  `base is taken in. A developer publishes the rewrite by hand before the branch is submitted again.`
-
 /**
  * Abort a rebase. It moves the tree back under any snapshot a read resolved mid-replay, which the
  * caches' markers must invalidate like any other working-tree move, however the abort ended.
@@ -450,7 +445,14 @@ async function carryForwardRewrittenHistory(
         )
         return
       }
-      if (await forcePublishToLocalRemote(ctx, branchPath, branchRef, publishedSha, rebasedHead)) {
+      const publish = await forcePublishToLocalRemote(
+        ctx,
+        branchPath,
+        branchRef,
+        publishedSha,
+        rebasedHead,
+      )
+      if (publish.kind === 'published') {
         await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
       }
     } else {
@@ -1546,7 +1548,7 @@ async function rebaseOneBranch(
       // the base happens to advance again. Gated on the loop-top snapshot, so
       // unmarked branches (nearly all of them, every cycle) cost nothing.
       if (canPublish && metaFile?.branch.historyRewrittenFrom) {
-        const unpublished = await reconcilePendingRewrite(ctx, {
+        const pending = await reconcilePendingRewrite(ctx, {
           branchPath,
           branchDir,
           branchRef,
@@ -1557,14 +1559,14 @@ async function rebaseOneBranch(
         })
         // A rebase now would replace the rewrite remote.git still waits for, along with any commit
         // made on top of it since, which only a submit may publish.
-        if (unpublished) {
-          if (metaFile.branch.historyRewrittenTo === undefined) {
-            await recordRebaseFailure(ctx, branchPath, branchDir, REWRITE_TIP_UNKNOWN, branchRef)
-            return { kind: 'failed', error: REWRITE_TIP_UNKNOWN }
-          }
-          workerLog(`  Skipping ${branchDir}: its rewritten history is not published yet`)
-          return { kind: 'none' }
+        if (pending.kind === 'failed') {
+          // [REDACT] failed[] is served to the browser via worker-status.json.
+          const reason = redactCredentials(pending.reason)
+          workerLogWarn(`  Skipping ${branchDir}: ${reason}`)
+          await recordRebaseFailure(ctx, branchPath, branchDir, reason, branchRef)
+          return { kind: 'failed', error: reason }
         }
+        if (pending.kind === 'waiting') return { kind: 'none' }
       }
 
       await fetchFromRemoteGit(branchGit, ctx.remoteGitPath, ctx.baseBranch)
@@ -1638,7 +1640,8 @@ async function rebaseOneBranch(
         published !== null &&
         published !== head &&
         metaFile?.branch.name === branchRef &&
-        isPublished(metaFile) &&
+        // A rewrite's tip is this branch's own publish, on GitHub or not.
+        (isPublished(metaFile) || published === metaFile.branch.historyRewrittenTo) &&
         (await contains(branchGit, head, published)) &&
         !(await contains(branchGit, fetchedBaseTip, published))
       /**

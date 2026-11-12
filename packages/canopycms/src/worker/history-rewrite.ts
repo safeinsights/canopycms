@@ -160,16 +160,23 @@ export async function clearHistoryRewrittenMarker(
  * carryForwardRewrittenHistory for the interleaving where that would silently
  * delete someone's direct push.
  *
- * Returns whether the push landed. A refused lease means a concurrent Lambda
- * push moved the ref; logged and retried by the self-heal pass, never thrown.
+ * Resolves `published`, `moved` for a refused lease (a concurrent Lambda push
+ * moved the ref; the self-heal pass retries it), or `failed` with git's message.
+ * Never throws.
  */
+/** How {@link forcePublishToLocalRemote} ended. */
+export type RewritePublish =
+  | { kind: 'published' }
+  | { kind: 'moved' }
+  | { kind: 'failed'; message: string }
+
 export async function forcePublishToLocalRemote(
   ctx: Pick<HistoryRewriteContext, 'remoteGitPath' | 'taskTimeoutMs'>,
   branchPath: string,
   branchRef: string,
   expectedSha: string,
   rewrittenTip: string,
-): Promise<boolean> {
+): Promise<RewritePublish> {
   // sharedRepoGit's env is gitChildEnv's, whose C-locale pin is what keeps
   // isStaleLeaseRejection below from silently becoming a no-op on a
   // non-English host.
@@ -187,15 +194,17 @@ export async function forcePublishToLocalRemote(
       `${rewrittenTip}:refs/heads/${branchRef}`,
     ])
     workerLog(`  Published rebased ${branchRef} into remote.git`)
-    return true
+    return { kind: 'published' }
   } catch (err) {
     const message = redactCredentials(getErrorMessage(err))
-    workerLogWarn(
-      isStaleLeaseRejection(message)
-        ? `  Did not publish rebased ${branchRef} into remote.git: it moved since this cycle read it (concurrent submit?) -- retrying next cycle`
-        : `  Failed to publish rebased ${branchRef} into remote.git: ${message}`,
-    )
-    return false
+    if (isStaleLeaseRejection(message)) {
+      workerLogWarn(
+        `  Did not publish rebased ${branchRef} into remote.git: it moved since this cycle read it (concurrent submit?) -- retrying next cycle`,
+      )
+      return { kind: 'moved' }
+    }
+    workerLogWarn(`  Failed to publish rebased ${branchRef} into remote.git: ${message}`)
+    return { kind: 'failed', message }
   }
 }
 
@@ -242,6 +251,22 @@ export async function enqueueGitHubPush(
   }
 }
 
+/** Why a branch whose rewrite was recorded without its rebased tip takes nothing in. */
+const REWRITE_TIP_UNKNOWN =
+  `this branch's rebased history was recorded without the commit to publish, so neither it nor the ` +
+  `base is taken in. A developer publishes the rewrite by hand before the branch is submitted again.`
+
+const COMMIT_ID = /^[0-9a-f]{40}([0-9a-f]{24})?$/
+
+/**
+ * `settled`: `remote.git` no longer stands at the marker, or never will by this pass. `waiting`: a
+ * concurrent push moved it this cycle. `failed`: the publish cannot land; `reason` says why.
+ */
+export type PendingRewrite =
+  | { kind: 'settled' }
+  | { kind: 'waiting' }
+  | { kind: 'failed'; reason: string }
+
 /**
  * Complete a rewrite this worker started but did not finish: get the rebased
  * history into `remote.git` and queued for GitHub.
@@ -253,8 +278,9 @@ export async function enqueueGitHubPush(
  * Always leases on the MARKER, never on remote.git's current tip -- the marker
  * is the one commit we know our own rebase replaced -- and sends the recorded
  * rebased tip, `target`, never `headSha`: a commit made in the clone since the
- * rewrite is no one's submitted work. Resolves whether `remote.git` still stands
- * at the marker, the rewrite unpublished.
+ * rewrite is no one's submitted work. Resolves {@link PendingRewrite}: while
+ * `remote.git` still stands at the marker the branch takes nothing in, since a
+ * rebase would replace the rewrite along with any commit made on top of it.
  */
 export async function reconcilePendingRewrite(
   ctx: HistoryRewriteContext,
@@ -268,35 +294,39 @@ export async function reconcilePendingRewrite(
     target: string | undefined
     gatewayPolicy: BranchPolicyDescription | undefined
   },
-): Promise<boolean> {
-  const { branchPath, branchDir, branchRef, headSha, marker, target, gatewayPolicy } = options
+): Promise<PendingRewrite> {
+  const { branchPath, branchDir, branchRef, headSha, marker, gatewayPolicy } = options
+  const target =
+    options.target !== undefined && COMMIT_ID.test(options.target) ? options.target : undefined
   const publishedSha = await readPublishedSha(ctx, branchRef)
 
   if (publishedSha === null) {
     workerLogWarn(
       `  ${branchDir}: a rewritten history is recorded but ${branchRef} is gone from remote.git -- nothing to publish`,
     )
-    return false
+    return { kind: 'settled' }
   }
   if (publishedSha === target || publishedSha === headSha) {
     // remote.git already carries the rewrite, or a submit since; only the
     // GitHub hop is left (a crash between the push and the queue, or a task
     // that was lost).
     await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
-    return false
+    return { kind: 'settled' }
   }
   if (publishedSha === marker) {
     // The publish into remote.git never landed -- a crash right after the
     // marker was written, or a lease refused by a concurrent submit.
-    if (target === undefined) {
-      workerLogWarn(
-        `  ${branchDir}: a rewritten history is recorded without its rebased tip, so nothing is published`,
-      )
-      return true
+    if (target === undefined) return { kind: 'failed', reason: REWRITE_TIP_UNKNOWN }
+    const publish = await forcePublishToLocalRemote(ctx, branchPath, branchRef, marker, target)
+    if (publish.kind === 'moved') return { kind: 'waiting' }
+    if (publish.kind === 'failed') {
+      return {
+        kind: 'failed',
+        reason: `this branch's rebased history could not be published into the deployment's repository: ${publish.message}`,
+      }
     }
-    if (!(await forcePublishToLocalRemote(ctx, branchPath, branchRef, marker, target))) return true
     await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
-    return false
+    return { kind: 'settled' }
   }
   // Neither this branch's rebased tip nor the commit its rewrite replaced:
   // something else moved remote.git. Never force over that.
@@ -304,7 +334,7 @@ export async function reconcilePendingRewrite(
     `  ${branchDir}: remote.git is at ${publishedSha} for ${branchRef}, which is neither the ` +
       `rebased tip nor the commit the rewrite replaced -- left untouched`,
   )
-  return false
+  return { kind: 'settled' }
 }
 
 /**
