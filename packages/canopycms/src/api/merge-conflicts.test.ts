@@ -465,7 +465,7 @@ describe('a branch held after its record was set aside', () => {
   const holdIt = async () => {
     await fs.mkdir(path.join(branchRoot, '.canopy-meta'), { recursive: true })
     await fs.writeFile(path.join(branchRoot, '.canopy-meta', 'merge-conflicts.json'), '{"oops"')
-    return new MergeConflictStore(branchRoot, 0).quarantine()
+    return (await new MergeConflictStore(branchRoot, 0).quarantine())!
   }
   const release = (as: ApiRequest['user']) =>
     MERGE_CONFLICT_ROUTES.releaseHold.handler(createCtx(), { user: as }, { branch })

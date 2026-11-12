@@ -884,7 +884,9 @@ export async function reconcileMergeConflicts(
     } catch (err) {
       if (!(err instanceof MergeConflictsFileMalformedError)) throw err
       const aside = await store.quarantine()
-      workerLogWarn(`  ${branchDir}: its conflict record does not parse; moved it to ${aside}`)
+      if (aside !== null) {
+        workerLogWarn(`  ${branchDir}: its conflict record does not parse; copied it to ${aside}`)
+      }
       current = null
     }
     if (current === null) {

@@ -129,15 +129,22 @@ export function alignToAncestor(
   const stale = new Set<number>()
   // A read keys an item by content (twins as K, K-2, ...), and a git-level merge bringing in the
   // base's edit of one twin leaves its key on the edited copy, which the ancestor then reads, or a
-  // backfill keys, as another item's. So a read key never outweighs content: an item under one
-  // that holds exactly an ancestor item of this list no key on this side names is that item.
+  // backfill keys, as another item's. So an item under a read key holding the item it names is
+  // that item, and one holding exactly another ancestor item no key on this side names is that
+  // one, even an item the branch edited to read like one it deleted.
   const held = new Set(items.flatMap((item) => ownKey(item) ?? []))
+  const unheld = new Set(
+    ancestorItems.flatMap((item, i) => (held.has(ancestorKeys[i]) ? [] : [valueToken(item)])),
+  )
+  const at = new Map(ancestorKeys.map((key, i) => [key, i]))
   const usurped = (j: number, own: string): boolean => {
     if (!hasContentKeyShape(own)) return false
     const content = valueToken(items[j])
-    return ancestorItems.some(
-      (other, k) => !held.has(ancestorKeys[k]) && valueToken(other) === content,
-    )
+    if (!unheld.has(content)) return false
+    const read = readKeys[j]
+    const named = read !== undefined && known.has(read) ? read : aliases.get(own)
+    const i = named === undefined ? undefined : at.get(named)
+    return i === undefined || valueToken(ancestorItems[i]) !== content
   }
   items.forEach((item, j) => {
     const own = ownKey(item)

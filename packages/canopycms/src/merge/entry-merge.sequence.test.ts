@@ -17,7 +17,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { FieldConfig } from '../config'
 import { itemKeysAsRead } from '../item-keys'
-import { mergeEntry } from './entry-merge'
+import { mergeEntry, type KeyRemap } from './entry-merge'
 
 const text = (...names: string[]): FieldConfig[] => names.map((name) => ({ name, type: 'string' }))
 const fields: FieldConfig[] = [
@@ -179,6 +179,9 @@ function intended(o: Model, a: Model, b: Model): Model | 'conflict' | 'ambiguous
     const [title, detail] = [pick('title'), pick('detail')]
     if (title === undefined || detail === undefined) return 'conflict'
     if (y.list !== x.list && z.list !== x.list && y.list !== z.list) return 'ambiguous'
+    // The merge reads a move across lists as a removal and an addition: with an edit on the other
+    // side, a conflict and the moved edit are both answers.
+    if ((y.list !== x.list && changed(z)) || (z.list !== x.list && changed(y))) return 'ambiguous'
     out.set(id, { title, detail, list: y.list !== x.list ? y.list : z.list })
   }
   return out
@@ -191,19 +194,23 @@ const contents = (model: Model, list: List) =>
     .sort()
 
 /**
- * Twins the data cannot tell apart: in the ancestor, both sides touched one of them; or a side
- * took an item out of a list while holding a copy of it there, which reads as the item itself.
+ * Twins the data cannot tell apart: in the ancestor, both sides touched one of them, unless both
+ * keyed them as the editor does (`keyed`); or a side took an item out of a list while holding a
+ * copy of it there, which reads as the item itself.
  */
-function twinsAmbiguous(o: Model, a: Model, b: Model): boolean {
+function twinsAmbiguous(o: Model, a: Model, b: Model, keyed: boolean): boolean {
   const groups = new Map<string, string[]>()
   for (const [id, item] of o) {
     const group = `${item.list}${contentOf(item)}`
     groups.set(group, [...(groups.get(group) ?? []), id])
   }
   const differs = (x: Model, id: string) => JSON.stringify(o.get(id)) !== JSON.stringify(x.get(id))
-  const bothTouched = [...groups.values()].some(
-    (ids) => ids.length > 1 && ids.some((id) => differs(a, id)) && ids.some((id) => differs(b, id)),
-  )
+  const bothTouched =
+    !keyed &&
+    [...groups.values()].some(
+      (ids) =>
+        ids.length > 1 && ids.some((id) => differs(a, id)) && ids.some((id) => differs(b, id)),
+    )
   const copyKept = (x: Model) =>
     [...o].some(
       ([id, item]) =>
@@ -213,53 +220,6 @@ function twinsAmbiguous(o: Model, a: Model, b: Model): boolean {
         ),
     )
   return bothTouched || copyKept(a) || copyKept(b)
-}
-
-/**
- * A known limit: a git-level merge left an item's key on content the base changed, that key is
- * the one a read now gives another item, here or in the other list (twins read K and K-2 as
- * their order allows), and the branch has since changed the item, so neither its key nor its
- * content shows which item it is. True when the branch holds such an item and the merge, given
- * the keys the ancestor's read gives each item instead, comes out as meant. An unchanged holder
- * of such a key is not this limit: its content names its item, and the merge must place it.
- */
-function staleKeyTaken(o: Side, mine: Side, base: Side, want: Model | 'conflict') {
-  const readKeyOf = new Map<string, string | undefined>()
-  const readAs = new Set<string>()
-  const ancestorOf = new Map<string, string>()
-  for (const list of LISTS) {
-    itemKeysAsRead(o.file[list]).forEach((key, k) => {
-      readKeyOf.set(`${list}${o.ids[list][k]}`, key)
-      if (key !== undefined) readAs.add(key)
-    })
-    o.file[list].forEach((item, k) => ancestorOf.set(`${list}${o.ids[list][k]}`, contentOf(item)))
-  }
-  const ideal = structuredClone(mine.file)
-  let stale = false
-  for (const list of LISTS) {
-    ideal[list] = ideal[list].map((item, k) => {
-      const id = mine.ids[list][k]
-      const key = readKeyOf.get(`${list}${id}`)
-      if (key === undefined) return item
-      const taken = item._key !== undefined && item._key !== key && readAs.has(item._key)
-      if (taken && contentOf(item) !== ancestorOf.get(`${list}${id}`)) stale = true
-      return { ...item, _key: key }
-    })
-  }
-  if (!stale) return false
-  const again = mergeEntry({
-    format: 'json',
-    ancestor: { data: structuredClone(o.file) },
-    base: { data: structuredClone(base.file) },
-    branch: { data: ideal },
-    fields,
-  })
-  if (again.kind !== 'merged') return false
-  if (want === 'conflict') return again.conflicts.length > 0
-  const data = again.data as File
-  return LISTS.every(
-    (l) => JSON.stringify(data[l].map(contentOf).sort()) === JSON.stringify(contents(want, l)),
-  )
 }
 
 /**
@@ -297,6 +257,26 @@ function identify(file: File, want: Model, sides: Side[]): Side {
     })
   }
   return { file, ids: ids as Record<List, string[]> }
+}
+
+/**
+ * Why the merged keys misname items, or undefined: a key held twice in one list, or a remap from
+ * a key of the branch's to a key the merge gave another item.
+ */
+function keyedWrongly(mine: Side, merged: Side, remaps: readonly KeyRemap[]): string | undefined {
+  for (const list of LISTS) {
+    const keys = merged.file[list].flatMap(({ _key }) => _key ?? [])
+    if (new Set(keys).size !== keys.length) return `${list} holds a key twice: ${keys}`
+    const idOf = (side: Side, key: string) =>
+      side.ids[list][side.file[list].findIndex((i) => i._key === key)]
+    for (const { within, from, to } of remaps) {
+      const [was, now] = [idOf(mine, from), idOf(merged, to)]
+      if (within.length === 0 && was !== undefined && now !== undefined && was !== now) {
+        return `${list}: a remap ${from} -> ${to} moves ${was}'s threads to ${now}`
+      }
+    }
+  }
+  return undefined
 }
 
 /**
@@ -350,6 +330,9 @@ function life(seed: number, syncs: number): string {
     file: { ...start.file, items: keyAll(start.file.items), l2: keyAll(start.file.l2) },
   }
   let checked = 0
+  // Every sync so far merged the editor's work on both sides: keys name every item, so a
+  // conflict where none is due, a key held twice, or a remap to another item is wrong too.
+  let byEditor = true
   for (let sync = 1; sync <= syncs; sync++) {
     const ids = LISTS.flatMap((list) => o.ids[list])
     const branchIds = new Set(LISTS.flatMap((list) => branch.ids[list]))
@@ -361,6 +344,7 @@ function life(seed: number, syncs: number): string {
       else if (branchIds.has(id)) opsB.set(id, g.pick(OPS))
     }
     const baseMode = g.pick(MODES)
+    byEditor &&= baseMode === 'editor'
     const base = apply(o, opsA, 'A', baseMode, g, sync)
     const mine = apply(branch, opsB, 'B', 'editor', g, sync)
     const [mo, ma, mb] = [modelOf(o), modelOf(base), modelOf(mine)]
@@ -370,10 +354,11 @@ function life(seed: number, syncs: number): string {
       JSON.stringify(mo.get(id)) !== JSON.stringify(x.get(id))
     const both = [...mo.keys()].some((id) => differs(ma, id) && differs(mb, id))
     if (both && baseMode !== 'editor') break
-    if (twinsAmbiguous(mo, ma, mb)) break
+    if (twinsAmbiguous(mo, ma, mb, byEditor)) break
     const want = intended(mo, ma, mb)
     if (want === 'ambiguous') break
     if (!both && want !== 'conflict' && g.next() < 0.4) {
+      byEditor = false
       branch = gitMerged(want, base, mine)
       o = base
       continue
@@ -385,7 +370,12 @@ function life(seed: number, syncs: number): string {
       branch: { data: structuredClone(mine.file) },
       fields,
     })
-    if (result.kind !== 'merged' || result.conflicts.length > 0) break
+    if (result.kind !== 'merged') break
+    const at = `seed ${seed}, sync ${sync}`
+    if (result.conflicts.length > 0) {
+      if (byEditor && want !== 'conflict') return `${at}: conflicts where none was due`
+      break
+    }
     const merged = result.data as File
     const meant = (data: File) =>
       want !== 'conflict' &&
@@ -393,12 +383,16 @@ function life(seed: number, syncs: number): string {
         (l) => JSON.stringify(data[l].map(contentOf).sort()) === JSON.stringify(contents(want, l)),
       )
     if (!meant(merged)) {
-      if (staleKeyTaken(o, mine, base, want)) return 'stale'
-      return `seed ${seed}, sync ${sync}: merged to ${JSON.stringify(merged)}, meant ${JSON.stringify(want === 'conflict' ? want : [...want])}`
+      return `${at}: merged to ${JSON.stringify(merged)}, meant ${JSON.stringify(want === 'conflict' ? want : [...want])}`
     }
     checked++
     o = base
-    branch = identify(merged, want as Model, [mine, base])
+    const next = identify(merged, want as Model, [mine, base])
+    if (byEditor) {
+      const wrong = keyedWrongly(mine, next, result.keyRemaps)
+      if (wrong) return `${at}: ${wrong}`
+    }
+    branch = next
   }
   return checked >= 2 ? 'merged' : 'short'
 }

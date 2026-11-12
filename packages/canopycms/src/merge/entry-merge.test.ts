@@ -1737,6 +1737,65 @@ describe("twins a git-level merge left under each other's first-save keys", () =
     ])
   })
 
+  describe('editor twins, keyed as read, with no git-level merge', () => {
+    const list: FieldConfig[] = [
+      { name: 'items', type: 'object', list: true, fields: text('heading', 'text', 'link') },
+    ]
+    const [K, K2, K3] = itemKeysAsRead([card, card, card]) as string[]
+    const J = itemKeysAsRead([other])[0] as string
+    const run3 = (o: Data[], a: Data[], b: Data[]) => {
+      const result = mergeEntry({
+        format: 'json',
+        ancestor: { data: { items: o } },
+        base: { data: { items: a } },
+        branch: { data: { items: b } },
+        fields: list,
+      })
+      if (result.kind !== 'merged') throw new Error('expected a merge')
+      return result
+    }
+    const twins = [
+      { ...card, _key: K },
+      { ...card, _key: K2 },
+      { ...other, _key: J },
+    ]
+
+    it('the base deletes one twin and the branch edits the other: both stand, no remap', () => {
+      const result = run3(
+        twins,
+        [twins[1], twins[2]],
+        [twins[0], { ...twins[1], text: 'mine' }, twins[2]],
+      )
+      expect(result.conflicts).toEqual([])
+      expect((result.data.items as Data[]).map((i) => [i.text, i._key])).toEqual([
+        ['mine', K2],
+        ['o', J],
+      ])
+      expect(result.keyRemaps).toEqual([])
+    })
+
+    it('the branch deletes one twin and the base edits the other: both stand', () => {
+      const result = run3(
+        twins,
+        [twins[0], { ...twins[1], text: 'base' }, twins[2]],
+        [twins[1], twins[2]],
+      )
+      expect(result.conflicts).toEqual([])
+      expect((result.data.items as Data[]).map((i) => i.text)).toEqual(['base', 'o'])
+    })
+
+    it('the branch deletes the twin the base edits, among three: a conflict on it', () => {
+      const three = [twins[0], twins[1], { ...card, _key: K3 }]
+      const result = run3(
+        three,
+        [three[0], { ...three[1], text: 'base' }, three[2]],
+        [three[0], three[2]],
+      )
+      expect(result.conflicts.map((c) => c.kind)).toEqual(['removed-by-you'])
+      expect((result.data.items as Data[]).map((i) => i._key)).toEqual([K, K3])
+    })
+  })
+
   it('D: the base edits the other twin and the branch edits a third item: both stand', () => {
     const edited = {
       ...branch,

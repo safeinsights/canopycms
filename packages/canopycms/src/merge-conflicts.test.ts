@@ -281,7 +281,7 @@ describe('MergeConflictStore', () => {
     await fs.mkdir(path.join(root, '.canopy-meta'))
     await fs.writeFile(path.join(root, '.canopy-meta', 'merge-conflicts.json'), '{"oops"')
     const store = new MergeConflictStore(root, 0)
-    const aside = await store.quarantine()
+    const aside = (await store.quarantine())!
     expect(await fs.readFile(aside, 'utf8')).toBe('{"oops"')
     expect((await store.read())?.held).toMatchObject({ aside: path.basename(aside) })
     await expect(assertNoOpenConflicts(root)).rejects.toMatchObject({
@@ -314,6 +314,25 @@ describe('MergeConflictStore', () => {
     // The next cycle sets it aside again, and the branch is held.
     await new MergeConflictStore(root, 0).quarantine()
     await expect(assertNoOpenConflicts(root)).rejects.toMatchObject({ held: true })
+  })
+
+  it('keeps every damaged copy, and sets a record aside once however often it is asked', async () => {
+    const file = path.join(root, '.canopy-meta', 'merge-conflicts.json')
+    await fs.mkdir(path.dirname(file))
+    const store = new MergeConflictStore(root, 0)
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000)
+    await fs.writeFile(file, '{"first"')
+    const first = (await store.quarantine())!
+    // Asked again once it is held: the copy it already made, not a copy of the held record.
+    await expect(store.quarantine()).resolves.toBe(first)
+    await fs.writeFile(file, '{"second"')
+    const second = (await store.quarantine())!
+    clock.mockRestore()
+    expect(second).not.toBe(first)
+    expect(await fs.readFile(first, 'utf8')).toBe('{"first"')
+    expect(await fs.readFile(second, 'utf8')).toBe('{"second"')
+    await fs.writeFile(file, JSON.stringify({ schema: 2, version: 1, entries: {} }))
+    await expect(store.quarantine()).resolves.toBeNull()
   })
 
   it('refuses a file that is not a record, rather than reading it as none', async () => {
