@@ -40,6 +40,11 @@ describe('a diff that runs out of time', () => {
       {
         key: '?notes',
         dataPath: [{ field: 'notes' }],
+        sidePaths: {
+          ancestor: [{ field: 'notes' }],
+          base: [{ field: 'notes' }],
+          branch: [{ field: 'notes' }],
+        },
         kind: 'changed',
         ancestor: 'a\nb\nc\n',
         base: 'A\nb\nc\n',

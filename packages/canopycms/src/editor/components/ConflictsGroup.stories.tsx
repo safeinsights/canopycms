@@ -10,6 +10,7 @@ import {
   conflictFields,
   conflictRecordFields,
   entryConflictData,
+  keylessConflictData,
   fieldsConflictData,
   savedValue,
 } from './__test__/conflict-fixtures'
@@ -29,6 +30,8 @@ interface HarnessProps {
   lockedReason?: string
   noEditReason?: string
   unsavedEdits?: boolean
+  /** The branch deleted the entry since its conflicts were found. */
+  entryDeleted?: boolean
 }
 
 /** The group over a form value and choices it changes, so a choice shows as chosen. */
@@ -95,6 +98,9 @@ export const RemovedByYou: Story = { args: { only: ['tagline'] } }
 /** A whole list item the latest version removed; there is no Edit. */
 export const ListItem: Story = { args: { only: ['step'] } }
 
+/** A field of an item the latest version keyed apart, in a list it left keyless: all three show. */
+export const KeylessListItem: Story = { args: { data: keylessConflictData() } }
+
 /** A value shown whole, here an image. */
 export const WholeValueImage: Story = { args: { only: ['cover'] } }
 
@@ -114,6 +120,11 @@ export const EntryDeletedByYou: Story = {
 
 export const EntryUnreadable: Story = {
   args: { data: entryConflictData('unreadable') },
+}
+
+/** Field conflicts on an entry the branch deleted since: no form to choose in, so one card keeps it deleted. */
+export const DeletedEntryWithFields: Story = {
+  args: { only: ['summary', 'readTime'], noForm: true, entryDeleted: true },
 }
 
 /** Every kind of field conflict at once. */

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
   MergeConflictStore,
+  MergeConflictsFileFormatError,
   OpenMergeConflictsError,
   assertNoOpenConflicts,
   conflictFilesOf,
@@ -32,7 +33,18 @@ const fieldsFound = (
   path: 'content/page.home.aboutAbc1234.json',
   kind: 'fields',
   sides,
-  fields: keys.map((key) => ({ key, dataPath: [{ field: key }], kind: 'changed' })),
+  fields: keys.map((key) => ({
+    key,
+    dataPath: [{ field: key }],
+    sidePaths: { ancestor: [{ field: key }], base: [{ field: key }], branch: [{ field: key }] },
+    kind: 'changed',
+  })),
+})
+
+const paths = (key: string) => ({
+  ancestor: [{ field: key }],
+  base: [{ field: key }],
+  branch: [{ field: key }],
 })
 
 const first = () =>
@@ -54,6 +66,7 @@ describe('withFoundConflicts', () => {
       {
         key: 'title',
         dataPath: [{ field: 'title' }],
+        sidePaths: paths('title'),
         kind: 'changed',
         mergeSha: M1,
         sides: { ancestor: 'o1', base: 'a1', branch: 'b1' },
@@ -61,6 +74,7 @@ describe('withFoundConflicts', () => {
       {
         key: 'cta',
         dataPath: [{ field: 'cta' }],
+        sidePaths: paths('cta'),
         kind: 'changed',
         mergeSha: M1,
         sides: { ancestor: 'o1', base: 'a1', branch: 'b1' },
@@ -69,17 +83,26 @@ describe('withFoundConflicts', () => {
   })
 
   it('keeps a field the next merge did not find, and renews one it found from the first ancestor', () => {
-    const next = withFoundConflicts(
-      first,
-      [fieldsFound({ ancestor: 'o2', base: 'a2', branch: 'b2' }, 'title')],
-      M2,
-    )
+    // The second merge reads each version's place elsewhere; the first ancestor's path stays with
+    // the first ancestor's blob.
+    const found = fieldsFound({ ancestor: 'o2', base: 'a2', branch: 'b2' }, 'title')
+    found.fields![0].sidePaths = {
+      ancestor: [{ field: 'o2' }],
+      base: [{ field: 'a2' }],
+      branch: [{ field: 'b2' }],
+    }
+    const next = withFoundConflicts(first, [found], M2)
     expect(next[ID]?.mergeSha).toBe(M2)
     expect(next[ID]?.fields).toEqual([
       { ...first[ID]!.fields![1] },
       {
         key: 'title',
         dataPath: [{ field: 'title' }],
+        sidePaths: {
+          ancestor: [{ field: 'title' }],
+          base: [{ field: 'a2' }],
+          branch: [{ field: 'b2' }],
+        },
         kind: 'changed',
         mergeSha: M2,
         sides: { ancestor: 'o1', base: 'a2', branch: 'b2' },
@@ -87,7 +110,20 @@ describe('withFoundConflicts', () => {
     ])
   })
 
-  it('replaces an entry with an entry-level conflict, and that with fields found later', () => {
+  it('keeps no ancestor path for a field whose first ancestor had no value there', () => {
+    const none = fieldsFound({ base: 'a1', branch: 'b1' }, 'title')
+    none.fields![0].sidePaths = { base: [{ field: 'title' }], branch: [{ field: 'title' }] }
+    const found = withFoundConflicts({}, [none], M1)
+    const next = withFoundConflicts(
+      found,
+      [fieldsFound({ ancestor: 'o2', base: 'a2', branch: 'b2' }, 'title')],
+      M2,
+    )
+    expect(next[ID]?.fields?.[0].sides.ancestor).toBeUndefined()
+    expect(next[ID]?.fields?.[0].sidePaths.ancestor).toBeUndefined()
+  })
+
+  it('replaces an entry with an entry-level conflict, and a deleted entry’s with fields found later', () => {
     const deleted = withFoundConflicts(
       first,
       [{ contentId: ID, path: 'p', kind: 'deleted-on-base', sides: { branch: 'b2' } }],
@@ -100,10 +136,30 @@ describe('withFoundConflicts', () => {
       sides: { branch: 'b2' },
       previous: first[ID],
     })
-    const again = withFoundConflicts(deleted, [fieldsFound({ ancestor: 'o3' }, 'title')], M1)
-    expect(again[ID]?.fields?.map(({ key, sides }) => ({ key, sides }))).toEqual([
-      { key: 'title', sides: { ancestor: 'o3' } },
-    ])
+    const again = withFoundConflicts(
+      deleted,
+      [fieldsFound({ ancestor: 'o3', base: 'a3', branch: 'b3' }, 'title')],
+      M1,
+    )
+    // The base brought the entry back, so the deletion is no choice left to make.
+    expect(again[ID]).toMatchObject({ kind: 'fields', mergeSha: M1, previous: deleted[ID] })
+    expect(again[ID]?.fields?.map((f) => f.key)).toEqual(['title'])
+    const unreadable = withFoundConflicts(
+      {},
+      [{ contentId: ID, path: 'p', kind: 'unreadable', sides: { ancestor: 'o1', base: 'a1' } }],
+      M1,
+    )
+    const later = withFoundConflicts(
+      unreadable,
+      [fieldsFound({ ancestor: 'o2', base: 'a2', branch: 'b2' }, 'title')],
+      M2,
+    )
+    expect(later[ID]).toMatchObject({
+      kind: 'unreadable',
+      mergeSha: M2,
+      sides: { ancestor: 'o1', base: 'a2', branch: 'b2' },
+    })
+    expect(later[ID]?.fields).toBeUndefined()
   })
 
   it('moves the records of entries the merge moved, and leaves the rest', () => {
@@ -137,8 +193,8 @@ describe('withoutMergesGone', () => {
     [ID]: {
       ...withFoundConflicts({}, [fieldsFound({}, 'title')], M1)[ID]!,
       fields: [
-        { key: 'title', dataPath: [], kind: 'changed', mergeSha: M1, sides: {} },
-        { key: 'cta', dataPath: [], kind: 'changed', mergeSha: M2, sides: {} },
+        { key: 'title', dataPath: [], sidePaths: {}, kind: 'changed', mergeSha: M1, sides: {} },
+        { key: 'cta', dataPath: [], sidePaths: {}, kind: 'changed', mergeSha: M2, sides: {} },
       ],
     },
     [OTHER]: { path: 'q', mergeSha: M2, kind: 'unreadable', sides: {} },
@@ -189,6 +245,57 @@ describe('MergeConflictStore', () => {
     expect((await store.read())?.version).toBe(1)
     await store.update(() => ({ entries: {} }))
     expect(await store.read()).toMatchObject({ version: 2, entries: {} })
+  })
+
+  it('refuses a field that names no side paths, as one this code did not write', async () => {
+    await fs.mkdir(path.join(root, '.canopy-meta'))
+    const field = { key: 'title', dataPath: [], kind: 'changed', mergeSha: M1, sides: {} }
+    const record = {
+      schema: 2,
+      version: 1,
+      entries: { [ID]: { path: 'p', mergeSha: M1, kind: 'fields', sides: {}, fields: [field] } },
+    }
+    const file = path.join(root, '.canopy-meta', 'merge-conflicts.json')
+    await fs.writeFile(file, JSON.stringify(record))
+    await expect(new MergeConflictStore(root).read()).rejects.toThrow(/malformed/)
+    record.entries[ID].fields[0] = { ...field, sidePaths: {} } as typeof field
+    await fs.writeFile(file, JSON.stringify(record))
+    await expect(new MergeConflictStore(root).read()).resolves.toMatchObject({ version: 1 })
+  })
+
+  it('refuses a record of another format, and one holding a member this code does not write', async () => {
+    await fs.mkdir(path.join(root, '.canopy-meta'))
+    const file = path.join(root, '.canopy-meta', 'merge-conflicts.json')
+    await fs.writeFile(file, JSON.stringify({ schema: 1, version: 1, entries: {} }))
+    await expect(new MergeConflictStore(root).read()).rejects.toBeInstanceOf(
+      MergeConflictsFileFormatError,
+    )
+    await expect(assertNoOpenConflicts(root)).rejects.toMatchObject({ count: null })
+    await fs.writeFile(file, JSON.stringify({ schema: 2, version: 1, entries: {}, extra: 1 }))
+    await expect(new MergeConflictStore(root).read()).rejects.toThrow(/malformed/)
+    await fs.writeFile(file, JSON.stringify({ schema: 2, version: 1, entries: {} }))
+    await expect(new MergeConflictStore(root).read()).resolves.toMatchObject({ entries: {} })
+  })
+
+  it('holds the branch once a record that does not parse is set aside, until a release', async () => {
+    await fs.mkdir(path.join(root, '.canopy-meta'))
+    await fs.writeFile(path.join(root, '.canopy-meta', 'merge-conflicts.json'), '{"oops"')
+    const store = new MergeConflictStore(root, 0)
+    const aside = await store.quarantine()
+    expect(await fs.readFile(aside, 'utf8')).toBe('{"oops"')
+    expect((await store.read())?.held).toMatchObject({ aside: path.basename(aside) })
+    await expect(assertNoOpenConflicts(root)).rejects.toMatchObject({
+      count: null,
+      held: true,
+      message: expect.stringContaining('on hold until an admin releases it'),
+    })
+    // A write that leaves it out keeps it, as a merge's does; only one that names it releases it.
+    await store.update((current) => current && { ...current, remaps: [] })
+    await store.update(() => ({ entries: {} }))
+    expect((await store.read())?.held).toBeDefined()
+    await store.update((current) => current && { ...current, held: undefined })
+    expect((await store.read())?.held).toBeUndefined()
+    await expect(assertNoOpenConflicts(root)).resolves.toBeUndefined()
   })
 
   it('refuses a file that is not a record, rather than reading it as none', async () => {
@@ -407,7 +514,14 @@ describe('withRemappedItemKeys', () => {
     path: 'content/page.home.aboutAbc1234.json',
     kind: 'fields',
     sides: { ancestor: 'o1', base: 'a1', branch: 'b1' },
-    fields: [{ key, dataPath, kind: 'changed' }],
+    fields: [
+      {
+        key,
+        dataPath,
+        sidePaths: { ancestor: dataPath, base: dataPath, branch: dataPath },
+        kind: 'changed',
+      },
+    ],
   })
   const recorded = withFoundConflicts(
     {},
@@ -443,6 +557,8 @@ describe('withRemappedItemKeys', () => {
     ])
     expect(renamed[ID]?.mergeSha).toBe(M2)
     expect(renamed[ID]?.previous).toEqual(recorded[ID])
+    // Each version's own path addresses its stored blob, which keeps its keys.
+    expect(renamed[ID]?.fields?.[0].sidePaths).toEqual(recorded[ID]?.fields?.[0].sidePaths)
   })
 
   it('renames an inner item only inside the outer item the remap names, inner first', () => {

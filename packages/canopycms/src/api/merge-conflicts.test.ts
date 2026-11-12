@@ -25,6 +25,7 @@ import { GitManager } from '../git-manager'
 import {
   LOCATION_CONFLICT_KEY,
   MergeConflictStore,
+  assertNoOpenConflicts,
   type MergeConflictEntry,
   type MergeConflictField,
 } from '../merge-conflicts'
@@ -123,7 +124,15 @@ const field = (
   dataPath: MergeConflictField['dataPath'],
   sides: MergeConflictField['sides'],
   extra: Partial<MergeConflictField> = {},
-): MergeConflictField => ({ key, dataPath, kind: 'changed', mergeSha: MERGE, sides, ...extra })
+): MergeConflictField => ({
+  key,
+  dataPath,
+  sidePaths: { ancestor: dataPath, base: dataPath, branch: dataPath },
+  kind: 'changed',
+  mergeSha: MERGE,
+  sides,
+  ...extra,
+})
 
 const recordAs = (entries: Record<string, MergeConflictEntry>) =>
   new MergeConflictStore(branchRoot, 0).update(() => ({ entries }))
@@ -452,6 +461,41 @@ describe('GET /:branch/conflicts', () => {
   })
 })
 
+describe('a branch held after its record was set aside', () => {
+  const holdIt = async () => {
+    await fs.mkdir(path.join(branchRoot, '.canopy-meta'), { recursive: true })
+    await fs.writeFile(path.join(branchRoot, '.canopy-meta', 'merge-conflicts.json'), '{"oops"')
+    return new MergeConflictStore(branchRoot, 0).quarantine()
+  }
+  const release = (as: ApiRequest['user']) =>
+    MERGE_CONFLICT_ROUTES.releaseHold.handler(createCtx(), { user: as }, { branch })
+
+  it('says it is held, naming the set-aside file to admins only', async () => {
+    const aside = await holdIt()
+    expect((await list(createCtx())).data?.held).toEqual({ at: expect.any(String) })
+    expect((await list(createCtx(), adminUser)).data?.held).toEqual({
+      at: expect.any(String),
+      aside: path.basename(aside),
+    })
+  })
+
+  it('is released by an admin, which opens the gate, and by no one else', async () => {
+    await holdIt()
+    expect(await release(user)).toMatchObject({ ok: false, status: 403 })
+    await expect(assertNoOpenConflicts(branchRoot)).rejects.toMatchObject({ held: true })
+    expect(await release(adminUser)).toEqual({ ok: true, status: 200, data: { released: true } })
+    await expect(assertNoOpenConflicts(branchRoot)).resolves.toBeUndefined()
+    expect((await list(createCtx())).data).not.toHaveProperty('held')
+    expect(await release(adminUser)).toEqual({ ok: true, status: 200, data: { released: false } })
+  })
+
+  it('routes the release apart from an entry’s conflicts', () => {
+    expect(
+      matchRoute(buildCanopyRoutes(), 'POST', ['feature', 'conflicts', 'release-hold'])?.pattern,
+    ).toEqual([':branch', 'conflicts', 'release-hold'])
+  })
+})
+
 describe('GET /:branch/conflicts/...entryPath', () => {
   it('returns each field with its sides, and every version they name read as the editor reads it (rows 4, 5, 21)', async () => {
     await recordAs({ [ID.hello]: helloRecord() })
@@ -483,6 +527,27 @@ describe('GET /:branch/conflicts/...entryPath', () => {
     await recordAs({ [ID.hello]: entry })
     const data = (await entryConflict(createCtx(), 'content/blog/hello')).data!
     expect(data.fields[0]).toMatchObject({ key: '?title', drawerKey: 'title' })
+  })
+
+  it('keeps a key the merge named under the schema, whatever key a version gives the item', async () => {
+    // The branch's version holds the block keyless, so its read keys it by content.
+    const keyless = post('Hello you', 'Welcome friends')
+    const branch = await blob(
+      json({ ...keyless, sections: keyless.sections.map(({ _key: _k, ...item }) => item) }),
+    )
+    const entry = helloRecord()
+    const named = (key: string) => ({
+      ...entry.fields![1],
+      key,
+      sides: { ...entry.fields![1].sides, branch },
+    })
+    entry.fields = [named('sections.hero1.heading'), named('sections.hero1?legacy')]
+    await recordAs({ [ID.hello]: entry })
+    const data = (await entryConflict(createCtx(), 'blog/hello')).data!
+    expect(data.fields.map((f) => [f.key, f.drawerKey])).toEqual([
+      ['sections.hero1.heading', 'sections.hero1.heading'],
+      ['sections.hero1?legacy', 'sections.hero1?legacy'],
+    ])
   })
 
   it('keeps an item conflict’s key and kind, and the location pseudo-key (rows 13, 14)', async () => {
@@ -552,6 +617,42 @@ describe('GET /:branch/conflicts/...entryPath', () => {
       [big]: { unavailable: 'too-large' },
       ['c'.repeat(40)]: { unavailable: 'missing' },
     })
+  })
+
+  it('stops reading versions once their total would be too large to answer', async () => {
+    // Fields found by several merges each name their own versions, of about 0.9 MiB here.
+    const big = (n: number) => blob(json({ title: `${n}`.repeat(900 * 1024) }))
+    const shas = await Promise.all([1, 2, 3, 4, 5].map(big))
+    const entry = helloRecord()
+    entry.fields = shas.map((branch, n) =>
+      field(`f${n}`, [{ field: `f${n}` }], { ...helloSides, branch }),
+    )
+    await recordAs({ [ID.hello]: entry })
+    const { versions } = (await entryConflict(createCtx(), 'blog/hello')).data!
+    const tooLarge = shas.filter((sha) => 'unavailable' in versions[sha])
+    expect(tooLarge.length).toBeGreaterThan(0)
+    expect(tooLarge.length).toBeLessThan(shas.length)
+    expect(versions[helloSides.base]).not.toHaveProperty('unavailable')
+  })
+
+  it('spends that budget on the versions the cards show, the newest merge’s first', async () => {
+    const big = (n: number) => blob(json({ title: `${n}`.repeat(1000 * 1024) }))
+    const [unused, old1, old2, old3, old4] = await Promise.all([9, 1, 2, 3, 4].map(big))
+    const entry = helloRecord()
+    // The entry's own sides name a version no field's card reads.
+    entry.sides = { ...helloSides, ancestor: unused }
+    entry.fields = [
+      ...[old1, old2, old3, old4].map((branch, n) =>
+        field(`old${n}`, [{ field: `old${n}` }], { ...helloSides, branch }),
+      ),
+      field('newest', [{ field: 'newest' }], helloSides),
+    ]
+    await recordAs({ [ID.hello]: entry })
+    const { versions } = (await entryConflict(createCtx(), 'blog/hello')).data!
+    expect(versions).not.toHaveProperty(unused)
+    for (const sha of Object.values(helloSides))
+      expect(versions[sha]).not.toHaveProperty('unavailable')
+    expect(versions[old1]).toEqual({ unavailable: 'too-large' })
   })
 
   it('answers an entry the user may not read as one with no conflict (row 46)', async () => {
@@ -754,6 +855,24 @@ describe('POST /:branch/resolve-entry/...entryPath', () => {
     expect(res.ok).toBe(true)
     expect(await fs.readFile(path.join(branchRoot, files.gone), 'utf8')).toBe(latest)
     expect(await recorded()).toEqual({})
+  })
+
+  it('keeps deleted an entry the branch deleted with field conflicts open, clearing them', async () => {
+    // The editor's "Keep it deleted" card for an entry whose field conflicts outlived it.
+    await recordAs({ [ID.gone]: { ...helloRecord(), path: files.gone } })
+    const read = await entryConflict(createCtx(), 'content/blog/gone', ID.gone)
+    expect(read.ok).toBe(true)
+    expect(read.data?.kind).toBe('fields')
+    const res = await resolveEntry(createCtx(), 'content/blog/gone', {
+      id: ID.gone,
+      mergeSha: MERGE,
+      choice: 'keep',
+    })
+    expect(res.ok).toBe(true)
+    expect(res.data?.openCount).toBe(0)
+    expect(await recorded()).toEqual({})
+    expect(await conflictFiles()).toEqual([])
+    await expect(fs.stat(path.join(branchRoot, files.gone))).rejects.toThrow()
   })
 
   it('replaces an entry that can’t merge field by field with the latest version (rows 33, 43)', async () => {

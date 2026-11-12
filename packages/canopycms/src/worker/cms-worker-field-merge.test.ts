@@ -22,7 +22,11 @@ import type { FieldConfig } from '../config'
 import type { FlatSchemaItem } from '../config/types'
 import { parseEntryParts } from '../content-listing'
 import { itemKeysAsRead } from '../item-keys'
-import { MergeConflictStore, type MergeConflictsFile } from '../merge-conflicts'
+import {
+  MergeConflictStore,
+  assertNoOpenConflicts,
+  type MergeConflictsFile,
+} from '../merge-conflicts'
 import { unsafeAsLogicalPath } from '../paths/test-utils'
 import { initTestRepo, mockConsole } from '../test-utils'
 import { CmsWorker } from './cms-worker'
@@ -406,7 +410,18 @@ describe('the field merge in the rebase loop', () => {
         kind: 'fields',
         sides,
         fields: [
-          { key: '?title', dataPath: [{ field: 'title' }], kind: 'changed', mergeSha: head, sides },
+          {
+            key: '?title',
+            dataPath: [{ field: 'title' }],
+            sidePaths: {
+              ancestor: [{ field: 'title' }],
+              base: [{ field: 'title' }],
+              branch: [{ field: 'title' }],
+            },
+            kind: 'changed',
+            mergeSha: head,
+            sides,
+          },
         ],
       },
     })
@@ -1156,7 +1171,23 @@ describe('the field merge in the rebase loop', () => {
 
     expect(summary.rebased).toEqual([BRANCH])
     expect((await fs.readdir(dir)).filter((f) => f.includes('.malformed-'))).toHaveLength(1)
+    // The merge records anew, and the hold stays: it took the set-aside merge as merged, so the
+    // choices lost with the record would read as the branch's own.
     expect(Object.keys((await repo.record())?.entries ?? {})).toEqual(['aboutAbc1234'])
+    expect((await repo.record())?.held).toBeDefined()
+  })
+
+  it('holds the branch when it sets aside a record with nothing to merge', async () => {
+    const repo = await createRepo(tmpDir, {})
+    const dir = path.join(repo.clonePath, '.canopy-meta')
+    await fs.mkdir(dir, { recursive: true })
+    await fs.writeFile(path.join(dir, 'merge-conflicts.json'), '{"entries": 7}')
+
+    await repo.cycle()
+
+    const [aside] = (await fs.readdir(dir)).filter((f) => f.includes('.malformed-'))
+    expect((await repo.record())?.held).toMatchObject({ aside })
+    await expect(assertNoOpenConflicts(repo.clonePath)).rejects.toMatchObject({ held: true })
   })
 
   it('reconciles the record of a branch in review too', async () => {
@@ -1558,16 +1589,23 @@ describe('the field merge in the rebase loop', () => {
     expect((await repo.record())?.entries[COLLECTION_ID]?.path).toBe(`${NEW}/.collection.json`)
   })
 
-  it('leaves a conflict record in a later format alone', async () => {
-    const repo = await createRepo(tmpDir, {})
-    const dir = path.join(repo.clonePath, '.canopy-meta')
-    await fs.mkdir(dir, { recursive: true })
-    const later = JSON.stringify({ schema: 2, version: 1, entries: { x: { novel: true } } })
-    await fs.writeFile(path.join(dir, 'merge-conflicts.json'), later)
+  it.each([
+    ['a later', 3],
+    ['an earlier', 1],
+  ])(
+    'leaves a conflict record in %s format alone, and keeps the gates closed',
+    async (_, schema) => {
+      const repo = await createRepo(tmpDir, {})
+      const dir = path.join(repo.clonePath, '.canopy-meta')
+      await fs.mkdir(dir, { recursive: true })
+      const other = JSON.stringify({ schema, version: 1, entries: { x: { novel: true } } })
+      await fs.writeFile(path.join(dir, 'merge-conflicts.json'), other)
 
-    await repo.cycle()
+      await repo.cycle()
 
-    expect(await fs.readFile(path.join(dir, 'merge-conflicts.json'), 'utf8')).toBe(later)
-    expect((await fs.readdir(dir)).filter((f) => f.includes('.malformed-'))).toEqual([])
-  })
+      expect(await fs.readFile(path.join(dir, 'merge-conflicts.json'), 'utf8')).toBe(other)
+      expect((await fs.readdir(dir)).filter((f) => f.includes('.malformed-'))).toEqual([])
+      await expect(assertNoOpenConflicts(repo.clonePath)).rejects.toMatchObject({ count: null })
+    },
+  )
 })

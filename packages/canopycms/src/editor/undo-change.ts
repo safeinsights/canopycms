@@ -127,16 +127,21 @@ const updateAt = (
 
 /**
  * `item` placed in `list` (which lacks it) where `order` has it: after the nearest item before it
- * in `order` that `list` holds, else first.
+ * in `order` that `list` holds, else before the nearest one after it, else at its place in `order`.
  */
 const placeLike = (list: readonly unknown[], item: unknown, key: string, order: unknown[]) => {
   const at = indexOfKey(order, key)
+  const indexIn = (other: unknown) =>
+    isPlainRecord(other) ? indexOfKey(list, other[ITEM_KEY] as string) : -1
   for (let i = at - 1; i >= 0; i--) {
-    const before = order[i]
-    const index = isPlainRecord(before) ? indexOfKey(list, before[ITEM_KEY] as string) : -1
+    const index = indexIn(order[i])
     if (index >= 0) return [...list.slice(0, index + 1), item, ...list.slice(index + 1)]
   }
-  return [item, ...list]
+  for (let i = at + 1; at > 0 && i < order.length; i++) {
+    const index = indexIn(order[i])
+    if (index >= 0) return [...list.slice(0, index), item, ...list.slice(index)]
+  }
+  return at > 0 ? [...list.slice(0, at), item, ...list.slice(at)] : [item, ...list]
 }
 
 const isNothing = (value: unknown): boolean => value === undefined || isEmptyContainer(value)

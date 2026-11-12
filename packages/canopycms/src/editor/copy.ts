@@ -33,6 +33,7 @@ export const EDITOR_ACTIONS = {
   keepYourVersion: 'Keep your version',
   useBoth: 'Use both',
   markResolved: 'Mark resolved',
+  releaseHold: 'Release hold',
   removeIt: 'Remove it',
   keepIt: 'Keep it',
   keepItDeleted: 'Keep it deleted',

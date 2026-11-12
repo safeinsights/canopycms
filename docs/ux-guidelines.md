@@ -36,6 +36,7 @@ One word per idea, everywhere. New UI takes the verbs from `EDITOR_ACTIONS` in
 | **Use latest version**, **Keep your version** | A conflict's two sides                                           | Use theirs, Keep mine                       |
 | **Use both**                                  | Long text: the latest version's lines, then yours                | Merge, Combine                              |
 | **Mark resolved**                             | Settling a conflict edited by hand                               | Resolve, Done                               |
+| **Release hold**                              | Letting a held branch go on                                      | Unblock                                     |
 | **Remove it**, **Keep it**                    | A conflict on a value one side removed                           | Delete, Restore                             |
 | **entry**, **collection**                     | A content item, and the folder that holds entries                | file, page, item; folder                    |
 | **file**                                      | An item in the media library                                     | asset, media item                           |

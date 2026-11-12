@@ -15,6 +15,7 @@ import { computeEntryDiff } from '../editor/entry-diff'
 import { itemKeysAsRead, itemKeysOnPath, resolveThreadPath } from '../item-keys'
 import { entryAsRead } from '../utils/calendar-day'
 import { serializeFrontmatter, serializeYaml } from '../utils/content-serialize'
+import { checkSidePaths, valueAtSidePath } from './__test__/side-paths'
 import {
   mergeCollectionMeta,
   mergeEntry,
@@ -50,7 +51,10 @@ const fields: FieldConfig[] = [
 ]
 
 type Data = Record<string, unknown>
-type Merged = Extract<EntryMergeResult, { kind: 'merged' }>
+/** A merge's result, its conflicts' side paths checked against the three versions and set aside. */
+type Merged = Omit<Extract<EntryMergeResult, { kind: 'merged' }>, 'conflicts'> & {
+  conflicts: Array<Omit<FieldConflict, 'sidePaths'>>
+}
 
 const MARKERS = /<{7}|>{7}|={7}|\|{7}/
 
@@ -70,7 +74,10 @@ const run = (
   })
   if (result.kind !== 'merged') throw new Error(`expected a merge, got ${result.kind}`)
   expect(JSON.stringify(result)).not.toMatch(MARKERS)
-  return result
+  return {
+    ...result,
+    conflicts: checkSidePaths(result.conflicts, { ancestor: o, base: a, branch: b }, schema),
+  }
 }
 
 /** Asserts the two identities for these three versions. */
@@ -2217,7 +2224,7 @@ describe('conflict names agree with the "Show changes" drawer', () => {
    * The drawer's change for `conflict` once the merge lands: the drawer then compares the base,
    * the branch's new merge base, with the merged entry.
    */
-  const drawerChange = (a: Data, merged: Data, conflict: FieldConflict) =>
+  const drawerChange = (a: Data, merged: Data, conflict: Pick<FieldConflict, 'key'>) =>
     computeEntryDiff({
       fields,
       before: { format: 'json', entryType: 'page', data: entryAsRead(fields, a) },
@@ -2265,4 +2272,158 @@ describe('conflict names agree with the "Show changes" drawer', () => {
       expect(change?.dataPath).toEqual(result.conflicts[0].dataPath)
     })
   }
+
+  it('names where the branch holds an item the merge re-keyed by the base version as read', () => {
+    const [o, a, b] = cases
+      .find(([name]) => name === 'a field of an item the base left keyless')!
+      .slice(1) as Data[]
+    const result = mergeEntry({
+      format: 'json',
+      ancestor: { data: o },
+      base: { data: a },
+      branch: { data: b },
+      fields,
+    })
+    if (result.kind !== 'merged') throw new Error('expected a merge')
+    const [conflict] = result.conflicts
+    const baseKey = itemKeysAsRead([{ title: 'B', detail: 'd' }])[0]
+    expect(conflict.sidePaths.base).toEqual([
+      { field: 'items' },
+      { item: baseKey },
+      { field: 'title' },
+    ])
+    // The merged item takes the base's read key, so only the branch's own path finds its value.
+    expect(conflict.sidePaths.base).toEqual(conflict.dataPath)
+    expect(conflict.sidePaths.branch).toEqual([
+      { field: 'items' },
+      { item: b.items[0]._key },
+      { field: 'title' },
+    ])
+    const branchRead = entryAsRead(fields, b)
+    expect(valueAtSidePath(branchRead, conflict.sidePaths.branch!)).toBe('M')
+    expect(valueAtSidePath(branchRead, conflict.dataPath)).toBeUndefined()
+  })
+})
+
+describe('side paths', () => {
+  it('names an item a side lacks through the list it holds', () => {
+    const o = { items: [item('k1', 'One')], other: [] as unknown[] }
+    const a = { items: [] as unknown[], other: [item('k1', 'One')] }
+    const b = { items: [item('k1', 'One, mine')], other: [] as unknown[] }
+    const schema: FieldConfig[] = [
+      { name: 'items', type: 'object', list: true, fields: text('title', 'detail') },
+      { name: 'other', type: 'object', list: true, fields: text('title', 'detail') },
+    ]
+    const result = mergeEntry({
+      format: 'json',
+      ancestor: { data: o },
+      base: { data: a },
+      branch: { data: b },
+      fields: schema,
+    })
+    if (result.kind !== 'merged') throw new Error('expected a merge')
+    // The base took the item out of `items`: it is named by the list it holds, which lacks it.
+    const moved = result.conflicts.find((c) => c.item)
+    expect(moved?.kind).toBe('removed-on-base')
+    expect(moved?.base).toBeUndefined()
+    expect(moved?.sidePaths.base).toEqual([{ field: 'items' }])
+    expect(moved?.sidePaths.ancestor).toEqual([{ field: 'items' }, { item: 'k1' }])
+    expect(moved?.sidePaths.branch).toEqual([{ field: 'items' }, { item: 'k1' }])
+    checkSidePaths(
+      result.conflicts,
+      { ancestor: { data: o }, base: { data: a }, branch: { data: b } },
+      schema,
+    )
+  })
+
+  it('names a value lifted whole in each version that holds it, a side lacking the leaf included', () => {
+    // A block of a template the schema lacks is one value; the base took a row out of it.
+    const schema: FieldConfig[] = [
+      { name: 'blocks', type: 'block', templates: [{ name: 'hero', fields: text('title') }] },
+    ]
+    const [r1, r2] = [
+      { t: 't', u: 'u' },
+      { t: 'x', u: 'y' },
+    ]
+    const block = { template: 'legacy', value: { title: 'T', rows: [r1, r2] } }
+    const o = { data: { blocks: [block] } }
+    const a = { data: { blocks: [{ template: 'legacy', value: { title: 'T', rows: [r2] } }] } }
+    const b = {
+      data: {
+        blocks: [
+          {
+            _key: itemKeysAsRead([block])[0],
+            template: 'legacy',
+            value: { title: 'T', rows: [{ t: 'tB', u: 'u' }, r2] },
+          },
+        ],
+      },
+    }
+    const result = mergeEntry({ format: 'json', ancestor: o, base: a, branch: b, fields: schema })
+    if (result.kind !== 'merged') throw new Error('expected a merge')
+    expect(result.conflicts).toHaveLength(1)
+    expect(result.conflicts[0].base).toBeDefined()
+    expect(result.conflicts[0].sidePaths.base).toEqual([
+      { field: 'blocks' },
+      { item: itemKeysAsRead(a.data.blocks)[0] },
+    ])
+    checkSidePaths(result.conflicts, { ancestor: o, base: a, branch: b }, schema)
+  })
+
+  it('names a nested item the base removed through the outer item the base keyed apart', () => {
+    const schema: FieldConfig[] = [
+      {
+        name: 'items',
+        type: 'object',
+        list: true,
+        fields: [
+          ...text('name', 'n2'),
+          { name: 'rows', type: 'object', list: true, fields: text('t', 'u') },
+        ],
+      },
+    ]
+    const [r1, r2] = [
+      { t: 't', u: 'u' },
+      { t: 'x', u: 'y' },
+    ]
+    const [k1, k2] = itemKeysAsRead([r1, r2])
+    const outer = { name: 'n', n2: 'm', rows: [r1, r2] }
+    const o = { data: { items: [outer] } }
+    const a = { data: { items: [{ name: 'nA', n2: 'm', rows: [r2] }] } }
+    const b = {
+      data: {
+        items: [
+          {
+            _key: itemKeysAsRead([outer])[0],
+            name: 'n',
+            n2: 'm',
+            rows: [
+              { _key: k1, t: 'tB', u: 'u' },
+              { _key: k2, ...r2 },
+            ],
+          },
+        ],
+      },
+    }
+    const result = mergeEntry({ format: 'json', ancestor: o, base: a, branch: b, fields: schema })
+    if (result.kind !== 'merged') throw new Error('expected a merge')
+    const removed = result.conflicts.find((c) => c.kind === 'removed-on-base')
+    expect(removed?.sidePaths.base).toEqual([
+      { field: 'items' },
+      { item: itemKeysAsRead(a.data.items)[0] },
+      { field: 'rows' },
+    ])
+    checkSidePaths(result.conflicts, { ancestor: o, base: a, branch: b }, schema)
+  })
+
+  it('names an md body by its field on every side', () => {
+    const result = run(
+      { data: { title: 'T' }, body: 'one\ntwo\n' },
+      { data: { title: 'T' }, body: 'one, base\ntwo\n' },
+      { data: { title: 'T' }, body: 'one, mine\ntwo\n' },
+      'md',
+      [...fields, { name: 'content', type: 'markdown', isBody: true }],
+    )
+    expect(result.conflicts).toHaveLength(1)
+  })
 })
