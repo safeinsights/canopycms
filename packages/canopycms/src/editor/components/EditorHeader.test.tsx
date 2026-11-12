@@ -1123,19 +1123,19 @@ describe('EditorHeader - blocked controls say why on focus and ignore their clic
       )
 
       await userEvent.click(screen.getByRole('button', { name: 'Release hold' }))
-      const dialog = await screen.findByRole('dialog', { name: "Release this branch's hold?" })
+      const dialog = await screen.findByRole('dialog', {
+        name: `Release the hold on "${defaultProps.branchName}"?`,
+      })
       expect(dialog.textContent).toContain(releaseHoldConsequences)
       const confirm = within(dialog).getByRole('button', { name: 'Release hold' })
       // A refusal says why in the confirm, which stays open; a release closes it.
       await userEvent.click(confirm)
       expect(within(dialog).getByRole('alert').textContent).toBe('This branch is busy.')
       await new Promise((resolve) => setTimeout(resolve, 500))
-      expect(screen.queryByRole('dialog', { name: "Release this branch's hold?" })).toBeTruthy()
+      expect(screen.queryByRole('dialog')).toBeTruthy()
       await userEvent.click(confirm)
       expect(onRelease).toHaveBeenCalledTimes(2)
-      await waitFor(() =>
-        expect(screen.queryByRole('dialog', { name: "Release this branch's hold?" })).toBeNull(),
-      )
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     })
 
     it('holds Submit for review with the reason while the branch is held', async () => {
@@ -1160,17 +1160,39 @@ describe('EditorHeader - blocked controls say why on focus and ignore their clic
       expect(screen.getByTestId('submit-button').getAttribute('aria-disabled')).toBe('true')
     })
 
-    it('moves focus to Submit for review when a release takes its confirm away', async () => {
+    it('moves focus to Submit for review when its own release takes the confirm away', async () => {
+      // The release lands, and the re-read that clears the hold unmounts the confirm before it
+      // can return focus.
+      let rerender: (ui: React.ReactElement) => void = () => {}
+      const props = {
+        userContext: author,
+        branchCreatedBy: 'u1',
+        conflictRecordHeld: {
+          onRelease: vi.fn(async () => {
+            rerender(<Headers {...defaultProps} {...props} conflictRecordHeld={undefined} />)
+            return { released: true as const }
+          }),
+        },
+      }
+      const view = renderHeader(props)
+      rerender = view.rerender
+      await userEvent.click(screen.getByRole('button', { name: 'Release hold' }))
+      const dialog = await screen.findByRole('dialog')
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Release hold' }))
+      await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('submit-button')))
+    })
+
+    it('leaves focus alone when the hold goes without a release from here', async () => {
       const props = {
         userContext: author,
         branchCreatedBy: 'u1',
         conflictRecordHeld: { onRelease: vi.fn() },
       }
       const view = renderHeader(props)
-      await userEvent.click(screen.getByRole('button', { name: 'Release hold' }))
-      await screen.findByRole('dialog', { name: "Release this branch's hold?" })
+      act(() => (document.activeElement as HTMLElement | null)?.blur())
       view.rerender(<Headers {...defaultProps} {...props} conflictRecordHeld={undefined} />)
-      await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('submit-button')))
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(document.activeElement).toBe(document.body)
     })
 
     it('offers no release where the branch is not held', () => {

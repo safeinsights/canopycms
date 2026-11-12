@@ -33,4 +33,20 @@ describe('useBranchConflictsData', () => {
     await waitFor(() => expect(always.result.current.data?.held).toBeDefined())
     expect(asked.list).toHaveBeenCalledWith({ branch: 'feature' })
   })
+
+  it('reads the list again when what is open changes, showing the last answer meanwhile', async () => {
+    const { list, client } = clientWith()
+    const hook = renderHook(
+      ({ open }: { open: string[] }) => useBranchConflictsData(client, 'feature', open, true),
+      { wrapper, initialProps: { open: [] } },
+    )
+    await waitFor(() => expect(hook.result.current.data?.held).toBeDefined())
+    let answer: (value: unknown) => void = () => {}
+    list.mockReturnValueOnce(new Promise((resolve) => (answer = resolve)))
+    hook.rerender({ open: ['aboutAbc1234'] })
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+    expect(hook.result.current.data?.held).toBeDefined()
+    answer({ ok: true, status: 200, data: { conflicts: [], hiddenCount: 0, openCount: 1 } })
+    await waitFor(() => expect(hook.result.current.data?.openCount).toBe(1))
+  })
 })

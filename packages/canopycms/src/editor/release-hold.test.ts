@@ -45,15 +45,18 @@ describe('releaseConflictsHold', () => {
 
   it('settles an unanswered request by reading the record again', async () => {
     for (const unanswered of [await gatewayPage(504), new ApiTimeoutError('POST', '/x', 1000)]) {
+      // No longer held: released, though this read can't say by whom.
       const landed = client(unanswered, notHeld)
-      expect(await releaseConflictsHold(landed as never, 'b')).toEqual({
-        released: true,
-        wasHeld: true,
-      })
+      expect(await releaseConflictsHold(landed as never, 'b')).toEqual({ released: true })
       const stillHeld = client(unanswered, held)
       expect(await releaseConflictsHold(stillHeld as never, 'b')).toMatchObject({
         tone: 'warning',
-        error: expect.stringContaining("Couldn't tell"),
+        error: expect.stringContaining("didn't answer, and the branch is still on hold"),
+      })
+      const unread = client(unanswered, { ok: false, status: 503, error: 'Busy' })
+      expect(await releaseConflictsHold(unread as never, 'b')).toMatchObject({
+        tone: 'warning',
+        error: expect.stringContaining('may have gone through'),
       })
     }
   })

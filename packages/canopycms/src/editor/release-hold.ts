@@ -9,11 +9,17 @@ import type { ReleaseOutcome } from './components/ReleaseHoldButton'
 import { isGatewayFailure, isUnanswered } from './unanswered'
 import { getErrorMessage } from '../utils/error'
 
-/** A release's outcome, and on release whether the branch was still held. */
+/** A release's outcome, and on release whether it found the branch held, when that is known. */
 export type ReleaseResult = ReleaseOutcome & { wasHeld?: boolean }
 
 const UNKNOWN: ReleaseResult = {
-  error: "Couldn't tell whether the hold was released. Try again in a moment.",
+  error:
+    "The release may have gone through even though the server didn't answer. Reload the page to see whether the branch is still on hold.",
+  tone: 'warning',
+}
+
+const STILL_HELD: ReleaseResult = {
+  error: "The server didn't answer, and the branch is still on hold. Try again in a moment.",
   tone: 'warning',
 }
 
@@ -23,7 +29,9 @@ export async function releaseConflictsHold(
 ): Promise<ReleaseResult> {
   const settle = async (): Promise<ReleaseResult> => {
     const now = await apiClient.conflicts.list({ branch }).catch(() => undefined)
-    return now?.ok && now.data && !now.data.held ? { released: true, wasHeld: true } : UNKNOWN
+    if (!now?.ok || !now.data) return UNKNOWN
+    // Not held now, but this read can't say whose release that was.
+    return now.data.held ? STILL_HELD : { released: true }
   }
   let result: Awaited<ReturnType<ApiClient['conflicts']['releaseHold']>>
   try {

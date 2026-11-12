@@ -522,3 +522,13 @@ export const ConflictRecordHeldRefused: Story = {
 export const ConflictRecordHeldEditor: Story = {
   args: { conflictRecordHeld: {} },
 }
+
+/** A reviewer on a held branch in review: Approve waits, with the reason. */
+export const ConflictRecordHeldReviewer: Story = {
+  args: {
+    branchStatus: 'submitted',
+    branchCreatedBy: 'author-1',
+    userContext: { userId: 'reviewer-1', groups: ['Reviewers'] },
+    conflictRecordHeld: {},
+  },
+}

@@ -18,7 +18,14 @@ export type ReleaseOutcome = { released: true } | { error: string; tone: 'warnin
  * (api/merge-conflicts.ts `releaseHold`), behind a confirm that says what is lost. A refusal shows
  * in the confirm, which stays open; a release closes it.
  */
-export function ReleaseHoldButton({ onRelease }: { onRelease: () => Promise<ReleaseOutcome> }) {
+export function ReleaseHoldButton({
+  branchLabel,
+  onRelease,
+}: {
+  /** The branch as the bar names it, which the confirm names. */
+  branchLabel?: string
+  onRelease: () => Promise<ReleaseOutcome>
+}) {
   const [open, setOpen] = useState(false)
   const [releasing, setReleasing] = useState(false)
   const [refusal, setRefusal] = useState<Extract<ReleaseOutcome, { error: string }>>()
@@ -38,7 +45,9 @@ export function ReleaseHoldButton({ onRelease }: { onRelease: () => Promise<Rele
       </Button>
       <ConfirmDeleteModal
         isOpen={open}
-        title="Release this branch's hold?"
+        title={
+          branchLabel ? `Release the hold on "${branchLabel}"?` : "Release this branch's hold?"
+        }
         message={releaseHoldConsequences}
         confirmLabel={EDITOR_ACTIONS.releaseHold}
         loading={releasing}

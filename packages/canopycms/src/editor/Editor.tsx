@@ -1985,7 +1985,12 @@ const EditorContent: React.FC<EditorProps> = ({
     const result = await releaseConflictsHold(apiClient, branchNameState)
     if ('released' in result) {
       notifications.show({
-        message: result.wasHeld ? 'Hold released.' : 'This branch was no longer on hold.',
+        message:
+          result.wasHeld === true
+            ? 'Hold released.'
+            : result.wasHeld === false
+              ? 'This branch was already released.'
+              : 'This branch is no longer on hold.',
         color: 'green',
       })
       void branchConflicts.reload()

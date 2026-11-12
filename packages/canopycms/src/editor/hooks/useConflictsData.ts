@@ -6,7 +6,7 @@
  * "Show changes" drawer. A null key fetches nothing.
  */
 
-import { useCallback } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import useSWR, { useSWRConfig } from 'swr'
 import type { ApiClient } from '../context'
 import type { EntryConflictData, MergeConflictsData } from '../../api/merge-conflicts'
@@ -14,11 +14,10 @@ import type { EntryConflictData, MergeConflictsData } from '../../api/merge-conf
 const KEY_PREFIX = 'canopy:conflicts:'
 
 /**
- * The list's key. It carries what the branch listing says is open (`conflictFiles`), so a
- * listing that changes it reads the list again.
+ * The list's key, one per branch, so a re-read keeps the last answer showing until it lands: a
+ * branch's hold must not blink off while its list is read again.
  */
-const listKey = (branch: string, open: readonly string[]): string =>
-  `${KEY_PREFIX}${branch}|${open.join(',')}`
+const listKey = (branch: string): string => `${KEY_PREFIX}${branch}|`
 
 /** An entry's key, under its branch's prefix and a `:`, which no branch name holds. */
 const entryKey = (branch: string, target: EntryConflictTarget): string =>
@@ -51,14 +50,21 @@ export function useBranchConflictsData(
   /** Read even with no entry named, as an admin does to learn of a hold on the branch. */
   always = false,
 ): ConflictsState<MergeConflictsData> {
-  const key =
-    branch && (always || conflictFiles?.length) ? listKey(branch, conflictFiles ?? []) : null
+  const key = branch && (always || conflictFiles?.length) ? listKey(branch) : null
   const swr = useSWR(key, async (): Promise<MergeConflictsData> => {
     const result = await apiClient.conflicts.list({ branch })
     if (result.ok && result.data && Array.isArray(result.data.conflicts)) return result.data
     throw new ConflictsLoadError(result.error ?? `HTTP ${result.status}`)
   })
   const { mutate } = swr
+  // A listing that changes what is open (`conflictFiles`) reads the list again.
+  const open = (conflictFiles ?? []).join(',')
+  const lastOpen = useRef(open)
+  useEffect(() => {
+    if (lastOpen.current === open) return
+    lastOpen.current = open
+    if (key) void mutate()
+  }, [open, key, mutate])
   const { mutate: mutateKeys } = useSWRConfig()
   const reload = useCallback(async () => {
     const prefix = `${KEY_PREFIX}${branch}`

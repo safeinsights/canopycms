@@ -257,10 +257,12 @@ export function EditorHeader({
   // goes to the workflow control, which the release has just freed.
   const releasable = !!releaseHold
   const wasReleasable = useRef(releasable)
+  const releasedHere = useRef(false)
   useLayoutEffect(() => {
     const active = document.activeElement
-    if (wasReleasable.current && !releasable && (!active || active === document.body)) {
-      focusTarget(2)?.focus({ preventScroll: true })
+    if (wasReleasable.current && !releasable && releasedHere.current) {
+      releasedHere.current = false
+      if (!active || active === document.body) focusTarget(2)?.focus({ preventScroll: true })
     }
     wasReleasable.current = releasable
   })
@@ -303,7 +305,18 @@ export function EditorHeader({
               // The bar's button carries the spinner where it shows.
               workingSpinner={narrow || !baseUpdate}
             />
-            {releaseHold && <ReleaseHoldButton onRelease={releaseHold} />}
+            {releaseHold && (
+              <ReleaseHoldButton
+                branchLabel={branchLabel ?? branchName}
+                onRelease={async () => {
+                  // Marked while in flight: the re-read that clears the hold can land first.
+                  releasedHere.current = true
+                  const outcome = await releaseHold()
+                  if (!('released' in outcome)) releasedHere.current = false
+                  return outcome
+                }}
+              />
+            )}
           </Group>
           {modifiedCount > 0 && (
             <Tooltip

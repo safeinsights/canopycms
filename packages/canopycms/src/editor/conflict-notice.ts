@@ -50,7 +50,7 @@ export const conflictRecordHeldMessage =
 
 /** The same, to an admin, who has the way out beside it. */
 export const conflictRecordHeldAdminMessage =
-  "This branch's record of conflicts was damaged and set aside, so it's on hold: it can't be submitted or approved. Release the hold to let it go on."
+  "This branch's record of conflicts was damaged and set aside, so it's on hold: it can't be submitted or approved. Use \"Release hold\" to let it go on."
 
 /** What "Release hold" gives up, in its confirm. */
 export const releaseHoldConsequences =
