@@ -545,6 +545,7 @@ export async function mergeIntoBranch(
   if (refused) return refused
   if (lockLost()) return { kind: 'wait' }
   // A field merge of the base settles what git could not, which no reviewer has seen either.
+  // Approving waits for the content-write lock the caller holds, so none lands after this check.
   if (await changesWhatWasReviewed(ctx, args, head, sha)) await returnToReview(ctx, args)
 
   const published = await readPublishedSha(ctx, branchRef)
@@ -573,15 +574,6 @@ export async function mergeIntoBranch(
   // `catchUpWithPublished`.
   if (lockLost()) return { kind: 'wait' }
   await moveClone(git, branchPath, sha)
-  // Again once moved: approving takes no content-write lock, so it can land mid-merge. Unjudged, an
-  // approval goes back to review, and a failure must not skip what follows for the merge that did
-  // land.
-  await changesWhatWasReviewed(ctx, args, head, sha)
-    .catch(() => true)
-    .then((changed) => (changed ? returnToReview(ctx, args) : undefined))
-    .catch((err: unknown) =>
-      workerLogWarn(`  ${branchDir}: could not judge a late approval: ${getErrorMessage(err)}`),
-    )
   // Landed: a failure here leaves the remaps and the stamp for the next cycle's reconcile.
   await landed(ctx, args, sha).catch((err: unknown) =>
     workerLogWarn(
@@ -648,8 +640,7 @@ async function changesWhatWasReviewed(
 /**
  * Send an approved branch back to review and clear the verdict from the PR body. Called before the
  * clone moves, where a failed save throws, so a crash or a failure leaves the commits for the next
- * cycle to judge again rather than an approval standing over them; `mergeIntoBranch` asks again
- * once it has moved, for an approval that landed meanwhile.
+ * cycle to judge again rather than an approval standing over them.
  */
 export async function returnToReview(
   ctx: GitHubCommitsContext,

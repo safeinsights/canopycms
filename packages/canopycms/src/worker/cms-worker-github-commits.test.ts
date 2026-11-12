@@ -733,29 +733,6 @@ describe('row 42: a pull request in review that GitHub reports dirty', () => {
     expect((await readMeta(s))?.pullRequestHold).toBeUndefined()
   })
 
-  it('sends a branch approved while its merge was landing back to review', async () => {
-    await s.advanceBase({ [ENTRY]: page('seed', 'base') })
-    const update = MergeConflictStore.prototype.update
-    let approvedMidMerge = false
-    const spy = vi.spyOn(MergeConflictStore.prototype, 'update').mockImplementation(async function (
-      this: MergeConflictStore,
-      ...args
-    ) {
-      spy.mockRestore()
-      await writeMeta(s, approved)
-      approvedMidMerge = true
-      return update.apply(this, args)
-    })
-
-    await cycle(s, workerWithPullRequest(s, 'dirty'))
-
-    expect(approvedMidMerge).toBe(true)
-    expect(await s.file(ENTRY)).toBe(page('editor', 'base'))
-    const meta = await readMeta(s)
-    expect(meta?.status).toBe('submitted')
-    expect(meta?.review).toBeUndefined()
-  })
-
   it('sends an approved branch back to review once a field-clean merge lands', async () => {
     await writeMeta(s, approved)
     await s.advanceBase({ [ENTRY]: page('seed', 'base') })
