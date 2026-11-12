@@ -101,8 +101,19 @@ export function holdsChoice(
   bodyField: string | undefined,
 ): boolean {
   const expected = expectedUnder(field, choice, saved)
-  if (!expected) return true
+  // A place with no path, such as where the entry is, holds nothing the form could edit.
+  if (!expected || field.dataPath.length === 0) return true
   if ('text' in expected) return valueAtChange(current, field, bodyField) === expected.text
+  // An item on the way that the form no longer has holds nothing, though an empty value would
+  // compare equal to the nothing found there.
+  const from = expected.from
+  const itemGone = field.dataPath.some(
+    (segment, i) =>
+      'item' in segment &&
+      valueAtChange(from, { dataPath: field.dataPath.slice(0, i + 1) }, bodyField) !== undefined &&
+      valueAtChange(current, { dataPath: field.dataPath.slice(0, i + 1) }, bodyField) === undefined,
+  )
+  if (itemGone) return false
   // Long text checks the merged text, which your saved value holds until a region is chosen.
   if (field.text && (!choice || choice.how === 'yours')) {
     return valueAtChange(current, field, bodyField) === valueAtChange(saved, field, bodyField)

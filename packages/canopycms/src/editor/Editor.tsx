@@ -749,6 +749,7 @@ const EditorContent: React.FC<EditorProps> = ({
     handleDiscardFileDraft,
     handleReload,
     isSelectedDirty,
+    isDirtyForEntry,
     resolveUnsaved,
     fieldErrors,
     draftStorageFailed,
@@ -3293,6 +3294,7 @@ const EditorContent: React.FC<EditorProps> = ({
                               }
                             : undefined,
                           onResolveEntry: changesResolveEntry,
+                          unsavedEdits: isDirtyForEntry(changesSubject.logicalPath),
                         }
                       : undefined
                   }

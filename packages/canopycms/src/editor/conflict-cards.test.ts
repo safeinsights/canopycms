@@ -173,4 +173,24 @@ describe('buildEntryConflicts', () => {
     const same = buildEntryConflicts(data, conflictFields, 'body', undefined, savedValue)
     expect(same.fields[0].cards.map((c) => c.type)).toEqual(['region', 'region'])
   })
+
+  it('shows your saved value as yours once a save since the merge changed it', () => {
+    const saved = { ...savedValue, summary: 'Saved after the merge.' }
+    const card = onlyCard(
+      buildEntryConflicts(fieldsConflictData(['summary']), conflictFields, 'body', undefined, saved)
+        .fields[0].cards,
+    )
+    expect(card).toMatchObject({ yours: { kind: 'text', text: 'Saved after the merge.' } })
+    // Unchanged since the merge, yours is the branch's version as before.
+    const same = onlyCard(
+      buildEntryConflicts(
+        fieldsConflictData(['summary']),
+        conflictFields,
+        'body',
+        undefined,
+        savedValue,
+      ).fields[0].cards,
+    )
+    expect(same).toMatchObject({ yours: { kind: 'text', text: 'A guide to your first edit.' } })
+  })
 })

@@ -95,6 +95,14 @@ function renderGroup(options: Options = {}) {
   return { ...view, held, onChoose, onEdit, update, conflicts, data }
 }
 
+/** The body as the merge left it with `regions` chosen. */
+const bodyChosen = (regions: Parameters<typeof textWithChoices>[1]): string => {
+  const text = buildEntryConflicts(fieldsConflictData(['body']), conflictFields, 'body').fields[0]
+    .text
+  if (!text) throw new Error('the body should merge by region')
+  return textWithChoices(text, regions)
+}
+
 const headingOf = (card: HTMLElement): string =>
   within(card).getByRole('heading', { level: 4 }).textContent ?? ''
 
@@ -416,18 +424,22 @@ describe('ConflictsGroup choosing', () => {
     expect(within(card).queryByTestId('conflict-choice-note')).toBeNull()
   })
 
-  it('does not overwrite an edit made after the choice when choosing again', async () => {
+  it('drops a choice the form was edited away from, keeping the edit to mark resolved', async () => {
     const { onChoose, held } = renderGroup({
       only: ['summary'],
       value: { ...savedValue, summary: 'My own wording.' },
       choices: { summary: { mergeSha: MERGE_SHA, choice: { how: 'latest' } } },
     })
-    await clickIn(screen.getByTestId('conflict-card'), /^Choose again:/)
-    expect(onChoose).toHaveBeenLastCalledWith(
-      expect.objectContaining({ key: 'summary' }),
-      undefined,
-      false,
+    await waitFor(() =>
+      expect(onChoose).toHaveBeenLastCalledWith(
+        expect.objectContaining({ key: 'summary' }),
+        undefined,
+        false,
+      ),
     )
+    const card = screen.getByTestId('conflict-card')
+    expect(screen.queryByTestId('conflict-choice-note')).toBeNull()
+    expect(within(card).getByRole('button', { name: /^Mark resolved:/ })).toBeTruthy()
     expect(held.value.summary).toBe('My own wording.')
   })
 
@@ -453,7 +465,8 @@ describe('ConflictsGroup choosing', () => {
           choice: { how: 'regions', regions: { 0: 'latest', 1: 'yours' } },
         },
       },
-      value: { ...savedValue },
+      // The form holds what those choices wrote.
+      value: { ...savedValue, body: bodyChosen({ 0: 'latest', 1: 'yours' }) },
       record: false,
     })
     await clickIn(cardStarting('Body (part 2 of 2)'), /^Choose again:/)

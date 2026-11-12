@@ -9,7 +9,7 @@
  * comes from.
  */
 
-import React, { useId, useState } from 'react'
+import React, { useEffect, useId, useState } from 'react'
 import {
   Alert,
   Box,
@@ -722,18 +722,38 @@ export const ConflictsGroup: React.FC<ConflictsGroupProps> = ({
   const headingId = useId()
   const editable = !noEditReason
   const entryKind = data.kind === 'fields' ? undefined : data.kind
+
+  // A stored choice stands while the form still holds what it chose. One the form was edited away
+  // from since, or a region choice on text that now shows whole, chose nothing the save would
+  // write: it is dropped, and the card offers "Mark resolved" for the edit instead.
+  const standing = new Map<string, FieldChoice>()
+  const stale: FieldConflict[] = []
+  if (form) {
+    for (const field of conflicts.fields) {
+      const chosen = choices[field.key]
+      if (!chosen || chosen.mergeSha !== field.mergeSha) continue
+      const placed = chosen.choice.how !== 'regions' || !!field.text
+      const held =
+        chosen.choice.how === 'edited' ||
+        holdsChoice(form.value, form.saved, field, chosen.choice, form.bodyField)
+      if (placed && held) standing.set(field.key, chosen.choice)
+      else stale.push(field)
+    }
+  }
+  const staleKeys = stale.map((f) => f.key).join(',')
   const open = entryKind
     ? 1
-    : conflicts.fields.filter((f) => !isDecided(f, choices[f.key]?.choice)).length
+    : conflicts.fields.filter(
+        (f) => !isDecided(f, form ? standing.get(f.key) : choices[f.key]?.choice),
+      ).length
+  useEffect(() => {
+    for (const field of stale) onChoose?.(field, undefined, false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `stale` is this render's, keyed by `staleKeys`
+  }, [staleKeys])
 
   const actionsFor = (field: FieldConflict): CardActions | undefined => {
     if (!form || !editable || !onChoose) return undefined
-    const chosen = choices[field.key]
-    // A region choice on text that now shows whole, as after a save, places nothing: none stands.
-    const choice =
-      chosen?.mergeSha === field.mergeSha && (chosen.choice.how !== 'regions' || field.text)
-        ? chosen.choice
-        : undefined
+    const choice = standing.get(field.key)
     const held = holdsChoice(form.value, form.saved, field, choice, form.bodyField)
     const record = (next: FieldChoice | undefined) => onChoose(field, next, isDecided(field, next))
     const latestReason =

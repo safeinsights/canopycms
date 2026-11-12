@@ -5,6 +5,8 @@
  * Pure. Where a choice lands in the form value is `conflict-choices.ts`.
  */
 
+import equal from 'fast-deep-equal'
+
 import type { EntryChangeSide } from '../api/branch-entry-changes'
 import type { ConflictSide, EntryConflictData, EntryConflictField } from '../api/merge-conflicts'
 import type { FieldConfig, ObjectFieldConfig } from '../config'
@@ -227,6 +229,20 @@ export function buildEntryConflicts(
     const named = toLatest.get(field.drawerKey) ?? toYours.get(field.drawerKey)
     const along = fieldAlong(fields, field.dataPath)
     const path = named?.path ?? between.get(field.drawerKey)?.path ?? along.path
+    // Your saved value where a save since the merge changed it, which is what keeping yours keeps:
+    // the branch's version is only how it read at the merge.
+    const savedHere = saved && valueAtChange(saved, { dataPath: field.dataPath }, bodyField)
+    const branchHere =
+      versions.yours &&
+      valueAtChange(formValueOfSide(versions.yours), { dataPath: field.dataPath }, bodyField)
+    const savedYours =
+      saved && !equal(savedHere, branchHere)
+        ? displayWhole(along.field, savedHere, referenceTitle)
+        : undefined
+    const savedMarks = (before: DisplayValue): TextDiff | undefined =>
+      savedYours && before.kind === 'text' && savedYours.kind === 'text'
+        ? textDiff(before.text, savedYours.text)
+        : undefined
 
     if (field.text) {
       const texts = [versions.before, versions.latest, versions.yours].map((v) =>
@@ -288,7 +304,7 @@ export function buildEntryConflicts(
       const marks = (to: DisplayValue) =>
         before.kind === 'text' && to.kind === 'text' ? textDiff(before.text, to.text) : undefined
       const latestText = marks(latestValue)
-      const yoursText = marks(yoursValue)
+      const yoursText = savedYours ? savedMarks(before) : marks(yoursValue)
       return {
         ...common,
         cards: [
@@ -302,13 +318,15 @@ export function buildEntryConflicts(
             before,
             latest: latestValue,
             ...(!latestPlaceable && { latestUnavailable: true as const }),
-            yours: yoursValue,
+            yours: savedYours ?? yoursValue,
             ...(latestText && { latestText }),
             ...(yoursText && { yoursText }),
           },
         ],
       }
     }
+    const before = fromLatest?.before ?? fromYours?.before ?? EMPTY
+    const yoursText = savedYours ? savedMarks(before) : fromYours?.text
     return {
       ...common,
       cards: [
@@ -319,12 +337,12 @@ export function buildEntryConflicts(
           conflict: field.kind,
           item: !!field.item,
           path,
-          before: fromLatest?.before ?? fromYours?.before ?? EMPTY,
+          before,
           latest: fromLatest ? (fromLatest.after ?? EMPTY) : (across?.before ?? EMPTY),
           ...(!latestPlaceable && { latestUnavailable: true as const }),
-          yours: fromYours ? (fromYours.after ?? EMPTY) : (across?.after ?? EMPTY),
+          yours: savedYours ?? (fromYours ? (fromYours.after ?? EMPTY) : (across?.after ?? EMPTY)),
           ...(fromLatest?.text && { latestText: fromLatest.text }),
-          ...(fromYours?.text && { yoursText: fromYours.text }),
+          ...(yoursText && { yoursText }),
         },
       ],
     }

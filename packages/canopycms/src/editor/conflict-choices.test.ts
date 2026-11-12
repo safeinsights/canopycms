@@ -204,3 +204,35 @@ describe('review fixes', () => {
     expect(textWithChoices(text, { 0: 'both' })).toBe('a\n\ny\nb\n')
   })
 })
+
+describe('round 3 review', () => {
+  it('holds nothing where the form lost an item the place is inside', () => {
+    const field: FieldConflict = {
+      key: 'steps.k2.tags',
+      mergeSha: MERGE,
+      dataPath: [{ field: 'steps' }, { item: 'k2' }, { field: 'tags' }],
+      item: false,
+      cards: [],
+      latestPlaceable: false,
+    }
+    // An empty list reads as nothing, as does the place in an item the form no longer has.
+    const saved = {
+      ...savedValue,
+      steps: [
+        { _key: 'k1', text: 'Install' },
+        { _key: 'k2', text: 'Configure', tags: [] },
+      ],
+    }
+    const lost = { ...saved, steps: [{ _key: 'k1', text: 'Install' }] }
+    expect(holdsChoice(saved, saved, field, { how: 'yours' }, 'body')).toBe(true)
+    expect(holdsChoice(lost, saved, field, { how: 'yours' }, 'body')).toBe(false)
+    expect(holdsChoice(lost, saved, field, undefined, 'body')).toBe(false)
+  })
+
+  it('holds a place with no path, such as where the entry is, whatever the form', () => {
+    const location = fieldOf('location')
+    expect(holdsChoice({ other: 'value' }, savedValue, location, { how: 'yours' }, 'body')).toBe(
+      true,
+    )
+  })
+})

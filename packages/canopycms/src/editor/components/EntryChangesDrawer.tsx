@@ -131,6 +131,8 @@ export interface EntryChangesConflicts extends Pick<
 > {
   state: ConflictsState<EntryConflictData | null>
   onResolveEntry?: ConflictsGroupProps['onResolveEntry']
+  /** The entry has a draft, open or not, which an entry-level choice would leave behind. */
+  unsavedEdits?: boolean
 }
 
 /** Why "Restore entry" didn't: `warning` where nothing is lost, or the outcome is unknown. */
@@ -587,7 +589,7 @@ const ConflictsSection: React.FC<{
       onResolveEntry={conflicts.onResolveEntry}
       noEditReason={noEditReason}
       lockedReason={lockedReason}
-      unsavedEdits={subject.unsavedEdits}
+      unsavedEdits={conflicts.unsavedEdits ?? subject.unsavedEdits}
     />
   )
 }
