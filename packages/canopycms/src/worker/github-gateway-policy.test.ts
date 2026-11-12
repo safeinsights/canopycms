@@ -672,7 +672,7 @@ describe('the conflicts status on a pull request head', () => {
     }
   })
 
-  it("refuses a description over GitHub's limit or with a control character, and a link that is not plain http(s)", async () => {
+  it('refuses a description over the cap or with a control character, and a link that is not plain http(s)', async () => {
     for (const [change, reason] of [
       [{ description: 'x'.repeat(141) }, 'too-long'],
       [{ description: 'two\nlines' }, 'invalid'],

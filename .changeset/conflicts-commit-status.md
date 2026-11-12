@@ -13,7 +13,8 @@ row: PR head shows open conflicts; App needs Commit statuses
 
 **What changed.** The worker sets a `CanopyCMS conflicts` commit status on each pull request's
 head: it fails with the number of choices still open in the editor, and passes once none are.
-Make it a required check in branch protection to stop a by-hand merge of undecided content.
+Make it a required check in branch protection to stop a by-hand merge of undecided content, on a
+branch the CMS opens every pull request into: other pull requests never get it.
 `init-github-app` now asks for the "Commit statuses: read and write" permission, and `verify`
 reports an installation without it. Until an installation has it, only the status is refused, and
 System health says so.

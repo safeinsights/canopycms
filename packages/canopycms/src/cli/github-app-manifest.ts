@@ -23,9 +23,9 @@ export type PermissionSet = Readonly<Record<string, PermissionLevel>>
  * - `pull_requests: write` — `pulls.create`/`pulls.update`, and the GraphQL
  *   mutations `markPullRequestReadyForReview`/`convertPullRequestToDraft`,
  *   derived by analogy since GitHub's reference has no line for them.
- * - `statuses: write` — `repos.createCommitStatus`: the "CanopyCMS conflicts"
- *   status the git sync sets on each pull request's head
- *   (worker/conflicts-status.ts).
+ * - `statuses: write` — `repos.createCommitStatus`, in worker/github-gateway.ts
+ *   `setConflictsStatus`: the "CanopyCMS conflicts" status the git sync sets on
+ *   each pull request's head (worker/conflicts-status.ts).
  * - `metadata: read` — implied by any repository permission; declared so
  *   this object states the whole surface, not just the non-automatic part.
  * Nothing else: no `issues`, `administration`, `actions`, or organisation

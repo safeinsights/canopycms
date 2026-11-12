@@ -283,8 +283,9 @@ export interface GitHubGateway {
   convertPullRequestToDraft(number: number, signal?: AbortSignal): Promise<void>
   /**
    * Set the {@link CONFLICTS_STATUS_CONTEXT} status on a pull request's head. Refused
-   * (`GatewayRefusalError`, reason `not-head`) unless `sha` is the head GitHub holds now, and as
-   * `updatePullRequest` refuses a pull request it would not update.
+   * (`GatewayRefusalError`) with reason `not-head` unless `sha` is the head GitHub holds now, as
+   * `updatePullRequest` refuses a pull request it would not update, and for a description or link
+   * `assertCommitStatusText` refuses (worker/branch-policy.ts).
    */
   setConflictsStatus(status: GitHubConflictsStatus, signal?: AbortSignal): Promise<void>
   deleteBranch(branch: string, signal?: AbortSignal): Promise<void>

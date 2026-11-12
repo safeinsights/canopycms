@@ -5,9 +5,9 @@
  * GitHub refuse what the CMS refuses.
  *
  * Set once per git sync, after the rebase cycle, on the head that cycle's fetch read from GitHub:
- * only what reached GitHub gets a status. A status is set again only when its head, state,
- * description or link changes from what this worker last set. A failure is never cached, so the
- * next cycle retries it; none fails the sync.
+ * only what reached GitHub gets a status. A status is set again only when anything it would send
+ * (pull request, head, state, description, link) differs from what this worker last set. A failure
+ * is never cached, so the next cycle retries it; none fails the sync.
  */
 import type { Dirent } from 'node:fs'
 import fs from 'node:fs/promises'
@@ -153,7 +153,7 @@ export async function setConflictsStatuses(
               : 'other'
       // A refused credential names its remedy over any other failure.
       if (reason === 'permission' || !failure) failure = { reason, message }
-      // GitHub answers every later write in the cycle the same way; the next cycle tries again.
+      // Every later write would meet the same GitHub; the next cycle tries again.
       if (reason !== 'other') {
         failed.push(...due.slice(index + 1).map((d) => d.branch))
         break

@@ -355,9 +355,10 @@ export interface UnpublishableBranchesReport {
 
 /**
  * The last git sync's failures to set the "CanopyCMS conflicts" status on pull request heads
- * (worker/conflicts-status.ts): `permission` when GitHub refused the credential (the GitHub App's
- * Commit statuses permission not yet accepted), `unreachable` when GitHub or the gateway could not
- * be reached, `other` for anything else. `branches` lists at most 50 names, `count` all of them.
+ * (worker/conflicts-status.ts): `permission` when GitHub refused the credential (it lacks the Commit
+ * statuses permission), `unreachable` when GitHub or the gateway could not be reached or GitHub was
+ * busy, `other` for anything else, a gateway refusal or an unreadable conflict record included.
+ * `branches` lists at most 50 names, `count` all of them.
  */
 export interface ConflictsStatusFailure {
   reason: 'permission' | 'unreachable' | 'other'

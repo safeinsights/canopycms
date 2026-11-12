@@ -118,8 +118,9 @@ export interface WorkerContext {
    */
   warnedDivergences(): Map<string, string>
   /**
-   * The conflicts status this worker last set on each branch's pull request head, by branch name
-   * (worker/conflicts-status.ts). Held per instance, so a restarted worker sets each once again.
+   * The conflicts status this worker last set on each branch's pull request head, by branch name,
+   * and the tip each `not-head:` key last woke a sync for (worker/conflicts-status.ts). Held per
+   * instance, so a restarted worker sets each once again.
    */
   conflictsStatusesSet(): Map<string, string>
   /**

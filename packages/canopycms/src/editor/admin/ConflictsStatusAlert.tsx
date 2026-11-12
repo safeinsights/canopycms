@@ -39,8 +39,8 @@ const WHY: Record<ConflictsStatusFailure['reason'], React.ReactNode> = {
   ),
   other: (
     <Text size="sm">
-      GitHub refused it. The next git sync tries again; if it keeps failing, the worker log names
-      each pull request and GitHub&apos;s answer.
+      GitHub refused it, or the branch&apos;s record of conflicts couldn&apos;t be read. The next
+      git sync tries again; if it keeps failing, the worker log names each branch and why.
     </Text>
   ),
 }

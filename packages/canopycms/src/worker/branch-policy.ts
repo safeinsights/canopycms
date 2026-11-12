@@ -615,7 +615,8 @@ export function assertPullRequestText(
 }
 
 /**
- * The longest commit status description the gateway sends: GitHub's own limit.
+ * The longest commit status description the gateway sends, the length GitHub documents for a
+ * deployment status's; its own descriptions are far shorter.
  * @internal Exported for tests.
  */
 export const MAX_COMMIT_STATUS_DESCRIPTION_LENGTH = 140
@@ -624,7 +625,7 @@ export const MAX_COMMIT_STATUS_DESCRIPTION_LENGTH = 140
 export const MAX_COMMIT_STATUS_URL_LENGTH = 2048
 
 /**
- * Refuse a commit status description over GitHub's cap or holding a control character, and a target
+ * Refuse a commit status description over the cap or holding a control character, and a target
  * URL that is not plain http(s) or carries credentials. `branch` names the pull request's head.
  */
 export function assertCommitStatusText(
