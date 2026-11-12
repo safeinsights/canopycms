@@ -10,7 +10,8 @@ import { describe, expect, it } from 'vitest'
 import type { ContentFormat, FieldConfig } from '../config'
 import { parseEntryParts } from '../content-listing'
 import { itemKeysAsRead } from '../item-keys'
-import { mergeEntry, type EntryMergeResult, type MergeSide } from './entry-merge'
+import { checkSidePaths } from './__test__/side-paths'
+import { mergeEntry, type MergeSide } from './entry-merge'
 
 type Item = Record<string, string>
 
@@ -39,17 +40,16 @@ const merge = (
   texts: { ancestor: string; base: string; branch: string },
   format: ContentFormat,
   fields?: FieldConfig[],
-): Extract<EntryMergeResult, { kind: 'merged' }> => {
-  const result = mergeEntry({
-    format,
+) => {
+  const sides = {
     ancestor: side(texts.ancestor, format),
     base: side(texts.base, format),
     branch: side(texts.branch, format),
-    ...(fields && { fields }),
-  })
+  }
+  const result = mergeEntry({ format, ...sides, ...(fields && { fields }) })
   if (result.kind !== 'merged') throw new Error(`expected a merge, got ${result.kind}`)
   expect(JSON.stringify(result)).not.toMatch(/<{7}|>{7}|={7}|\|{7}/)
-  return result
+  return { ...result, conflicts: checkSidePaths(result.conflicts, sides, fields) }
 }
 
 const conflictList = (result: { conflicts: Array<{ key: string; kind: string }> }) =>

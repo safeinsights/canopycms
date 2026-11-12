@@ -428,3 +428,29 @@ describe('holdsAs, every change shape with an edit since', () => {
     expect(holdsAs(undone, savedValue, change)).toBe(false)
   })
 })
+
+describe('putting back an item among items keyed otherwise', () => {
+  const change: EntryChange = {
+    key: 'links.x',
+    dataPath: [{ field: 'links' }, { item: 'x' }],
+    path: ['Links', 'X'],
+    kind: 'removed',
+    item: true,
+  }
+
+  it('places it before the nearest item after it that the form holds, none before it doing', () => {
+    // The source's items before it read under keys the form doesn't hold, as a version that left
+    // the list keyless reads them; the one after it is held.
+    const source = { links: [link('p1', 'One'), link('p2', 'Two'), link('x', 'X'), link('c', 'C')] }
+    const current = { links: [link('c', 'C')] }
+    const placed = setChangeBack(current, source, change)
+    expect((placed?.links as Array<{ _key: string }>).map((l) => l._key)).toEqual(['x', 'c'])
+  })
+
+  it('places it at its own place when the form holds no item beside it', () => {
+    const source = { links: [link('p1', 'One'), link('x', 'X')] }
+    const current = { links: [link('q', 'Other')] }
+    const placed = setChangeBack(current, source, change)
+    expect((placed?.links as Array<{ _key: string }>).map((l) => l._key)).toEqual(['q', 'x'])
+  })
+})

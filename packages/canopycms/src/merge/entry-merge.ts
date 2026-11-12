@@ -50,6 +50,12 @@ export interface FieldConflict {
   /** The drawer's `EntryChange.key` for this place: list items named by key. */
   key: string
   dataPath: DataPathSegment[]
+  /**
+   * Where each version holds this place, as a read of that version names it: a list item the merge
+   * paired with another side's can read under another key there, as one in a list a side left
+   * keyless does. Absent for a version without the place.
+   */
+  sidePaths: SidePaths
   kind: FieldConflictKind
   /** A whole list item or block, rather than a field's value. */
   item?: true
@@ -61,6 +67,13 @@ export interface FieldConflict {
   regions?: TextConflictRegion[]
   /** The line merge of an mdx body or field did not parse, so the whole value is the conflict. */
   unparseable?: true
+}
+
+/** Each version's own data path to a place. */
+export interface SidePaths {
+  ancestor?: DataPathSegment[]
+  base?: DataPathSegment[]
+  branch?: DataPathSegment[]
 }
 
 /**
@@ -92,14 +105,27 @@ interface Versions {
   b: unknown
 }
 
-type RawConflict = Omit<FieldConflict, 'key' | 'dataPath'> & {
+/** Each version's own path to a place, by its own list positions; absent where it lacks it. */
+interface Places {
+  o?: RawSegment[]
+  a?: RawSegment[]
+  b?: RawSegment[]
+}
+
+type RawConflict = Omit<FieldConflict, 'key' | 'dataPath' | 'sidePaths'> & {
   at: RawSegment[]
+  places: Places
+  /** Each step's places, as `trail` holds each step's versions. */
+  placeTrail?: Places[]
   /** Each step's versions, so a conflict can be lifted to an enclosing value. */
   trail?: Versions[]
 }
 
 interface At {
   segments: RawSegment[]
+  places: Places
+  /** `places` after each step of `segments`: a side keeps its place up to an item it lacks. */
+  placeTrail: Places[]
   /** The versions of the value at each step of `segments`. */
   trail: Versions[]
   /** The branch's keys of the list items enclosing this place, outermost first. */
@@ -111,6 +137,8 @@ interface At {
 /** A line merge of a string member, kept so a schema-aware check can undo it afterwards. */
 interface TextMerge {
   at: RawSegment[]
+  places: Places
+  placeTrail: Places[]
   versions: { o: unknown; a: string; b: string }
   conflict?: RawConflict
 }
@@ -123,14 +151,36 @@ interface Walk {
   ancestorKeys: ReadonlySet<string>
 }
 
-const ROOT: At = { segments: [], trail: [], branchKeys: [], item: false }
-
-const child = (at: At, segment: RawSegment, versions: Versions): At => ({
-  segments: [...at.segments, segment],
-  trail: [...at.trail, versions],
-  branchKeys: at.branchKeys,
+const ROOT: At = {
+  segments: [],
+  places: { o: [], a: [], b: [] },
+  placeTrail: [],
+  trail: [],
+  branchKeys: [],
   item: false,
-})
+}
+
+/** `places` one step on: `step` gives each side's segment, or none where that side lacks it. */
+const placesOn = (places: Places, step: (side: keyof Places) => RawSegment | undefined): Places => {
+  const on = (side: keyof Places) => {
+    const segment = step(side)
+    const place = places[side]
+    return place && segment ? [...place, segment] : undefined
+  }
+  return { o: on('o'), a: on('a'), b: on('b') }
+}
+
+const child = (at: At, segment: RawSegment, versions: Versions): At => {
+  const places = placesOn(at.places, () => segment)
+  return {
+    segments: [...at.segments, segment],
+    places,
+    placeTrail: [...at.placeTrail, places],
+    trail: [...at.trail, versions],
+    branchKeys: at.branchKeys,
+    item: false,
+  }
+}
 
 /** `record`'s own member `name`: never one it inherits, and `__proto__` as a member. */
 const member = (record: Record<string, unknown>, name: string): unknown =>
@@ -180,6 +230,8 @@ const kindOf = (a: unknown, b: unknown): FieldConflictKind =>
 function conflict(o: unknown, a: unknown, b: unknown, at: At, walk: Walk): void {
   walk.conflicts.push({
     at: at.segments,
+    places: at.places,
+    placeTrail: at.placeTrail,
     trail: at.trail,
     kind: kindOf(a, b),
     ...(at.item && { item: true as const }),
@@ -223,10 +275,17 @@ function mergeLeaf(o: unknown, a: unknown, b: unknown, at: At, walk: Walk): unkn
   ) {
     const merged = mergeText(typeof o === 'string' ? o : '', a, b)
     if (merged) {
-      const text: TextMerge = { at: at.segments, versions: { o, a, b } }
+      const text: TextMerge = {
+        at: at.segments,
+        places: at.places,
+        placeTrail: at.placeTrail,
+        versions: { o, a, b },
+      }
       if (merged.regions.length > 0) {
         text.conflict = {
           at: at.segments,
+          places: at.places,
+          placeTrail: at.placeTrail,
           trail: at.trail,
           kind: 'changed',
           ...versions(o, a, b),
@@ -387,8 +446,14 @@ function mergeList(
       jb === undefined ? undefined : b[jb],
     ]
     const itemVersions = { o: oi, a: ai, b: bi }
+    const itemPlaces = placesOn(at.places, (side) => {
+      const index = { o: i, a: ja, b: jb }[side]
+      return index === undefined ? undefined : { index }
+    })
     const itemAt: At = {
       segments: [...at.segments, { index: out.length }],
+      places: itemPlaces,
+      placeTrail: [...at.placeTrail, itemPlaces],
       trail: [...at.trail, itemVersions],
       branchKeys: [...at.branchKeys, (jb !== undefined && bReadKeys[jb]) || id],
       item: true,
@@ -487,6 +552,10 @@ function withListKey(
   return { ...merged, [ITEM_KEY]: key }
 }
 
+/** A version's data with its md/mdx body under the body field, as a read gives the form. */
+const withBody = (side: MergeSide, bodyName: string): Record<string, unknown> =>
+  side.body === undefined ? side.data : { ...side.data, [bodyName]: side.body }
+
 const mdxParses = (text: string): boolean => parseMarkdownBody(text, 'mdx') !== undefined
 
 const sameContent = (x: MergeSide, y: MergeSide): boolean =>
@@ -512,6 +581,7 @@ function mergeBody(
   if (!parses(text) && parses(a) && parses(b)) {
     walk.conflicts.push({
       at: at.segments,
+      places: at.places,
       kind: 'changed',
       ...versions(o, a, b),
       unparseable: true,
@@ -519,7 +589,13 @@ function mergeBody(
     return b
   }
   if (regions.length > 0) {
-    walk.conflicts.push({ at: at.segments, kind: 'changed', ...versions(o, a, b), regions })
+    walk.conflicts.push({
+      at: at.segments,
+      places: at.places,
+      kind: 'changed',
+      ...versions(o, a, b),
+      regions,
+    })
   }
   return text
 }
@@ -570,9 +646,9 @@ export function mergeEntry({
     data,
     ...(body !== undefined && { body }),
     conflicts: named(walk.conflicts, fields, read, {
-      o: ancestor.data,
-      a: base.data,
-      b: branch.data,
+      o: withBody(ancestor, bodyName),
+      a: withBody(base, bodyName),
+      b: withBody(branch, bodyName),
     }),
     keyRemaps: walk.keyRemaps,
   }
@@ -582,6 +658,8 @@ interface KeyedItem {
   item: unknown
   /** The list holding it: field names, and each enclosing item by its key. */
   list: string
+  /** Where it is in its version. */
+  at: RawSegment[]
 }
 
 /**
@@ -590,9 +668,9 @@ interface KeyedItem {
  */
 function keyedItems(data: unknown): Map<string, KeyedItem | null> {
   const found = new Map<string, KeyedItem | null>()
-  visitItems(data, (item, key, list) => {
+  visitItems(data, (item, key, list, at) => {
     for (const name of [key, contentName(item)]) {
-      found.set(name, found.has(name) ? null : { item, list })
+      found.set(name, found.has(name) ? null : { item, list, at })
     }
   })
   return found
@@ -663,7 +741,13 @@ function flagItemsMovedAway(
           ? 'removed-by-you'
           : undefined
     if (!kind || named.has(JSON.stringify(at))) return
-    walk.conflicts.push({ at, kind, item: true, ...versions(inO?.item, inA?.item, inB?.item) })
+    walk.conflicts.push({
+      at,
+      places: { o: inO?.at, a: inA?.at, b: inB?.at },
+      kind,
+      item: true,
+      ...versions(inO?.item, inA?.item, inB?.item),
+    })
   })
 }
 
@@ -680,18 +764,53 @@ function named(
 ): FieldConflict[] {
   const seen = new Set<string>()
   const out: FieldConflict[] = []
-  for (const { at, trail, ...rest } of conflicts) {
+  const asRead = (side: unknown) =>
+    fields && isPlainRecord(side) ? entryAsRead(fields, side) : side
+  const reads = { o: asRead(sides.o), a: asRead(sides.a), b: asRead(sides.b) }
+  for (const { at, places, placeTrail, trail, ...rest } of conflicts) {
     const { key, dataPath, depth } = describePath(fields, read, at)
     if (seen.has(key)) continue
     seen.add(key)
+    // Each version's own path to where its value below was taken: its place, or its place at the
+    // step the name stops at when the merge's trail gave the whole value, or the merged path when
+    // the whole value was found by member names alone. A version without the item a conflict names
+    // is named by the list it holds, one step short of `dataPath`, which says it lacks the item. A
+    // side naming the place at another depth offers none.
+    const prefix = at.slice(0, depth)
+    const byName = prefix.every((segment) => 'field' in segment)
+    const placeOf = (side: keyof Places): RawSegment[] | undefined =>
+      depth === at.length
+        ? places[side]
+        : trail?.[depth - 1]
+          ? placeTrail?.[depth - 1]?.[side]
+          : byName
+            ? prefix
+            : undefined
+    const describe = (side: keyof Places, place: RawSegment[]) => {
+      const named = describePath(fields, reads[side], place)
+      return named.depth === place.length ? named.dataPath : undefined
+    }
+    const sidePath = (side: keyof Places): DataPathSegment[] | undefined => {
+      const place = placeOf(side)
+      if (place) return describe(side, place)
+      const list =
+        depth === at.length && rest.item ? placeTrail?.[at.length - 2]?.[side] : undefined
+      const holder = list && describe(side, list)
+      const missing = dataPath.at(-1)
+      return holder && missing && 'item' in missing ? holder : undefined
+    }
+    const [ancestor, base, branch] = [sidePath('o'), sidePath('a'), sidePath('b')]
+    const sidePaths: SidePaths = {
+      ...(ancestor && { ancestor }),
+      ...(base && { base }),
+      ...(branch && { branch }),
+    }
     if (depth === at.length) {
-      out.push({ key, dataPath, ...rest })
+      out.push({ key, dataPath, sidePaths, ...rest })
       continue
     }
     // The whole value's versions: from the merge's own trail, else by member names when the way
     // there passes no list item (whose place differs between versions), else none to offer.
-    const prefix = at.slice(0, depth)
-    const byName = prefix.every((segment) => 'field' in segment)
     const whole =
       trail?.[depth - 1] ??
       (byName
@@ -700,6 +819,7 @@ function named(
     out.push({
       key,
       dataPath,
+      sidePaths,
       kind: whole ? kindOf(whole.a, whole.b) : 'changed',
       ...(!('field' in at[depth - 1]) && { item: true as const }),
       ...(whole && versions(whole.o, whole.a, whole.b)),
@@ -745,6 +865,8 @@ function undoUnparseableMdx(
     setAt(data, text.at, b)
     const whole: RawConflict = {
       at: text.at,
+      places: text.places,
+      placeTrail: text.placeTrail,
       trail: text.conflict?.trail,
       kind: 'changed',
       ...versions(o, a, b),

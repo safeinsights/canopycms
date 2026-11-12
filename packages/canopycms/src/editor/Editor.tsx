@@ -173,6 +173,8 @@ import { PreviewFollowContext, usePreviewFollow } from './hooks/usePreviewFollow
 import { UndoToastMessage } from './components/UndoToastMessage'
 import { getNotificationDuration } from './utils/env'
 import { MayHaveLandedError, isGatewayFailure, isUnanswered } from './unanswered'
+import type { ReleaseOutcome } from './components/ReleaseHoldButton'
+import { releaseConflictsHold } from './release-hold'
 
 export interface EditorEntry {
   path: LogicalPath // Logical path (no IDs/extensions)
@@ -528,6 +530,8 @@ const EditorContent: React.FC<EditorProps> = ({
     apiClient,
     branchNameState,
     currentBranch?.conflictFiles,
+    // Every viewer reads it, as a hold on the branch names no entry.
+    true,
   )
   const openConflictCount = currentBranch?.conflictFiles?.length
     ? (branchConflicts.data?.openCount ?? currentBranch.conflictFiles.length)
@@ -1976,6 +1980,23 @@ const EditorContent: React.FC<EditorProps> = ({
     ]).catch(console.error)
     return undefined
   }
+  // An admin's release of a branch held as its record of conflicts was set aside.
+  const handleReleaseConflictsHold = async (): Promise<ReleaseOutcome> => {
+    const result = await releaseConflictsHold(apiClient, branchNameState)
+    if ('released' in result) {
+      notifications.show({
+        message:
+          result.wasHeld === true
+            ? 'Hold released.'
+            : result.wasHeld === false
+              ? 'This branch was already released.'
+              : 'This branch is no longer on hold.',
+        color: 'green',
+      })
+      void branchConflicts.reload()
+    }
+    return result
+  }
   keepConflictsRef.current = (items) => {
     void Promise.all(
       items.map((c) =>
@@ -2858,6 +2879,11 @@ const EditorContent: React.FC<EditorProps> = ({
               branchReadOnly={currentBranch?.readOnly}
               branchHold={currentBranch?.hold}
               openConflicts={openConflictCount}
+              conflictRecordHeld={
+                branchConflicts.data?.held
+                  ? { ...(userIsAdmin && { onRelease: handleReleaseConflictsHold }) }
+                  : undefined
+              }
               branchApproveBlocked={currentBranch?.approveBlocked}
               branchWriteBlocked={branchContentLocked}
               branchLoading={branchLoading}

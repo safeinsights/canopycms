@@ -10,6 +10,7 @@ import {
   conflictFields,
   conflictRecordFields,
   entryConflictData,
+  keylessConflictData,
   fieldsConflictData,
   savedValue,
 } from './__test__/conflict-fixtures'
@@ -96,6 +97,9 @@ export const RemovedByYou: Story = { args: { only: ['tagline'] } }
 
 /** A whole list item the latest version removed; there is no Edit. */
 export const ListItem: Story = { args: { only: ['step'] } }
+
+/** A field of an item the latest version keyed apart, in a list it left keyless: all three show. */
+export const KeylessListItem: Story = { args: { data: keylessConflictData() } }
 
 /** A value shown whole, here an image. */
 export const WholeValueImage: Story = { args: { only: ['cover'] } }

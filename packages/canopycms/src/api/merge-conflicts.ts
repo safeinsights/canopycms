@@ -27,19 +27,19 @@ import {
   EntryGoneError,
 } from '../content-store'
 import type { DataPathSegment } from '../editor/entry-diff'
-import type { FieldConflictKind } from '../merge/entry-merge'
+import type { FieldConflictKind, SidePaths } from '../merge/entry-merge'
 import { keyOfDataPath } from '../merge/conflict-path'
 import {
-  LOCATION_CONFLICT_KEY,
   MergeConflictStore,
   MergeConflictsFileMalformedError,
-  MergeConflictsFileNewerError,
+  MergeConflictsFileFormatError,
   conflictFilesOf,
   openConflictCount,
   withoutEntryConflict,
   withoutResolvedFields,
   type MergeConflictEntry,
   type MergeConflictKind,
+  type MergeConflictState,
   type MergeSides,
   type ResolvedFieldConflict,
 } from '../merge-conflicts'
@@ -78,6 +78,11 @@ export interface MergeConflictsData {
   hiddenCount: number
   /** Choices open on the branch, each field and each entry-level conflict, hidden ones included. */
   openCount: number
+  /**
+   * The branch's record was damaged and set aside, so Submit and Approve wait until an admin
+   * releases it (`POST /:branch/conflicts/release-hold`); the file it was moved to, for admins.
+   */
+  held?: { at: string; aside?: string }
 }
 
 export type MergeConflictsResponse = ApiResponse<MergeConflictsData>
@@ -98,6 +103,12 @@ export interface EntryConflictField {
    */
   drawerKey: string
   dataPath: DataPathSegment[]
+  /**
+   * Where each of `sides`' versions holds the value, as `versions` reads it; absent for a version
+   * without the place. A list item can read under another key in one version than `dataPath`
+   * names, as one in a list a side left keyless does.
+   */
+  sidePaths: SidePaths
   kind: FieldConflictKind
   /** A whole list item: resolving it keeps or removes the item. */
   item?: true
@@ -129,6 +140,11 @@ export type ResolveEntryConflictResponse = ApiResponse<{ contentId: string; open
 
 /** The most of a version read, as "Show changes" caps a side. */
 const MAX_SIDE_BYTES = 1024 * 1024
+/**
+ * The most of all the versions one answer reads, since a field found again by several merges names
+ * versions of its own: well under the gateway's 6 MB response cap, as the JSON it parses to is larger.
+ */
+const MAX_VERSIONS_BYTES = 3 * 1024 * 1024
 const FORMATS: readonly ContentFormat[] = ['mdx', 'md', 'json', 'yaml']
 
 const RECORD_UNREADABLE_ERROR =
@@ -148,12 +164,21 @@ export const resolvedConflictsSchema = z
 const readEntries = async (
   branchRoot: string,
 ): Promise<Record<string, MergeConflictEntry> | 'unreadable'> => {
+  const record = await readRecord(branchRoot)
+  return record === 'unreadable' ? record : record.entries
+}
+
+/** The record as the list answers it; one that does not parse answers as unreadable. */
+const readRecord = async (
+  branchRoot: string,
+): Promise<Pick<MergeConflictState, 'entries' | 'held'> | 'unreadable'> => {
   try {
-    return (await new MergeConflictStore(branchRoot).read())?.entries ?? {}
+    const record = await new MergeConflictStore(branchRoot).read()
+    return record ?? { entries: {} }
   } catch (err) {
     if (
       err instanceof MergeConflictsFileMalformedError ||
-      err instanceof MergeConflictsFileNewerError
+      err instanceof MergeConflictsFileFormatError
     ) {
       return 'unreadable'
     }
@@ -337,8 +362,9 @@ const listHandler = async (
   req: ApiRequest,
 ): Promise<MergeConflictsResponse> => {
   const { branchContext } = gc
-  const entries = await readEntries(branchContext.branchRoot)
-  if (entries === 'unreadable') return { ok: false, status: 503, error: RECORD_UNREADABLE_ERROR }
+  const record = await readRecord(branchContext.branchRoot)
+  if (record === 'unreadable') return { ok: false, status: 503, error: RECORD_UNREADABLE_ERROR }
+  const { entries, held } = record
   const contentRoot = ctx.services.config.contentRoot || 'content'
   const checkAccess = await ctx.services.createContentAccessChecker(
     branchContext,
@@ -368,7 +394,14 @@ const listHandler = async (
   return {
     ok: true,
     status: 200,
-    data: { conflicts, hiddenCount, openCount: openConflictCount(entries) },
+    data: {
+      conflicts,
+      hiddenCount,
+      openCount: openConflictCount(entries),
+      ...(held && {
+        held: { at: held.at, ...(isAdmin(req.user.groups) && { aside: held.aside }) },
+      }),
+    },
   }
 }
 
@@ -438,8 +471,10 @@ const readVersions = async (
   const fields = entryType?.schema
   const format =
     entryType?.format ?? FORMATS.find((f) => ref.physicalPath.endsWith(getFormatExtension(f)))
+  let budget = MAX_VERSIONS_BYTES
   for (const sha of shas) {
-    const raw = await git.readBlob(sha, MAX_SIDE_BYTES)
+    const raw = await git.readBlob(sha, Math.min(MAX_SIDE_BYTES, budget))
+    if (typeof raw === 'string') budget -= Buffer.byteLength(raw)
     if (raw === undefined) versions[sha] = { unavailable: 'missing' }
     else if (raw === 'too-large') versions[sha] = { unavailable: 'too-large' }
     else if (!format) versions[sha] = { unavailable: 'unreadable' }
@@ -493,8 +528,13 @@ const entryHandler = async (
   const add = (sides: MergeSides) => {
     for (const sha of [sides.ancestor, sides.base, sides.branch]) if (sha) shas.add(sha)
   }
-  add(entry.sides)
-  for (const field of entry.fields ?? []) add(field.sides)
+  // Read in the order the cards need them, within MAX_VERSIONS_BYTES: a fields record's cards read
+  // only its fields' versions, the newest merge's first; an entry-level record's, its own.
+  if (entry.kind === 'fields') {
+    for (const field of [...(entry.fields ?? [])].reverse()) add(field.sides)
+  } else {
+    add(entry.sides)
+  }
   const git = ctx.services.createGitManagerFor(branchRoot, {
     baseBranch: branchContext.branch.baseBranch,
   })
@@ -509,8 +549,10 @@ const entryHandler = async (
     return { ok: false, status: 503, error: RECORD_UNREADABLE_ERROR }
   }
   const { versions, fields: schemaFields } = read
+  // A key the merge named under the schema is the drawer's already; one named without it starts
+  // at an unknown top field (`?name`) and is named again here, where no list item is on the way.
   const drawerKeyOf = (field: NonNullable<MergeConflictEntry['fields']>[number]): string => {
-    if (!schemaFields || field.key === LOCATION_CONFLICT_KEY) return field.key
+    if (!schemaFields || !field.key.startsWith('?')) return field.key
     const side = [field.sides.branch, field.sides.base, field.sides.ancestor]
       .map((sha) => (sha ? versions[sha] : undefined))
       .find((v): v is EntryChangeSide => v !== undefined && !('unavailable' in v))
@@ -530,6 +572,7 @@ const entryHandler = async (
         key: field.key,
         drawerKey: drawerKeyOf(field),
         dataPath: field.dataPath,
+        sidePaths: field.sidePaths,
         kind: field.kind,
         ...(field.item && { item: true as const }),
         ...(field.text && { text: true as const }),
@@ -825,8 +868,61 @@ const resolveEntryConflict = defineEndpoint({
   handler: resolveHandler,
 })
 
+export type ReleaseConflictsHoldResponse = ApiResponse<{ released: boolean }>
+
+/**
+ * An admin's release of a branch held because its conflict record was set aside: which fields
+ * clashed is lost, and the values stay as the merges left them. Under the content-write lock, as a
+ * merge's record is written.
+ */
+const releaseHoldHandler = async (gc: {
+  branchContext: BranchContext
+}): Promise<ReleaseConflictsHoldResponse> => {
+  const { branchRoot } = gc.branchContext
+  try {
+    const written = await withContentWriteLock(branchRoot, () =>
+      new MergeConflictStore(branchRoot).update((current) => {
+        if (!current?.held) return null
+        return { ...current, held: undefined }
+      }),
+    )
+    return { ok: true, status: 200, data: { released: written !== null } }
+  } catch (err) {
+    if (err instanceof ContentWriteLockBusyError) {
+      return {
+        ok: false,
+        status: 409,
+        code: 'BRANCH_SYNCING',
+        error:
+          'This branch is busy: it is being synced, or a save is in flight. Try again in a moment.',
+      }
+    }
+    if (
+      err instanceof MergeConflictsFileMalformedError ||
+      err instanceof MergeConflictsFileFormatError
+    ) {
+      return { ok: false, status: 503, error: RECORD_UNREADABLE_ERROR }
+    }
+    throw err
+  }
+}
+
+const releaseConflictsHold = defineEndpoint({
+  namespace: 'conflicts',
+  name: 'releaseHold',
+  method: 'POST',
+  path: '/:branch/conflicts/release-hold',
+  params: z.object({ branch: branchNameSchema }),
+  responseType: 'ReleaseConflictsHoldResponse',
+  response: {} as ReleaseConflictsHoldResponse,
+  defaultMockData: { released: true },
+  guards: ['admin', 'branch'] as const,
+  handler: releaseHoldHandler,
+})
+
 export const MERGE_CONFLICT_ROUTES = {
   list: listMergeConflicts,
+  releaseHold: releaseConflictsHold,
   entry: readEntryConflict,
   resolveEntry: resolveEntryConflict,
 } as const

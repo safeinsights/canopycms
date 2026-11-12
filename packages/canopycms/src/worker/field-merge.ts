@@ -436,16 +436,23 @@ type FoundField = Omit<MergeConflictField, 'mergeSha' | 'sides'>
 
 const recordFields = (conflicts: readonly FieldConflict[]): FoundField[] =>
   conflicts.map(
-    ({ key, dataPath, kind, item, regions, unparseable }): FoundField => ({
+    ({ key, dataPath, sidePaths, kind, item, regions, unparseable }): FoundField => ({
       key,
       dataPath,
+      sidePaths,
       kind,
       ...(item && { item }),
       ...((regions !== undefined || unparseable) && { text: true as const }),
     }),
   )
 
-const LOCATION: FoundField = { key: LOCATION_CONFLICT_KEY, dataPath: [], kind: 'changed' }
+/** The entry's place, which no version holds a value for. */
+const LOCATION: FoundField = {
+  key: LOCATION_CONFLICT_KEY,
+  dataPath: [],
+  sidePaths: {},
+  kind: 'changed',
+}
 
 /** What one unit resolves to: its file in the merge, and what a person must still decide. */
 interface Resolution {

@@ -17,7 +17,7 @@ import type { OperatingMode } from '../operating-mode/types'
 import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, CreateBranchBody, UpdateBranchAccessBody } from './branch'
 import type { BranchChangesResponse } from './branch-changes'
 import type { BranchEntryChangeResponse, RestoreEntryBody, RestoreEntryResponse } from './branch-entry-changes'
-import type { EntryConflictResponse, MergeConflictsResponse, ResolveEntryConflictBody, ResolveEntryConflictResponse } from './merge-conflicts'
+import type { EntryConflictResponse, MergeConflictsResponse, ReleaseConflictsHoldResponse, ResolveEntryConflictBody, ResolveEntryConflictResponse } from './merge-conflicts'
 import type { BranchMergeResponse, RequestChangesBody, SubmitBranchBody, SubmitBranchResponse, UpdateFromBaseResponse } from './branch-status'
 import type { AdminDeleteTaskResponse, AdminRetryTaskResponse, AdminStatusResponse, AdminTasksResponse, BranchHealthResponse, DeleteArchivedBranchesBody, DeleteArchivedBranchesResponse, DismissUnpublishedResponse, PurgeBranchDirResponse, RepairBranchDirResponse, RepairContentDuplicatesResponse } from './admin'
 import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from './comments'
@@ -144,6 +144,11 @@ export class CanopyApiClient {
     /** POST /:branch/resolve-entry/...entryPath */
     resolveEntry: (params: Record<string, string>, body: ResolveEntryConflictBody, options?: RequestOptions): Promise<ResolveEntryConflictResponse> => {
       return this.request('POST', this.buildPath('/:branch/resolve-entry/...entryPath', params), body, 'standard', options)
+    },
+
+    /** POST /:branch/conflicts/release-hold */
+    releaseHold: (params: Record<string, string>, options?: RequestOptions): Promise<ReleaseConflictsHoldResponse> => {
+      return this.request('POST', this.buildPath('/:branch/conflicts/release-hold', params), undefined, 'standard', options)
     },
   }
 
