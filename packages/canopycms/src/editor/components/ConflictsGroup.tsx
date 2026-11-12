@@ -941,6 +941,7 @@ export const ConflictsGroup: React.FC<ConflictsGroupProps> = ({
       <Stack component="ul" gap="sm" p={0} m={0} style={{ listStyle: 'none' }}>
         {entryKind ? (
           <EntryCard
+            key={entryKind}
             kind={entryKind}
             reason={lockedReason}
             unsavedEdits={unsavedEdits}

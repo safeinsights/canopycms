@@ -67,7 +67,12 @@ import {
   plural,
   type Side,
 } from './change-parts'
-import { ConflictsGroup, type ConflictsGroupProps, type EntryChoiceDone } from './ConflictsGroup'
+import {
+  ConflictsGroup,
+  SETTLED_HOLD_MS,
+  type ConflictsGroupProps,
+  type EntryChoiceDone,
+} from './ConflictsGroup'
 import { LoadingCards, LoadingSummary } from './EntryChangesSkeleton'
 
 /** The entry a drawer compares, as the editor knows it. */
@@ -624,20 +629,28 @@ export const EntryChangesView: React.FC<EntryChangesViewProps> = (props) => {
   // What was said is about the entry it was said on.
   const entryDone = said?.path === props.subject.logicalPath ? said : undefined
   // Focus waits for the card to go: only then may "Restore entry" be offered in its place.
-  const focusAfter = useRef<{ entryGone: boolean; path: string }>()
+  const focusAfter = useRef<{ entryGone: boolean; path: string; at: number }>()
   const onEntryDone = (done: EntryChoiceDone) => {
     setSaid((last) => ({
       id: (last?.id ?? 0) + 1,
       message: done.message,
       path: props.subject.logicalPath,
     }))
-    focusAfter.current = { entryGone: done.entryGone, path: props.subject.logicalPath }
+    focusAfter.current = {
+      entryGone: done.entryGone,
+      path: props.subject.logicalPath,
+      at: Date.now(),
+    }
   }
   useEffect(() => {
     const root = rootRef.current
     const pending = focusAfter.current
     if (!root || !pending) return
-    if (pending.path !== props.subject.logicalPath) focusAfter.current = undefined
+    // It waits as long as the card holds its choice, no longer: a card that goes later went for
+    // another reason.
+    if (pending.path !== props.subject.logicalPath || Date.now() - pending.at > SETTLED_HOLD_MS) {
+      focusAfter.current = undefined
+    }
     if (!focusAfter.current || root.querySelector('[data-entry-card]')) return
     focusAfter.current = undefined
     // Focus anywhere but the page or the drawer itself was put there since, and stays.

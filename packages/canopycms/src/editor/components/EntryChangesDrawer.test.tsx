@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react'
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -14,6 +14,7 @@ import {
   type EntryChangesSubject,
 } from './EntryChangesDrawer'
 import { conflictFields, entryConflictData, fieldsConflictData } from './__test__/conflict-fixtures'
+import { SETTLED_HOLD_MS } from './ConflictsGroup'
 
 afterEach(() => cleanup())
 
@@ -649,6 +650,19 @@ describe('focus after an entry-level choice, its card gone (issue 1258)', () => 
         'entry-changes-restore',
       ),
     )
+  })
+
+  it('moves no focus for a card that goes after its choice stopped waiting', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const view = render(show(keptDeleted(true)))
+      await userEvent.click(within(drawer()).getByRole('button', { name: 'Keep it deleted' }))
+      await act(() => vi.advanceTimersByTimeAsync(SETTLED_HOLD_MS + 1))
+      view.rerender(show(keptDeleted(false)))
+      expect(document.activeElement).not.toBe(within(drawer()).getByTestId('entry-changes-restore'))
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('leaves focus where a person moved it before the card went', async () => {

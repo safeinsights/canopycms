@@ -312,15 +312,24 @@ export const createTestCanopyServices = async (
   return _createCanopyServicesInternal(testConfig, options)
 }
 
-/** A remote URL's local path, a relative one from `cwd` as git reads it; undefined for another host. */
-const localPathOf = (url: string, cwd: string): string | undefined => {
-  if (!/^file:/i.test(url))
-    return /^[a-z][a-z0-9+.-]*:/i.test(url) ? undefined : path.resolve(cwd, url)
-  try {
-    return fileURLToPath(url)
-  } catch {
-    return undefined
+/**
+ * A remote URL's local path as git reads it: a `file://` URL, a drive path, or a path relative to
+ * `cwd` with its links resolved; undefined for a scheme or git's scp form (a colon before any
+ * slash), which name another host.
+ */
+const localPathOf = async (url: string, cwd: string): Promise<string | undefined> => {
+  if (url.startsWith('file://')) {
+    try {
+      return fileURLToPath(url)
+    } catch {
+      return undefined
+    }
   }
+  if (/^[A-Za-z]:[\\/]/.test(url)) return path.resolve(url)
+  const colon = url.indexOf(':')
+  const slash = url.search(/[\\/]/)
+  if (colon >= 0 && (slash < 0 || colon < slash)) return undefined
+  return path.resolve(await fs.realpath(cwd).catch(() => cwd), url)
 }
 
 /** Whether two paths name one directory, symlinks resolved where they exist. */
@@ -816,7 +825,7 @@ async function _createCanopyServicesInternal(
     // baseRoot is the workspace's content-branches directory, where the worker looks.
     const workspacePath = path.dirname(context.baseRoot)
     const origin = await createGitManagerFor(context.branchRoot).getRemoteUrl()
-    const originPath = origin && localPathOf(origin, context.branchRoot)
+    const originPath = origin && (await localPathOf(origin, context.branchRoot))
     if (!originPath || !(await samePath(originPath, path.join(workspacePath, 'remote.git')))) {
       return 'other-remote'
     }

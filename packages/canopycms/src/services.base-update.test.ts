@@ -103,7 +103,7 @@ describe('services runBaseUpdateNow', () => {
     await expect(services.runBaseUpdateNow(context())).resolves.toBe('answered')
   })
 
-  it.each(['https://example.com/site.git', 'file://host/remote.git'])(
+  it.each(['https://example.com/site.git', 'file://host/remote.git', 'u@h:x/../../../remote.git'])(
     'runs nothing for a clone of %s, which the local worker never fetches',
     async (origin) => {
       await cloneWithOrigin(origin)
