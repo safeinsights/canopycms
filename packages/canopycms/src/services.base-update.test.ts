@@ -45,8 +45,9 @@ describe('services runBaseUpdateNow', () => {
     await git.addRemote('origin', origin ?? path.join(workspace, 'remote.git'))
   }
 
+  // A space in the path, as under a person's name: git's listing of remotes would split it.
   beforeEach(async () => {
-    workspace = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-run-now-')))
+    workspace = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'canopy run now ')))
     await fs.mkdir(path.join(workspace, 'remote.git'))
   })
 

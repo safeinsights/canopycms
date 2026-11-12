@@ -325,7 +325,7 @@ const localPathOf = async (url: string, cwd: string): Promise<string | undefined
       return undefined
     }
   }
-  if (/^[A-Za-z]:[\\/]/.test(url)) return path.resolve(url)
+  if (process.platform === 'win32' && /^[A-Za-z]:[\\/]/.test(url)) return path.resolve(url)
   const colon = url.indexOf(':')
   const slash = url.search(/[\\/]/)
   if (colon >= 0 && (slash < 0 || colon < slash)) return undefined
