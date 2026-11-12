@@ -2,8 +2,9 @@
 
 import React, { useEffect, useRef, useState } from 'react'
 
-import { Alert, Stack, Text } from '@mantine/core'
-import { IconInfoCircle } from '@tabler/icons-react'
+import { Alert, Button, Group, Stack, Text } from '@mantine/core'
+import { IconAlertTriangle } from '@tabler/icons-react'
+import { EDITOR_ACTIONS } from './copy'
 
 import type {
   BlockFieldConfig,
@@ -215,8 +216,11 @@ export interface FormRendererProps {
     threadId?: string,
   ) => Promise<void>
   onResolveThread?: (threadId: string) => Promise<void>
-  /** True when this entry's content conflicts with a recent change on the base branch */
-  conflictNotice?: boolean
+  /**
+   * The entry's open conflicts, said once above the fields (conflict-notice.ts), with the way to
+   * "Show changes" when it is offered.
+   */
+  conflictNotice?: { message: string; onShowChanges?: () => void }
   /**
    * Per-field validation errors keyed by canonical canopy path (e.g.
    * `blocks[0].title`). Rendered as a summary alert plus an inline message
@@ -264,7 +268,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   highlightThreadId,
   onAddComment,
   onResolveThread,
-  conflictNotice = false,
+  conflictNotice,
   fieldErrors,
   format,
   readOnly = false,
@@ -884,15 +888,24 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
 
           {conflictNotice && (
             <Alert
-              icon={<IconInfoCircle size={16} />}
-              color="orange"
+              icon={<IconAlertTriangle size={16} />}
+              color="yellow"
               variant="light"
-              title="Page updated since your draft started"
               data-testid="conflict-alert"
             >
-              {readOnly
-                ? 'Someone else has recently changed this page.'
-                : 'Someone else has recently changed this page. You can keep editing — a reviewer will reconcile your changes when you submit.'}
+              <Group gap="xs" justify="space-between" wrap="wrap">
+                <Text size="sm">{conflictNotice.message}</Text>
+                {conflictNotice.onShowChanges && (
+                  <Button
+                    size="compact-sm"
+                    variant="subtle"
+                    onClick={conflictNotice.onShowChanges}
+                    data-testid="conflict-alert-show-changes"
+                  >
+                    {EDITOR_ACTIONS.showChanges}
+                  </Button>
+                )}
+              </Group>
             </Alert>
           )}
 

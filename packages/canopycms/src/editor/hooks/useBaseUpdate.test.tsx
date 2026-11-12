@@ -1,4 +1,6 @@
-import { act, renderHook, waitFor } from '@testing-library/react'
+import { act, fireEvent, render as render2, renderHook, waitFor } from '@testing-library/react'
+import type { ReactElement } from 'react'
+import { MantineProvider } from '@mantine/core'
 import { useSWRConfig } from 'swr'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { notifications } from '@mantine/notifications'
@@ -137,6 +139,55 @@ describe('useBaseUpdate', () => {
     await waitFor(() => expect(shown()).toHaveLength(1))
     expect(shown()[0]).toMatchObject({ color: 'red', autoClose: false })
     expect(onUpdated).not.toHaveBeenCalled()
+  })
+
+  it('counts the fields a merge left to choose, and offers "Show changes" (issue 1244)', async () => {
+    const requestedAt = new Date().toISOString()
+    listed = editing({ baseUpdateRequestedAt: requestedAt })
+    client.conflicts.list.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { conflicts: [], hiddenCount: 0, openCount: 3 },
+    })
+    const onShowConflicts = vi.fn()
+    const { result, onUpdated } = render({ onShowConflicts })
+    await waitFor(() => expect(result.current.wait).toBe('waiting'))
+
+    listed = editing({
+      baseUpdateRequestedAt: requestedAt,
+      lastBaseUpdate: { at: requestedAt, outcome: 'conflicts', keptEntries: 2 },
+    })
+    await act(() => result.current.reload())
+
+    await waitFor(() => expect(shown()).toHaveLength(1))
+    expect(client.conflicts.list).toHaveBeenCalledWith({ branch: NAME })
+    expect(shown()[0]).toMatchObject({ color: 'yellow', autoClose: false })
+    const body = render2(<MantineProvider>{shown()[0].message as ReactElement}</MantineProvider>)
+    expect(body.getByText('Latest changes added. 3 fields need your choice.')).toBeTruthy()
+    expect(body.queryByText(/kept your version/)).toBeNull()
+    fireEvent.click(body.getByRole('button', { name: 'Show changes' }))
+    expect(onShowConflicts).toHaveBeenCalledTimes(1)
+    expect(onUpdated).toHaveBeenCalledTimes(1)
+  })
+
+  it('still reports a merge with conflicts when they could not be counted', async () => {
+    const requestedAt = new Date().toISOString()
+    listed = editing({ baseUpdateRequestedAt: requestedAt })
+    client.conflicts.list.mockResolvedValue({ ok: false, status: 503, error: 'Busy' })
+    const { result } = render()
+    await waitFor(() => expect(result.current.wait).toBe('waiting'))
+
+    listed = editing({
+      baseUpdateRequestedAt: requestedAt,
+      lastBaseUpdate: { at: requestedAt, outcome: 'conflicts' },
+    })
+    await act(() => result.current.reload())
+
+    await waitFor(() => expect(shown()).toHaveLength(1))
+    expect(shown()[0]).toMatchObject({
+      color: 'yellow',
+      message: 'Latest changes added. Some fields need your choice.',
+    })
   })
 
   it('stays quiet when a reload finds the request already answered', async () => {

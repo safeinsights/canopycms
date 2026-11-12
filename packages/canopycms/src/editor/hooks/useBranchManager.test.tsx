@@ -2789,6 +2789,27 @@ describe('useBranchManager', () => {
       expect(mockClient.branches.list).toHaveBeenCalledTimes(1)
     })
 
+    it('says why Approve waits on open conflicts, in yellow until read, with no Retry', async () => {
+      const { notifications } = await import('@mantine/notifications')
+      const error =
+        'This branch has 2 conflicting fields. Use "Request changes" so its editor can choose what to keep.'
+      mockClient.workflow.approve.mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        code: 'OPEN_CONFLICTS',
+        error,
+      })
+      const { result } = await loaded()
+
+      await act(async () => {
+        await result.current.handleApprove('feature').catch(() => {})
+      })
+
+      expect(notifications.show).toHaveBeenLastCalledWith(
+        expect.objectContaining({ message: error, color: 'yellow', autoClose: false }),
+      )
+    })
+
     it('asks before approving, naming what stays open on GitHub', async () => {
       mockClient.workflow.approve.mockResolvedValueOnce({ ok: true, status: 200 })
       const { result } = await loaded(withPullRequest)

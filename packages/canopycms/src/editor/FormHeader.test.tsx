@@ -773,7 +773,7 @@ describe('FormRenderer notice and custom renderers', () => {
           onChange={() => {}}
           header={{ title: 'Team page' }}
           notice={<p data-testid="notice">Read only</p>}
-          conflictNotice
+          conflictNotice={{ message: '1 field changed by you and by someone else.' }}
           readOnly
         />
       </CanopyCMSProvider>,

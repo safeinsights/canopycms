@@ -17,6 +17,15 @@ export const postSchema = defineEntrySchema([
     label: 'Byline',
     fields: [{ name: 'name', type: 'string', label: 'Byline Name' }],
   },
+  // A list of objects, keyed per item: the field-merge e2e's item-level conflict lives here.
+  {
+    name: 'links',
+    type: 'object',
+    list: true,
+    label: 'Links',
+    itemLabel: 'label',
+    fields: [{ name: 'label', type: 'string', label: 'Link label' }],
+  },
   { name: 'body', type: 'mdx', label: 'Body', isBody: true },
 ] as const)
 

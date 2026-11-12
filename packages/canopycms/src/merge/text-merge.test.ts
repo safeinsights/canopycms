@@ -20,14 +20,16 @@ describe('mergeText', () => {
   it('makes two different insertions at one place a region, the branch lines in the text', () => {
     expect(mergeText('a\nz', 'a\nbase\nz', 'a\nmine\nmore\nz')).toEqual({
       text: 'a\nmine\nmore\nz',
-      regions: [{ ancestor: '', base: 'base', branch: 'mine\nmore', line: 1, lines: 2 }],
+      regions: [
+        { ancestor: '', base: 'base', branch: 'mine\nmore', line: 1, lines: 2, baseLines: 1 },
+      ],
     })
   })
 
   it('records a region where the branch deleted lines the base changed: no lines held', () => {
     expect(mergeText('a\nb\nc\n', 'a\nB\nc\n', 'a\nc\n')).toEqual({
       text: 'a\nc\n',
-      regions: [{ ancestor: 'b', base: 'B', branch: '', line: 1, lines: 0 }],
+      regions: [{ ancestor: 'b', base: 'B', branch: '', line: 1, lines: 0, baseLines: 1 }],
     })
   })
 

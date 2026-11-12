@@ -29,7 +29,7 @@ import { isPlainRecord } from './validation/field-traversal'
 const MERGE_CONFLICTS_FILE = 'merge-conflicts.json'
 
 /** A record field naming where the entry is, which both sides moved to different places. */
-export const LOCATION_CONFLICT_KEY = '@location'
+export { LOCATION_CONFLICT_KEY } from './merge/conflict-path'
 
 /** Blob ids of the versions a merge compared; absent where that version had no file. */
 export interface MergeSides {

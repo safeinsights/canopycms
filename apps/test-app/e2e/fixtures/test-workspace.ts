@@ -684,6 +684,51 @@ export async function pushConflictingChangeToMain(
 }
 
 /**
+ * Write a file into a branch's clone, relative to its content/ dir, as a save would leave it
+ * (uncommitted; `commitBranchChanges` commits it).
+ */
+export async function writeBranchContentFile(
+  typed: string,
+  contentRelativePath: string,
+  content: string,
+): Promise<void> {
+  const filePath = path.join(BRANCHES_DIR, branchKey(typed), 'content', contentRelativePath)
+  await fs.mkdir(path.dirname(filePath), { recursive: true })
+  await fs.writeFile(filePath, content, 'utf8')
+}
+
+/** Read a file from a branch's clone, relative to its content/ dir. */
+export async function readBranchContentFile(
+  typed: string,
+  contentRelativePath: string,
+): Promise<string> {
+  return fs.readFile(
+    path.join(BRANCHES_DIR, branchKey(typed), 'content', contentRelativePath),
+    'utf8',
+  )
+}
+
+/**
+ * Remove a file from the main branch on remote.git, as `pushConflictingChangeToMain` changes one,
+ * so a file a test added doesn't reach the next test's branches. Nothing to remove is no error.
+ */
+export async function removeFileFromMain(contentRelativePath: string): Promise<void> {
+  const mainPath = path.join(BRANCHES_DIR, 'main')
+  const filePath = path.join(mainPath, 'content', contentRelativePath)
+  const exists = await fs
+    .access(filePath)
+    .then(() => true)
+    .catch(() => false)
+  if (!exists) return
+  const git = simpleGit({ baseDir: mainPath })
+  await git.addConfig('user.name', 'CanopyCMS Test Bot')
+  await git.addConfig('user.email', 'test@example.com')
+  await git.rm([path.join('content', contentRelativePath)])
+  await git.commit('E2E: remove test file')
+  await git.push('origin', 'main', ['--force'])
+}
+
+/**
  * Trigger the worker's rebaseActiveBranches() via the test-only API endpoint.
  */
 export async function triggerRebase(baseUrl: string): Promise<void> {

@@ -70,7 +70,11 @@ function actionError(result: ApiResponse, fallback: string, staleIsConflict = fa
   if (isGatewayFailure(result)) return new UnansweredError()
   const message = result.error || fallback
   if (result.ok) return new Error(message)
-  return staleIsConflict && result.status === 409 && !isNonApiResponse(result)
+  // Open conflicts refuse the action where the branch still is, so they are no stale status.
+  return staleIsConflict &&
+    result.status === 409 &&
+    result.code !== 'OPEN_CONFLICTS' &&
+    !isNonApiResponse(result)
     ? new StaleStatusError(message)
     : new RefusedError(message, result.status)
 }
@@ -947,8 +951,9 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         ) : (
           message
         ),
-        color: 'red',
-        ...(details.note ? { autoClose: false } : {}),
+        // A 409, such as open conflicts, loses nothing and says what to do: yellow, until read.
+        color: err.status === 409 ? 'yellow' : 'red',
+        ...(details.note || err.status === 409 ? { autoClose: false, withCloseButton: true } : {}),
       })
       await loadBranches()
       return

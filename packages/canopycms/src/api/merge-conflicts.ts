@@ -59,7 +59,7 @@ import { defineEndpoint } from './route-builder'
 import { branchNameSchema, contentIdSchema, logicalPathSchema } from './validators'
 
 /** One entry's open conflicts, as the list names them. */
-interface MergeConflictListItem {
+export interface MergeConflictListItem {
   contentId: string
   kind: MergeConflictKind
   /** Where the file is in the branch, or was, for one the branch deleted. */
@@ -72,7 +72,7 @@ interface MergeConflictListItem {
   mergeSha: string
 }
 
-interface MergeConflictsData {
+export interface MergeConflictsData {
   conflicts: MergeConflictListItem[]
   /** Entries with conflicts open that this user may not read: counted, never named. */
   hiddenCount: number
@@ -87,9 +87,9 @@ interface UnavailableConflictSide {
   unavailable: 'too-large' | 'unreadable' | 'missing' | 'not-an-entry'
 }
 
-type ConflictSide = EntryChangeSide | UnavailableConflictSide
+export type ConflictSide = EntryChangeSide | UnavailableConflictSide
 
-interface EntryConflictField {
+export interface EntryConflictField {
   /** The record's name for the place: what `resolvedConflicts` sends back. */
   key: string
   /**
@@ -108,7 +108,7 @@ interface EntryConflictField {
   sides: MergeSides
 }
 
-interface EntryConflictData {
+export interface EntryConflictData {
   contentId: string
   kind: MergeConflictKind
   path: string
@@ -123,7 +123,7 @@ interface EntryConflictData {
 export type EntryConflictResponse = ApiResponse<EntryConflictData>
 
 /** What an entry-level conflict is resolved by. */
-type EntryConflictChoice = 'keep' | 'delete' | 'restore' | 'use-latest'
+export type EntryConflictChoice = 'keep' | 'delete' | 'restore' | 'use-latest'
 
 export type ResolveEntryConflictResponse = ApiResponse<{ contentId: string; openCount: number }>
 

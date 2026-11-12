@@ -29,6 +29,14 @@ export const EDITOR_ACTIONS = {
   redoAllChanges: 'Redo all changes',
   restoreEntry: 'Restore entry',
   deleteEntry: 'Delete entry',
+  useLatestVersion: 'Use latest version',
+  keepYourVersion: 'Keep your version',
+  useBoth: 'Use both',
+  markResolved: 'Mark resolved',
+  removeIt: 'Remove it',
+  keepIt: 'Keep it',
+  keepItDeleted: 'Keep it deleted',
+  chooseAgain: 'Choose again',
 } as const
 
 /** Withdraw's confirm on a branch that conflicts with its base, which then gets the latest changes. */

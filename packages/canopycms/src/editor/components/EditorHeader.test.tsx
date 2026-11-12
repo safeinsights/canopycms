@@ -10,6 +10,7 @@ import type { EditorEntry } from '../Editor'
 import type { BranchHold, BranchStatus } from '../../types'
 import { RESERVED_GROUPS } from '../../authorization/helpers'
 import { GET_LATEST_CHANGES_TOOLTIP, type BaseUpdateControl } from '../base-update-wait'
+import { conflictsHoldMessage, conflictsSubmitReason } from '../conflict-notice'
 
 const Wrapper = ({ children }: { children: React.ReactNode }) => (
   <CanopyCMSProvider>{children}</CanopyCMSProvider>
@@ -1057,6 +1058,57 @@ describe('EditorHeader - blocked controls say why on focus and ignore their clic
       expect(await screen.findByText(reason)).toBeTruthy()
       await userEvent.click(submit)
       expect(onSubmit).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('open conflicts (row 45)', () => {
+    const author = { userId: 'u1' }
+
+    it('holds Submit for review with the count and the way forward, and ignores its click', async () => {
+      const onSubmit = vi.fn()
+      renderHeader({ openConflicts: 2, userContext: author, branchCreatedBy: 'u1', onSubmit })
+      const submit = screen.getByTestId('submit-button')
+
+      expect(submit.getAttribute('aria-disabled')).toBe('true')
+      act(() => submit.focus())
+      expect(await screen.findByText(conflictsSubmitReason(2))).toBeTruthy()
+      expect(conflictsSubmitReason(2)).toContain('"Show changes"')
+      await userEvent.click(submit)
+      expect(onSubmit).not.toHaveBeenCalled()
+    })
+
+    it('lets Submit for review act once no choice is open', async () => {
+      const onSubmit = vi.fn()
+      renderHeader({ openConflicts: 0, userContext: author, branchCreatedBy: 'u1', onSubmit })
+      const submit = screen.getByTestId('submit-button')
+
+      expect(submit.getAttribute('aria-disabled')).toBeNull()
+      await userEvent.click(submit)
+      expect(onSubmit).toHaveBeenCalled()
+    })
+
+    it('shows "Needs action" with the count, its detail reachable in words', () => {
+      renderHeader({ openConflicts: 3, userContext: author, branchCreatedBy: 'u1' })
+      const badge = screen.getByTestId('branch-hold-status')
+      expect(badge.textContent).toBe('Needs action (3)')
+      expect(badge.closest('[role="status"]')?.textContent).toContain(conflictsHoldMessage(3))
+    })
+
+    it('says a hold on the pull request instead, without a conflicts count', () => {
+      renderHeader({
+        openConflicts: 3,
+        branchHold: { kind: 'rewritten' },
+        userContext: author,
+        branchCreatedBy: 'u1',
+      })
+      expect(screen.getByTestId('branch-hold-status').textContent).toBe('Needs action')
+    })
+
+    it('names no branch in its copy', () => {
+      expect(conflictsSubmitReason(1)).toBe(
+        '1 field needs your choice before this branch can be submitted. Choose what to keep in "Show changes" on each flagged entry.',
+      )
+      expect(conflictsHoldMessage(2)).not.toMatch(/main|base/)
     })
   })
 

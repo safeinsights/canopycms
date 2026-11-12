@@ -247,6 +247,42 @@ describe('EntryNavigator', () => {
       expect(onEdit).toHaveBeenCalled()
     })
 
+    it('offers an admin "Keep your version" for a collection\'s conflicts, beside its badge', async () => {
+      const user = userEvent.setup()
+      const onKeep = vi.fn()
+      renderEntryNavigator({
+        collections: [
+          {
+            path: unsafeAsLogicalPath('posts'),
+            label: 'Posts',
+            type: 'collection',
+            conflictNotice: true,
+            conflictKeep: { label: 'Keep your version of its settings', onKeep },
+          },
+        ],
+      })
+
+      expect(screen.getByTestId('conflict-badge')).toBeTruthy()
+      await user.click(screen.getByTestId('collection-menu-posts'))
+      await user.click(await screen.findByText('Keep your version of its settings'))
+      expect(onKeep).toHaveBeenCalledTimes(1)
+    })
+
+    it('offers no "Keep your version" on a read-only navigator', () => {
+      renderEntryNavigator({
+        readOnly: true,
+        collections: [
+          {
+            path: unsafeAsLogicalPath('posts'),
+            label: 'Posts',
+            type: 'collection',
+            conflictKeep: { label: 'Keep your version of its settings', onKeep: vi.fn() },
+          },
+        ],
+      })
+      expect(screen.queryByTestId('collection-menu-posts')).toBeNull()
+    })
+
     it('calls onAddSubCollection when Add Sub-Collection is clicked', async () => {
       const user = userEvent.setup()
       const onAddSubCollection = vi.fn()
