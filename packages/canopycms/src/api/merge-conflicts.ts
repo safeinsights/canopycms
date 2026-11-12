@@ -883,8 +883,7 @@ const releaseHoldHandler = async (gc: {
     const written = await withContentWriteLock(branchRoot, () =>
       new MergeConflictStore(branchRoot).update((current) => {
         if (!current?.held) return null
-        const { held: _released, ...rest } = current
-        return rest
+        return { ...current, held: undefined }
       }),
     )
     return { ok: true, status: 200, data: { released: written !== null } }

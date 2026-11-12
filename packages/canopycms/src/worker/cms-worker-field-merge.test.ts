@@ -1170,9 +1170,10 @@ describe('the field merge in the rebase loop', () => {
 
     expect(summary.rebased).toEqual([BRANCH])
     expect((await fs.readdir(dir)).filter((f) => f.includes('.malformed-'))).toHaveLength(1)
-    // The merge records anew, which clears the hold the set-aside record left.
+    // The merge records anew, and the hold stays: it took the set-aside merge as merged, so the
+    // choices lost with the record would read as the branch's own.
     expect(Object.keys((await repo.record())?.entries ?? {})).toEqual(['aboutAbc1234'])
-    expect((await repo.record())?.held).toBeUndefined()
+    expect((await repo.record())?.held).toBeDefined()
   })
 
   it('holds the branch when it sets aside a record with nothing to merge', async () => {

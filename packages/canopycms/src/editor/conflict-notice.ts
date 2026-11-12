@@ -44,10 +44,14 @@ export const conflictsHoldMessage = (count: number): string =>
 export const latestChangesConflictsMessage = (count: number | undefined): string =>
   `Latest changes added. ${count === undefined ? 'Some fields need' : fieldsNeed(count)} your choice.`
 
-/** The bar's "Needs action" detail, to an admin, while the branch's conflict record is held. */
+/** The bar's "Needs action" detail while the branch's record of conflicts is held. */
 export const conflictRecordHeldMessage =
-  "This branch's record of which fields were changed by you and by someone else was damaged and set aside, so it can't be submitted or approved until an admin releases it."
+  "This branch's record of conflicts was damaged and set aside, so it's on hold: it can't be submitted or approved until an admin releases the hold."
+
+/** The same, to an admin, who has the way out beside it. */
+export const conflictRecordHeldAdminMessage =
+  "This branch's record of conflicts was damaged and set aside, so it's on hold: it can't be submitted or approved. Release the hold to let it go on."
 
 /** What "Release hold" gives up, in its confirm. */
 export const releaseHoldConsequences =
-  'Releasing lets this branch be submitted and approved again. Which fields needed a choice is lost: each keeps the value it has now, and no one is asked to choose.'
+  "Releasing lets this branch be submitted and approved again. The list of fields that needed a choice is lost for good: each field keeps the value it has now, and no one will be asked to choose. Check the branch's changes first."

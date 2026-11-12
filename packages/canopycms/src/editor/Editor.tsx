@@ -173,6 +173,8 @@ import { PreviewFollowContext, usePreviewFollow } from './hooks/usePreviewFollow
 import { UndoToastMessage } from './components/UndoToastMessage'
 import { getNotificationDuration } from './utils/env'
 import { MayHaveLandedError, isGatewayFailure, isUnanswered } from './unanswered'
+import type { ReleaseOutcome } from './components/ReleaseHoldButton'
+import { releaseConflictsHold } from './release-hold'
 
 export interface EditorEntry {
   path: LogicalPath // Logical path (no IDs/extensions)
@@ -528,7 +530,8 @@ const EditorContent: React.FC<EditorProps> = ({
     apiClient,
     branchNameState,
     currentBranch?.conflictFiles,
-    userIsAdmin,
+    // Every viewer reads it, as a hold on the branch names no entry.
+    true,
   )
   const openConflictCount = currentBranch?.conflictFiles?.length
     ? (branchConflicts.data?.openCount ?? currentBranch.conflictFiles.length)
@@ -1977,20 +1980,17 @@ const EditorContent: React.FC<EditorProps> = ({
     ]).catch(console.error)
     return undefined
   }
-  // An admin's release of a branch held as its conflict record was set aside.
-  const handleReleaseConflictsHold = async (): Promise<boolean> => {
-    const result = await apiClient.conflicts.releaseHold({ branch: branchNameState })
-    if (result.ok) {
-      await branchConflicts.reload()
-      notifications.show({ message: 'Hold released.', color: 'green' })
-      return true
+  // An admin's release of a branch held as its record of conflicts was set aside.
+  const handleReleaseConflictsHold = async (): Promise<ReleaseOutcome> => {
+    const result = await releaseConflictsHold(apiClient, branchNameState)
+    if ('released' in result) {
+      notifications.show({
+        message: result.wasHeld ? 'Hold released.' : 'This branch was no longer on hold.',
+        color: 'green',
+      })
+      void branchConflicts.reload()
     }
-    notifications.show({
-      message: result.error ?? "Couldn't release the hold. Try again in a moment.",
-      color: 'red',
-      autoClose: false,
-    })
-    return false
+    return result
   }
   keepConflictsRef.current = (items) => {
     void Promise.all(
@@ -2875,8 +2875,8 @@ const EditorContent: React.FC<EditorProps> = ({
               branchHold={currentBranch?.hold}
               openConflicts={openConflictCount}
               conflictRecordHeld={
-                userIsAdmin && branchConflicts.data?.held
-                  ? { onRelease: handleReleaseConflictsHold }
+                branchConflicts.data?.held
+                  ? { ...(userIsAdmin && { onRelease: handleReleaseConflictsHold }) }
                   : undefined
               }
               branchApproveBlocked={currentBranch?.approveBlocked}

@@ -490,10 +490,35 @@ export const NarrowGetLatestChangesSaveFirst: Story = {
   args: { baseUpdate: { ...getLatest, blockedReason: 'Save your changes first.' } },
 }
 
-/** To an admin, a branch held as its conflict record was damaged and set aside, with its way out. */
+/** To an admin, a branch held as its record of conflicts was set aside, with its way out. */
 export const ConflictRecordHeld: Story = {
   args: {
     userContext: { userId: 'admin-1', groups: ['Admins'] },
-    conflictRecordHeld: { onRelease: async () => true },
+    conflictRecordHeld: { onRelease: async () => ({ released: true }) },
   },
+}
+
+/** The same at phone width: the way out stays beside its badge. */
+export const NarrowConflictRecordHeld: Story = {
+  ...ConflictRecordHeld,
+  parameters: phone,
+}
+
+/** A release the server refuses: its reason shows in the confirm, which stays open. */
+export const ConflictRecordHeldRefused: Story = {
+  args: {
+    userContext: { userId: 'admin-1', groups: ['Admins'] },
+    conflictRecordHeld: {
+      onRelease: async () => ({
+        error:
+          'This branch is busy: it is being synced, or a save is in flight. Try again in a moment.',
+        tone: 'warning',
+      }),
+    },
+  },
+}
+
+/** To anyone else, the hold and why Submit for review waits, with no way out of their own. */
+export const ConflictRecordHeldEditor: Story = {
+  args: { conflictRecordHeld: {} },
 }

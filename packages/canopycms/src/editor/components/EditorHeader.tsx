@@ -1,4 +1,4 @@
-import React, { useRef, type ReactNode, type Ref } from 'react'
+import React, { useLayoutEffect, useRef, type ReactNode, type Ref } from 'react'
 import {
   Badge,
   Box,
@@ -21,11 +21,12 @@ import { isAdmin, isLockedOutOfBranch, isReviewer } from '../../authorization/he
 import { branchBarStatus, describeBranchLock, type BranchBarStatus } from '../branch-lock'
 import { HOLD_BADGE, branchHoldMessage } from '../branch-status'
 import {
+  conflictRecordHeldAdminMessage,
   conflictRecordHeldMessage,
   conflictsHoldMessage,
   conflictsSubmitReason,
 } from '../conflict-notice'
-import { ReleaseHoldButton } from './ReleaseHoldButton'
+import { ReleaseHoldButton, type ReleaseOutcome } from './ReleaseHoldButton'
 import { EDITOR_ACTIONS, UNFINISHED_SUBMIT_APPROVE_REASON, rewrittenSubmitReason } from '../copy'
 import { reviewRoleOf, type ReviewRole } from '../../authorization/review-role'
 import { SYSTEM_USER_ID } from '../../system-users'
@@ -118,10 +119,10 @@ export interface EditorHeaderProps {
   /** Choices a merge's conflicts leave open on the branch, which hold Submit for review. */
   openConflicts?: number
   /**
-   * To an admin, the branch is held as its conflict record was set aside; `onRelease` releases it,
-   * resolving whether it did.
+   * The branch is held as its record of conflicts was set aside; `onRelease`, an admin's way out,
+   * releases it.
    */
-  conflictRecordHeld?: { onRelease: () => Promise<boolean> }
+  conflictRecordHeld?: { onRelease?: () => Promise<ReleaseOutcome> }
   /** The open branch's wait for the latest changes, whoever asked: every viewer who sees it waits. */
   latestWait?: BaseUpdateWait
 }
@@ -181,6 +182,12 @@ export function EditorHeader({
     },
     userContext,
   )
+  const releaseHold = branchName ? conflictRecordHeld?.onRelease : undefined
+  const heldMessage = !conflictRecordHeld
+    ? undefined
+    : releaseHold
+      ? conflictRecordHeldAdminMessage
+      : conflictRecordHeldMessage
   const workflow = workflowAction({
     branchName,
     busy,
@@ -195,6 +202,7 @@ export function EditorHeader({
     approveBlocked: branchApproveBlocked,
     waitingForLatest: latestWait === 'waiting',
     openConflicts,
+    heldReason: heldMessage,
   })
   const lock = {
     branchStatus,
@@ -216,8 +224,8 @@ export function EditorHeader({
           role: workflow?.kind === 'review' ? 'review' : workflow?.permitted ? 'withdraw' : 'none',
           isAdmin: isAdmin(userContext?.groups ?? []),
         })
-      : branchName && conflictRecordHeld && status.value !== 'loading'
-        ? conflictRecordHeldMessage
+      : branchName && heldMessage && status.value !== 'loading'
+        ? heldMessage
         : branchName && conflictsHeld && status.value !== 'loading'
           ? conflictsHoldMessage(openConflicts)
           : undefined
@@ -245,6 +253,17 @@ export function EditorHeader({
 
   // Controls come and go as a submit or withdraw changes the lock, and focus follows them.
   const [[wayRef, saveAllRef, workflowRef, secondaryRef], focusTarget] = useFocusHandOff(4)
+  // A release unmounts its confirm with the button that opened it, which leaves focus nowhere: it
+  // goes to the workflow control, which the release has just freed.
+  const releasable = !!releaseHold
+  const wasReleasable = useRef(releasable)
+  useLayoutEffect(() => {
+    const active = document.activeElement
+    if (wasReleasable.current && !releasable && (!active || active === document.body)) {
+      focusTarget(2)?.focus({ preventScroll: true })
+    }
+    wasReleasable.current = releasable
+  })
   const workflowControl = {
     onSubmit,
     onWithdraw,
@@ -273,18 +292,19 @@ export function EditorHeader({
             // Below `md` the bar has no room for it, so the branch's menu offers it.
             getLatest={narrow ? baseUpdate : undefined}
           />
-          <BranchStatusLabel
-            status={branchName ? status : { value: 'none', readOnly: false }}
-            reason={branchLockReason}
-            holdMessage={holdMessage}
-            holdCount={holdCount}
-            working={latestWait !== 'none' ? GETTING_LATEST_CHANGES : undefined}
-            // The bar's button carries the spinner where it shows.
-            workingSpinner={narrow || !baseUpdate}
-          />
-          {branchName && conflictRecordHeld && (
-            <ReleaseHoldButton onRelease={conflictRecordHeld.onRelease} />
-          )}
+          {/* The way out stays beside the hold it ends, however the bar wraps. */}
+          <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
+            <BranchStatusLabel
+              status={branchName ? status : { value: 'none', readOnly: false }}
+              reason={branchLockReason}
+              holdMessage={holdMessage}
+              holdCount={holdCount}
+              working={latestWait !== 'none' ? GETTING_LATEST_CHANGES : undefined}
+              // The bar's button carries the spinner where it shows.
+              workingSpinner={narrow || !baseUpdate}
+            />
+            {releaseHold && <ReleaseHoldButton onRelease={releaseHold} />}
+          </Group>
           {modifiedCount > 0 && (
             <Tooltip
               label={unsavedTooltip(
@@ -545,6 +565,8 @@ type WorkflowActionInput = Pick<
   waitingForLatest: boolean
   /** Choices left open by a merge's conflicts, which the server refuses a submit for. */
   openConflicts: number
+  /** Why the branch is held, as its record of conflicts was set aside, which holds both. */
+  heldReason?: string
 }
 
 /**
@@ -565,6 +587,7 @@ function workflowAction({
   approveBlocked,
   waitingForLatest,
   openConflicts,
+  heldReason,
 }: WorkflowActionInput): WorkflowAction | null {
   const isSubmitted = branchStatus === 'submitted'
   const isEditing = branchStatus === 'editing'
@@ -588,7 +611,7 @@ function workflowAction({
       blocked: !branchName || busy || savingAll,
       permitted: true,
       reason: savingAll ? 'Wait for Save all to finish.' : busy ? BUSY_REASON : '',
-      approveReason: approveBlocked ? UNFINISHED_SUBMIT_APPROVE_REASON : undefined,
+      approveReason: approveBlocked ? UNFINISHED_SUBMIT_APPROVE_REASON : heldReason,
     }
   }
 
@@ -624,28 +647,30 @@ function workflowAction({
       busy ||
       savingAll ||
       !canPerformAction ||
-      (isEditing && (rewritten || waitingForLatest || openConflicts > 0)),
+      (isEditing && (rewritten || waitingForLatest || openConflicts > 0 || !!heldReason)),
     permitted: canPerformAction,
     reason: savingAll
       ? 'Wait for Save all to finish.'
       : waitingForLatest && isEditing
         ? WAITING_SUBMIT_REASON
-        : openConflicts > 0 && isEditing
-          ? conflictsSubmitReason(openConflicts)
-          : rewritten && isEditing
-            ? rewrittenSubmitReason(isAdmin(userContext?.groups ?? []))
-            : // No branch data (`branchStatus === undefined`) must not be
-              // interpolated raw into this label. Guarded explicitly here rather
-              // than left to the early return above, which hides the action
-              // today only as a side effect of `branchIsProtected`'s `?? true`
-              // default -- not a guarantee this arm stays unreachable.
-              branchStatus === undefined
-              ? 'Branch details could not be loaded. Use "Refresh branch" to try again.'
-              : !statusHasAction
-                ? `This branch is ${branchStatus}, so it can't be submitted for review or withdrawn from review.`
-                : !userHasPermission
-                  ? 'You do not have permission to submit this branch for review or withdraw it from review. Ask an admin for access.'
-                  : '',
+        : heldReason && isEditing
+          ? heldReason
+          : openConflicts > 0 && isEditing
+            ? conflictsSubmitReason(openConflicts)
+            : rewritten && isEditing
+              ? rewrittenSubmitReason(isAdmin(userContext?.groups ?? []))
+              : // No branch data (`branchStatus === undefined`) must not be
+                // interpolated raw into this label. Guarded explicitly here rather
+                // than left to the early return above, which hides the action
+                // today only as a side effect of `branchIsProtected`'s `?? true`
+                // default -- not a guarantee this arm stays unreachable.
+                branchStatus === undefined
+                ? 'Branch details could not be loaded. Use "Refresh branch" to try again.'
+                : !statusHasAction
+                  ? `This branch is ${branchStatus}, so it can't be submitted for review or withdrawn from review.`
+                  : !userHasPermission
+                    ? 'You do not have permission to submit this branch for review or withdraw it from review. Ask an admin for access.'
+                    : '',
   }
 }
 

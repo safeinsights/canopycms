@@ -276,7 +276,7 @@ describe('MergeConflictStore', () => {
     await expect(new MergeConflictStore(root).read()).resolves.toMatchObject({ entries: {} })
   })
 
-  it('holds the branch once a record that does not parse is set aside, until a write leaves held out', async () => {
+  it('holds the branch once a record that does not parse is set aside, until a release', async () => {
     await fs.mkdir(path.join(root, '.canopy-meta'))
     await fs.writeFile(path.join(root, '.canopy-meta', 'merge-conflicts.json'), '{"oops"')
     const store = new MergeConflictStore(root, 0)
@@ -286,12 +286,13 @@ describe('MergeConflictStore', () => {
     await expect(assertNoOpenConflicts(root)).rejects.toMatchObject({
       count: null,
       held: true,
-      message: expect.stringContaining('waits for an admin'),
+      message: expect.stringContaining('on hold until an admin releases it'),
     })
-    // Other writers keep the hold; a write that leaves it out, as a merge's, clears it.
+    // A write that leaves it out keeps it, as a merge's does; only one that names it releases it.
     await store.update((current) => current && { ...current, remaps: [] })
-    expect((await store.read())?.held).toBeDefined()
     await store.update(() => ({ entries: {} }))
+    expect((await store.read())?.held).toBeDefined()
+    await store.update((current) => current && { ...current, held: undefined })
     expect((await store.read())?.held).toBeUndefined()
     await expect(assertNoOpenConflicts(root)).resolves.toBeUndefined()
   })

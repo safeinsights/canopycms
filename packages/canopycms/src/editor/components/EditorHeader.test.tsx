@@ -11,6 +11,7 @@ import type { BranchHold, BranchStatus } from '../../types'
 import { RESERVED_GROUPS } from '../../authorization/helpers'
 import { GET_LATEST_CHANGES_TOOLTIP, type BaseUpdateControl } from '../base-update-wait'
 import {
+  conflictRecordHeldAdminMessage,
   conflictRecordHeldMessage,
   conflictsHoldMessage,
   conflictsSubmitReason,
@@ -1110,36 +1111,76 @@ describe('EditorHeader - blocked controls say why on focus and ignore their clic
     })
 
     it('shows an admin a held branch, released through a confirm that says what is lost', async () => {
-      const onRelease = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+      const onRelease = vi
+        .fn()
+        .mockResolvedValueOnce({ error: 'This branch is busy.', tone: 'warning' })
+        .mockResolvedValueOnce({ released: true })
       renderHeader({ openConflicts: 0, userContext: author, conflictRecordHeld: { onRelease } })
       const badge = screen.getByTestId('branch-hold-status')
       expect(badge.textContent).toBe('Needs action')
-      expect(badge.closest('[role="status"]')?.textContent).toContain(conflictRecordHeldMessage)
+      expect(badge.closest('[role="status"]')?.textContent).toContain(
+        conflictRecordHeldAdminMessage,
+      )
 
-      await userEvent.click(screen.getByRole('button', { name: 'Release hold…' }))
-      const dialog = await screen.findByRole('dialog', { name: 'Release this branch?' })
+      await userEvent.click(screen.getByRole('button', { name: 'Release hold' }))
+      const dialog = await screen.findByRole('dialog', { name: "Release this branch's hold?" })
       expect(dialog.textContent).toContain(releaseHoldConsequences)
       const confirm = within(dialog).getByRole('button', { name: 'Release hold' })
-      // A release the server refuses leaves the confirm open; one it makes closes it.
+      // A refusal says why in the confirm, which stays open; a release closes it.
       await userEvent.click(confirm)
-      expect(onRelease).toHaveBeenCalledTimes(1)
-      // Past the modal's closing transition, so a confirm that closed would be gone by now.
+      expect(within(dialog).getByRole('alert').textContent).toBe('This branch is busy.')
       await new Promise((resolve) => setTimeout(resolve, 500))
-      expect(screen.queryByRole('dialog', { name: 'Release this branch?' })).toBeTruthy()
+      expect(screen.queryByRole('dialog', { name: "Release this branch's hold?" })).toBeTruthy()
       await userEvent.click(confirm)
       expect(onRelease).toHaveBeenCalledTimes(2)
       await waitFor(() =>
-        expect(screen.queryByRole('dialog', { name: 'Release this branch?' })).toBeNull(),
+        expect(screen.queryByRole('dialog', { name: "Release this branch's hold?" })).toBeNull(),
       )
+    })
+
+    it('holds Submit for review with the reason while the branch is held', async () => {
+      const onSubmit = vi.fn()
+      renderHeader({
+        userContext: author,
+        branchCreatedBy: 'u1',
+        onSubmit,
+        conflictRecordHeld: { onRelease: vi.fn() },
+      })
+      const submit = screen.getByTestId('submit-button')
+      expect(submit.getAttribute('aria-disabled')).toBe('true')
+      await userEvent.click(submit)
+      expect(onSubmit).not.toHaveBeenCalled()
+    })
+
+    it('tells anyone else the branch is held, with no way out of their own', () => {
+      renderHeader({ userContext: author, branchCreatedBy: 'u1', conflictRecordHeld: {} })
+      const badge = screen.getByTestId('branch-hold-status')
+      expect(badge.closest('[role="status"]')?.textContent).toContain(conflictRecordHeldMessage)
+      expect(screen.queryByRole('button', { name: 'Release hold' })).toBeNull()
+      expect(screen.getByTestId('submit-button').getAttribute('aria-disabled')).toBe('true')
+    })
+
+    it('moves focus to Submit for review when a release takes its confirm away', async () => {
+      const props = {
+        userContext: author,
+        branchCreatedBy: 'u1',
+        conflictRecordHeld: { onRelease: vi.fn() },
+      }
+      const view = renderHeader(props)
+      await userEvent.click(screen.getByRole('button', { name: 'Release hold' }))
+      await screen.findByRole('dialog', { name: "Release this branch's hold?" })
+      view.rerender(<Headers {...defaultProps} {...props} conflictRecordHeld={undefined} />)
+      await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('submit-button')))
     })
 
     it('offers no release where the branch is not held', () => {
       renderHeader({ openConflicts: 2, userContext: author, branchCreatedBy: 'u1' })
-      expect(screen.queryByRole('button', { name: 'Release hold…' })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Release hold' })).toBeNull()
     })
 
     it('names no branch in its copy', () => {
       expect(conflictRecordHeldMessage).not.toMatch(/main|base/)
+      expect(conflictRecordHeldAdminMessage).not.toMatch(/main|base/)
       expect(conflictsSubmitReason(1)).toBe(
         '1 field needs your choice before this branch can be submitted. Choose what to keep in "Show changes" on each flagged entry.',
       )

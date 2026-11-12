@@ -107,8 +107,9 @@ export interface MergeConflictState {
   landing?: Landing
   /**
    * A record that didn't parse was set aside: which conflicts it held is lost, so Submit and Approve
-   * wait ({@link assertNoOpenConflicts}) until an admin releases the branch or a merge records
-   * anew, as a merge writes no `held`.
+   * wait ({@link assertNoOpenConflicts}) until an admin releases the branch. A later merge does not:
+   * it takes the set-aside merge as merged, so the lost choices would read as the branch's own.
+   * {@link MergeConflictStore.update} keeps it through a change that leaves it out.
    */
   held?: Held
 }
@@ -427,7 +428,7 @@ export class OpenMergeConflictsError extends Error {
   ) {
     super(
       held
-        ? "This branch's record of conflicting changes was damaged and set aside, so it waits for an admin to check it."
+        ? "This branch's record of conflicts was damaged and set aside, so it's on hold until an admin releases it."
         : count === null
           ? "Couldn't check this branch for changes that conflict with newer ones. Try again in a moment."
           : count === 1
@@ -525,8 +526,8 @@ export class MergeConflictStore {
 
   /**
    * Replace what the file holds with what `change` makes of it, under the module's locks. `change`
-   * gets null when there is no file yet, and returns null to write nothing. Resolves what was
-   * written, or null.
+   * gets null when there is no file yet, and returns null to write nothing; a `held` it leaves out
+   * stays. Resolves what was written, or null.
    */
   async update(
     change: (current: MergeConflictState | null) => MergeConflictState | null,
@@ -544,12 +545,16 @@ export class MergeConflictStore {
             },
           )
           if (next === null) return null
+          // A hold stays unless the change names `held`, as only a release does, setting it undefined.
+          const held = Object.prototype.hasOwnProperty.call(next, 'held')
+            ? next.held
+            : current?.held
           const payload = {
             schema: RECORD_SCHEMA,
             entries: next.entries,
             ...(next.remaps && { remaps: next.remaps }),
             ...(next.landing && { landing: next.landing }),
-            ...(next.held && { held: next.held }),
+            ...(held && { held }),
           }
           await writeOccJsonFile(this.filePath, payload, {
             expectedVersion: current ? current.version : null,
