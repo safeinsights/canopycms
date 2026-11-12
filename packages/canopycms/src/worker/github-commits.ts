@@ -503,8 +503,9 @@ async function fastForward(
  * left an item under a key that names another item (branch-merge.ts `buildRekey`): one commit on
  * `tip`, recorded, published and moved to in {@link mergeIntoBranch}'s order, its remaps moving the
  * branch's comment threads once it lands. Null, for the caller to fast-forward to `tip` as git
- * keyed it, where no item needs a new key or the commit could not reach GitHub, as it would leave
- * the clone ahead of it.
+ * keyed it, where no item needs a new key, where the commit could not be published (gateway policy,
+ * {@link decidePublish}, a `remote.git` head it doesn't contain), or where the clone's saves would
+ * keep the clone from moving to it ({@link savesMeet}).
  */
 async function rekeyTakenIn(
   ctx: GitHubCommitsContext,
@@ -537,7 +538,7 @@ async function rekeyTakenIn(
     await moveClone(git, branchPath, sha)
   } catch (err) {
     if (!/would be overwritten/.test(getErrorMessage(err))) throw err
-    // Published: the next cycle fast-forwards to it once the saves are submitted.
+    // Saves made since `savesMeet` looked: published, so the next cycle catches up with it.
     workerLog(`  ${branchDir}: local changes overlap commits from GitHub, which wait for a submit`)
     return { kind: 'wait' }
   }
@@ -657,7 +658,7 @@ export async function mergeIntoBranch(
     }
   }
   const merged = await commitMerge(git, plan, { head, other: into, message })
-  // The re-key's remaps first: the merge keeps its keys for the items it matches.
+  // The re-key's remaps cover entries the branch left alone, the merge's those both changed.
   const built = rekey ? { ...merged, keyRemaps: [...rekey.keyRemaps, ...merged.keyRemaps] } : merged
   const { sha, conflicts } = built
   const refused = await refuseIncoming(args, head, sha)
@@ -920,10 +921,10 @@ async function mergesHeld(
 }
 
 /**
- * The record as `head` has it: comment threads take the item keys of merges `head` holds, other
- * merges' remaps go, and records changed by merges it lacks give back the ones they replaced.
- * Resolves whether `head` holds a merge the record named then; a merge recorded since counts as
- * held, as nothing settled it.
+ * The record as `head` has it, or `also` with it: comment threads take the item keys of merges
+ * `head` holds, the remaps of merges neither holds go, and records changed by merges neither holds
+ * give back the ones they replaced. Resolves whether either holds a merge the record named then; a
+ * merge recorded since counts as held, as nothing settled it.
  */
 async function settleRecord(
   git: SimpleGit,
