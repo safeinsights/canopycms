@@ -2,8 +2,7 @@
 
 The pure engine that merges one entry's ancestor, base and branch versions field by field, and
 names each conflict as the "Show changes" drawer names a change. It imports no node built-in, so
-it can run in the browser; `pnpm lint:bundle` checks the part the editor reaches today,
-`value-equality.ts`.
+the editor can run it in the browser; `pnpm lint:bundle` checks that.
 
 The **code comment at the point of the rule is authoritative**; this file is the map.
 

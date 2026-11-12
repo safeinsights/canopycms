@@ -150,6 +150,7 @@ const field = (
   key,
   drawerKey: key,
   dataPath,
+  sidePaths: { ancestor: dataPath, base: dataPath, branch: dataPath },
   kind,
   mergeSha: MERGE_SHA,
   sides,

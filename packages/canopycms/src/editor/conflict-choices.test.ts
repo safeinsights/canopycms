@@ -177,13 +177,14 @@ describe('review fixes', () => {
   })
 
   it('places nothing where the latest version lacks an item the place is inside', () => {
-    // The latest version holds no item k2, as when the base left its list keyless.
+    // The latest version holds no item k2, and the record names no place in it: the guard holds.
     const data = fieldsConflictData([])
     data.fields = [
       {
         key: 'steps.k2.text',
         drawerKey: 'steps.k2.text',
         dataPath: [{ field: 'steps' }, { item: 'k2' }, { field: 'text' }],
+        sidePaths: {},
         kind: 'changed',
         mergeSha: MERGE,
         sides: data.sides,

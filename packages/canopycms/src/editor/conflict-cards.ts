@@ -25,6 +25,8 @@ import {
 import { flattenGroupFields } from '../utils/flatten-group-fields'
 import { humanizeName, schemaLabel } from './schema-label'
 import { formValueOfSide, valueAtChange } from './undo-change'
+import { ITEM_KEY } from '../item-keys'
+import { isPlainRecord } from '../validation/field-traversal'
 
 type FormValue = Record<string, unknown>
 
@@ -88,8 +90,9 @@ export interface FieldConflict {
   latest?: FormValue
   /**
    * The latest version was read and holds every list item on the place's path, other than the item
-   * a removal on its side took out, so its value there can be found and placed. A list the base
-   * left keyless reads with keys of its own content, which needn't be the ones the merge named.
+   * a removal on its side took out, so its value there can be found and placed. It is keyed as the
+   * merge named the place along the base's own path ({@link alignedTo}), so this fails only where
+   * the record gives no such path, or one that runs another way.
    */
   latestPlaceable: boolean
   /**
@@ -115,6 +118,45 @@ const versionOf = (
   if (sha === undefined) return null
   const side = versions[sha]
   return side === undefined || 'unavailable' in side ? undefined : side
+}
+
+/**
+ * `version` with its list items along `from`, its own path to a conflict's place, keyed as `to`,
+ * the merged path, names them, so `to` finds the value in it: an item of a list a side left keyless
+ * reads there with a key of its own content (api/merge-conflicts.ts `EntryConflictField.sidePaths`).
+ * Unchanged where there is no `from`, where the two paths don't run alike, or where a key `to` names
+ * is another item's in that list.
+ */
+const alignedTo = (
+  version: ConflictVersion | undefined,
+  from: readonly DataPathSegment[] | undefined,
+  to: readonly DataPathSegment[],
+): ConflictVersion | undefined => {
+  if (!version || !from || equal(from, to) || from.length !== to.length) return version
+  const data = structuredClone(version.data)
+  let node: unknown = data
+  for (const [i, segment] of from.entries()) {
+    const target = to[i]
+    if ('field' in segment) {
+      if (!('field' in target) || target.field !== segment.field) return version
+      node = isPlainRecord(node) ? node[segment.field] : undefined
+    } else if ('blockData' in segment) {
+      if (!('blockData' in target)) return version
+      node = isPlainRecord(node) ? (isPlainRecord(node.value) ? node.value : node) : undefined
+    } else {
+      if (!('item' in target) || !Array.isArray(node)) return version
+      const keyed = (key: string) =>
+        (node as unknown[]).find((x) => isPlainRecord(x) && x[ITEM_KEY] === key)
+      const item = keyed(segment.item)
+      if (!isPlainRecord(item)) return version
+      if (target.item !== segment.item) {
+        if (keyed(target.item) !== undefined) return version
+        item[ITEM_KEY] = target.item
+      }
+      node = item
+    }
+  }
+  return { ...version, data }
 }
 
 /** A diff's changes by key, a whole entry missing on a side giving none. */
@@ -195,12 +237,19 @@ export function buildEntryConflicts(
   let incomplete = false
   const out = data.fields.map((field: EntryConflictField): FieldConflict => {
     const { ancestor, base, branch } = field.sides
-    const versions = {
+    const read = {
       before: versionOf(data.versions, ancestor),
       latest: versionOf(data.versions, base),
       yours: versionOf(data.versions, branch),
     }
-    if (Object.values(versions).some((v) => v === undefined)) incomplete = true
+    if (Object.values(read).some((v) => v === undefined)) incomplete = true
+    // Each version keyed as the merge named this place, so the one data path finds it in all three.
+    const versions = {
+      before: alignedTo(read.before, field.sidePaths.ancestor, field.dataPath),
+      latest: alignedTo(read.latest, field.sidePaths.base, field.dataPath),
+      yours: alignedTo(read.yours, field.sidePaths.branch, field.dataPath),
+    }
+    const realigned = (['before', 'latest', 'yours'] as const).some((v) => versions[v] !== read[v])
     const latest = versions.latest ? formValueOfSide(versions.latest) : undefined
     const latestPlaceable =
       !!latest &&
@@ -223,9 +272,16 @@ export function buildEntryConflicts(
     if (field.key === LOCATION_CONFLICT_KEY) {
       return { ...common, cards: [{ ...card, id: field.key, type: 'location', path: [] }] }
     }
-    const toLatest = diff(ancestor, base)
-    const toYours = diff(ancestor, branch)
-    const between = diff(base, branch)
+    // A realigned version is this field's own, so its diffs are too.
+    const pair = (
+      from: ConflictVersion | undefined,
+      to: ConflictVersion | undefined,
+      fromSha: string | undefined,
+      toSha: string | undefined,
+    ) => (realigned ? changesByKey(fields, from, to, referenceTitle) : diff(fromSha, toSha))
+    const toLatest = pair(versions.before, versions.latest, ancestor, base)
+    const toYours = pair(versions.before, versions.yours, ancestor, branch)
+    const between = pair(versions.latest, versions.yours, base, branch)
     const named = toLatest.get(field.drawerKey) ?? toYours.get(field.drawerKey)
     const along = fieldAlong(fields, field.dataPath)
     const path = named?.path ?? between.get(field.drawerKey)?.path ?? along.path

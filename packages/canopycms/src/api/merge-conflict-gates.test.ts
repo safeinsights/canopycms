@@ -44,8 +44,8 @@ const recordOpen = () =>
           kind: 'fields',
           sides: {},
           fields: [
-            { key: 'title', dataPath: [{ field: 'title' }], kind: 'changed' },
-            { key: 'cta', dataPath: [{ field: 'cta' }], kind: 'changed' },
+            { key: 'title', dataPath: [{ field: 'title' }], sidePaths: {}, kind: 'changed' },
+            { key: 'cta', dataPath: [{ field: 'cta' }], sidePaths: {}, kind: 'changed' },
           ],
         },
       ],

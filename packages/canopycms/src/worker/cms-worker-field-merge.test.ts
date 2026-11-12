@@ -406,7 +406,18 @@ describe('the field merge in the rebase loop', () => {
         kind: 'fields',
         sides,
         fields: [
-          { key: '?title', dataPath: [{ field: 'title' }], kind: 'changed', mergeSha: head, sides },
+          {
+            key: '?title',
+            dataPath: [{ field: 'title' }],
+            sidePaths: {
+              ancestor: [{ field: 'title' }],
+              base: [{ field: 'title' }],
+              branch: [{ field: 'title' }],
+            },
+            kind: 'changed',
+            mergeSha: head,
+            sides,
+          },
         ],
       },
     })

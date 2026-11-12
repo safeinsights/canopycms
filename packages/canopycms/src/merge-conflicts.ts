@@ -18,7 +18,7 @@ import path from 'node:path'
 import { z } from 'zod'
 
 import type { DataPathSegment } from './editor/entry-diff'
-import type { FieldConflictKind, KeyRemap } from './merge/entry-merge'
+import type { FieldConflictKind, KeyRemap, SidePaths } from './merge/entry-merge'
 import type { ContentId } from './paths/types'
 import type { ConflictStatus } from './types'
 import { withLock } from './utils/async-mutex'
@@ -51,6 +51,11 @@ export interface MergeConflictField {
   /** `entry-diff.ts`' `EntryChange.key` for the place, or {@link LOCATION_CONFLICT_KEY}. */
   key: string
   dataPath: DataPathSegment[]
+  /**
+   * Where each of `sides`' versions holds the value, as a read of that version names it
+   * (merge/entry-merge.ts `FieldConflict.sidePaths`); `ancestor`'s is the first ancestor's.
+   */
+  sidePaths: SidePaths
   kind: FieldConflictKind
   item?: true
   /** Long text, merged by line: the regions both sides changed come from the three blobs. */
@@ -139,6 +144,12 @@ const dataPathSchema = z.array(
   ]),
 )
 
+const sidePathsSchema = z.object({
+  ancestor: dataPathSchema.optional(),
+  base: dataPathSchema.optional(),
+  branch: dataPathSchema.optional(),
+})
+
 const entrySchema: z.ZodType<MergeConflictEntry> = z.lazy(() =>
   z.object({
     path: z.string(),
@@ -150,6 +161,7 @@ const entrySchema: z.ZodType<MergeConflictEntry> = z.lazy(() =>
         z.object({
           key: z.string(),
           dataPath: dataPathSchema,
+          sidePaths: sidePathsSchema,
           kind: z.enum(['changed', 'removed-on-base', 'removed-by-you']),
           item: z.literal(true).optional(),
           text: z.literal(true).optional(),
@@ -202,8 +214,8 @@ export class MergeConflictsFileMalformedError extends Error {
 /**
  * `existing` with what one merge, `mergeSha`, found. An entry this merge found no conflict in keeps
  * its record: its value is still the author's, which this merge took as the branch's own change.
- * A field found again keeps the ancestor it was first found against, so the person still sees what
- * they started from, and takes this merge's base and branch. An entry-level conflict replaces the
+ * A field found again keeps the ancestor it was first found against, and that ancestor's path, so
+ * the person still sees what they started from, and takes this merge's base and branch. An entry-level conflict replaces the
  * entry's record, and so does a field conflict an entry-level one held. `paths` moves the kept
  * records of entries this merge moved. Every record this merge changes keeps the one it replaced
  * as `previous`. Pure.
@@ -241,8 +253,15 @@ export function withFoundConflicts(
     const now = fields.map((field) => {
       const earlier = priorFields.find((f) => f.key === field.key)
       const ancestor = earlier ? earlier.sides.ancestor : sides.ancestor
+      // The path travels with its blob: the first ancestor's, or none when that had no value here.
+      const { ancestor: _found, ...latestPaths } = field.sidePaths
+      const ancestorPath = earlier ? earlier.sidePaths.ancestor : field.sidePaths.ancestor
       return {
         ...field,
+        sidePaths: {
+          ...latestPaths,
+          ...(ancestorPath !== undefined && { ancestor: ancestorPath }),
+        },
         mergeSha,
         sides: { ...latest, ...(ancestor !== undefined && { ancestor }) },
       }

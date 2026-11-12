@@ -31,7 +31,18 @@ const fieldsFound = (
   path: 'content/page.home.aboutAbc1234.json',
   kind: 'fields',
   sides,
-  fields: keys.map((key) => ({ key, dataPath: [{ field: key }], kind: 'changed' })),
+  fields: keys.map((key) => ({
+    key,
+    dataPath: [{ field: key }],
+    sidePaths: { ancestor: [{ field: key }], base: [{ field: key }], branch: [{ field: key }] },
+    kind: 'changed',
+  })),
+})
+
+const paths = (key: string) => ({
+  ancestor: [{ field: key }],
+  base: [{ field: key }],
+  branch: [{ field: key }],
 })
 
 const first = () =>
@@ -53,6 +64,7 @@ describe('withFoundConflicts', () => {
       {
         key: 'title',
         dataPath: [{ field: 'title' }],
+        sidePaths: paths('title'),
         kind: 'changed',
         mergeSha: M1,
         sides: { ancestor: 'o1', base: 'a1', branch: 'b1' },
@@ -60,6 +72,7 @@ describe('withFoundConflicts', () => {
       {
         key: 'cta',
         dataPath: [{ field: 'cta' }],
+        sidePaths: paths('cta'),
         kind: 'changed',
         mergeSha: M1,
         sides: { ancestor: 'o1', base: 'a1', branch: 'b1' },
@@ -68,22 +81,44 @@ describe('withFoundConflicts', () => {
   })
 
   it('keeps a field the next merge did not find, and renews one it found from the first ancestor', () => {
-    const next = withFoundConflicts(
-      first,
-      [fieldsFound({ ancestor: 'o2', base: 'a2', branch: 'b2' }, 'title')],
-      M2,
-    )
+    // The second merge reads each version's place elsewhere; the first ancestor's path stays with
+    // the first ancestor's blob.
+    const found = fieldsFound({ ancestor: 'o2', base: 'a2', branch: 'b2' }, 'title')
+    found.fields![0].sidePaths = {
+      ancestor: [{ field: 'o2' }],
+      base: [{ field: 'a2' }],
+      branch: [{ field: 'b2' }],
+    }
+    const next = withFoundConflicts(first, [found], M2)
     expect(next[ID]?.mergeSha).toBe(M2)
     expect(next[ID]?.fields).toEqual([
       { ...first[ID]!.fields![1] },
       {
         key: 'title',
         dataPath: [{ field: 'title' }],
+        sidePaths: {
+          ancestor: [{ field: 'title' }],
+          base: [{ field: 'a2' }],
+          branch: [{ field: 'b2' }],
+        },
         kind: 'changed',
         mergeSha: M2,
         sides: { ancestor: 'o1', base: 'a2', branch: 'b2' },
       },
     ])
+  })
+
+  it('keeps no ancestor path for a field whose first ancestor had no value there', () => {
+    const none = fieldsFound({ base: 'a1', branch: 'b1' }, 'title')
+    none.fields![0].sidePaths = { base: [{ field: 'title' }], branch: [{ field: 'title' }] }
+    const found = withFoundConflicts({}, [none], M1)
+    const next = withFoundConflicts(
+      found,
+      [fieldsFound({ ancestor: 'o2', base: 'a2', branch: 'b2' }, 'title')],
+      M2,
+    )
+    expect(next[ID]?.fields?.[0].sides.ancestor).toBeUndefined()
+    expect(next[ID]?.fields?.[0].sidePaths.ancestor).toBeUndefined()
   })
 
   it('replaces an entry with an entry-level conflict, and that with fields found later', () => {
@@ -136,8 +171,8 @@ describe('withoutMergesGone', () => {
     [ID]: {
       ...withFoundConflicts({}, [fieldsFound({}, 'title')], M1)[ID]!,
       fields: [
-        { key: 'title', dataPath: [], kind: 'changed', mergeSha: M1, sides: {} },
-        { key: 'cta', dataPath: [], kind: 'changed', mergeSha: M2, sides: {} },
+        { key: 'title', dataPath: [], sidePaths: {}, kind: 'changed', mergeSha: M1, sides: {} },
+        { key: 'cta', dataPath: [], sidePaths: {}, kind: 'changed', mergeSha: M2, sides: {} },
       ],
     },
     [OTHER]: { path: 'q', mergeSha: M2, kind: 'unreadable', sides: {} },
@@ -188,6 +223,22 @@ describe('MergeConflictStore', () => {
     expect((await store.read())?.version).toBe(1)
     await store.update(() => ({ entries: {} }))
     expect(await store.read()).toMatchObject({ version: 2, entries: {} })
+  })
+
+  it('refuses a field that names no side paths, as one this code did not write', async () => {
+    await fs.mkdir(path.join(root, '.canopy-meta'))
+    const field = { key: 'title', dataPath: [], kind: 'changed', mergeSha: M1, sides: {} }
+    const record = {
+      schema: 1,
+      version: 1,
+      entries: { [ID]: { path: 'p', mergeSha: M1, kind: 'fields', sides: {}, fields: [field] } },
+    }
+    const file = path.join(root, '.canopy-meta', 'merge-conflicts.json')
+    await fs.writeFile(file, JSON.stringify(record))
+    await expect(new MergeConflictStore(root).read()).rejects.toThrow(/malformed/)
+    record.entries[ID].fields[0] = { ...field, sidePaths: {} } as typeof field
+    await fs.writeFile(file, JSON.stringify(record))
+    await expect(new MergeConflictStore(root).read()).resolves.toMatchObject({ version: 1 })
   })
 
   it('refuses a file that is not a record, rather than reading it as none', async () => {

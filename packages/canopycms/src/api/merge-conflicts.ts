@@ -27,7 +27,7 @@ import {
   EntryGoneError,
 } from '../content-store'
 import type { DataPathSegment } from '../editor/entry-diff'
-import type { FieldConflictKind } from '../merge/entry-merge'
+import type { FieldConflictKind, SidePaths } from '../merge/entry-merge'
 import { keyOfDataPath } from '../merge/conflict-path'
 import {
   LOCATION_CONFLICT_KEY,
@@ -98,6 +98,12 @@ export interface EntryConflictField {
    */
   drawerKey: string
   dataPath: DataPathSegment[]
+  /**
+   * Where each of `sides`' versions holds the value, as `versions` reads it; absent for a version
+   * without the place. A list item can read under another key in one version than `dataPath`
+   * names, as one in a list a side left keyless does.
+   */
+  sidePaths: SidePaths
   kind: FieldConflictKind
   /** A whole list item: resolving it keeps or removes the item. */
   item?: true
@@ -530,6 +536,7 @@ const entryHandler = async (
         key: field.key,
         drawerKey: drawerKeyOf(field),
         dataPath: field.dataPath,
+        sidePaths: field.sidePaths,
         kind: field.kind,
         ...(field.item && { item: true as const }),
         ...(field.text && { text: true as const }),

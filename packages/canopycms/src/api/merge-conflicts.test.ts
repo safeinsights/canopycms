@@ -123,7 +123,15 @@ const field = (
   dataPath: MergeConflictField['dataPath'],
   sides: MergeConflictField['sides'],
   extra: Partial<MergeConflictField> = {},
-): MergeConflictField => ({ key, dataPath, kind: 'changed', mergeSha: MERGE, sides, ...extra })
+): MergeConflictField => ({
+  key,
+  dataPath,
+  sidePaths: { ancestor: dataPath, base: dataPath, branch: dataPath },
+  kind: 'changed',
+  mergeSha: MERGE,
+  sides,
+  ...extra,
+})
 
 const recordAs = (entries: Record<string, MergeConflictEntry>) =>
   new MergeConflictStore(branchRoot, 0).update(() => ({ entries }))

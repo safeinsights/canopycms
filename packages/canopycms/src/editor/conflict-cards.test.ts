@@ -115,6 +115,11 @@ describe('buildEntryConflicts', () => {
         key: '?steps',
         drawerKey: 'steps',
         dataPath: [{ field: 'steps' }],
+        sidePaths: {
+          ancestor: [{ field: 'steps' }],
+          base: [{ field: 'steps' }],
+          branch: [{ field: 'steps' }],
+        },
         kind: 'changed',
         mergeSha: 'd'.repeat(40),
         sides: data.sides,
