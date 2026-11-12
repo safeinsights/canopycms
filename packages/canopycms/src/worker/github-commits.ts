@@ -548,13 +548,17 @@ async function rekeyTakenIn(
 }
 
 /** {@link buildRekey} on GitHub's commits from `head` to `tip`, or null when none needs a new key. */
-function rekeyOf(
+async function rekeyOf(
   ctx: GitHubCommitsContext,
-  { git, branchPath, branchRef }: GitHubCommitsArgs,
+  { git, branchPath, branchRef, dirty }: GitHubCommitsArgs,
   head: string,
   tip: string,
   unchangedIn?: { head: string; since: string },
 ): Promise<BuiltMerge | null> {
+  // A file the clone's saves changed keeps git's keys: their commit merges against `head`'s.
+  const skip = dirty
+    ? new Set((await git.status()).files.flatMap((f) => (f.from ? [f.path, f.from] : [f.path])))
+    : undefined
   return buildRekey(git, branchPath, {
     from: head,
     tip,
@@ -562,6 +566,7 @@ function rekeyOf(
     timeoutMs: ctx.taskTimeoutMs,
     message: `Key the items that merges on GitHub brought into ${branchRef}`,
     ...(unchangedIn && { unchangedIn }),
+    ...(skip && { skip }),
   })
 }
 
@@ -598,13 +603,14 @@ export async function mergeIntoBranch(
   const { head, other, message, fromGitHub, inReview } = merge
   // GitHub's merges come in under the field merge's keys, as a fast-forward takes them in, for the
   // entries the merge takes from GitHub whole: one the branch changed too merges by git's keys.
-  const since = fromGitHub
-    ? (await git.raw(['merge-base', '--end-of-options', head, other])).trim()
-    : ''
+  const bases = fromGitHub
+    ? (await git.raw(['merge-base', '--all', '--end-of-options', head, other]))
+        .split('\n')
+        .filter((line) => COMMIT_ID.test(line))
+    : []
+  // With one merge base, as the field merge needs; none or several leave git's merge as it is.
   const rekey =
-    fromGitHub && COMMIT_ID.test(since)
-      ? await rekeyOf(ctx, args, head, other, { head, since })
-      : null
+    bases.length === 1 ? await rekeyOf(ctx, args, head, other, { head, since: bases[0] }) : null
   const into = rekey?.sha ?? other
   const plan = await planMerge(git, branchPath, {
     head,
@@ -764,8 +770,8 @@ export async function returnToReview(
  * the merge builds on, so a record of a merge that never landed can't carry into this one. Before
  * the merge is visible: one that never lands leaves records the next
  * {@link reconcileMergeConflicts} turns back. A merge `also` holds, GitHub's tip the merge takes in,
- * is landing rather than gone, and the earlier landing it replaces is on GitHub already: what that
- * one kept over GitHub's commits is noted for the pull request body now.
+ * is landing rather than gone. An earlier landing either commit holds is published, and this one
+ * replaces it: what it kept over GitHub's commits is noted for the pull request body now.
  */
 async function recordMerge(
   ctx: GitHubCommitsContext,
@@ -777,7 +783,7 @@ async function recordMerge(
   const { sha, conflicts, keptPaths, keyRemaps, paths } = built
   const inHead = await settleRecord(git, branchPath, merge.head, merge.also)
   const earlier = (await new MergeConflictStore(branchPath).read())?.landing
-  if (merge.also !== undefined && earlier && earlier.mergeSha !== sha && inHead(earlier.mergeSha)) {
+  if (earlier && earlier.mergeSha !== sha && inHead(earlier.mergeSha)) {
     await noteKeptOverGitHub(ctx, args, earlier.keptOverGitHub ?? [])
   }
   const state = await new MergeConflictStore(branchPath).update((current) => ({

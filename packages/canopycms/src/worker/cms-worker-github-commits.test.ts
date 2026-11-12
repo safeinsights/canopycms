@@ -2717,6 +2717,12 @@ describe('a merge on GitHub that leaves an item under a key naming another', () 
    * pushed but not yet in the clone; then Update branch merges a base edit of `p` on top of it.
    */
   async function landingThenUpdate(): Promise<void> {
+    await landingPublished()
+    await s.advanceBase({ [LIST]: list('L', [item('p3'), item('q')]) })
+    await s.updateBranchOnGitHub()
+  }
+  /** That merge alone, its push landed on GitHub. */
+  async function landingPublished(): Promise<void> {
     await s.commit({ 'editor.txt': 'v1\n' })
     await s.push()
     await writeMeta(s)
@@ -2729,8 +2735,6 @@ describe('a merge on GitHub that leaves an item under a key naming another', () 
     await fs.rm(lock)
     expect((await readMeta(s))?.conflictFiles).toEqual([CONFLICTED_ID])
     await s.resetOnGitHub((await s.remoteSha(`refs/heads/${BRANCH}`)) as string)
-    await s.advanceBase({ [LIST]: list('L', [item('p3'), item('q')]) })
-    await s.updateBranchOnGitHub()
   }
 
   it('keeps the record of a merge still landing when GitHub merges the base on top of it', async () => {
@@ -2763,6 +2767,54 @@ describe('a merge on GitHub that leaves an item under a key naming another', () 
     await cycle(s)
 
     expect(remap).not.toHaveBeenCalled()
+  })
+
+  for (const variant of ['edit', 'delete'] as const) {
+    it(`keeps a saved ${variant} of a twin through a re-key published while it was saved`, async () => {
+      const mine =
+        variant === 'edit'
+          ? list('L-branch', [
+              { _key: KX, ...item('x'), a: 'B' },
+              { _key: KX2, ...item('x') },
+            ])
+          : list('L-branch', [{ _key: KX, ...item('x') }])
+      await stale(['x', 'x'], [KX, KX2])
+      await s.save({ [LIST]: mine })
+      await cycle(s)
+      await s.resetOnGitHub((await s.remoteSha(`refs/heads/${BRANCH}`)) as string)
+      await s.commit({ [LIST]: mine }, 'submit of the saves')
+
+      await cycle(s)
+
+      expect(await itemsIn(await s.file(LIST))).toEqual(
+        variant === 'edit' ? ['B/x2', 'pad/x'] : ['pad/x2'],
+      )
+    })
+  }
+
+  it('notes what a landing kept over GitHub when a merge of the base replaces it', async () => {
+    await landingPublished()
+    const update = BranchMetadataFileManager.prototype.update
+    let failed = false
+    vi.spyOn(BranchMetadataFileManager.prototype, 'update').mockImplementation(function (
+      this: BranchMetadataFileManager,
+      ...args: Parameters<BranchMetadataFileManager['update']>
+    ) {
+      const change = args[0]
+      const probe = change(null)
+      if (!failed && probe === null && String(change).includes('keptOverGitHub')) {
+        failed = true
+        return Promise.reject(new Error('unwritable'))
+      }
+      return update.apply(this, args)
+    })
+    await s.advanceBase({ 'other.txt': 'base\n' })
+    await cycle(s)
+    vi.restoreAllMocks()
+
+    await cycle(s)
+
+    expect((await readMeta(s))?.keptOverGitHub).toEqual([ENTRY])
   })
 
   /** Twins keyed by the editor; base edits the first; Update branch on GitHub alone. */

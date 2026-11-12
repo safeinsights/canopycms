@@ -338,9 +338,11 @@ export async function buildRekey(
      * entry `head` changed against `since`'s keys, which git's merge keeps and a re-key would not.
      */
     unchangedIn?: { head: string; since: string }
+    /** Paths left as git merged them: the clone's saves, whose commit a merge reads by old keys. */
+    skip?: ReadonlySet<string>
   },
 ): Promise<BuiltMerge | null> {
-  const { from, tip, contentRoot, timeoutMs, message, unchangedIn } = args
+  const { from, tip, contentRoot, timeoutMs, message, unchangedIn, skip } = args
   const merges = (
     await git.raw([
       'rev-list',
@@ -384,7 +386,8 @@ export async function buildRekey(
     const applied = new Set<string>()
     for (const [file, blob] of field.updates) {
       // A later commit that changed the entry again decided its keys itself.
-      if (!blob || (await blobAt(git, merge, file)) !== (await blobAt(git, tip, file))) continue
+      if (!blob || skip?.has(file)) continue
+      if ((await blobAt(git, merge, file)) !== (await blobAt(git, tip, file))) continue
       if (
         unchangedIn &&
         (await blobAt(git, unchangedIn.head, file)) !== (await blobAt(git, unchangedIn.since, file))
