@@ -18,6 +18,7 @@ Each of the four disjoint call trees under `start()` is its own module, reached 
 | `git-sync.ts`                                      | The git-sync cluster: `syncGit` and everything below it except the rebase loop                                                                                        |
 | `rebase.ts`                                        | The rebase loop, the deepest leaf of the git-sync cluster                                                                                                             |
 | `github-commits.ts`, `branch-merge.ts`             | Commits made on GitHub, into clones                                                                                                                                   |
+| `field-merge.ts`                                   | A merge's entries paired by content ID, and field-merged blobs                                                                                                        |
 | `history-rewrite.ts`                               | The [SYNC-H1] kernel all three clusters touch                                                                                                                         |
 | `canopy-state.ts`                                  | Sync's handling of tracked `.canopy-meta/` state                                                                                                                      |
 | `provisioned-workspace.ts`                         | Zero-retry provisioning-lock hold                                                                                                                                     |
@@ -72,10 +73,9 @@ via `ctx.github()`, and `github-auth`, `github-mirror` and `shared-repo-git` sit
   `BranchRebaseOutcome`.
 - Interrupted-rebase recovery is lossy and keyed on the WORKING-TREE column: `rebase.ts`, the
   `isRebaseInProgress` block.
-- MODIFY/DELETE conflicts resolve by `git rm`/`git add`: `rebase.ts`, inside `runRebaseRounds`'s
-  conflict branch.
+- Rebase only where `planMerge` finds nothing to decide, else merge, recording conflicts first: `rebase.ts` `takeBaseByMerge`, `github-commits.ts` `recordMerge`.
 - What is never merged: `github-commits.ts`, `bringInGitHubCommits`.
-- ABORT OWNERSHIP is split across four sites, none redundant: `rebase.ts`, `runRebaseRounds`'s
+- ABORT OWNERSHIP is split across several sites, none redundant: `rebase.ts`, `runRebaseRounds`'s
   doc comment.
 - `isLockCompromised` is a CALLBACK because [SYNC-C1] the lock can be lost between rounds: the
   same comment.

@@ -1079,4 +1079,77 @@ describe('services submitBranch', () => {
       expect(listBase).not.toHaveBeenCalled()
     })
   })
+  describe('commitSavedWork, before getting the latest changes', () => {
+    const people: Record<string, { id: string; name: string; email: string }> = {
+      user_raj: { id: 'user_raj', name: 'Raj Patel', email: 'raj@example.com' },
+    }
+
+    it('commits the saved work locally, naming its editors, and pushes nothing', async () => {
+      await fs.mkdir(path.join(localPath, '.canopy-meta'), { recursive: true })
+      await fs.writeFile(
+        path.join(localPath, '.canopy-meta', 'branch.json'),
+        JSON.stringify({
+          branch: {
+            name: 'feature-1',
+            status: 'editing',
+            access: {},
+            editors: ['user_raj'],
+            uncommittedEditors: ['user_raj'],
+          },
+        }),
+        'utf8',
+      )
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'saved', 'utf8')
+
+      const committed = await services.commitSavedWork({
+        context,
+        message: 'Save changes before getting the latest from main',
+        lookupEditor: async (id) => people[id] ?? null,
+      })
+
+      expect(committed).toBe(true)
+      const git = simpleGit({ baseDir: localPath })
+      expect((await git.raw(['log', '-1', '--format=%B'])).trimEnd()).toBe(
+        'Save changes before getting the latest from main\n\nEdited-by: Raj Patel (user_raj)',
+      )
+      expect((await git.status()).isClean()).toBe(true)
+      expect(await remoteBranchSha('feature-1')).toBeUndefined()
+      const onDisk = JSON.parse(
+        await fs.readFile(path.join(localPath, '.canopy-meta', 'branch.json'), 'utf8'),
+      ) as { branch: { uncommittedEditors?: string[] } }
+      expect(onDisk.branch.uncommittedEditors).toBeUndefined()
+    })
+
+    it('commits nothing when nothing is saved', async () => {
+      const before = await localSha()
+      expect(await services.commitSavedWork({ context, message: 'unused' })).toBe(false)
+      expect(await localSha()).toBe(before)
+    })
+
+    it("refuses while a worker's interrupted rebase is still on disk, committing nothing", async () => {
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'saved', 'utf8')
+      await fs.mkdir(path.join(localPath, '.git', 'rebase-merge'))
+      const before = await localSha()
+
+      await expect(services.commitSavedWork({ context, message: 'unused' })).rejects.toBeInstanceOf(
+        ContentWriteLockBusyError,
+      )
+      await expect(services.submitBranch({ context })).rejects.toBeInstanceOf(
+        ContentWriteLockBusyError,
+      )
+      expect(await localSha()).toBe(before)
+    })
+
+    it('refuses while a sync holds the branch', async () => {
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'saved', 'utf8')
+      const release = await tryAcquireContentWriteLock(localPath)
+      try {
+        await expect(
+          services.commitSavedWork({ context, message: 'unused' }),
+        ).rejects.toBeInstanceOf(ContentWriteLockBusyError)
+      } finally {
+        await release()
+      }
+    })
+  })
 }, 30_000)

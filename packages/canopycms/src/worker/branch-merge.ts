@@ -4,12 +4,15 @@ import path from 'node:path'
 
 import type { SimpleGit } from 'simple-git'
 
+import { readSchemaSnapshot } from '../branch-schema-cache'
 import { extractIdFromFilename } from '../content-id-index'
+import type { KeyRemap } from '../merge/entry-merge'
+import type { FoundEntryConflict } from '../merge-conflicts'
 import { normalizeFilesystemPath } from '../paths/normalize'
 import { ROOT_COLLECTION_ID, type ContentId } from '../paths/types'
-import type { ConflictStatus } from '../types'
 import { isNonFastForwardRejection } from '../utils/git'
 import { getErrorMessage, redactCredentials } from '../utils/error'
+import { resolveFieldMerge, type FieldMergeResult } from './field-merge'
 import { runGit } from './git-process'
 import { pinnedReceivePack, sharedRepoGit, sharedRepoProcessOptions } from './shared-repo-git'
 import type { WorkerContext } from './worker-context'
@@ -24,10 +27,12 @@ import type { WorkerContext } from './worker-context'
 const OBJECT_ID = /^[0-9a-f]{40}([0-9a-f]{24})?$/
 
 /**
- * The conflicts {@link buildMergeCommit} settles by keeping `head`'s side of one path. Every other
- * kind (a rename colliding with another, a file meeting a directory, a directory rename) moves or
- * joins paths, so no one side of one path is the branch's version, and settling it by rule loses a
- * file. Messages that are not `CONFLICT` are git's notes, such as `Auto-merging`.
+ * The conflicts {@link planMerge} settles by keeping `head`'s side of one path. Every other kind (a
+ * rename colliding with another, a file meeting a directory, a directory rename) moves or joins
+ * paths, so no one side of one path is the branch's version, and settling it by rule loses a file;
+ * only the field merge, which pairs entries by content ID, settles those, and only where it decides
+ * every path the conflict names. Messages that are not `CONFLICT` are git's notes, such as
+ * `Auto-merging`.
  */
 const SETTLED_BY_KEEPING_HEAD: ReadonlySet<string> = new Set([
   'CONFLICT (contents)',
@@ -43,11 +48,17 @@ interface ConflictStage {
   path: string
 }
 
+/** One of `merge-tree`'s messages that is a conflict no one side of one path settles. */
+interface UnsettledConflict {
+  kind: string
+  paths: string[]
+}
+
 interface MergeTreeResult {
   tree: string
   stages: ConflictStage[]
-  /** Conflict kinds other than {@link SETTLED_BY_KEEPING_HEAD}. */
-  unsettled: string[]
+  /** Conflicts of a kind other than {@link SETTLED_BY_KEEPING_HEAD}, with the paths they name. */
+  unsettled: UnsettledConflict[]
 }
 
 /**
@@ -68,37 +79,82 @@ function parseMergeTree(output: string, head: string, other: string): MergeTreeR
     const [, mode, oid, stage, path] = match
     stages.push({ mode, oid, stage, path })
   }
-  const unsettled = new Set<string>()
+  const unsettled: UnsettledConflict[] = []
   for (i++; i < fields.length && fields[i] !== ''; ) {
-    const kind = fields[i + parseInt(fields[i], 10) + 1]
-    if (kind?.startsWith('CONFLICT') && !SETTLED_BY_KEEPING_HEAD.has(kind)) unsettled.add(kind)
-    i += parseInt(fields[i], 10) + 3
+    const count = parseInt(fields[i], 10)
+    const kind = fields[i + count + 1]
+    if (kind?.startsWith('CONFLICT') && !SETTLED_BY_KEEPING_HEAD.has(kind)) {
+      unsettled.push({ kind, paths: fields.slice(i + 1, i + 1 + count) })
+    }
+    i += count + 3
   }
   // A path git could not decode as UTF-8 reads back as U+FFFD, which names no file.
-  if (stages.some(({ path }) => path.includes('\ufffd'))) unsettled.add('an unreadable file name')
-  return { tree, stages, unsettled: [...unsettled] }
+  const undecodable = stages.filter(({ path }) => path.includes('\ufffd')).map(({ path }) => path)
+  if (undecodable.length > 0) unsettled.push({ kind: 'an unreadable file name', paths: [] })
+  return { tree, stages, unsettled }
 }
 
-/** What {@link buildMergeCommit} made of the two commits. */
-export type BuiltMerge =
-  /** `sha` is the merge, reachable from no ref yet. `conflicted` kept the branch's version. */
-  | { kind: 'built'; sha: string; conflicted: string[] }
+/** What {@link planMerge} made of the two commits. */
+export type MergePlan =
+  | {
+      kind: 'planned'
+      /** The merge's tree. */
+      tree: string
+      /** The tree git's own merge wrote, conflict markers and all. */
+      gitTree: string
+      /** Paths git could not merge, whoever settled them. */
+      gitConflicted: string[]
+      /** What a person must still decide, entry by entry. */
+      conflicts: FoundEntryConflict[]
+      /** Paths where the branch's version stands over the other side's change, whole or in part. */
+      keptPaths: string[]
+      /** Git's own merge with nothing for a person: no conflict, and every file as git merged it. */
+      asGitDoes: boolean
+      /** Item keys the merge changed, by the entry path the branch's comment threads name. */
+      keyRemaps: Array<{ entryPath: string; contentId?: string; remaps: KeyRemap[] }>
+      /** Where each entry the merge decided stands in it. */
+      paths: Map<string, string>
+    }
   /** Git met conflicts no rule settles safely. Nothing was built. */
   | { kind: 'unsettled'; conflicts: string[]; paths: string[] }
 
+/** {@link commitMerge}'s commit of a planned merge; `sha` is reachable from no ref yet. */
+export type BuiltMerge = Omit<
+  Extract<MergePlan, { kind: 'planned' }>,
+  'kind' | 'tree' | 'gitTree'
+> & {
+  kind: 'built'
+  sha: string
+}
+
+const NO_FIELD_MERGE: FieldMergeResult = {
+  updates: new Map(),
+  covered: new Set(),
+  conflicts: [],
+  keyRemaps: [],
+  paths: new Map(),
+}
+
 /**
- * The merge of `other` into `head`, as a commit no ref names, with `head` the first parent. A path
- * git cannot merge keeps `head`'s side, stage 2, at the path git reports, or stays deleted when
- * `head` has no such stage: the rule the rebase loop applies to a conflict, since `head` has the
- * editor's work. The commit takes its identity from the clone's `user.*`, written when the clone
- * is provisioned.
+ * The merge of `other` into `head`, as a tree. Every entry and `.collection.json` both sides
+ * changed is merged field by field (field-merge.ts), which settles git's conflicts there, whatever
+ * their kind. A path git cannot merge that is no entry keeps `head`'s side, stage 2, at the path
+ * git reports, or stays deleted when `head` has no such stage: `head` has the editor's work. With
+ * no single merge base, git's merge stands as that rule leaves it, since a field merge needs one
+ * version both sides started from.
  */
-export async function buildMergeCommit(
+export async function planMerge(
   git: SimpleGit,
   clonePath: string,
-  args: { head: string; other: string; message: string; timeoutMs: number },
-): Promise<BuiltMerge> {
-  const { head, other, message, timeoutMs } = args
+  args: { head: string; other: string; contentRoot: string; timeoutMs: number },
+): Promise<MergePlan> {
+  const { head, other, contentRoot, timeoutMs } = args
+  const bases = (await git.raw(['merge-base', '--all', '--end-of-options', head, other]))
+    .split('\n')
+    .filter((line) => OBJECT_ID.test(line))
+  if (bases.length === 0) {
+    return { kind: 'unsettled', conflicts: ['no history in common with it'], paths: [] }
+  }
   const output = await git.raw([
     'merge-tree',
     '--write-tree',
@@ -107,18 +163,118 @@ export async function buildMergeCommit(
     head,
     other,
   ])
-  const { tree: mergedTree, stages, unsettled } = parseMergeTree(output, head, other)
-  const conflicted = [...new Set(stages.map(({ path }) => path))]
-  if (unsettled.length > 0) return { kind: 'unsettled', conflicts: unsettled, paths: conflicted }
+  const { tree: gitTree, stages, unsettled } = parseMergeTree(output, head, other)
+  const gitConflicted = [...new Set(stages.map(({ path }) => path))]
+  const field =
+    bases.length === 1
+      ? await resolveFieldMerge({
+          git,
+          clonePath,
+          ancestor: bases[0],
+          head,
+          other,
+          mergedTree: gitTree,
+          conflicted: new Set(gitConflicted),
+          contentRoot,
+          flatSchema: await readSchemaSnapshot(clonePath),
+          collectionIdOf: (file) => conflictFilesToContentIds([file], contentRoot)[0],
+          timeoutMs,
+        })
+      : NO_FIELD_MERGE
+  const unsettledLeft = unsettled.filter(
+    ({ paths }) => paths.length === 0 || paths.some((p) => !field.covered.has(p)),
+  )
+  if (field.unsettled) unsettledLeft.push({ kind: field.unsettled, paths: [] })
+  if (unsettledLeft.length > 0) {
+    return {
+      kind: 'unsettled',
+      conflicts: [...new Set(unsettledLeft.map(({ kind }) => kind))],
+      paths: gitConflicted,
+    }
+  }
+
+  const updates = new Map(field.updates)
+  const kept = gitConflicted.filter((file) => !field.covered.has(file))
+  const headStages = new Map(stages.filter((s) => s.stage === '2').map((s) => [s.path, s]))
+  for (const file of kept) {
+    const stage = headStages.get(file)
+    updates.set(file, stage ? { path: file, mode: stage.mode, oid: stage.oid } : null)
+  }
   const tree =
-    stages.length === 0
-      ? mergedTree
-      : await keepHeadStages(clonePath, { mergedTree, stages, conflicted, timeoutMs })
+    updates.size === 0 ? gitTree : await withUpdates(clonePath, { gitTree, updates, timeoutMs })
+  const conflicts = [
+    ...field.conflicts,
+    ...keptVersions(kept, stages, contentRoot, field.conflicts),
+  ]
+  return {
+    kind: 'planned',
+    tree,
+    gitTree,
+    gitConflicted,
+    conflicts,
+    keptPaths: [...new Set([...field.conflicts.map(({ path }) => path), ...kept])],
+    keyRemaps: field.keyRemaps,
+    paths: field.paths,
+    asGitDoes:
+      gitConflicted.length === 0 &&
+      conflicts.length === 0 &&
+      field.keyRemaps.length === 0 &&
+      tree === gitTree,
+  }
+}
+
+/**
+ * The files the merge kept `head`'s side of as entry-level conflicts, by the content ID their path
+ * carries, one per ID and none for an ID the field merge already names. A path with none is
+ * dropped rather than guessed at.
+ */
+function keptVersions(
+  kept: readonly string[],
+  stages: readonly ConflictStage[],
+  contentRoot: string,
+  named: readonly FoundEntryConflict[],
+): FoundEntryConflict[] {
+  const seen = new Set<string>(named.map(({ contentId }) => contentId))
+  const found: FoundEntryConflict[] = []
+  for (const file of kept) {
+    const [contentId] = conflictFilesToContentIds([file], contentRoot)
+    if (!contentId || seen.has(contentId)) continue
+    seen.add(contentId)
+    const oid = (stage: string) => stages.find((s) => s.path === file && s.stage === stage)?.oid
+    const [ancestor, branch, base] = [oid('1'), oid('2'), oid('3')]
+    found.push({
+      contentId,
+      path: file,
+      kind: 'unreadable',
+      sides: {
+        ...(ancestor && { ancestor }),
+        ...(base && { base }),
+        ...(branch && { branch }),
+      },
+    })
+  }
+  return found
+}
+
+/**
+ * {@link planMerge}'s merge as a commit no ref names, with `head` the first parent. The commit takes
+ * its identity from the clone's `user.*`, written when the clone is provisioned.
+ */
+export async function commitMerge(
+  git: SimpleGit,
+  plan: Extract<MergePlan, { kind: 'planned' }>,
+  { head, other, message }: { head: string; other: string; message: string },
+): Promise<BuiltMerge> {
+  const { tree, gitTree: _gitTree, kind: _kind, ...rest } = plan
   const sha = (
     await git.raw(['commit-tree', '-p', head, '-p', other, '-m', message, '--end-of-options', tree])
   ).trim()
-  return { kind: 'built', sha, conflicted }
+  return { kind: 'built', sha, ...rest }
 }
+
+/** Whether `plan` is git's own merge with nothing for a person. */
+export const mergesAsGitDoes = (plan: MergePlan): boolean =>
+  plan.kind === 'planned' && plan.asGitDoes
 
 /**
  * Whether `merged` holds exactly what `from` and `other` merge to cleanly, and so nothing else. A
@@ -143,17 +299,16 @@ export async function isCleanMergeOf(
   return (await git.revparse(['--verify', '--end-of-options', `${merged}^{tree}`])).trim() === tree
 }
 
-/** `mergedTree` with each of `conflicted` as `head` has it, through a throwaway index. */
-async function keepHeadStages(
+/** `gitTree` with each of `updates` in place, through a throwaway index. */
+async function withUpdates(
   clonePath: string,
   args: {
-    mergedTree: string
-    stages: readonly ConflictStage[]
-    conflicted: readonly string[]
+    gitTree: string
+    updates: ReadonlyMap<string, { mode: string; oid: string } | null>
     timeoutMs: number
   },
 ): Promise<string> {
-  const { mergedTree, stages, conflicted, timeoutMs } = args
+  const { gitTree, updates, timeoutMs } = args
   const shared = sharedRepoProcessOptions(clonePath, 'worktree')
   const indexFile = path.join(clonePath, '.git', `canopy-merge-index-${randomUUID()}`)
   const options = {
@@ -161,15 +316,13 @@ async function keepHeadStages(
     env: { ...shared.env, GIT_INDEX_FILE: indexFile },
     inactivityTimeoutMs: timeoutMs,
   }
-  const kept = new Map(stages.filter((s) => s.stage === '2').map((s) => [s.path, s]))
-  // Mode 0 removes a path: what is left when `head` has no side of it.
-  const zeros = '0'.repeat(mergedTree.length)
-  const entries = conflicted.map((file) => {
-    const entry = kept.get(file)
-    return `${entry?.mode ?? '0'} ${entry?.oid ?? zeros}\t${file}\0`
-  })
+  // Mode 0 removes a path.
+  const zeros = '0'.repeat(gitTree.length)
+  const entries = [...updates].map(
+    ([file, blob]) => `${blob?.mode ?? '0'} ${blob?.oid ?? zeros}\t${file}\0`,
+  )
   try {
-    await runGit(['read-tree', '--end-of-options', mergedTree], options)
+    await runGit(['read-tree', '--end-of-options', gitTree], options)
     await runGit(['update-index', '-z', '--index-info'], { ...options, stdin: entries.join('') })
     return (await runGit(['write-tree'], options)).trim()
   } finally {
@@ -229,7 +382,7 @@ export async function commitsApart(
  *
  * Pure.
  */
-export function conflictFilesToContentIds(
+function conflictFilesToContentIds(
   conflictedFiles: readonly string[],
   contentRoot: string,
 ): ContentId[] {
@@ -270,23 +423,4 @@ export function conflictFilesToContentIds(
     })
     .filter((id): id is ContentId => id !== null)
   return [...new Set(conflictIds)]
-}
-
-/**
- * The conflict record after a rebase or merge: the IDs already recorded plus
- * its own. A conflict means this branch's version replaced base's change to
- * that entry, which a later clean rebase does not undo, so the record only
- * grows until the branch merges (buildMergedBranchUpdate clears it).
- *
- * Pure.
- */
-export function recordConflicts(
-  recorded: readonly ContentId[] | undefined,
-  found: readonly ContentId[],
-): { conflictStatus: ConflictStatus; conflictFiles: ContentId[] } {
-  const conflictFiles = [...new Set([...(recorded ?? []), ...found])]
-  return {
-    conflictStatus: conflictFiles.length > 0 ? 'conflicts-detected' : 'clean',
-    conflictFiles,
-  }
 }

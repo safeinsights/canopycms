@@ -2,6 +2,7 @@ import { createElement, useCallback, useEffect, useMemo, useRef, useState } from
 import useSWR, { useSWRConfig } from 'swr'
 import { notifications } from '@mantine/notifications'
 import type { WriteContentBody } from '../../api/content'
+import type { ResolvedFieldConflict } from '../../merge-conflicts'
 import type { ApiErrorCode } from '../../api/types'
 import type { EditorEntry, EditorCollection } from '../Editor'
 import type { LogicalPath } from '../../paths/types'
@@ -107,6 +108,19 @@ export interface UseEntryManagerOptions {
    * refreshes the entries, so what reads the same branch state reloads here.
    */
   onContentRefresh?: (branch: string) => void
+  /**
+   * The conflicts a save of an entry resolves (useConflictChoices.ts): `pending` names them as the
+   * save sends them, and `onSaved` hears which the save sent and which the server cleared.
+   */
+  conflictResolutions?: {
+    pending: (branch: string, contentId: string) => ResolvedFieldConflict[]
+    onSaved: (
+      branch: string,
+      contentId: string,
+      sent: ResolvedFieldConflict[],
+      cleared: ResolvedFieldConflict[],
+    ) => void
+  }
 }
 
 export interface UseEntryManagerReturn {
@@ -513,14 +527,24 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
         "This entry hasn't finished loading, so it can't be saved yet. Reload it and try again (your unsaved edits will be lost).",
       )
     }
+    const resolving = options.conflictResolutions?.pending(requestBranch, entry.contentId) ?? []
     const writeBody: WriteContentBody = {
       ...(payload as unknown as WriteContentBody),
       expectedVersion,
+      ...(resolving.length > 0 && { resolvedConflicts: resolving }),
     }
     const result = await apiClient.content.write(writeParams, writeBody)
     if (isGatewayFailure(result)) throw new UnansweredError()
     if (!result.ok)
       throw new SaveApiError(result.status, result.error, result.fieldErrors, result.code)
+    if (resolving.length > 0) {
+      options.conflictResolutions?.onSaved(
+        requestBranch,
+        entry.contentId,
+        resolving,
+        result.data?.resolvedConflicts ?? [],
+      )
+    }
     // Update stored version token from write response
     if (typeof result.data?.version === 'number') {
       entryVersionsRef.current.set(versionKey(requestBranch, entry.contentId), result.data.version)

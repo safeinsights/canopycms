@@ -70,7 +70,7 @@ function fakeGateway(): FakeGateway {
     })),
     defaultBranch: vi.fn(async () => 'main'),
     isProtectedBranch: vi.fn(async () => false),
-    fetch: vi.fn(async () => ({ refs: new Map([['main', SHA]]), bundleId: null })),
+    fetch: vi.fn(async () => ({ refs: new Map([['main', SHA]]), bundleId: null, startedAt: 1 })),
     openBundle: vi.fn<GitHubGateway['openBundle']>(),
     push: vi.fn(async () => ({
       kind: 'pushed' as const,
@@ -831,13 +831,14 @@ describe('operations across the socket', () => {
 
   it('carries only the pull request fields the worker reads, and a withheld body as null', async () => {
     const gateway = fakeGateway()
-    // More than the type holds: the server sends the five fields alone.
+    // More than the type holds: the server sends the type's fields alone.
     const full = {
       merged: true,
       merged_at: '2026-01-01T00:00:00Z',
       state: 'closed' as const,
       node_id: 'PR_2',
       body: null,
+      headSha: 'b'.repeat(40),
       title: 'a title the worker never reads',
     }
     gateway.getPullRequest.mockResolvedValue(full)
@@ -849,6 +850,7 @@ describe('operations across the socket', () => {
       state: 'closed',
       node_id: 'PR_2',
       body: null,
+      headSha: 'b'.repeat(40),
     })
   })
 
@@ -895,6 +897,7 @@ describe('fetch jobs', () => {
         ['release/1.0', OTHER],
       ]),
       bundleId: 'c'.repeat(32),
+      startedAt: 1_700_000_000_000,
     })
     await serve(gateway)
 
@@ -907,9 +910,10 @@ describe('fetch jobs', () => {
       ]),
     )
     expect(result.bundleId).toBe('c'.repeat(32))
+    expect(result.startedAt).toBe(1_700_000_000_000)
     // Deduplicated before it is sent, as the gateway would itself.
     expect(gateway.fetch).toHaveBeenCalledWith(
-      { have: [SHA, OTHER] },
+      { have: [SHA, OTHER], fresh: false },
       undefined,
       expect.any(Function),
     )
@@ -917,7 +921,8 @@ describe('fetch jobs', () => {
 
   it('keeps a job running when the worker abandons its wait, and answers its next poll', async () => {
     const gateway = fakeGateway()
-    let finish: (value: { refs: Map<string, string>; bundleId: null }) => void = () => undefined
+    let finish: (value: { refs: Map<string, string>; bundleId: null; startedAt: 1 }) => void = () =>
+      undefined
     gateway.fetch.mockImplementation(() => new Promise((resolve) => (finish = resolve)))
     const server = await serve(gateway)
     const controller = new AbortController()
@@ -928,8 +933,12 @@ describe('fetch jobs', () => {
     await expect(abandoned).rejects.toThrow('the sync loop is stopping')
 
     // The gateway's fetch took no signal, so nothing could abort it: only a progress listener.
-    expect(gateway.fetch).toHaveBeenCalledWith({ have: [] }, undefined, expect.any(Function))
-    finish({ refs: new Map([['main', SHA]]), bundleId: null })
+    expect(gateway.fetch).toHaveBeenCalledWith(
+      { have: [], fresh: false },
+      undefined,
+      expect.any(Function),
+    )
+    finish({ refs: new Map([['main', SHA]]), bundleId: null, startedAt: 1 })
     await server.idle()
     expect(gateway.fetch).toHaveBeenCalledTimes(1)
   })
@@ -959,7 +968,7 @@ describe('fetch jobs', () => {
           await new Promise((resolve) => setTimeout(resolve, 100))
           onProgress?.()
         }
-        return { refs: new Map([['main', SHA]]), bundleId: null }
+        return { refs: new Map([['main', SHA]]), bundleId: null, startedAt: 1 }
       },
     )
     await serve(gateway)
@@ -979,7 +988,11 @@ describe('fetch jobs', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
     try {
       const gateway = fakeGateway()
-      let finish: (value: { refs: Map<string, string>; bundleId: null }) => void = () => undefined
+      let finish: (value: {
+        refs: Map<string, string>
+        bundleId: null
+        startedAt: 1
+      }) => void = () => undefined
       gateway.fetch.mockImplementation(() => new Promise((resolve) => (finish = resolve)))
       await serve(gateway)
 
@@ -988,9 +1001,9 @@ describe('fetch jobs', () => {
       // Two of the server's 25 s waits pass with the job still running.
       await vi.advanceTimersByTimeAsync(25_001)
       await vi.advanceTimersByTimeAsync(25_001)
-      finish({ refs: new Map(), bundleId: null })
+      finish({ refs: new Map(), bundleId: null, startedAt: 1 })
 
-      expect(await result).toEqual({ refs: new Map(), bundleId: null })
+      expect(await result).toEqual({ refs: new Map(), bundleId: null, startedAt: 1 })
     } finally {
       vi.useRealTimers()
     }
@@ -1000,12 +1013,16 @@ describe('fetch jobs', () => {
     const gateway = fakeGateway()
     gateway.fetch
       .mockRejectedValueOnce(new GitHubTransientError('github-fetch-failed', 'GitHub was down'))
-      .mockResolvedValueOnce({ refs: new Map(), bundleId: null })
+      .mockResolvedValueOnce({ refs: new Map(), bundleId: null, startedAt: 1 })
     await serve(gateway)
     const client = connectGitHubGateway(socketPath)
 
     await expect(client.fetch({ have: [] })).rejects.toBeInstanceOf(GitHubTransientError)
-    expect(await client.fetch({ have: [] })).toEqual({ refs: new Map(), bundleId: null })
+    expect(await client.fetch({ have: [] })).toEqual({
+      refs: new Map(),
+      bundleId: null,
+      startedAt: 1,
+    })
     expect(gateway.fetch).toHaveBeenCalledTimes(2)
   })
 
@@ -1022,7 +1039,7 @@ describe('fetch jobs', () => {
     const second = fakeGateway()
     await serve(second)
 
-    expect(await result).toEqual({ refs: new Map([['main', SHA]]), bundleId: null })
+    expect(await result).toEqual({ refs: new Map([['main', SHA]]), bundleId: null, startedAt: 1 })
     expect(second.fetch).toHaveBeenCalledTimes(1)
   })
 
@@ -1096,8 +1113,11 @@ describe('fetch jobs', () => {
 
   it('drops the job that finished longest ago, not the one started first', async () => {
     const gateway = fakeGateway()
-    let finishFirst: (value: { refs: Map<string, string>; bundleId: null }) => void = () =>
-      undefined
+    let finishFirst: (value: {
+      refs: Map<string, string>
+      bundleId: null
+      startedAt: 1
+    }) => void = () => undefined
     gateway.fetch.mockImplementationOnce(() => new Promise((resolve) => (finishFirst = resolve)))
     await serve(gateway)
     const start = async () => {
@@ -1112,7 +1132,7 @@ describe('fetch jobs', () => {
       quick.push(job)
       await done(job)
     }
-    finishFirst({ refs: new Map(), bundleId: null })
+    finishFirst({ refs: new Map(), bundleId: null, startedAt: 1 })
     expect((await done(first)).status).toBe(200)
 
     await start()

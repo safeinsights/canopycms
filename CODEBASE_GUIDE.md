@@ -87,6 +87,7 @@ Content, git and branch files have their own sections below; the rest:
 - `system-users.ts` — dependency-free ids CanopyCMS acts as: `SYSTEM_USER_ID`, `CONTENT_READER_USER_ID`, `isSystemUserId`
 - `resolve-canopy-user.ts` — shared authenticate-then-merge-internal-groups pipeline for both request entry points
 - `comment-store.ts` — comment persistence; field threads follow `item-keys.ts`' `_key`; see [ARCHITECTURE.md](ARCHITECTURE.md#comments--collaboration)
+- `merge-conflicts.ts` — unresolved field-merge conflicts
 - `entry-schema.ts` — `defineEntrySchema`, `TypeFromEntrySchema`, block templates, `buildResolvedReference`, `buildRestrictedReference`, `buildMissingReference`, `isResolvedReference`
 - `entry-schema-registry.ts` — registry for reusable field definitions; validates `isTitle` and `isBody`
 - `reference-resolver.ts` — `loadReferenceOptions`, scoped by collections and entry types
@@ -117,11 +118,13 @@ Route handlers, one file per endpoint namespace:
 
 - `branch.ts` — `/branches`: create, list, delete; `toBranchListItem` shapes branch responses, with server-computed `isProtected` / `readOnly`
 - `branch-status.ts` — `/branch-status`: status and submit (`SubmitBranchResponse`)
+- `branch-update-from-base.ts` — `POST /:branch/update-from-base` (`updateFromBase`): `commitSavedWork`, enqueue `sync-branch`
 - `branch-withdraw.ts` — `/branch-withdraw`: withdraw a PR
 - `archived-branches.ts` — `POST /:branch/archive`, `POST /admin/archived-branches/delete`
 - `branch-review.ts` — `/branch-review`: approve, request changes
 - `branch-changes.ts` — `GET /:branch/changes`
 - `branch-entry-changes.ts` — `GET /:branch/changes/...entryPath`; `POST /:branch/restore-entry/...entryPath` (`ContentStore.restore`)
+- `merge-conflicts.ts` — `GET /:branch/conflicts[/...entryPath]`, `POST /:branch/resolve-entry/...entryPath`; `clearFieldConflicts`
 - `branch-merge.ts` — `/branch-merge`: merge and clean up
 - `content.ts` — `/content`: read and write; runs entry-link and adopter `validateEntry` validation on write
 - `entries.ts` — `/entries`: entry management; cursor-paginated listing
@@ -245,8 +248,9 @@ direction, and every invariant.
 - `stale-mirror.ts` — `settleStaleMirror`: a `remote.git` head without editor work follows GitHub
 - `canopy-state.ts` — how sync treats adopter-tracked `.canopy-meta/` state: `listTrackedCanopyState`, `trackedCanopyStateChanges`, `splitByUpstreamTracking`, `untrackInIndex`, `restoreRetiredSchemaCache`
 - `provisioned-workspace.ts` — `holdProvisionedWorkspace`: the zero-retry provisioning-lock hold around base refresh and each rebase
-- `rebase.ts` — the rebase loop, `runRebaseCycle`, `pollMergeState`
+- `rebase.ts` — the rebase loop, `runRebaseCycle` (requested branches first), `answerBaseUpdate`, `pollMergeState`; `requestBranchSync` wakes `scheduleLoop`
 - `github-commits.ts`, `branch-merge.ts`: GitHub-side commits
+- `field-merge.ts` — `resolveFieldMerge`
 - `github-gateway.ts` — GitHub access; `branch-policy.ts`, `gateway-egress.ts`, `github-gateway-http.ts` its policy, scrubbing, socket
 - `github-mirror.ts`, `github-mirror-upkeep.ts`, `shared-repo-git.ts` — isolated git
 - `github-transfer.ts`, `bundle-header.ts`, `git-process.ts` — bundle transfer; `self-checks.ts` — boot checks
@@ -256,8 +260,8 @@ direction, and every invariant.
 - `log.ts` — `workerLog` / `workerLogWarn` / `workerLogError`, timestamped replacements for `console.*`
 
 Task actions: `push-branch`, `push-and-create-pr`, `push-and-update-pr`,
-`push-and-create-or-update-pr`, `convert-to-draft`, `close-pr`, `delete-remote-branch`. Rebase
-behaviour and conflict tracking are in
+`push-and-create-or-update-pr`, `convert-to-draft`, `close-pr`, `delete-remote-branch`. Base
+merges and conflicts:
 [ARCHITECTURE.md](ARCHITECTURE.md#branch-synchronization-and-conflict-detection).
 
 ## Task Queue Module
@@ -515,6 +519,7 @@ Top-level components and helpers:
 - `FormRenderer.tsx` — schema-driven form dispatch incl. `group` and string-list; a boundary per field; under `readOnly`, `ReadOnlyFence` disables custom renderers
 - `FormHeader.tsx` / `form-outline.ts` — the form's sticky header and its field outline
 - `BranchManager.tsx` — branch list, badges and workflow buttons; `getBranchPermissions` folds in `isProtected`
+- `GetLatestChangesButton.tsx`, `BaseUpdateNotice.tsx`, `hooks/useBaseUpdate.tsx`, `base-update-wait.ts` — "Get latest changes"
 - `CommentsPanel.tsx` — comment panel
 - `GroupManager.tsx` / `PermissionManager.tsx` — admin group, permission drawers
 - `preview-bridge.tsx` / `PreviewFrame.tsx` — the bridge's host and editor sides; `PreviewPane.tsx` adds the toolbar (`PreviewToolbarTools.tsx`); see [Preview Bridge](#preview-bridge)
@@ -529,6 +534,7 @@ Top-level components and helpers:
 - `field-breadcrumb.ts` / `field-target.ts` — a field path's label breadcrumb; `findFieldTarget`, `focusFieldTarget`, `revealField`
 - `entry-diff.ts` — `computeEntryDiff`
 - `undo-change.ts` — "Undo change"
+- `conflict-cards.ts` / `conflict-choices.ts` / `conflict-notice.ts` / `components/ConflictsGroup.tsx` — conflicts
 - `schema-label.ts` — `schemaLabel`: a field's, group's or template's label, else its humanised name
 - `undo-removal.ts` — `FieldRemoval`, `restoreRemoval`, `openThreadsWithin` — a form Remove or Clear undone
 - `user-display.ts` — `SYSTEM_USER_LABEL`, `userIdLabel`
@@ -575,7 +581,7 @@ Manager hooks, in `editor/hooks/` — see
 - `useUserContext.tsx` / `useUserMetadata.ts` — current user (`EditorAuthGate` identity, else `whoami`); SWR user metadata, `seedUserProfiles`
 - `useReferenceResolution.ts` — preview value and `isLoading`, for `Editor.tsx`
 - `useEntryLinkResolution.ts` — resolves `entry:ID` patterns in preview data
-- `useBranchesData.ts` / `useEntriesData.ts` / `useCommentsData.ts` / `useBranchChangesData.ts` — the SWR hooks; keys in the README
+- `useBranchesData.ts` / `useEntriesData.ts` / `useCommentsData.ts` / `useBranchChangesData.ts` / `useConflictsData.ts` — the SWR hooks; keys in the README
 - `index.ts` — only the nine hooks `Editor.tsx` and `media/MediaLibraryBody.tsx` import
 
 Field components, in `editor/fields/`:
@@ -668,8 +674,8 @@ Admin UI, in `editor/admin/`, gated only by `Editor.tsx`:
 - `UnpublishedAtMergeAlert.tsx` — branches merged unfinished
 - `useSystemHealth.tsx` — loads on open, polls every 30 s, exposes the actions
 
-Conflict notices (`FormRenderer`'s `conflictNotice`, `EntryNavCollection.conflictNotice`) are
-computed in `Editor.tsx` from `currentBranch.conflictFiles`.
+Conflict notices (`FormRenderer`'s `conflictNotice`, `EntryNavCollection.conflictNotice`) come
+from `currentBranch.conflictFiles` in `Editor.tsx`.
 
 Design rationale: [ARCHITECTURE.md](ARCHITECTURE.md#editor-architecture).
 
@@ -706,6 +712,7 @@ All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 - `branch-delete.ts` — `deleteBranchWorkspace`: the one delete path (API, admin bulk, worker sweep)
 - `branch-param.ts` — `resolveBranchParam` (the exact form first), `shortNameOf`
 - `branch-metadata.ts` — `branch.json` persistence under layered concurrency; `baseBranch` immutable; `buildMergedBranchUpdate`, `buildInitialBranchMetadata`; `update` (a computed save), `recordEditor`, `markEditorsCommitted`, `recordBranchEditor`
+- `base-update.ts` — dependency-free "Get latest changes" constants and `isBaseUpdatePending`; metadata `baseUpdateRequestedAt`, `lastBaseUpdate`
 - `branch-metadata-file.ts` — schema-checked `branch.json` reads; a deliberate leaf module
 - `branch-metadata-error.ts` — the corrupt-metadata error, node-free
 - `branch-workspace.ts` — `BranchWorkspaceManager`: `provisionBranch` returns a `created` / `exists` `ProvisionOutcome`
@@ -840,6 +847,17 @@ parse-versus-create-versus-cast conventions.
 - `mdx-allowlist.ts` — `resolveMdxAllowlist` for `mdxAllow`; dependency-free
 - `deletion-checker.ts` — `findReferencingEntries`, the entries a delete would orphan
 - `block-structural-keys.ts` — which keys of a block item are structure rather than content
+
+## Merge Module
+
+**Location**: `packages/canopycms/src/merge/` —
+[AGENTS.md](packages/canopycms/src/merge/AGENTS.md)
+
+- `entry-merge.ts` — `mergeEntry`, `mergeCollectionMeta`
+- `list-alignment.ts` — list item identity and order
+- `text-merge.ts`, `diff3.ts` — line merge, over jsdiff
+- `conflict-path.ts` — names a conflict as the drawer would
+- `value-equality.ts` — `sameValue`, shared with the drawer
 
 ## Entry Links
 

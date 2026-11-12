@@ -1,9 +1,10 @@
-import React, { useRef, type ReactNode, type Ref } from 'react'
+import React, { useLayoutEffect, useRef, type ReactNode, type Ref } from 'react'
 import {
   Badge,
   Box,
   Button,
   Group,
+  Loader,
   Menu,
   Text,
   Tooltip,
@@ -19,6 +20,13 @@ import type { SaveAllProgress } from '../hooks/save-all'
 import { isAdmin, isLockedOutOfBranch, isReviewer } from '../../authorization/helpers'
 import { branchBarStatus, describeBranchLock, type BranchBarStatus } from '../branch-lock'
 import { HOLD_BADGE, branchHoldMessage } from '../branch-status'
+import {
+  conflictRecordHeldAdminMessage,
+  conflictRecordHeldMessage,
+  conflictsHoldMessage,
+  conflictsSubmitReason,
+} from '../conflict-notice'
+import { ReleaseHoldButton, type ReleaseOutcome } from './ReleaseHoldButton'
 import { EDITOR_ACTIONS, UNFINISHED_SUBMIT_APPROVE_REASON, rewrittenSubmitReason } from '../copy'
 import { reviewRoleOf, type ReviewRole } from '../../authorization/review-role'
 import { SYSTEM_USER_ID } from '../../system-users'
@@ -28,6 +36,14 @@ import { TooltipDetail } from './TooltipDetail'
 import { ReasonedMenuItem } from './ReasonedMenuItem'
 import { UnsavedMark } from './UnsavedMark'
 import { DraftStorageWarning, HIDDEN_STYLE, SaveAllButton } from './SaveAllButton'
+import { GetLatestChangesButton } from './GetLatestChangesButton'
+import {
+  GETTING_LATEST_CHANGES,
+  WAITING_NOTICE,
+  WAITING_SUBMIT_REASON,
+  type BaseUpdateControl,
+  type BaseUpdateWait,
+} from '../base-update-wait'
 import { useFocusHandOff, useMenuItemFocusReturn } from '../utils/focus-return'
 
 export interface EditorHeaderProps {
@@ -98,6 +114,17 @@ export interface EditorHeaderProps {
   branchPending?: boolean
   /** The branch list answered without this branch. */
   branchMissing?: boolean
+  /** "Get latest changes", when this user may ask on the open branch (hooks/useBaseUpdate.tsx). */
+  baseUpdate?: BaseUpdateControl
+  /** Choices a merge's conflicts leave open on the branch, which hold Submit for review. */
+  openConflicts?: number
+  /**
+   * The branch is held as its record of conflicts was set aside; `onRelease`, an admin's way out,
+   * releases it.
+   */
+  conflictRecordHeld?: { onRelease?: () => Promise<ReleaseOutcome> }
+  /** The open branch's wait for the latest changes, whoever asked: every viewer who sees it waits. */
+  latestWait?: BaseUpdateWait
 }
 
 /**
@@ -139,6 +166,10 @@ export function EditorHeader({
   branchLoading = false,
   branchPending = false,
   branchMissing = false,
+  baseUpdate,
+  latestWait = 'none',
+  openConflicts = 0,
+  conflictRecordHeld,
 }: EditorHeaderProps) {
   const reviewRole = reviewRoleOf(
     {
@@ -151,6 +182,12 @@ export function EditorHeader({
     },
     userContext,
   )
+  const releaseHold = branchName ? conflictRecordHeld?.onRelease : undefined
+  const heldMessage = !conflictRecordHeld
+    ? undefined
+    : releaseHold
+      ? conflictRecordHeldAdminMessage
+      : conflictRecordHeldMessage
   const workflow = workflowAction({
     branchName,
     busy,
@@ -163,6 +200,9 @@ export function EditorHeader({
     savingAll: !!saveAllProgress,
     rewritten: branchHold?.kind === 'rewritten',
     approveBlocked: branchApproveBlocked,
+    waitingForLatest: latestWait === 'waiting',
+    openConflicts,
+    heldReason: heldMessage,
   })
   const lock = {
     branchStatus,
@@ -176,13 +216,20 @@ export function EditorHeader({
   }
   const branchLockReason = describeBranchLock(lock)
   const status = branchBarStatus({ ...lock, isProtected: branchServerProtected })
+  // A hold of the pull request outranks open conflicts, which only hold the next submit.
+  const conflictsHeld = openConflicts > 0 && branchStatus === 'editing'
   const holdMessage =
     branchName && branchHold && status.value !== 'loading'
       ? branchHoldMessage(branchHold, {
           role: workflow?.kind === 'review' ? 'review' : workflow?.permitted ? 'withdraw' : 'none',
           isAdmin: isAdmin(userContext?.groups ?? []),
         })
-      : undefined
+      : branchName && heldMessage && status.value !== 'loading'
+        ? heldMessage
+        : branchName && conflictsHeld && status.value !== 'loading'
+          ? conflictsHoldMessage(openConflicts)
+          : undefined
+  const holdCount = !branchHold && !conflictRecordHeld && conflictsHeld ? openConflicts : undefined
 
   const theme = useMantineTheme()
   // Mantine's own below-`md` query, the one `visibleFrom="md"` hides under.
@@ -206,6 +253,19 @@ export function EditorHeader({
 
   // Controls come and go as a submit or withdraw changes the lock, and focus follows them.
   const [[wayRef, saveAllRef, workflowRef, secondaryRef], focusTarget] = useFocusHandOff(4)
+  // A release unmounts its confirm with the button that opened it, which leaves focus nowhere: it
+  // goes to the workflow control, which the release has just freed.
+  const releasable = !!releaseHold
+  const wasReleasable = useRef(releasable)
+  const releasedHere = useRef(false)
+  useLayoutEffect(() => {
+    const active = document.activeElement
+    if (wasReleasable.current && !releasable && releasedHere.current) {
+      releasedHere.current = false
+      if (!active || active === document.body) focusTarget(2)?.focus({ preventScroll: true })
+    }
+    wasReleasable.current = releasable
+  })
   const workflowControl = {
     onSubmit,
     onWithdraw,
@@ -231,12 +291,33 @@ export function EditorHeader({
             onRefreshBranch={onBranchReloadData}
             onDiscardAll={onBranchDiscardDrafts}
             pillRef={branchToggleRef}
+            // Below `md` the bar has no room for it, so the branch's menu offers it.
+            getLatest={narrow ? baseUpdate : undefined}
           />
-          <BranchStatusLabel
-            status={branchName ? status : { value: 'none', readOnly: false }}
-            reason={branchLockReason}
-            holdMessage={holdMessage}
-          />
+          {/* The way out stays beside the hold it ends, however the bar wraps. */}
+          <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
+            <BranchStatusLabel
+              status={branchName ? status : { value: 'none', readOnly: false }}
+              reason={branchLockReason}
+              holdMessage={holdMessage}
+              holdCount={holdCount}
+              working={latestWait !== 'none' ? GETTING_LATEST_CHANGES : undefined}
+              // The bar's button carries the spinner where it shows.
+              workingSpinner={narrow || !baseUpdate}
+            />
+            {releaseHold && (
+              <ReleaseHoldButton
+                branchLabel={branchLabel ?? branchName}
+                onRelease={async () => {
+                  // Marked while in flight: the re-read that clears the hold can land first.
+                  releasedHere.current = true
+                  const outcome = await releaseHold()
+                  if (!('released' in outcome)) releasedHere.current = false
+                  return outcome
+                }}
+              />
+            )}
+          </Group>
           {modifiedCount > 0 && (
             <Tooltip
               label={unsavedTooltip(
@@ -266,6 +347,7 @@ export function EditorHeader({
       trailing={
         <>
           <DraftStorageWarning shown={draftStorageFailed && modifiedCount > 0} />
+          {!narrow && baseUpdate && <GetLatestChangesButton control={baseUpdate} />}
           {/* A lock can end, so wide Save all stays and says why; below `md` space wins. */}
           {(!narrow || editable) && (
             <SaveAllButton
@@ -277,9 +359,11 @@ export function EditorHeader({
                 branchLockReason ??
                 (!branchName
                   ? 'Open a branch first.'
-                  : entryListFailed && modifiedCount > 0
-                    ? 'The list of entries couldn\'t be loaded, so these changes can\'t be saved yet. Choose "Refresh branch" in the branch menu to try again.'
-                    : undefined)
+                  : latestWait === 'waiting'
+                    ? WAITING_NOTICE
+                    : entryListFailed && modifiedCount > 0
+                      ? 'The list of entries couldn\'t be loaded, so these changes can\'t be saved yet. Choose "Refresh branch" in the branch menu to try again.'
+                      : undefined)
               }
               saveAllProgress={saveAllProgress}
               singleSaving={singleSaving}
@@ -354,19 +438,43 @@ function BranchStatusLabel({
   status,
   reason,
   holdMessage,
+  holdCount,
+  working,
+  workingSpinner = true,
 }: {
   status: BranchBarStatus
   reason?: string
   holdMessage?: string
+  /** How many things the hold waits on, shown beside its badge's label. */
+  holdCount?: number
+  /** Work the branch waits on, such as getting the latest changes, shown and announced. */
+  working?: string
+  /** A spinner beside `working`, unless the control doing the work shows one. */
+  workingSpinner?: boolean
 }) {
-  const spoken =
+  const spoken = [
     status.label && status.value !== 'loading'
       ? [status.label.replace(' · ', ', '), reason].filter(Boolean).join('. ')
-      : ''
+      : '',
+    working,
+  ]
+    .filter(Boolean)
+    .join('. ')
   return (
     // Always mounted, so a lock that arrives is announced.
-    <Box role="status" style={status.label || holdMessage ? { flexShrink: 0 } : HIDDEN_STYLE}>
+    <Box
+      role="status"
+      style={status.label || holdMessage || working ? { flexShrink: 0 } : HIDDEN_STYLE}
+    >
       <Group gap="xs" wrap="nowrap">
+        {working && (
+          <Group gap={4} wrap="nowrap" aria-hidden="true" data-testid="branch-working-status">
+            {workingSpinner && <Loader size={12} />}
+            <Text span size="sm">
+              {working}
+            </Text>
+          </Group>
+        )}
         {status.label && (
           <Group
             gap={4}
@@ -384,7 +492,7 @@ function BranchStatusLabel({
         {holdMessage && (
           <TooltipDetail detail={holdMessage}>
             <Badge color={HOLD_BADGE.color} variant="light" data-testid="branch-hold-status">
-              {HOLD_BADGE.label}
+              {holdCount === undefined ? HOLD_BADGE.label : `${HOLD_BADGE.label} (${holdCount})`}
             </Badge>
           </TooltipDetail>
         )}
@@ -466,6 +574,12 @@ type WorkflowActionInput = Pick<
   rewritten: boolean
   /** The pull request may not hold what would be approved. */
   approveBlocked: boolean
+  /** The branch waits on the latest changes, which a submit would leave behind. */
+  waitingForLatest: boolean
+  /** Choices left open by a merge's conflicts, which the server refuses a submit for. */
+  openConflicts: number
+  /** Why the branch is held, as its record of conflicts was set aside, which holds both. */
+  heldReason?: string
 }
 
 /**
@@ -484,6 +598,9 @@ function workflowAction({
   savingAll,
   rewritten,
   approveBlocked,
+  waitingForLatest,
+  openConflicts,
+  heldReason,
 }: WorkflowActionInput): WorkflowAction | null {
   const isSubmitted = branchStatus === 'submitted'
   const isEditing = branchStatus === 'editing'
@@ -507,7 +624,7 @@ function workflowAction({
       blocked: !branchName || busy || savingAll,
       permitted: true,
       reason: savingAll ? 'Wait for Save all to finish.' : busy ? BUSY_REASON : '',
-      approveReason: approveBlocked ? UNFINISHED_SUBMIT_APPROVE_REASON : undefined,
+      approveReason: approveBlocked ? UNFINISHED_SUBMIT_APPROVE_REASON : heldReason,
     }
   }
 
@@ -538,24 +655,35 @@ function workflowAction({
   return {
     kind: isWithdrawable ? 'withdraw' : 'submit',
     // `busy` alone can't hold it: an entry load clears that shared flag mid-run.
-    blocked: !branchName || busy || savingAll || !canPerformAction || (rewritten && isEditing),
+    blocked:
+      !branchName ||
+      busy ||
+      savingAll ||
+      !canPerformAction ||
+      (isEditing && (rewritten || waitingForLatest || openConflicts > 0 || !!heldReason)),
     permitted: canPerformAction,
     reason: savingAll
       ? 'Wait for Save all to finish.'
-      : rewritten && isEditing
-        ? rewrittenSubmitReason(isAdmin(userContext?.groups ?? []))
-        : // No branch data (`branchStatus === undefined`) must not be
-          // interpolated raw into this label. Guarded explicitly here rather
-          // than left to the early return above, which hides the action
-          // today only as a side effect of `branchIsProtected`'s `?? true`
-          // default -- not a guarantee this arm stays unreachable.
-          branchStatus === undefined
-          ? 'Branch details could not be loaded. Use "Refresh branch" to try again.'
-          : !statusHasAction
-            ? `This branch is ${branchStatus}, so it can't be submitted for review or withdrawn from review.`
-            : !userHasPermission
-              ? 'You do not have permission to submit this branch for review or withdraw it from review. Ask an admin for access.'
-              : '',
+      : waitingForLatest && isEditing
+        ? WAITING_SUBMIT_REASON
+        : heldReason && isEditing
+          ? heldReason
+          : openConflicts > 0 && isEditing
+            ? conflictsSubmitReason(openConflicts)
+            : rewritten && isEditing
+              ? rewrittenSubmitReason(isAdmin(userContext?.groups ?? []))
+              : // No branch data (`branchStatus === undefined`) must not be
+                // interpolated raw into this label. Guarded explicitly here rather
+                // than left to the early return above, which hides the action
+                // today only as a side effect of `branchIsProtected`'s `?? true`
+                // default -- not a guarantee this arm stays unreachable.
+                branchStatus === undefined
+                ? 'Branch details could not be loaded. Use "Refresh branch" to try again.'
+                : !statusHasAction
+                  ? `This branch is ${branchStatus}, so it can't be submitted for review or withdrawn from review.`
+                  : !userHasPermission
+                    ? 'You do not have permission to submit this branch for review or withdraw it from review. Ask an admin for access.'
+                    : '',
   }
 }
 

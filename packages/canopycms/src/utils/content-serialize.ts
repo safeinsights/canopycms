@@ -43,7 +43,8 @@ import type { FieldConfig } from '../config'
 import { createDebugLogger } from './debug'
 import { getErrorMessage } from './error'
 import { serializeJson } from './json-source-splice'
-import { preserveMarkdownSource, type MarkdownBodyFormat } from './markdown-body-splice'
+import { preserveMarkdownSource } from './markdown-body-splice'
+import type { MarkdownBodyFormat } from './markdown-parse'
 import { snapshotDocument, spliceSource, withSourceLineEndings } from './yaml-source-splice'
 
 const log = createDebugLogger({ prefix: 'ContentSerialize' })

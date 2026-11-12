@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { act, render, screen, cleanup, within } from '@testing-library/react'
+import { act, render, screen, cleanup, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { EditorHeader, type EditorHeaderProps } from './EditorHeader'
 import { EntryHeader, type EntryHeaderProps } from './EntryHeader'
@@ -9,6 +9,14 @@ import { unsafeAsContentId, unsafeAsLogicalPath } from '../../paths/test-utils'
 import type { EditorEntry } from '../Editor'
 import type { BranchHold, BranchStatus } from '../../types'
 import { RESERVED_GROUPS } from '../../authorization/helpers'
+import { GET_LATEST_CHANGES_TOOLTIP, type BaseUpdateControl } from '../base-update-wait'
+import {
+  conflictRecordHeldAdminMessage,
+  conflictRecordHeldMessage,
+  conflictsHoldMessage,
+  conflictsSubmitReason,
+  releaseHoldConsequences,
+} from '../conflict-notice'
 
 const Wrapper = ({ children }: { children: React.ReactNode }) => (
   <CanopyCMSProvider>{children}</CanopyCMSProvider>
@@ -489,6 +497,11 @@ describe('EditorHeader - breadcrumb', () => {
       'an entry of an unknown type',
       { entryUnavailable: true },
       "This entry's content type isn't known to this editor version yet.",
+    ],
+    [
+      'a branch getting the latest changes',
+      { writesWaitReason: 'Getting the latest changes. You can edit again when it finishes.' },
+      'Getting the latest changes.',
     ],
   ])('blocks Change URL… and Delete entry for %s, saying why', async (_what, props, reason) => {
     const onEntryRename = vi.fn()
@@ -1051,6 +1064,149 @@ describe('EditorHeader - blocked controls say why on focus and ignore their clic
       expect(await screen.findByText(reason)).toBeTruthy()
       await userEvent.click(submit)
       expect(onSubmit).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('open conflicts (row 45)', () => {
+    const author = { userId: 'u1' }
+
+    it('holds Submit for review with the count and the way forward, and ignores its click', async () => {
+      const onSubmit = vi.fn()
+      renderHeader({ openConflicts: 2, userContext: author, branchCreatedBy: 'u1', onSubmit })
+      const submit = screen.getByTestId('submit-button')
+
+      expect(submit.getAttribute('aria-disabled')).toBe('true')
+      act(() => submit.focus())
+      expect(await screen.findByText(conflictsSubmitReason(2))).toBeTruthy()
+      expect(conflictsSubmitReason(2)).toContain('"Show changes"')
+      await userEvent.click(submit)
+      expect(onSubmit).not.toHaveBeenCalled()
+    })
+
+    it('lets Submit for review act once no choice is open', async () => {
+      const onSubmit = vi.fn()
+      renderHeader({ openConflicts: 0, userContext: author, branchCreatedBy: 'u1', onSubmit })
+      const submit = screen.getByTestId('submit-button')
+
+      expect(submit.getAttribute('aria-disabled')).toBeNull()
+      await userEvent.click(submit)
+      expect(onSubmit).toHaveBeenCalled()
+    })
+
+    it('shows "Needs action" with the count, its detail reachable in words', () => {
+      renderHeader({ openConflicts: 3, userContext: author, branchCreatedBy: 'u1' })
+      const badge = screen.getByTestId('branch-hold-status')
+      expect(badge.textContent).toBe('Needs action (3)')
+      expect(badge.closest('[role="status"]')?.textContent).toContain(conflictsHoldMessage(3))
+    })
+
+    it('says a hold on the pull request instead, without a conflicts count', () => {
+      renderHeader({
+        openConflicts: 3,
+        branchHold: { kind: 'rewritten' },
+        userContext: author,
+        branchCreatedBy: 'u1',
+      })
+      expect(screen.getByTestId('branch-hold-status').textContent).toBe('Needs action')
+    })
+
+    it('shows an admin a held branch, released through a confirm that says what is lost', async () => {
+      const onRelease = vi
+        .fn()
+        .mockResolvedValueOnce({ error: 'This branch is busy.', tone: 'warning' })
+        .mockResolvedValueOnce({ released: true })
+      renderHeader({ openConflicts: 0, userContext: author, conflictRecordHeld: { onRelease } })
+      const badge = screen.getByTestId('branch-hold-status')
+      expect(badge.textContent).toBe('Needs action')
+      expect(badge.closest('[role="status"]')?.textContent).toContain(
+        conflictRecordHeldAdminMessage,
+      )
+
+      await userEvent.click(screen.getByRole('button', { name: 'Release hold' }))
+      const dialog = await screen.findByRole('dialog', {
+        name: `Release the hold on "${defaultProps.branchName}"?`,
+      })
+      expect(dialog.textContent).toContain(releaseHoldConsequences)
+      const confirm = within(dialog).getByRole('button', { name: 'Release hold' })
+      // A refusal says why in the confirm, which stays open; a release closes it.
+      await userEvent.click(confirm)
+      expect(within(dialog).getByRole('alert').textContent).toBe('This branch is busy.')
+      await new Promise((resolve) => setTimeout(resolve, 500))
+      expect(screen.queryByRole('dialog')).toBeTruthy()
+      await userEvent.click(confirm)
+      expect(onRelease).toHaveBeenCalledTimes(2)
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    })
+
+    it('holds Submit for review with the reason while the branch is held', async () => {
+      const onSubmit = vi.fn()
+      renderHeader({
+        userContext: author,
+        branchCreatedBy: 'u1',
+        onSubmit,
+        conflictRecordHeld: { onRelease: vi.fn() },
+      })
+      const submit = screen.getByTestId('submit-button')
+      expect(submit.getAttribute('aria-disabled')).toBe('true')
+      await userEvent.click(submit)
+      expect(onSubmit).not.toHaveBeenCalled()
+    })
+
+    it('tells anyone else the branch is held, with no way out of their own', () => {
+      renderHeader({ userContext: author, branchCreatedBy: 'u1', conflictRecordHeld: {} })
+      const badge = screen.getByTestId('branch-hold-status')
+      expect(badge.closest('[role="status"]')?.textContent).toContain(conflictRecordHeldMessage)
+      expect(screen.queryByRole('button', { name: 'Release hold' })).toBeNull()
+      expect(screen.getByTestId('submit-button').getAttribute('aria-disabled')).toBe('true')
+    })
+
+    it('moves focus to Submit for review when its own release takes the confirm away', async () => {
+      // The release lands, and the re-read that clears the hold unmounts the confirm before it
+      // can return focus.
+      let rerender: (ui: React.ReactElement) => void = () => {}
+      const props = {
+        userContext: author,
+        branchCreatedBy: 'u1',
+        conflictRecordHeld: {
+          onRelease: vi.fn(async () => {
+            rerender(<Headers {...defaultProps} {...props} conflictRecordHeld={undefined} />)
+            return { released: true as const }
+          }),
+        },
+      }
+      const view = renderHeader(props)
+      rerender = view.rerender
+      await userEvent.click(screen.getByRole('button', { name: 'Release hold' }))
+      const dialog = await screen.findByRole('dialog')
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Release hold' }))
+      await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('submit-button')))
+    })
+
+    it('leaves focus alone when the hold goes without a release from here', async () => {
+      const props = {
+        userContext: author,
+        branchCreatedBy: 'u1',
+        conflictRecordHeld: { onRelease: vi.fn() },
+      }
+      const view = renderHeader(props)
+      act(() => (document.activeElement as HTMLElement | null)?.blur())
+      view.rerender(<Headers {...defaultProps} {...props} conflictRecordHeld={undefined} />)
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(document.activeElement).toBe(document.body)
+    })
+
+    it('offers no release where the branch is not held', () => {
+      renderHeader({ openConflicts: 2, userContext: author, branchCreatedBy: 'u1' })
+      expect(screen.queryByRole('button', { name: 'Release hold' })).toBeNull()
+    })
+
+    it('names no branch in its copy', () => {
+      expect(conflictRecordHeldMessage).not.toMatch(/main|base/)
+      expect(conflictRecordHeldAdminMessage).not.toMatch(/main|base/)
+      expect(conflictsSubmitReason(1)).toBe(
+        '1 field needs your choice before this branch can be submitted. Choose what to keep in "Show changes" on each flagged entry.',
+      )
+      expect(conflictsHoldMessage(2)).not.toMatch(/main|base/)
     })
   })
 
@@ -2235,5 +2391,104 @@ describe('EntryHeader - Show changes', () => {
     expect(control.style.getPropertyValue('--ai-size')).toBe('var(--ai-size-md)')
     act(() => control.focus())
     expect((await screen.findByRole('tooltip')).textContent).toBe('Show changes')
+  })
+})
+
+describe('EditorHeader - Get latest changes', () => {
+  const originalMatchMedia = window.matchMedia
+  const owner = { userContext: { userId: 'u1' }, branchCreatedBy: 'u1' }
+  const control = (over: Partial<BaseUpdateControl> = {}): BaseUpdateControl => ({
+    wait: 'none',
+    requesting: false,
+    tooltip: GET_LATEST_CHANGES_TOOLTIP,
+    onRequest: vi.fn(),
+    ...over,
+  })
+
+  afterEach(() => {
+    window.matchMedia = originalMatchMedia
+    cleanup()
+  })
+
+  it('offers the button when it applies, and none otherwise', async () => {
+    const onRequest = vi.fn()
+    renderHeader({ ...owner, baseUpdate: control({ onRequest }) })
+    const button = screen.getByTestId('get-latest-changes-button')
+    expect(button.textContent).toContain('Get latest changes')
+    await userEvent.click(button)
+    expect(onRequest).toHaveBeenCalledTimes(1)
+    cleanup()
+
+    renderHeader(owner)
+    expect(screen.queryByTestId('get-latest-changes-button')).toBeNull()
+  })
+
+  it('waits for unsaved changes, saying why on focus', async () => {
+    const onRequest = vi.fn()
+    renderHeader({
+      ...owner,
+      baseUpdate: control({ onRequest, blockedReason: 'Save your changes first.' }),
+    })
+    const button = screen.getByTestId('get-latest-changes-button')
+    expect(button.getAttribute('aria-disabled')).toBe('true')
+    await userEvent.click(button)
+    expect(onRequest).not.toHaveBeenCalled()
+    act(() => button.focus())
+    expect((await screen.findByRole('tooltip')).textContent).toBe('Save your changes first.')
+  })
+
+  it('shows and announces the wait, and holds Submit for review meanwhile', () => {
+    renderHeader({ ...owner, baseUpdate: control({ wait: 'waiting' }), latestWait: 'waiting' })
+    const button = screen.getByTestId('get-latest-changes-button')
+    expect(button.getAttribute('data-working')).toBe('true')
+    expect(button.getAttribute('aria-disabled')).toBe('true')
+    // Progress, read at full contrast: only a block dims it.
+    expect(button.getAttribute('data-disabled')).toBeNull()
+    expect(screen.getByTestId('branch-working-status').textContent).toBe('Getting latest changes…')
+    expect(
+      screen.getAllByRole('status').some((s) => s.textContent?.includes('Getting latest changes…')),
+    ).toBe(true)
+    const submit = screen.getByTestId('submit-button')
+    expect(submit.getAttribute('aria-disabled')).toBe('true')
+  })
+
+  it('lets Submit for review act again once the wait is slow and the form editable', () => {
+    renderHeader({ ...owner, baseUpdate: control({ wait: 'slow' }), latestWait: 'slow' })
+    expect(screen.getByTestId('submit-button').getAttribute('aria-disabled')).toBeNull()
+    expect(screen.getByTestId('branch-working-status')).toBeTruthy()
+  })
+
+  it('holds Save all and Save, for every viewer, while the form waits', async () => {
+    renderHeader({
+      latestWait: 'waiting',
+      writesWaitReason: 'Getting the latest changes. You can edit again when it finishes.',
+      modifiedCount: 2,
+      hasUnsavedChanges: true,
+    })
+    expect(screen.getByTestId('save-all-button').getAttribute('aria-disabled')).toBe('true')
+    expect(screen.getByTestId('save-button').getAttribute('aria-disabled')).toBe('true')
+    // No button for someone who may not ask, but the bar still shows the wait.
+    expect(screen.queryByTestId('get-latest-changes-button')).toBeNull()
+    expect(screen.getByTestId('branch-working-status').textContent).toBe('Getting latest changes…')
+  })
+
+  it("moves into the branch's menu below md", async () => {
+    window.matchMedia = (query: string) =>
+      ({
+        matches: query.startsWith('(max-width:'),
+        media: query,
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      }) as MediaQueryList
+    const onRequest = vi.fn()
+    renderHeader({ ...owner, baseUpdate: control({ onRequest }) })
+    expect(screen.queryByTestId('get-latest-changes-button')).toBeNull()
+    await userEvent.click(screen.getByTestId('branch-dropdown-button'))
+    await userEvent.click(await screen.findByTestId('get-latest-changes-menu-item'))
+    expect(onRequest).toHaveBeenCalledTimes(1)
   })
 })

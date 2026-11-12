@@ -6,8 +6,10 @@
  * - Branches with uncommitted changes (dirty working tree) are not rebased
  * - Already-in-sync branches get their stale conflict state cleared
  * - Clean rebases mark the branch as clean
- * - Conflicting files keep the branch version (--theirs during rebase), ContentIds recorded in conflictFiles
+ * - A conflicting file the field merge does not read keeps the branch version, by a merge,
+ *   with its ContentId on record and in conflictFiles
  * - Non-entry files (no embedded ContentId) are excluded from conflictFiles
+ * (The field merge's own cases: cms-worker-field-merge.test.ts.)
  */
 
 import fs from 'node:fs/promises'
@@ -18,9 +20,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { simpleGit, type SimpleGit } from 'simple-git'
 
 import { BranchMetadataFileManager } from '../branch-metadata'
+import { MergeConflictStore } from '../merge-conflicts'
 import { resolveBranchParam } from '../branch-param'
 import { ROOT_COLLECTION_ID } from '../paths/types'
-import { initTestRepo, mockConsole } from '../test-utils'
+import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
+import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
+import { BASE_UPDATE_GIVE_UP_MS } from '../base-update'
 import { branchProvisioningLockName, tryAcquireProvisioningLock } from '../utils/provisioning-lock'
 import type { BranchPolicyDescription } from './branch-policy'
 import { CmsWorker } from './cms-worker'
@@ -402,6 +407,17 @@ describe('CmsWorker rebaseActiveBranches', () => {
 
     it('keeps the conflict record and clears a stale rebaseFailure when the branch is caught up', async () => {
       const setup = await createBranchSetup(tmpDir, 'my-feature')
+      const head = (await setup.branchGit.revparse(['HEAD'])).trim()
+      await new MergeConflictStore(setup.branchPath).update(() => ({
+        entries: {
+          EARLIERabcde: {
+            path: 'content/a.json',
+            mergeSha: head,
+            kind: 'unreadable',
+            sides: { branch: 'b'.repeat(40) },
+          },
+        },
+      }))
       await writeMeta(setup.branchPath, setup.contentBranchesPath, {
         conflictStatus: 'conflicts-detected',
         conflictFiles: ['EARLIERabcde'],
@@ -448,7 +464,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
       // Metadata should reflect clean state
       const meta = await readMeta(setup.branchPath)
       expect(meta?.conflictStatus).toBe('clean')
-      expect(meta?.conflictFiles).toEqual([])
+      expect(meta?.conflictFiles ?? []).toEqual([])
     })
   })
 
@@ -667,7 +683,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
     const ENTRY_FILE = 'page.about.TESTENTRYabc.json'
     const ENTRY_ID = 'TESTENTRYabc'
 
-    it('applies --theirs for conflicting entry files, keeps branch version, records ContentId', async () => {
+    it('keeps the branch version of a conflicting file outside the content root, recording its ContentId', async () => {
       const setup = await createBranchSetup(tmpDir, 'my-feature', {
         initialFiles: { [ENTRY_FILE]: '{"title":"base content"}' },
       })
@@ -692,7 +708,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
       const status = await setup.branchGit.status()
       expect(status.behind).toBe(0)
 
-      // Branch version should be preserved (--theirs during rebase)
+      // Not an entry the field merge reads: the branch's version stands, as a conflict on record
       const fileContent = await fs.readFile(path.join(setup.branchPath, ENTRY_FILE), 'utf8')
       expect(fileContent).toBe('{"title":"branch version"}')
 
@@ -702,7 +718,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
       expect(meta?.conflictFiles).toContain(ENTRY_ID)
     })
 
-    it("adds a rebase's conflicts to the ones already recorded", async () => {
+    it('derives conflictFiles from the conflict record once a merge writes one', async () => {
       const setup = await createBranchSetup(tmpDir, 'my-feature', {
         initialFiles: { [ENTRY_FILE]: '{"title":"base content"}' },
       })
@@ -717,10 +733,10 @@ describe('CmsWorker rebaseActiveBranches', () => {
 
       const meta = await readMeta(setup.branchPath)
       expect(meta?.conflictStatus).toBe('conflicts-detected')
-      expect(meta?.conflictFiles).toEqual(['EARLIERabcde', ENTRY_ID])
+      expect(meta?.conflictFiles).toEqual([ENTRY_ID])
     })
 
-    it('keeps an earlier conflict through a later clean rebase', async () => {
+    it('clears conflict flags no record backs, written before the record existed', async () => {
       const setup = await createBranchSetup(tmpDir, 'my-feature')
       await setup.commitToBranch({ 'branch-content.txt': 'branch work' })
       await setup.pushToRemote({ 'main-update.txt': 'new from main' })
@@ -733,8 +749,8 @@ describe('CmsWorker rebaseActiveBranches', () => {
 
       expect((await setup.branchGit.status()).behind).toBe(0)
       const meta = await readMeta(setup.branchPath)
-      expect(meta?.conflictStatus).toBe('conflicts-detected')
-      expect(meta?.conflictFiles).toEqual(['EARLIERabcde'])
+      expect(meta?.conflictStatus).toBe('clean')
+      expect(meta?.conflictFiles).toEqual([])
     })
 
     it('excludes non-entry files from conflictFiles (conflictStatus stays clean)', async () => {
@@ -754,15 +770,15 @@ describe('CmsWorker rebaseActiveBranches', () => {
 
       const meta = await readMeta(setup.branchPath)
       // No entry ContentIds were involved, so conflict is invisible to the editor
-      expect(meta?.conflictStatus).toBe('clean')
-      expect(meta?.conflictFiles).toEqual([])
+      expect(meta?.conflictStatus ?? 'clean').toBe('clean')
+      expect(meta?.conflictFiles ?? []).toEqual([])
+      expect(await fs.readFile(path.join(setup.branchPath, 'README.md'), 'utf8')).toBe(
+        '# Branch heading',
+      )
     })
 
-    it('records parent collection ContentId when .collection.json conflicts in a subcollection', async () => {
-      // Subcollection directory has an embedded ID: posts.cNbR5xFm2Kpd
-      const COLLECTION_DIR = 'content/posts.cNbR5xFm2Kpd'
-      const COLLECTION_ID = 'cNbR5xFm2Kpd'
-      const META_FILE = `${COLLECTION_DIR}/.collection.json`
+    it('merges entries both sides added to a .collection.json order, with no conflict', async () => {
+      const META_FILE = 'content/posts.cNbR5xFm2Kpd/.collection.json'
 
       const setup = await createBranchSetup(tmpDir, 'my-feature', {
         initialFiles: { [META_FILE]: '{"name":"posts","order":[]}' },
@@ -775,6 +791,37 @@ describe('CmsWorker rebaseActiveBranches', () => {
       await setup.pushToRemote(
         { [META_FILE]: '{"name":"posts","order":["main-order"]}' },
         'main: reorder collection',
+      )
+
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+
+      await runRebase(makeWorker(tmpDir))
+
+      const meta = await readMeta(setup.branchPath)
+      expect(meta?.conflictFiles ?? []).toEqual([])
+      const merged: unknown = JSON.parse(
+        await fs.readFile(path.join(setup.branchPath, META_FILE), 'utf8'),
+      )
+      expect(merged).toEqual({ name: 'posts', order: ['main-order', 'branch-order'] })
+    })
+
+    it('records parent collection ContentId when .collection.json conflicts in a subcollection', async () => {
+      // Subcollection directory has an embedded ID: posts.cNbR5xFm2Kpd
+      const COLLECTION_DIR = 'content/posts.cNbR5xFm2Kpd'
+      const COLLECTION_ID = 'cNbR5xFm2Kpd'
+      const META_FILE = `${COLLECTION_DIR}/.collection.json`
+
+      const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        initialFiles: { [META_FILE]: '{"name":"posts","label":"Posts"}' },
+      })
+
+      await setup.commitToBranch(
+        { [META_FILE]: '{"name":"posts","label":"Branch posts"}' },
+        'branch: relabel collection',
+      )
+      await setup.pushToRemote(
+        { [META_FILE]: '{"name":"posts","label":"Main posts"}' },
+        'main: relabel collection',
       )
 
       await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
@@ -792,15 +839,15 @@ describe('CmsWorker rebaseActiveBranches', () => {
       const META_FILE = 'content/.collection.json'
 
       const setup = await createBranchSetup(tmpDir, 'my-feature', {
-        initialFiles: { [META_FILE]: '{"entries":[]}' },
+        initialFiles: { [META_FILE]: '{"entries":[],"label":"Base"}' },
       })
 
       await setup.commitToBranch(
-        { [META_FILE]: '{"entries":[],"order":["branch"]}' },
+        { [META_FILE]: '{"entries":[],"label":"Branch"}' },
         'branch: update root schema',
       )
       await setup.pushToRemote(
-        { [META_FILE]: '{"entries":[],"order":["main"]}' },
+        { [META_FILE]: '{"entries":[],"label":"Main"}' },
         'main: update root schema',
       )
 
@@ -823,15 +870,15 @@ describe('CmsWorker rebaseActiveBranches', () => {
       const META_FILE = 'cms/content/.collection.json'
 
       const setup = await createBranchSetup(tmpDir, 'my-feature', {
-        initialFiles: { [META_FILE]: '{"entries":[]}' },
+        initialFiles: { [META_FILE]: '{"entries":[],"label":"Base"}' },
       })
 
       await setup.commitToBranch(
-        { [META_FILE]: '{"entries":[],"order":["branch"]}' },
+        { [META_FILE]: '{"entries":[],"label":"Branch"}' },
         'branch: update root schema',
       )
       await setup.pushToRemote(
-        { [META_FILE]: '{"entries":[],"order":["main"]}' },
+        { [META_FILE]: '{"entries":[],"label":"Main"}' },
         'main: update root schema',
       )
 
@@ -852,16 +899,16 @@ describe('CmsWorker rebaseActiveBranches', () => {
       const META_FILE = 'content/docs/.collection.json'
 
       const setup = await createBranchSetup(tmpDir, 'my-feature', {
-        initialFiles: { [META_FILE]: '{"name":"docs","order":[]}' },
+        initialFiles: { [META_FILE]: '{"name":"docs","label":"Docs"}' },
       })
 
       await setup.commitToBranch(
-        { [META_FILE]: '{"name":"docs","order":["branch"]}' },
-        'branch: reorder docs',
+        { [META_FILE]: '{"name":"docs","label":"Branch docs"}' },
+        'branch: relabel docs',
       )
       await setup.pushToRemote(
-        { [META_FILE]: '{"name":"docs","order":["main"]}' },
-        'main: reorder docs',
+        { [META_FILE]: '{"name":"docs","label":"Main docs"}' },
+        'main: relabel docs',
       )
 
       await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
@@ -872,8 +919,8 @@ describe('CmsWorker rebaseActiveBranches', () => {
       const meta = await readMeta(setup.branchPath)
       // No entry ContentIds, no root-collection match -- conflict is invisible to
       // the editor, same as the pre-existing "excludes non-entry files" case.
-      expect(meta?.conflictStatus).toBe('clean')
-      expect(meta?.conflictFiles).toEqual([])
+      expect(meta?.conflictStatus ?? 'clean').toBe('clean')
+      expect(meta?.conflictFiles ?? []).toEqual([])
     })
 
     it('records both entry and collection ContentIds for mixed conflicts', async () => {
@@ -884,21 +931,21 @@ describe('CmsWorker rebaseActiveBranches', () => {
 
       const setup = await createBranchSetup(tmpDir, 'my-feature', {
         initialFiles: {
-          [META_FILE]: '{"name":"posts","order":[]}',
+          [META_FILE]: '{"name":"posts","label":"Posts"}',
           [ENTRY_FILE]: '{"title":"base"}',
         },
       })
 
       await setup.commitToBranch(
         {
-          [META_FILE]: '{"name":"posts","order":["branch"]}',
+          [META_FILE]: '{"name":"posts","label":"Branch posts"}',
           [ENTRY_FILE]: '{"title":"branch version"}',
         },
         'branch: update both',
       )
       await setup.pushToRemote(
         {
-          [META_FILE]: '{"name":"posts","order":["main"]}',
+          [META_FILE]: '{"name":"posts","label":"Main posts"}',
           [ENTRY_FILE]: '{"title":"main version"}',
         },
         'main: update both',
@@ -973,10 +1020,12 @@ describe('CmsWorker rebaseActiveBranches', () => {
       expect(meta?.name).toBe(REF)
     })
 
-    it('is kept when a rebase records conflicts', async () => {
+    it('is kept when a merge records conflicts', async () => {
       const setup = await createBranchSetup(tmpDir, 'canopycms-prod-my-feature', {
         initialFiles: { [ENTRY_FILE]: '{"title":"base content"}' },
       })
+      // A merge publishes the clone's own ref, which is the name.
+      await setup.branchGit.raw(['branch', '-m', REF])
       await setup.commitToBranch({ [ENTRY_FILE]: '{"title":"branch version"}' })
       await setup.pushToRemote({ [ENTRY_FILE]: '{"title":"main version"}' })
       await writeMeta(setup.branchPath, setup.contentBranchesPath, { name: REF })
@@ -1256,5 +1305,257 @@ describe('CmsWorker rebaseActiveBranches', () => {
       expect(writeSpy).not.toHaveBeenCalled()
       writeSpy.mockRestore()
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Answering a request for the latest changes (base-update.ts)
+// ---------------------------------------------------------------------------
+
+describe('CmsWorker rebase loop answering a request for the latest changes', () => {
+  let tmpDir: string
+  let consoleSpy: MockConsole
+
+  beforeEach(async () => {
+    consoleSpy = mockConsole()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-base-update-test-'))
+  })
+
+  afterEach(async () => {
+    consoleSpy.restore()
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  const ENTRY_FILE = 'page.about.TESTENTRYabc.json'
+  const REQUESTED_AT = '2026-01-01T00:00:00.000Z'
+  const AFTER_REQUEST = Date.parse(REQUESTED_AT) + 1_000
+
+  /** One cycle of the rebase loop whose base fetch began at `fetchedAt`. */
+  const runCycle = (worker: CmsWorker, fetchedAt: number, requested?: Set<string>) =>
+    (
+      worker as unknown as {
+        rebaseActiveBranches(
+          policy: undefined,
+          gitHub: { tips: Map<string, string>; fetchedAt: number },
+          requested?: Set<string>,
+        ): Promise<void>
+      }
+    ).rebaseActiveBranches(undefined, { tips: new Map(), fetchedAt }, requested)
+
+  const remoteTip = async (setup: BranchSetup) => (await setup.remoteGit.revparse(['HEAD'])).trim()
+
+  it('answers "merged" with the fetch time and the base it took in', async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature')
+    await setup.pushToRemote({ 'new-file.txt': 'from main' })
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      baseUpdateRequestedAt: REQUESTED_AT,
+    })
+
+    await runCycle(makeWorker(tmpDir), AFTER_REQUEST)
+
+    expect((await readMeta(setup.branchPath))?.lastBaseUpdate).toEqual({
+      at: new Date(AFTER_REQUEST).toISOString(),
+      outcome: 'merged',
+      baseSha: await remoteTip(setup),
+    })
+  })
+
+  it('answers "conflicts" with the number of entries that kept the branch version', async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature', {
+      initialFiles: { [ENTRY_FILE]: '{"title":"base content"}' },
+    })
+    await setup.commitToBranch({ [ENTRY_FILE]: '{"title":"branch version"}' })
+    await setup.pushToRemote({ [ENTRY_FILE]: '{"title":"main version"}' })
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      baseUpdateRequestedAt: REQUESTED_AT,
+    })
+
+    await runCycle(makeWorker(tmpDir), AFTER_REQUEST)
+
+    const answer = (await readMeta(setup.branchPath))?.lastBaseUpdate
+    expect(answer?.outcome).toBe('conflicts')
+    expect(answer?.keptEntries).toBe(1)
+  })
+
+  it('answers "up-to-date" for a branch that already has the base', async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature')
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      baseUpdateRequestedAt: REQUESTED_AT,
+    })
+
+    await runCycle(makeWorker(tmpDir), AFTER_REQUEST)
+
+    expect((await readMeta(setup.branchPath))?.lastBaseUpdate).toEqual({
+      at: new Date(AFTER_REQUEST).toISOString(),
+      outcome: 'up-to-date',
+      baseSha: await remoteTip(setup),
+    })
+  })
+
+  it('answers "failed" for a branch saved again since the request, which the sync never commits', async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature')
+    await setup.pushToRemote({ 'new-file.txt': 'from main' })
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      baseUpdateRequestedAt: REQUESTED_AT,
+    })
+    await fs.writeFile(path.join(setup.branchPath, 'unsaved-edit.txt'), 'a later save')
+
+    await runCycle(makeWorker(tmpDir), AFTER_REQUEST)
+
+    expect((await readMeta(setup.branchPath))?.lastBaseUpdate?.outcome).toBe('failed')
+  })
+
+  it('leaves a request made after the fetch began for the next cycle, which answers it', async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature')
+    await setup.pushToRemote({ 'new-file.txt': 'from main' })
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      baseUpdateRequestedAt: REQUESTED_AT,
+    })
+    const worker = makeWorker(tmpDir)
+
+    // A cycle already running when the request arrived: it may have read an older base.
+    await runCycle(worker, Date.parse(REQUESTED_AT) - 1)
+    expect((await readMeta(setup.branchPath))?.lastBaseUpdate).toBeUndefined()
+
+    await runCycle(worker, AFTER_REQUEST)
+    expect((await readMeta(setup.branchPath))?.lastBaseUpdate).toMatchObject({
+      at: new Date(AFTER_REQUEST).toISOString(),
+      outcome: 'up-to-date',
+    })
+  })
+
+  it('writes nothing for a branch nobody asked, or whose request is answered', async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature')
+    await setup.pushToRemote({ 'new-file.txt': 'from main' })
+    const answered = { at: REQUESTED_AT, outcome: 'merged' as const }
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      baseUpdateRequestedAt: REQUESTED_AT,
+      lastBaseUpdate: answered,
+    })
+
+    await runCycle(makeWorker(tmpDir), AFTER_REQUEST)
+
+    expect((await readMeta(setup.branchPath))?.lastBaseUpdate).toEqual(answered)
+  })
+
+  it('leaves the request of a branch in review standing', async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature')
+    await setup.pushToRemote({ 'new-file.txt': 'from main' })
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      status: 'submitted',
+      baseUpdateRequestedAt: REQUESTED_AT,
+    })
+
+    await runCycle(makeWorker(tmpDir), AFTER_REQUEST)
+
+    expect((await readMeta(setup.branchPath))?.lastBaseUpdate).toBeUndefined()
+  })
+
+  const takeRequests = (worker: CmsWorker) =>
+    (
+      worker as unknown as { takeBranchSyncRequests(): { branches: Set<string> } }
+    ).takeBranchSyncRequests().branches
+
+  it('leaves the request standing while the schema gate holds the base', async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature')
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      baseUpdateRequestedAt: REQUESTED_AT,
+    })
+    const worker = makeWorker(tmpDir)
+    const report = (
+      worker as unknown as { ensureStatusReport(): { baseHold?: unknown } }
+    ).ensureStatusReport()
+    report.baseHold = {
+      since: REQUESTED_AT,
+      firstSeen: {},
+      incomingSha: 'a'.repeat(40),
+      missingSchemas: ['post'],
+      files: [],
+      fileCount: 0,
+    }
+
+    await runCycle(worker, AFTER_REQUEST)
+
+    expect((await readMeta(setup.branchPath))?.lastBaseUpdate).toBeUndefined()
+    expect(takeRequests(worker).size).toBe(0)
+  })
+
+  it('asks again for a requested branch whose provisioning lock is held elsewhere', async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature')
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      baseUpdateRequestedAt: new Date().toISOString(),
+    })
+    const release = await tryAcquireProvisioningLock(
+      setup.contentBranchesPath,
+      branchProvisioningLockName('my-feature'),
+    )
+    const worker = makeWorker(tmpDir)
+    await runCycle(worker, AFTER_REQUEST, new Set(['my-feature'])).finally(release)
+
+    expect((await readMeta(setup.branchPath))?.lastBaseUpdate).toBeUndefined()
+    expect([...takeRequests(worker)]).toEqual(['my-feature'])
+  })
+
+  it('asks again while a save holds a requested branch, and stops once the editor gives up', async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature')
+    // A save in progress holds the branch, which settles nothing.
+    const recent = new Date(Date.now() - 1_000).toISOString()
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      baseUpdateRequestedAt: recent,
+    })
+    const release = await tryAcquireContentWriteLock(setup.branchPath)
+    const worker = makeWorker(tmpDir)
+    try {
+      await runCycle(worker, Date.now())
+      expect([...takeRequests(worker)]).toEqual(['my-feature'])
+
+      const old = new Date(Date.now() - BASE_UPDATE_GIVE_UP_MS - 1_000).toISOString()
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, { baseUpdateRequestedAt: old })
+      await runCycle(worker, Date.now())
+      expect(takeRequests(worker).size).toBe(0)
+    } finally {
+      await release()
+    }
+  })
+
+  it("answers nothing while the branch's base lags GitHub's, and asks again", async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature')
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      baseUpdateRequestedAt: new Date(Date.now() - 1_000).toISOString(),
+    })
+    const worker = makeWorker(tmpDir)
+    // GitHub's base moved, but remote.git's ref didn't follow (a held or failed update).
+    await (
+      worker as unknown as {
+        rebaseActiveBranches(
+          policy: undefined,
+          gitHub: { tips: Map<string, string>; fetchedAt: number },
+        ): Promise<void>
+      }
+    ).rebaseActiveBranches(undefined, {
+      tips: new Map([['main', 'f'.repeat(40)]]),
+      fetchedAt: Date.now(),
+    })
+
+    expect((await readMeta(setup.branchPath))?.lastBaseUpdate).toBeUndefined()
+    expect([...takeRequests(worker)]).toEqual(['my-feature'])
+  })
+
+  it('syncs the requested branches first', async () => {
+    const setup = await createBranchSetup(tmpDir, 'a-first')
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+    const other = path.join(setup.contentBranchesPath, 'z-requested')
+    await simpleGit().clone(path.join(tmpDir, 'remote.git'), other)
+    await simpleGit(other).checkoutLocalBranch('z-requested')
+    await writeMeta(other, setup.contentBranchesPath, {})
+    await setup.pushToRemote({ 'new-file.txt': 'from main' })
+
+    await runCycle(makeWorker(tmpDir), AFTER_REQUEST, new Set(['z-requested']))
+
+    const order = consoleSpy
+      .all()
+      .log.filter((line) => line.includes('Rebasing '))
+      .map((line) => (line.includes('z-requested') ? 'z-requested' : 'a-first'))
+    expect(order).toEqual(['z-requested', 'a-first'])
   })
 })

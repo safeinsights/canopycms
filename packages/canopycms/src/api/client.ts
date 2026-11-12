@@ -17,7 +17,8 @@ import type { OperatingMode } from '../operating-mode/types'
 import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, CreateBranchBody, UpdateBranchAccessBody } from './branch'
 import type { BranchChangesResponse } from './branch-changes'
 import type { BranchEntryChangeResponse, RestoreEntryBody, RestoreEntryResponse } from './branch-entry-changes'
-import type { BranchMergeResponse, RequestChangesBody, SubmitBranchBody, SubmitBranchResponse } from './branch-status'
+import type { EntryConflictResponse, MergeConflictsResponse, ReleaseConflictsHoldResponse, ResolveEntryConflictBody, ResolveEntryConflictResponse } from './merge-conflicts'
+import type { BranchMergeResponse, RequestChangesBody, SubmitBranchBody, SubmitBranchResponse, UpdateFromBaseResponse } from './branch-status'
 import type { AdminDeleteTaskResponse, AdminRetryTaskResponse, AdminStatusResponse, AdminTasksResponse, BranchHealthResponse, DeleteArchivedBranchesBody, DeleteArchivedBranchesResponse, DismissUnpublishedResponse, PurgeBranchDirResponse, RepairBranchDirResponse, RepairContentDuplicatesResponse } from './admin'
 import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from './comments'
 import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse, RenameEntryBody, RenameEntryResponse, ValidateReferencesBody, WriteContentBody } from './content'
@@ -129,10 +130,37 @@ export class CanopyApiClient {
     },
   }
 
+  readonly conflicts = {
+    /** GET /:branch/conflicts */
+    list: (params: Record<string, string>, options?: RequestOptions): Promise<MergeConflictsResponse> => {
+      return this.request('GET', this.buildPath('/:branch/conflicts', params), undefined, 'standard', options)
+    },
+
+    /** GET /:branch/conflicts/...entryPath */
+    entry: (params: Record<string, string>, options?: RequestOptions): Promise<EntryConflictResponse> => {
+      return this.request('GET', this.buildPath('/:branch/conflicts/...entryPath', params), undefined, 'standard', options)
+    },
+
+    /** POST /:branch/resolve-entry/...entryPath */
+    resolveEntry: (params: Record<string, string>, body: ResolveEntryConflictBody, options?: RequestOptions): Promise<ResolveEntryConflictResponse> => {
+      return this.request('POST', this.buildPath('/:branch/resolve-entry/...entryPath', params), body, 'standard', options)
+    },
+
+    /** POST /:branch/conflicts/release-hold */
+    releaseHold: (params: Record<string, string>, options?: RequestOptions): Promise<ReleaseConflictsHoldResponse> => {
+      return this.request('POST', this.buildPath('/:branch/conflicts/release-hold', params), undefined, 'standard', options)
+    },
+  }
+
   readonly workflow = {
     /** POST /:branch/withdraw */
     withdraw: (params: Record<string, string>, options?: RequestOptions): Promise<BranchListItemResponse> => {
       return this.request('POST', this.buildPath('/:branch/withdraw', params), undefined, 'standard', options)
+    },
+
+    /** POST /:branch/update-from-base */
+    updateFromBase: (params: Record<string, string>, options?: RequestOptions): Promise<UpdateFromBaseResponse> => {
+      return this.request('POST', this.buildPath('/:branch/update-from-base', params), undefined, 'long', options)
     },
 
     /** POST /:branch/request-changes */

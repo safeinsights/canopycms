@@ -27,8 +27,11 @@ import { timeRequestPhase } from './utils/request-timing'
 import { CANOPY_META_DIR } from './utils/git'
 import { canopyLogWarn } from './utils/logger'
 
-/** Bump when BranchSchemaCacheEntry shape changes to auto-invalidate stale caches */
-const SCHEMA_CACHE_VERSION = 4
+/**
+ * Bump when BranchSchemaCacheEntry shape changes to auto-invalidate stale caches.
+ * @internal Exported for tests.
+ */
+export const SCHEMA_CACHE_VERSION = 4
 
 /** Minimum interval between mtime staleness checks (ms) */
 const MTIME_CHECK_DEBOUNCE_MS = 1000
@@ -148,6 +151,27 @@ async function schemaCacheDir(branchRoot: string): Promise<string> {
     () => false,
   )
   return isClone ? path.join(gitDir, 'canopycms') : path.join(branchRoot, CANOPY_META_DIR)
+}
+
+/**
+ * The entry types and collections of a branch's last persisted schema snapshot, for a reader with
+ * no entry schema registry to resolve one: the worker's merge, which names conflicts by them.
+ * Undefined when there is no snapshot of this version. Its freshness is not checked, so it can lag
+ * the tree.
+ */
+export async function readSchemaSnapshot(
+  branchRoot: string,
+): Promise<readonly FlatSchemaItem[] | undefined> {
+  try {
+    const cachePath = path.join(await schemaCacheDir(branchRoot), SCHEMA_CACHE_FILE)
+    const entry: unknown = JSON.parse(await fs.readFile(cachePath, 'utf-8'))
+    if (typeof entry !== 'object' || entry === null) return undefined
+    if (!('version' in entry) || entry.version !== SCHEMA_CACHE_VERSION) return undefined
+    if (!('flatSchema' in entry) || !Array.isArray(entry.flatSchema)) return undefined
+    return entry.flatSchema as FlatSchemaItem[]
+  } catch {
+    return undefined
+  }
 }
 
 /**

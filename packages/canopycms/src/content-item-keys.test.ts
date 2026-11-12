@@ -496,3 +496,25 @@ describe('a YAML or MD entry saved for the first time with keys', () => {
     expect(keysOf((await store.read(NOTES, unsafeAsSlug('crew'))).data.team)).toEqual(keys)
   })
 })
+
+describe('a sync that re-keys an item an author has open', () => {
+  it('refuses an open draft holding the old key: the version it was read at is gone', async () => {
+    await writeHome({ title: 'Home', team: [{ name: 'Ada' }, { name: 'Bo' }] })
+    const read = await readHomeApi()
+    const [ada, bo] = items(read.data.team)
+
+    // A sync brings in the base's edit to Bo, under the key the base's version reads under.
+    const rekeyed = { name: 'Bo (base)', [ITEM_KEY]: 'hBaseReadKey1' }
+    await writeHome({ title: 'Home', team: [ada, rekeyed] })
+    const later = new Date(Date.now() + 5_000)
+    await fs.utimes(homeFile, later, later)
+
+    // The author's open draft still holds Bo's old key.
+    const res = await writeHomeApi(
+      { ...read.data, title: 'Home, edited', team: [ada, bo] },
+      read.version,
+    )
+    expect(res.status).toBe(409)
+    expect(keysOf((await readFile()).team)).toEqual([ada[ITEM_KEY], 'hBaseReadKey1'])
+  })
+})

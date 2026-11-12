@@ -133,6 +133,17 @@ const branchMetadataShape = {
     })
     .optional()
     .catch(undefined),
+  baseUpdateRequestedAt: z.string().optional().catch(undefined),
+  // Dropped when malformed: it only ends the editor's wait, which then times out instead.
+  lastBaseUpdate: z
+    .object({
+      at: z.string(),
+      outcome: z.enum(['merged', 'up-to-date', 'conflicts', 'failed']),
+      baseSha: z.string().optional(),
+      keptEntries: z.number().int().nonnegative().optional(),
+    })
+    .optional()
+    .catch(undefined),
 } satisfies { [K in keyof BranchMetadata]-?: z.ZodTypeAny }
 
 /** The `branch` object, also embedded in the registry snapshot (branch-registry.ts). */

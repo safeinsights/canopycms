@@ -20,7 +20,7 @@ import path from 'node:path'
 import type { CanopyConfig } from './config'
 import type { EntrySchemaRegistry } from './schema/types'
 import { getConfigDefaults } from './config'
-import type { BranchContext, BranchMetadata, BranchPaths } from './types'
+import type { BranchContext, BranchMetadata, BranchPaths, CanopyUserId } from './types'
 import type { CanopyUser } from './user'
 import {
   createCheckBranchAccess,
@@ -40,7 +40,7 @@ import { enqueueTask } from './task-queue/cms-task-queue'
 import { getTaskQueueDir } from './task-queue/task-queue-config'
 import { baseBranchOf } from './utils/base-branch'
 import { shortNameOf } from './branch-param'
-import { detectHeadBranch, isCanopyInternalPath } from './utils/git'
+import { detectHeadBranch, isCanopyInternalPath, isRebaseInProgress } from './utils/git'
 import { readsFromCheckout } from './build-mode'
 import { timeRequestPhase } from './utils/request-timing'
 import {
@@ -54,7 +54,8 @@ import {
 import { getBranchMetadataFileManager, recordBranchEditor } from './branch-metadata'
 import { readBranchMetadataFile } from './branch-metadata-file'
 import { getErrorMessage, redactCredentials } from './utils/error'
-import { withContentWriteLock } from './utils/content-write-lock'
+import { ContentWriteLockBusyError, withContentWriteLock } from './utils/content-write-lock'
+import { assertNoOpenConflicts } from './merge-conflicts'
 import { ContentStore } from './content-store'
 import { entryLogicalPathOfFile } from './content-id-index'
 import { stampNewEntries, type StampedEntry } from './stamp-on-publish'
@@ -212,12 +213,27 @@ export interface CanopyServices {
     message: string
   }) => Promise<void>
   /**
+   * Commit the branch's saved but uncommitted work in its clone, pushing nothing. A later submit
+   * pushes it, or, on a branch published before, the worker's merge of the base once it moves
+   * (worker/rebase.ts, `aheadOfPublished`). Its trailers name the editors who saved since the last
+   * commit.
+   * Holds the branch's content-write lock; rejects with `ContentWriteLockBusyError` when busy.
+   * Resolves whether there was anything to commit.
+   */
+  commitSavedWork: (options: {
+    context: BranchContext
+    message: string
+    /** Names the editors; without it they are credited by id. */
+    lookupEditor?: EditorLookup
+  }) => Promise<boolean>
+  /**
    * Submit branch: fill new entries' empty `stampOnPublish` fields
    * (stamp-on-publish.ts), commit all changes (with the submitter's trailers)
    * and push to remote. Resolves with every path the branch changes against its base,
    * and with `stamped`, the entries this submit stamped.
    * Holds the branch's content-write lock; rejects with
-   * `ContentWriteLockBusyError` when busy, and with `NothingToSubmitError`
+   * `ContentWriteLockBusyError` when busy, with `OpenMergeConflictsError` before committing while
+   * a merge's conflicts are open (merge-conflicts.ts), and with `NothingToSubmitError`
    * before pushing when the branch changes nothing.
    */
   submitBranch: (options: {
@@ -390,9 +406,108 @@ async function _createCanopyServicesInternal(
     // lands on its detached head with the rebase's half-resolved index, and the
     // rebase's `--abort` discards it.
     await withContentWriteLock(options.context.branchRoot, async () => {
+      await refuseDuringRebase(options.context.branchRoot)
       await git.add(options.files)
       await git.commit(options.message)
     })
+  }
+
+  /**
+   * Inside the content-write lock, before a commit: a rebase left by a worker that died holds no
+   * lock, and its recovery (`rebase --abort`, worker/rebase.ts) would reset the branch past the
+   * commit, silently. In prod the worker clears it on its next cycle, so this is a retry.
+   */
+  const refuseDuringRebase = async (branchRoot: string): Promise<void> => {
+    if (await isRebaseInProgress(branchRoot)) throw new ContentWriteLockBusyError()
+  }
+
+  /**
+   * Commit every saved change but canopycms's own state, if there is one, with trailers naming
+   * `credited` and then the editors who saved since the last commit. Runs inside the caller's
+   * content-write lock. Resolves whether it committed.
+   */
+  const commitSavedChanges = async (
+    git: GitManager,
+    status: Awaited<ReturnType<GitManager['status']>>,
+    commit: {
+      message: string
+      credited?: SubmissionEditor
+      uncommitted: readonly CanopyUserId[]
+      named: ReadonlyMap<string, SubmissionEditor>
+    },
+  ): Promise<boolean> => {
+    if (!status.files.some((f) => !isCanopyInternalPath(f.path))) return false
+    await git.addAllExceptCanopyState()
+    const committers = commit.uncommitted.map((userId) => commit.named.get(userId) ?? { userId })
+    const trailers = buildEditorTrailers(
+      commit.credited ? [commit.credited, ...committers] : committers,
+      {
+        editedBy: config.gitEditedByTrailers ?? true,
+        coAuthoredBy: config.gitCoAuthoredByTrailers ?? false,
+      },
+    )
+    await git.commit(appendTrailers(commit.message, trailers))
+    return true
+  }
+
+  /** Clear the editors a commit named; a failure leaves them for the next commit to name again. */
+  const markCommitted = async (context: BranchContext, uncommitted: CanopyUserId[]) => {
+    if (uncommitted.length === 0) return
+    try {
+      await getBranchMetadataFileManager(context.branchRoot, context.baseRoot).markEditorsCommitted(
+        uncommitted,
+      )
+    } catch (err) {
+      console.warn(
+        `CanopyCMS: Could not clear the committed editors of ${context.branch.name}:`,
+        getErrorMessage(err),
+      )
+    }
+  }
+
+  /** The editors recorded on the branch, each with the name `lookupEditor` gives. */
+  const namedEditors = async (
+    context: BranchContext,
+    lookupEditor: EditorLookup | undefined,
+  ): Promise<Map<string, SubmissionEditor>> =>
+    new Map(
+      (
+        await describeEditors(
+          (await readRecordedEditors(context))?.editors ?? [],
+          memoizeLookup(lookupEditor),
+        )
+      ).map((e) => [e.userId, e]),
+    )
+
+  const commitSavedWork = async (options: {
+    context: BranchContext
+    message: string
+    lookupEditor?: EditorLookup
+  }): Promise<boolean> => {
+    const git = createGitManagerFor(options.context.branchRoot, {
+      baseBranch: options.context.branch.baseBranch,
+    })
+    await git.ensureAuthor({ name: config.gitBotAuthorName, email: config.gitBotAuthorEmail })
+    // Names are looked up before taking the lock, so a slow auth provider never holds it.
+    const named = await namedEditors(options.context, options.lookupEditor)
+    // [SYNC-C1] Locked for the same reason as submitBranch: a commit landing while a rebase is
+    // stopped on a conflict is discarded by its abort.
+    const committed = await withContentWriteLock(options.context.branchRoot, async () => {
+      await refuseDuringRebase(options.context.branchRoot)
+      await git.checkoutBranch(options.context.branch.name)
+      const status = await git.status()
+      const uncommitted = (await readRecordedEditors(options.context))?.uncommittedEditors ?? []
+      const done = await commitSavedChanges(git, status, {
+        message: options.message,
+        uncommitted,
+        named,
+      })
+      // Inside the lock, as submitBranch does: a save after it would record its editor as still
+      // uncommitted, and this would then clear them with the save left out of the commit.
+      if (done) await markCommitted(options.context, uncommitted)
+      return done
+    })
+    return committed
   }
 
   /** Runs inside submitBranch's content-write lock; a stamp that fails never blocks the submit. */
@@ -488,6 +603,9 @@ async function _createCanopyServicesInternal(
     let recorded: RecordedEditors = {}
     let stamped: StampedEntry[] = []
     const submitted = await withContentWriteLock(options.context.branchRoot, async () => {
+      await refuseDuringRebase(options.context.branchRoot)
+      // In the lock, as the worker records a merge's conflicts in it before the merge lands.
+      await assertNoOpenConflicts(options.context.branchRoot)
       await git.checkoutBranch(options.context.branch.name)
       // Before the status read, so the stamp joins this commit even when an earlier attempt
       // already committed the entry and only its push failed.
@@ -505,23 +623,13 @@ async function _createCanopyServicesInternal(
       // branch already had unpushed commits from an earlier attempt.
       // canopycms's own state under .canopy-meta/ is never content, so it neither
       // makes a commit worth creating nor gets staged into one.
-      let committed = false
       const preCommitSha = await git.headSha()
-      if (status.files.some((f) => !isCanopyInternalPath(f.path))) {
-        await git.addAllExceptCanopyState()
-        const committers = uncommitted.map((userId) => named.get(userId) ?? { userId })
-        const trailers = buildEditorTrailers(
-          options.submitter ? [options.submitter, ...committers] : committers,
-          {
-            editedBy: config.gitEditedByTrailers ?? true,
-            coAuthoredBy: config.gitCoAuthoredByTrailers ?? false,
-          },
-        )
-        await git.commit(
-          appendTrailers(options.message ?? `Submit ${options.context.branch.name}`, trailers),
-        )
-        committed = true
-      }
+      const committed = await commitSavedChanges(git, status, {
+        message: options.message ?? `Submit ${options.context.branch.name}`,
+        credited: options.submitter,
+        uncommitted,
+        named,
+      })
       // The diff runs after the commit so it covers saved-but-uncommitted edits too, and
       // before the push so a branch with nothing to submit never reaches the remote. A diff
       // that cannot be computed lets the submit through: the list only feeds the PR body, and
@@ -546,20 +654,7 @@ async function _createCanopyServicesInternal(
           effectiveBase,
         )
       }
-      // A failure here leaves them uncommitted, so the next commit names them again.
-      if (committed && uncommitted.length > 0) {
-        try {
-          await getBranchMetadataFileManager(
-            options.context.branchRoot,
-            options.context.baseRoot,
-          ).markEditorsCommitted(uncommitted)
-        } catch (err) {
-          console.warn(
-            `CanopyCMS: Could not clear the committed editors of ${options.context.branch.name}:`,
-            getErrorMessage(err),
-          )
-        }
-      }
+      if (committed) await markCommitted(options.context, uncommitted)
       if (committed || (await git.hasUnpushedCommits(options.context.branch.name))) {
         await git.push(options.context.branch.name)
       }
@@ -702,6 +797,7 @@ async function _createCanopyServicesInternal(
     githubService,
     bootstrapAdminIds,
     commitFiles,
+    commitSavedWork,
     submitBranch,
     commitToSettingsBranch,
     getSettingsBranchRoot,

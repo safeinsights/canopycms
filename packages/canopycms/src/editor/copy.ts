@@ -9,6 +9,7 @@ export const EDITOR_ACTIONS = {
   refreshFromServer: 'Refresh from server',
   submitForReview: 'Submit for review',
   withdrawFromReview: 'Withdraw from review',
+  getLatestChanges: 'Get latest changes',
   approve: 'Approve',
   review: 'Review',
   requestChanges: 'Request changes',
@@ -28,7 +29,19 @@ export const EDITOR_ACTIONS = {
   redoAllChanges: 'Redo all changes',
   restoreEntry: 'Restore entry',
   deleteEntry: 'Delete entry',
+  useLatestVersion: 'Use latest version',
+  keepYourVersion: 'Keep your version',
+  useBoth: 'Use both',
+  markResolved: 'Mark resolved',
+  releaseHold: 'Release hold',
+  removeIt: 'Remove it',
+  keepIt: 'Keep it',
+  keepItDeleted: 'Keep it deleted',
+  chooseAgain: 'Choose again',
 } as const
+
+/** Withdraw's confirm on a branch that conflicts with its base, which then gets the latest changes. */
+export const WITHDRAW_AND_GET_LATEST = 'Withdraw and get latest changes'
 
 /**
  * Why a list at its `maxItems` adds nothing more, as a disabled Add's Tooltip or an input's hint.

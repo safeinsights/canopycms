@@ -430,6 +430,75 @@ describe('useEntryManager', () => {
     )
   })
 
+  it('sends the conflicts a save resolves and reports which the server cleared', async () => {
+    const resolving = [
+      { mergeSha: 'd'.repeat(40), key: 'summary' },
+      { mergeSha: 'd'.repeat(40), key: 'body' },
+    ]
+    mockClient.content.write.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { resolvedConflicts: [resolving[0]] } as any,
+    })
+    const pending = vi.fn(() => resolving)
+    const onSaved = vi.fn()
+    const { result } = renderHook(
+      () => useEntryManager({ ...defaultOptions, conflictResolutions: { pending, onSaved } }),
+      { wrapper },
+    )
+    await loadForSave(result)
+    await result.current.saveEntry(mockEntry, { title: 'T' })
+
+    expect(pending).toHaveBeenCalledWith('main', mockEntry.contentId)
+    expect(mockClient.content.write).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ resolvedConflicts: resolving }),
+    )
+    expect(onSaved).toHaveBeenCalledWith('main', mockEntry.contentId, resolving, [resolving[0]])
+  })
+
+  it('sends no resolvedConflicts when no choice waits, and reports nothing', async () => {
+    mockClient.content.write.mockResolvedValueOnce({ ok: true, status: 200, data: {} as any })
+    const onSaved = vi.fn()
+    const { result } = renderHook(
+      () =>
+        useEntryManager({
+          ...defaultOptions,
+          conflictResolutions: { pending: () => [], onSaved },
+        }),
+      { wrapper },
+    )
+    await loadForSave(result)
+    await result.current.saveEntry(mockEntry, { title: 'T' })
+
+    const body = mockClient.content.write.mock.calls[0][1]
+    expect('resolvedConflicts' in body).toBe(false)
+    expect(onSaved).not.toHaveBeenCalled()
+  })
+
+  it('leaves choices waiting when the save is refused', async () => {
+    mockClient.content.write.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      error: 'This entry changed since you opened it.',
+    })
+    const onSaved = vi.fn()
+    const { result } = renderHook(
+      () =>
+        useEntryManager({
+          ...defaultOptions,
+          conflictResolutions: {
+            pending: () => [{ mergeSha: 'd'.repeat(40), key: 'summary' }],
+            onSaved,
+          },
+        }),
+      { wrapper },
+    )
+    await loadForSave(result)
+    await expect(result.current.saveEntry(mockEntry, { title: 'T' })).rejects.toBeTruthy()
+    expect(onSaved).not.toHaveBeenCalled()
+  })
+
   it('sends an adopted version with the next save', async () => {
     mockClient.content.write.mockResolvedValueOnce({ ok: true, status: 200, data: {} as any })
     const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })

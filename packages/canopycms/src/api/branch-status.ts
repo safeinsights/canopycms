@@ -6,6 +6,7 @@ import { toBranchListItem, type BranchListItem, type BranchListItemResponse } fr
 import type { StampedEntry } from '../stamp-on-publish'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { withdrawBranch } from './branch-withdraw'
+import { updateFromBase } from './branch-update-from-base'
 import { requestChanges, approveBranch } from './branch-review'
 import { markAsMerged } from './branch-merge'
 import { ARCHIVE_BRANCH_ROUTES } from './archived-branches'
@@ -17,6 +18,7 @@ import { isNonFastForwardRejection } from '../utils/git'
 import { ContentWriteLockBusyError } from '../utils/content-write-lock'
 import { submissionEditorFromUser, type SubmissionEditor } from '../submission-attribution'
 import { NothingToSubmitError } from '../services'
+import { OpenMergeConflictsError } from '../merge-conflicts'
 import { baseBranchOf } from '../utils/base-branch'
 import { shortNameOf } from '../branch-param'
 import { resolveEditorUrl } from '../editor-url'
@@ -24,6 +26,7 @@ import { resolveEditorUrl } from '../editor-url'
 // Re-export for client generation
 export type { BranchMergeResponse } from './branch-merge'
 export type { RequestChangesBody } from './branch-review'
+export type { UpdateFromBaseResponse } from './branch-update-from-base'
 
 /**
  * A submit's answer: the branch, plus the entries the submit stamped (stamp-on-publish.ts) when
@@ -162,6 +165,17 @@ const submitBranchForMergeHandler = async (
   } catch (err) {
     if (err instanceof NothingToSubmitError) {
       return { ok: false, status: 400, error: err.message }
+    }
+    if (err instanceof OpenMergeConflictsError) {
+      return {
+        ok: false,
+        status: 409,
+        code: 'OPEN_CONFLICTS',
+        error:
+          err.count === null
+            ? err.message
+            : `${err.message} Choose what to keep in "Show changes", then submit again.`,
+      }
     }
     const shortName = shortNameOf(ctx.services.config, branchContext.branch.name)
     // Retriable either way: a resubmit commits nothing new and pushes only
@@ -338,6 +352,7 @@ export const WORKFLOW_ROUTES = {
   getStatus: getBranchStatus,
   submit: submitBranchForMerge,
   withdraw: withdrawBranch,
+  updateFromBase,
   requestChanges: requestChanges,
   approve: approveBranch,
   markMerged: markAsMerged,

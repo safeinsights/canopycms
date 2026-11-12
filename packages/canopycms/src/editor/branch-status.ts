@@ -65,7 +65,7 @@ export function branchHoldMessage(hold: BranchHold, viewer: HoldViewer): string 
       if (viewer.role === 'review')
         return `${stuck} Use "Request changes" to send it back to its editor.`
       if (viewer.role === 'none') return `${stuck} Its editor needs to withdraw it from review.`
-      return `${stuck} Use "Withdraw from review", check any flagged entries, then submit it again.`
+      return `${stuck} Use "Withdraw from review" to bring in the latest changes, check any flagged entries, then submit it again.`
     }
     case 'retargeted':
       return `This pull request now merges into ${escapeForLog(hold.base)} on GitHub, so CanopyCMS isn't updating it. Update it on the pull request${viewer.isAdmin ? '' : ', or ask an admin'}.`

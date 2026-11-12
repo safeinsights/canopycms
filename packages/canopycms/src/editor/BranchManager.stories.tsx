@@ -358,6 +358,36 @@ export const CurrentBranchAndMenu: Story = {
   },
 }
 
+const getLatest = {
+  wait: 'none' as const,
+  requesting: false,
+  tooltip: 'Bring in changes made on the site since you started this branch.',
+  onRequest: () => console.log('Get latest changes'),
+}
+
+/** The open branch's card offers "Get latest changes" beside Submit for review. */
+export const CurrentBranchGetLatestChanges: Story = {
+  args: {
+    ...logged,
+    branches: reviewBranches,
+    currentBranchName: 'feature/landing',
+    currentBaseUpdate: getLatest,
+    user: { userId: 'alice', groups: [] },
+  },
+}
+
+/** While the latest changes come in, the card's button says so and Submit for review waits. */
+export const CurrentBranchGettingLatestChanges: Story = {
+  args: {
+    ...logged,
+    branches: reviewBranches,
+    currentBranchName: 'feature/landing',
+    currentBaseUpdate: { ...getLatest, wait: 'waiting' },
+    currentWorkflowBlockedReason: 'Wait for the latest changes to come in.',
+    user: { userId: 'alice', groups: [] },
+  },
+}
+
 /**
  * An admin with enough branches for the filter box. Live branches lead, newest first, and the
  * archived ones wait in the collapsed "Archived" section. The closed pull request's "…" menu

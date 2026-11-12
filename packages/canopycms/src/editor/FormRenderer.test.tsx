@@ -324,29 +324,48 @@ describe('FormRenderer', () => {
   })
 
   describe('conflictNotice prop', () => {
-    it('shows an informational notice when conflictNotice is true', () => {
-      const fields: FieldConfig[] = [{ name: 'title', type: 'string', label: 'Title' }]
+    const fields: FieldConfig[] = [{ name: 'title', type: 'string', label: 'Title' }]
+    const message = '2 fields changed by you and by someone else. Show changes to choose.'
+
+    it('says the conflicts once above the fields, with "Show changes" opening them', () => {
+      const onShowChanges = vi.fn()
       render(
         <CanopyCMSProvider>
           <FormRenderer
             fields={fields}
             value={{ title: 'hello' }}
             onChange={() => {}}
-            conflictNotice
+            conflictNotice={{ message, onShowChanges }}
           />
         </CanopyCMSProvider>,
       )
-      expect(screen.getByText(/Someone else has recently changed this page/)).toBeTruthy()
+      expect(screen.getByTestId('conflict-alert').textContent).toContain(message)
+      fireEvent.click(screen.getByRole('button', { name: 'Show changes' }))
+      expect(onShowChanges).toHaveBeenCalledTimes(1)
+    })
+
+    it('offers no "Show changes" when the drawer is not offered', () => {
+      render(
+        <CanopyCMSProvider>
+          <FormRenderer
+            fields={fields}
+            value={{ title: 'hello' }}
+            onChange={() => {}}
+            conflictNotice={{ message }}
+          />
+        </CanopyCMSProvider>,
+      )
+      expect(screen.getByTestId('conflict-alert')).toBeTruthy()
+      expect(screen.queryByRole('button', { name: 'Show changes' })).toBeNull()
     })
 
     it('does not show a conflict notice by default', () => {
-      const fields: FieldConfig[] = [{ name: 'title', type: 'string', label: 'Title' }]
       render(
         <CanopyCMSProvider>
           <FormRenderer fields={fields} value={{ title: 'hello' }} onChange={() => {}} />
         </CanopyCMSProvider>,
       )
-      expect(screen.queryByText(/Someone else has recently changed this page/)).toBeNull()
+      expect(screen.queryByTestId('conflict-alert')).toBeNull()
     })
   })
 

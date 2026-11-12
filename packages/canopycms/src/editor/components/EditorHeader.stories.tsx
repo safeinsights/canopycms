@@ -430,3 +430,105 @@ export const NarrowReviewerOnApproved: Story = {
   parameters: phone,
   args: { ...reviewing, branchStatus: 'approved' },
 }
+
+const getLatest = {
+  wait: 'none' as const,
+  requesting: false,
+  tooltip: 'Bring in changes made on the site since you started this branch.',
+  onRequest: noop,
+}
+
+/** Nothing unsaved, so "Get latest changes" can act. */
+export const GetLatestChanges: Story = {
+  args: { hasUnsavedChanges: false, modifiedCount: 0, baseUpdate: getLatest },
+}
+
+/** Unsaved changes hold it, with the reason in its Tooltip. */
+export const GetLatestChangesSaveFirst: Story = {
+  args: { baseUpdate: { ...getLatest, blockedReason: 'Save your changes first.' } },
+}
+
+/** Waiting on the worker: the button and the bar say so, and Submit for review waits. */
+export const GettingLatestChanges: Story = {
+  args: {
+    hasUnsavedChanges: false,
+    modifiedCount: 0,
+    baseUpdate: { ...getLatest, wait: 'waiting' },
+    latestWait: 'waiting',
+  },
+}
+
+/** Two minutes on: the form is editable again and Submit for review can act; the request stands. */
+export const LatestChangesSlow: Story = {
+  args: {
+    hasUnsavedChanges: false,
+    modifiedCount: 0,
+    baseUpdate: { ...getLatest, wait: 'slow' },
+    latestWait: 'slow',
+  },
+}
+
+/** Another viewer of a waiting branch, who may not ask: the bar shows the wait, with its spinner. */
+export const LatestChangesOtherViewer: Story = {
+  args: { hasUnsavedChanges: false, modifiedCount: 0, latestWait: 'waiting' },
+}
+
+/** Below `md` it moves into the branch's menu; the bar still shows the wait. */
+export const NarrowGettingLatestChanges: Story = {
+  parameters: phone,
+  args: {
+    hasUnsavedChanges: false,
+    modifiedCount: 0,
+    baseUpdate: { ...getLatest, wait: 'waiting' },
+    latestWait: 'waiting',
+  },
+}
+
+/** Below `md`, with unsaved changes: the menu item says to save first. */
+export const NarrowGetLatestChangesSaveFirst: Story = {
+  parameters: phone,
+  args: { baseUpdate: { ...getLatest, blockedReason: 'Save your changes first.' } },
+}
+
+/** To an admin, a branch held as its record of conflicts was set aside, with its way out. */
+export const ConflictRecordHeld: Story = {
+  args: {
+    userContext: { userId: 'admin-1', groups: ['Admins'] },
+    conflictRecordHeld: { onRelease: async () => ({ released: true }) },
+  },
+}
+
+/** The same at phone width: the way out stays beside its badge. */
+export const NarrowConflictRecordHeld: Story = {
+  ...ConflictRecordHeld,
+  parameters: phone,
+}
+
+/** A release the server refuses: its reason shows in the confirm, which stays open. */
+export const ConflictRecordHeldRefused: Story = {
+  args: {
+    userContext: { userId: 'admin-1', groups: ['Admins'] },
+    conflictRecordHeld: {
+      onRelease: async () => ({
+        error:
+          'This branch is busy: it is being synced, or a save is in flight. Try again in a moment.',
+        tone: 'warning',
+      }),
+    },
+  },
+}
+
+/** To anyone else, the hold and why Submit for review waits, with no way out of their own. */
+export const ConflictRecordHeldEditor: Story = {
+  args: { conflictRecordHeld: {} },
+}
+
+/** A reviewer on a held branch in review: Approve waits, with the reason. */
+export const ConflictRecordHeldReviewer: Story = {
+  args: {
+    branchStatus: 'submitted',
+    branchCreatedBy: 'author-1',
+    userContext: { userId: 'reviewer-1', groups: ['Reviewers'] },
+    conflictRecordHeld: {},
+  },
+}

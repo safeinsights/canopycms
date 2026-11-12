@@ -8,8 +8,14 @@ import {
   type BranchMetadataFile,
 } from '../branch-metadata'
 import { invalidateBranchContentCaches } from '../content-index-generation'
+import { MergeConflictStore } from '../merge-conflicts'
 import { isSettingsBranchName, sanitizeBranchName } from '../paths/branch-name'
-import type { PullRequestHold, PullRequestState } from '../types'
+import type { BaseUpdateOutcome, BranchMetadata, PullRequestHold, PullRequestState } from '../types'
+import {
+  BASE_UPDATE_CLOCK_SKEW_MS,
+  BASE_UPDATE_EARLY_RETRY_MS,
+  isBaseUpdatePending,
+} from '../base-update'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import {
   holdProvisionedWorkspace,
@@ -33,11 +39,15 @@ import {
   reconcilePendingRewrite,
 } from './history-rewrite'
 import { publishesBranch, type BranchPolicyDescription } from './branch-policy'
-import { commitsApart, conflictFilesToContentIds, recordConflicts } from './branch-merge'
+import { commitsApart, mergesAsGitDoes, planMerge } from './branch-merge'
 import type { GitHubPullRequest } from './github-gateway'
 import {
   bringInGitHubCommits,
+  catchUpWithPublished,
+  contains,
+  isPublished,
   mergeIntoBranch,
+  reconcileMergeConflicts,
   returnToReview,
   rewriteCleared,
   type GitHubCommitsArgs,
@@ -57,8 +67,9 @@ import type { WorkerContext } from './worker-context'
  * The rebase loop: the deepest leaf of the git-sync cluster, and the most
  * safety-critical part of the worker. `syncGit` (git-sync.ts) calls
  * `runRebaseCycle` once per cycle; every branch workspace behind the base
- * branch is rebased onto it, keeping the BRANCH's version of any conflicting
- * file. Three things make it the part most likely to misbehave under real EFS
+ * branch takes it in: by a rebase where git and the field merge agree there is
+ * nothing to decide, and by a merge (github-commits.ts' `mergeIntoBranch`)
+ * wherever there is. Three things make it the part most likely to misbehave under real EFS
  * and spot conditions, all documented at the point they happen:
  *
  * - it holds the [SYNC-C1] cross-host content-write lock for the whole rebase,
@@ -92,6 +103,7 @@ export type RebaseContext = Pick<
   | 'afterRebaseCompletedForTesting'
   | 'ensureSettingsBranch'
   | 'isDraining'
+  | 'requestBranchSync'
 >
 
 /**
@@ -168,7 +180,12 @@ export async function pollMergeState(
             }
           : null,
       )
-      if (saved) workerLog(`  PR #${prNumber} for ${branchDir} is merged -> archived`)
+      if (saved) {
+        workerLog(`  PR #${prNumber} for ${branchDir} is merged -> archived`)
+        // The base most likely moved with it, after this cycle's fetch: the next cycle brings
+        // that into the other branches without waiting out the interval.
+        ctx.requestBranchSync()
+      }
       return null
     }
 
@@ -271,48 +288,46 @@ interface RebaseRoundsResult {
   /** Whether `git rebase` reached a finished state. */
   completed: boolean
   /**
-   * Every conflicted path this loop resolved, across all rounds, in encounter
-   * order and with duplicates. Mostly `checkout --theirs`, but MODIFY/DELETE
-   * conflicts have no "their version" and are resolved by `git rm`/`git add`
-   * instead -- those land here too.
+   * A round met a conflict, so the rebase was aborted: one commit's replay can conflict where the
+   * whole merge does not, and the caller takes the base in by a merge instead.
    */
-  conflictedFiles: string[]
+  conflicted: boolean
   /**
-   * Set ONLY on the "unexpected error" and "conflict resolution failed" exits.
-   * MAX_REBASE_ROUNDS exhaustion is a distinct exit with no message of its own,
-   * and the caller's warning text must not conflate the two.
+   * Set ONLY on the "unexpected error" exit. MAX_REBASE_ROUNDS exhaustion is a
+   * distinct exit with no message of its own, and the caller's warning text
+   * must not conflate the two.
    */
   failureReason?: string
 }
 
 /**
- * Drive `git rebase` to a finished state, resolving each conflict in favour of
- * the BRANCH's version, and report what happened.
+ * Drive `git rebase` to a finished state, stopping at the first conflict, and
+ * report what happened. A conflict is never resolved here: settling one by rule
+ * in a round's replay reverts base's change, and the merge the caller falls back
+ * to decides each value against the fork point.
  *
- * ABORT OWNERSHIP is split across FOUR sites, none redundant; "the caller owns
- * the abort" would be wrong in a way that invites deleting a live one:
+ * ABORT OWNERSHIP is split across several sites, none redundant; "the caller
+ * owns the abort" would be wrong in a way that invites deleting a live one:
  * - the **unexpected-error** exit aborts HERE, before breaking, so the caller's
  *   `!completed` abort is a caught no-op for that path;
+ * - the **conflict** exit aborts HERE too, and the caller's `conflicted` branch,
+ *   which returns before `!completed`, calls `abortRebase` again: a no-op abort
+ *   that tells the caches the replay moved the tree back;
  * - the **lock-compromised** exit leaves the rebase in progress and is aborted
  *   by `rebaseOneBranch`'s own `lockCompromised() && !completed` branch,
  *   which returns `skippedLocked` before the `!completed` block below it is
  *   reached -- a distinct site that cannot be folded into that one;
- * - the **conflict-resolution-failure** and **MAX_REBASE_ROUNDS** exits are the
- *   only two the caller's `!completed` abort actually covers;
+ * - the **MAX_REBASE_ROUNDS** exit is the only one the caller's `!completed`
+ *   abort actually covers;
  * - a THROW (`branchGit.status()` is the first statement of the round catch, so
  *   a vanished `.git` or an EFS error escapes, as can the test hook beside it)
  *   unwinds to `rebaseOneBranch`'s outer catch, where the last-resort abort in
  *   its `finally` is the backstop -- not dead code.
  * (A fifth abort, in the interrupted-rebase recovery, cleans up a PREVIOUS run.)
  *
- * What this function DOES guarantee is narrower: no per-file resolution failure
- * escapes it. `checkout --theirs` on a MODIFY/DELETE conflict throws straight
- * out of the round loop, skipping both abort sites and wedging the clone
- * forever, so those set `failureReason` and break instead.
- *
  * `isLockCompromised` is re-read every round rather than passed as a value:
- * [SYNC-C1] the content-write lock can be lost BETWEEN rounds, and
- * `--continue`/`--skip` are as destructive as the initial rebase.
+ * [SYNC-C1] the content-write lock can be lost BETWEEN rounds, and `--skip` is
+ * as destructive as the initial rebase.
  */
 async function runRebaseRounds(
   ctx: Pick<RebaseContext, 'afterConflictDetectedForTesting'>,
@@ -321,16 +336,16 @@ async function runRebaseRounds(
   fetchedBaseTip: string,
   isLockCompromised: () => boolean,
 ): Promise<RebaseRoundsResult> {
-  const conflictedFiles: string[] = []
-  let nextAction: 'start' | 'continue' | 'skip' = 'start'
+  let nextAction: 'start' | 'skip' = 'start'
   let completed = false
+  let conflicted = false
   // Captured only on the "unexpected error" exit below, for the failed-summary
   // entry pushed at the `if (!completed)` check.
   let failureReason: string | undefined
 
   for (let round = 0; round < MAX_REBASE_ROUNDS && !completed; round++) {
     // Re-checked every round: the compromise can land between rounds, and
-    // `--continue`/`--skip` are as destructive as the initial rebase. Handled
+    // `--skip` is as destructive as the initial rebase. Handled
     // after the loop so it cannot be mistaken for the `!completed`
     // rebase-FAILURE path below.
     if (isLockCompromised()) break
@@ -339,92 +354,40 @@ async function runRebaseRounds(
         // The pinned base tip fetched above; a fetch by path updates no
         // remote-tracking ref.
         await branchGit.rebase([fetchedBaseTip])
-      } else if (nextAction === 'continue') {
-        await branchGit.rebase(['--continue'])
       } else {
         await branchGit.rebase(['--skip'])
       }
       completed = true
     } catch (rebaseErr) {
-      nextAction = 'continue'
       const st = await branchGit.status([...SHARED_REPO_STATUS_ARGS])
 
       if (st.conflicted.length > 0) {
         await ctx.afterConflictDetectedForTesting()
-        // During rebase, --theirs = the branch being replayed (the editor's
-        // work): git rebase reverses ours/theirs, "ours" being the target.
-        //
-        // MODIFY/DELETE conflicts have no "their version" to check out and must
-        // be resolved by staging a delete or an add instead. `git checkout
-        // --theirs` on one exits non-zero and simple-git throws -- and because
-        // this loop body IS the round loop's catch, that throw escapes the
-        // round loop entirely, skipping BOTH `rebase --abort` sites below and
-        // wedging the clone mid-rebase forever. The index/working-tree code
-        // pair identifies which side deleted (verified against real git):
-        //
-        //   U/D  "deleted by them"  -- the BRANCH deleted it, base modified it,
-        //        and git leaves base's version in the tree. Keeping the branch
-        //        version means honouring the delete: git rm.
-        //   D/U  "deleted by us"    -- base deleted it, the BRANCH modified it,
-        //        and git leaves the branch's version in the tree. Keeping the
-        //        branch version means keeping it: git add.
-        //
-        // A per-file resolution that STILL fails routes into the `!completed`
-        // path below, which aborts and records, rather than escaping.
-        //
-        // `--sparse` on add/rm: a conflicted path outside a sparse clone's cone
-        // is materialised for the conflict, but git refuses to stage it without.
-        const conflictKind = new Map(st.files.map((f) => [f.path, `${f.index}${f.working_dir}`]))
-        let resolutionFailure: string | undefined
-        for (const file of st.conflicted) {
-          const kind = conflictKind.get(file)
-          try {
-            if (kind === 'UD') {
-              await branchGit.raw(['rm', '-f', '--sparse', '--', file])
-            } else if (kind === 'DU') {
-              await branchGit.raw(['add', '--sparse', '--', file])
-            } else {
-              await branchGit.raw(['checkout', '--theirs', '--', file])
-              await branchGit.raw(['add', '--sparse', '--', file])
-            }
-          } catch (resolveErr: unknown) {
-            resolutionFailure =
-              `failed to resolve conflicted file '${file}' (status ${kind ?? '??'}): ` +
-              getErrorMessage(resolveErr)
-            break
-          }
-          conflictedFiles.push(file)
-        }
-        if (resolutionFailure !== undefined) {
-          // Same exit shape as the "unexpected error" branch below: set
-          // failureReason and break, letting the `!completed` block do the
-          // single `rebase --abort` and record the failure once.
-          failureReason = resolutionFailure
-          break
-        }
-        // nextAction stays 'continue'
+        workerLog(`  ${branchDir}: a replayed commit conflicts, so the base comes in by a merge`)
+        conflicted = true
+        await branchGit.rebase(['--abort']).catch(() => {})
+        break
+      }
+      const msg = rebaseErr instanceof Error ? rebaseErr.message : ''
+      if (
+        msg.toLowerCase().includes('nothing to commit') ||
+        msg.toLowerCase().includes('apply --skip')
+      ) {
+        // A replayed commit base already holds: skip it.
+        nextAction = 'skip'
       } else {
-        const msg = rebaseErr instanceof Error ? rebaseErr.message : ''
-        if (
-          msg.toLowerCase().includes('nothing to commit') ||
-          msg.toLowerCase().includes('apply --skip')
-        ) {
-          // Empty commit after --theirs resolution — skip it
-          nextAction = 'skip'
-        } else {
-          // Unexpected error — abort and leave the branch behind.
-          // conflictStatus/conflictFiles are deliberately not updated: the
-          // rebase did not complete, so it replaced nothing to record.
-          workerLogWarn(`  Unexpected rebase error in ${branchDir}: ${msg || 'Unknown error'}`)
-          failureReason = msg || 'Unknown error'
-          await branchGit.rebase(['--abort']).catch(() => {})
-          break
-        }
+        // Unexpected error — abort and leave the branch behind.
+        // conflictStatus/conflictFiles are deliberately not updated: the
+        // rebase did not complete, so it replaced nothing to record.
+        workerLogWarn(`  Unexpected rebase error in ${branchDir}: ${msg || 'Unknown error'}`)
+        failureReason = msg || 'Unknown error'
+        await branchGit.rebase(['--abort']).catch(() => {})
+        break
       }
     }
   }
 
-  return { completed, conflictedFiles, failureReason }
+  return { completed, conflicted, failureReason }
 }
 
 /**
@@ -534,6 +497,114 @@ type BranchRebaseOutcome =
     }
 
 /**
+ * What one branch's sync tells a request for the latest changes standing on it
+ * (base-update.ts), filled in by {@link rebaseOneBranch} as it goes.
+ */
+interface BaseUpdateProbe {
+  /** The branch's ref and its unanswered request, as read when its sync began. */
+  request?: { branchRef: string; requestedAt: string }
+  /** The base commit the branch was compared with. */
+  baseSha?: string
+  /** It already contained that commit. */
+  upToDate?: boolean
+  /** Entries the merge that took the base in left a conflict in for a person. */
+  keptEntries?: number
+}
+
+/** What an outcome answers a request with; undefined when it settles nothing. */
+function answerFor(
+  outcome: BranchRebaseOutcome,
+  probe: BaseUpdateProbe,
+): BaseUpdateOutcome | undefined {
+  // `rebased` on a failure: the base came in, and only publishing the rewrite failed.
+  if (outcome.kind === 'rebased' || (outcome.kind === 'failed' && outcome.rebased)) {
+    return probe.keptEntries ? 'conflicts' : 'merged'
+  }
+  if (outcome.kind === 'none') return probe.upToDate ? 'up-to-date' : undefined
+  // A save since the request, which the sync never commits: the editor's Retry commits it.
+  if (outcome.kind === 'failed' || outcome.kind === 'skippedDirty') return 'failed'
+  return undefined
+}
+
+/** Whether a request is unanswered and recent enough for the worker to chase with early cycles. */
+function worthAnotherCycle(
+  branch: Pick<BranchMetadata, 'status' | 'baseUpdateRequestedAt' | 'lastBaseUpdate'>,
+): boolean {
+  const age = Date.now() - Date.parse(branch.baseUpdateRequestedAt ?? '')
+  return (
+    branch.status === 'editing' &&
+    isBaseUpdatePending(branch) &&
+    age >= -BASE_UPDATE_CLOCK_SKEW_MS &&
+    age < BASE_UPDATE_EARLY_RETRY_MS
+  )
+}
+
+/**
+ * Answer the branch's request for the latest changes in `lastBaseUpdate`, which ends the editor's
+ * wait. Only from a cycle whose GitHub fetch began at or after the request, and only once the
+ * branch holds the base that fetch found: an earlier fetch may predate the changes asked for, and a
+ * base ref that didn't move (a held or failed update) isn't the latest. While the schema gate holds
+ * the base the request stands. Anything else that settles nothing, a lock or a GitHub step on its
+ * way among them, asks for another early cycle while the request is recent. Never throws.
+ */
+async function answerBaseUpdate(
+  ctx: RebaseContext,
+  branchDir: string,
+  branchPath: string,
+  probe: BaseUpdateProbe,
+  outcome: BranchRebaseOutcome,
+  gitHub: GitHubSnapshot | undefined,
+  requested: boolean,
+): Promise<void> {
+  const { request } = probe
+  if (!request) {
+    // Skipped before its request was read: a provisioning lock held elsewhere.
+    if (requested && outcome.kind === 'skippedLocked') {
+      const meta = await BranchMetadataFileManager.loadOnly(branchPath).catch(() => null)
+      if (meta && worthAnotherCycle(meta.branch)) ctx.requestBranchSync(branchDir)
+    }
+    return
+  }
+  if (!gitHub || ctx.ensureStatusReport().baseHold) return
+  const askAgain = () => {
+    if (worthAnotherCycle({ status: 'editing', baseUpdateRequestedAt: request.requestedAt })) {
+      ctx.requestBranchSync(request.branchRef)
+    }
+  }
+  // The request's time is the Lambda's clock and the fetch's this host's: both keep NTP time.
+  if (gitHub.fetchedAt < Date.parse(request.requestedAt)) return askAgain()
+  const answer = answerFor(outcome, probe)
+  if (answer === undefined) return askAgain()
+  const gitHubBase = gitHub.tips.get(ctx.baseBranch)
+  if (answer !== 'failed' && gitHubBase !== undefined && probe.baseSha !== gitHubBase) {
+    return askAgain()
+  }
+  const lastBaseUpdate = {
+    at: new Date(gitHub.fetchedAt).toISOString(),
+    outcome: answer,
+    ...(probe.baseSha !== undefined && { baseSha: probe.baseSha }),
+    ...(answer === 'conflicts' && { keptEntries: probe.keptEntries }),
+  }
+  try {
+    // A newer request, made after this fetch began, waits for the next cycle's answer.
+    const saved = await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update(
+      (existing) =>
+        existing?.branch.name === request.branchRef &&
+        existing.branch.status === 'editing' &&
+        existing.branch.baseUpdateRequestedAt === request.requestedAt
+          ? { branch: { lastBaseUpdate } }
+          : null,
+      { keepUpdatedAt: true },
+    )
+    if (saved) workerLog(`  ${branchDir}: answered the request for the latest changes (${answer})`)
+  } catch (err) {
+    workerLogWarn(
+      `  ${branchDir}: could not record the answer to its request for the latest changes: ${getErrorMessage(err)}`,
+    )
+  }
+}
+
+/**
  * Rebase every branch workspace that is behind the base branch, one cycle.
  *
  * The per-branch work is {@link rebaseOneBranch}; what stays here is the walk
@@ -549,6 +620,7 @@ export async function runRebaseCycle(
   ctx: RebaseContext,
   gatewayPolicy?: BranchPolicyDescription,
   gitHub?: GitHubSnapshot,
+  requested: ReadonlySet<string> = new Set(),
 ): Promise<RebaseSummary> {
   const rebased: string[] = []
   const skippedDirty: string[] = []
@@ -561,6 +633,8 @@ export async function runRebaseCycle(
   } catch {
     return { rebased, skippedDirty, skippedLocked, failed }
   }
+  // Branches someone is waiting on go first; the sort is stable, so the rest keep their order.
+  branchDirs.sort((a, b) => Number(requested.has(b)) - Number(requested.has(a)))
 
   for (const branchDir of branchDirs) {
     // A draining worker finishes the branch it is rebasing and starts no other:
@@ -594,8 +668,8 @@ export async function runRebaseCycle(
 
     // The base branch's own clone is refreshed ff-only by
     // refreshBaseBranchWorkspace() earlier in syncGit(). Routing it through
-    // this conflict-resolution loop could rewrite its history (the --theirs
-    // loop below) and stamp meaningless conflict metadata on it. Compare
+    // this loop could rewrite its history (the rebase below) and stamp
+    // meaningless conflict metadata on it. Compare
     // sanitized-vs-sanitized: branchDir is a filesystem name, ctx.baseBranch
     // is raw.
     if (branchDir === ctx.sanitizedBaseBranch) {
@@ -609,7 +683,24 @@ export async function runRebaseCycle(
       workerLogWarn(`  Skipping ${branchDir}: settings branch, never a content workspace`)
       continue
     }
-    const outcome = await holdAndRebaseOneBranch(ctx, branchDir, branchPath, gatewayPolicy, gitHub)
+    const probe: BaseUpdateProbe = {}
+    const outcome = await holdAndRebaseOneBranch(
+      ctx,
+      branchDir,
+      branchPath,
+      gatewayPolicy,
+      gitHub,
+      probe,
+    )
+    await answerBaseUpdate(
+      ctx,
+      branchDir,
+      branchPath,
+      probe,
+      outcome,
+      gitHub,
+      requested.has(branchDir),
+    )
     if (outcome.kind === 'rebased') rebased.push(branchDir)
     else if (outcome.kind === 'skippedDirty') skippedDirty.push(branchDir)
     else if (outcome.kind === 'skippedLocked') skippedLocked.push(branchDir)
@@ -693,6 +784,7 @@ async function holdAndRebaseOneBranch(
   branchPath: string,
   gatewayPolicy: BranchPolicyDescription | undefined,
   gitHub: GitHubSnapshot | undefined,
+  probe: BaseUpdateProbe,
 ): Promise<BranchRebaseOutcome> {
   let hold: ProvisionedWorkspaceHold
   try {
@@ -718,6 +810,7 @@ async function holdAndRebaseOneBranch(
       hold.isCompromised,
       gatewayPolicy,
       gitHub,
+      probe,
     )
   } finally {
     await releaseProvisionedWorkspace(hold.release, branchDir)
@@ -763,6 +856,44 @@ async function lacksPublishedCommits(
   if (published === null) return false
   await fetchFromRemoteGit(git, ctx.remoteGitPath, `refs/heads/${branchRef}`)
   return (await commitsApart(git, 'HEAD', published)).onlyB > 0
+}
+
+/**
+ * {@link reconcileMergeConflicts} for a submitted or approved branch, whose merges of GitHub's
+ * commits can leave records too, under the content-write lock as for a branch being edited. Only
+ * for a clone with a record, or with `conflictFiles` to clear, so others cost one stat. Never
+ * throws.
+ */
+async function reconcileInReview(
+  ctx: RebaseContext,
+  branchDir: string,
+  branchPath: string,
+  metaFile: BranchMetadataFile,
+  isProvisioningLockCompromised: () => boolean,
+): Promise<void> {
+  try {
+    const flagged = (metaFile.branch.conflictFiles?.length ?? 0) > 0
+    if (!flagged && !(await new MergeConflictStore(branchPath).exists())) return
+    await assertSharedRepoConfig(branchPath, 'worktree')
+    await withContentLockInReview(
+      branchDir,
+      branchPath,
+      isProvisioningLockCompromised,
+      async () => {
+        await reconcileMergeConflicts(ctx, {
+          git: sharedRepoGit(branchPath, 'worktree'),
+          branchPath,
+          branchDir,
+          branchRef: await readCloneRef(branchPath),
+        })
+        return { kind: 'none' }
+      },
+    )
+  } catch (err) {
+    workerLogWarn(
+      `  ${branchDir}: could not reconcile its conflict record: ${getErrorMessage(err)}`,
+    )
+  }
 }
 
 /**
@@ -870,7 +1001,8 @@ function pullRequestHoldOf(
 /**
  * Record {@link pullRequestHoldOf} for the branch card, when it changed: every save regenerates the
  * branch registry. It's bookkeeping, so it leaves `updatedAt`, which the card shows as an edit.
- * Best-effort: a failure leaves the card as it was until the next cycle.
+ * `tookBase` says this cycle merged the base in, which GitHub measured the pull request before, so
+ * nothing holds it. Best-effort: a failure leaves the card as it was until the next cycle.
  */
 async function recordPullRequestHold(
   ctx: RebaseContext,
@@ -878,11 +1010,17 @@ async function recordPullRequestHold(
   branchPath: string,
   metaFile: BranchMetadataFile,
   pullRequest: GitHubPullRequest,
+  tookBase: boolean,
 ): Promise<void> {
   const { name, baseBranch, pullRequestHold, submittedAt } = metaFile.branch
-  const hold = pullRequestHoldOf(pullRequest, baseBranch ?? ctx.baseBranch)
-  if (hold === null || JSON.stringify(hold) === JSON.stringify(pullRequestHold)) return
   try {
+    let hold = tookBase ? undefined : pullRequestHoldOf(pullRequest, baseBranch ?? ctx.baseBranch)
+    // A conflict counts only on the commit the clone holds: one measured on an older head, as while
+    // the worker's own merge is on its way to GitHub, says nothing about the branch now.
+    if (hold?.kind === 'conflicts' && pullRequest.headSha !== (await cloneHead(branchPath))) {
+      hold = pullRequestHold?.kind === 'conflicts' ? null : undefined
+    }
+    if (hold === null || JSON.stringify(hold) === JSON.stringify(pullRequestHold)) return
     await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update(
       // A newer submit's pull request isn't the one measured.
       (current) =>
@@ -896,17 +1034,25 @@ async function recordPullRequestHold(
   }
 }
 
+/** The commit a branch clone holds. */
+async function cloneHead(branchPath: string): Promise<string> {
+  await assertSharedRepoConfig(branchPath, 'worktree')
+  return (await sharedRepoGit(branchPath, 'worktree').revparse(['HEAD'])).trim()
+}
+
 /**
  * Merge the base into a submitted or approved branch whose open pull request GitHub reports
- * `behind`, so it can merge. It keeps the approval and the PR body: the pull request's diff is what
- * was reviewed. Only from a clone, `remote.git` and GitHub all at one commit, since anything else
- * is work still on its way, and only for the base GitHub measured against: a pull request someone
- * retargeted would gain another branch's commits under its approval. A branch with a failed sync
- * is left for its next submit or a retry of the task, as a push here would clear that failure with
- * the PR still stale. A conflict leaves the branch as it is; withdrawing it brings the rebase
- * loop's rule into play, where an editor can see the result. A failure goes in the cycle's summary
- * only: the step before this one clears `rebaseFailure` each cycle, so recording it would reset its
- * age every time.
+ * `behind` or `dirty`, so it can merge. A submitted branch stays submitted: the pull request's diff
+ * is still the author's changes. An approved branch keeps its approval only for git's own clean
+ * merge; any merge the field merge settled sends it back to review (`mergeIntoBranch`). Only from a
+ * clone, `remote.git` and GitHub all at one commit, since anything else is work still on its way,
+ * and only for the base GitHub measured against: a pull request someone retargeted would gain
+ * another branch's commits under its approval. A branch with a failed sync is left for its next
+ * submit or a retry of the task, as a push here would clear that failure with the PR still stale. A
+ * merge that leaves a value or file for a person leaves the branch as it is (`mergeIntoBranch`'s
+ * `inReview`), and withdrawing it lets the merge for a branch being edited record the conflicts,
+ * where an editor can resolve them. A failure goes in the cycle's summary only: the step before
+ * this one clears `rebaseFailure` each cycle, so recording it would reset its age every time.
  * Never throws.
  */
 async function updateBranchInReviewFromBase(
@@ -966,7 +1112,7 @@ async function updateBranchInReviewFromBase(
           other: baseTip,
           message: `Merge ${base} into ${branchRef}`,
           fromGitHub: false,
-          stopOnConflict: true,
+          inReview: true,
         })
         if (outcome.kind === 'blocked') {
           const error = redactCredentials(outcome.reason)
@@ -1019,8 +1165,9 @@ async function withContentLockInReview(
 }
 
 /**
- * Rebase ONE branch workspace onto the base branch, keeping the branch's
- * version of every conflicting file.
+ * Bring the base branch into ONE branch workspace: by a rebase where nothing
+ * needs a person, else by a merge that leaves each value both sides changed
+ * differently for one.
  *
  * `branchDir` is the sanitized directory name and `branchPath` its absolute
  * path; the caller has already established that this is a real branch
@@ -1037,6 +1184,7 @@ async function rebaseOneBranch(
   isProvisioningLockCompromised: () => boolean,
   gatewayPolicy: BranchPolicyDescription | undefined,
   gitHub: GitHubSnapshot | undefined,
+  probe: BaseUpdateProbe = {},
 ): Promise<BranchRebaseOutcome> {
   // Read only by the catch below. See the `rebased` rider on
   // BranchRebaseOutcome.
@@ -1052,6 +1200,16 @@ async function rebaseOneBranch(
       gatewayPolicy?.namespace,
     )
     const branchStatus = metaFile?.branch.status
+    // Only an editing branch takes the base in, so only its request can be answered.
+    const requestedAt = metaFile?.branch.baseUpdateRequestedAt
+    if (
+      metaFile !== null &&
+      branchStatus === 'editing' &&
+      requestedAt !== undefined &&
+      isBaseUpdatePending(metaFile.branch)
+    ) {
+      probe.request = { branchRef: metaFile.branch.name, requestedAt }
+    }
 
     // Skip branches that must not be mutated:
     // - submitted/approved: in review, so never rewrite history under an active
@@ -1060,6 +1218,7 @@ async function rebaseOneBranch(
     // - archived: finished, with no PR left to poll.
     if (metaFile !== null && (branchStatus === 'submitted' || branchStatus === 'approved')) {
       workerLog(`  Skipping ${branchDir} (${branchStatus})`)
+      await reconcileInReview(ctx, branchDir, branchPath, metaFile, isProvisioningLockCompromised)
       const outcome = await bringInCommitsForBranchInReview(
         ctx,
         branchDir,
@@ -1070,27 +1229,27 @@ async function rebaseOneBranch(
         gitHub,
       )
       const pullRequest = await pollMergeState(ctx, branchDir, branchPath, metaFile)
-      if (pullRequest !== null) {
-        await recordPullRequestHold(ctx, branchDir, branchPath, metaFile, pullRequest)
-      }
-      // GitHub reports `behind` only where up-to-date branches are required, so a repository
-      // that doesn't require them gets no commits or CI runs from this.
-      if (
+      // GitHub reports `behind` only where up-to-date branches are required, and `dirty` only where
+      // git's merge conflicts, so a pull request that merges as it is gets no commits or CI runs.
+      const updated =
         outcome.kind === 'none' &&
         pullRequest?.state === 'open' &&
-        pullRequest.mergeable_state === 'behind'
-      ) {
-        return updateBranchInReviewFromBase(
-          ctx,
-          branchDir,
-          branchPath,
-          pullRequest,
-          isProvisioningLockCompromised,
-          gatewayPolicy,
-          gitHub,
-        )
+        (pullRequest.mergeable_state === 'behind' || pullRequest.mergeable_state === 'dirty')
+          ? await updateBranchInReviewFromBase(
+              ctx,
+              branchDir,
+              branchPath,
+              pullRequest,
+              isProvisioningLockCompromised,
+              gatewayPolicy,
+              gitHub,
+            )
+          : outcome
+      if (pullRequest !== null) {
+        const tookBase = updated.kind === 'rebased'
+        await recordPullRequestHold(ctx, branchDir, branchPath, metaFile, pullRequest, tookBase)
       }
-      return outcome
+      return updated
     }
     if (branchStatus === 'archived') {
       workerLog(`  Skipping ${branchDir} (${branchStatus})`)
@@ -1104,13 +1263,11 @@ async function rebaseOneBranch(
     const branchGit = sharedRepoGit(branchPath, 'worktree')
 
     // [SYNC-C1] Take the branch's cross-host content-write lock BEFORE the
-    // dirty check, and hold it for the whole rebase. The dirty check alone is
-    // check-then-act, and its residual window spans fetch, replay and N
-    // conflict rounds of awaited git subprocesses on EFS. A save landing in
-    // there is destroyed two ways: `checkout --theirs` below overwrites the
-    // just-saved file with the branch's committed version and the rebase then
-    // SUCCEEDS (nothing logs a failure at all), and `rebase --abort`
-    // hard-resets the tree. The editor already got its 200 either way.
+    // dirty check, and hold it for the whole rebase or merge. The dirty check
+    // alone is check-then-act, and its residual window spans fetch, replay and
+    // the merge's awaited git subprocesses on EFS. A save landing in there makes
+    // the next replayed commit fail, and the `rebase --abort` that follows
+    // hard-resets the tree, discarding it. The editor already got its 200.
     //
     // Zero-retry acquisition, deliberately: on contention this branch is
     // skipped and retried next sync cycle (~5 min), the same principle as the
@@ -1237,6 +1394,12 @@ async function rebaseOneBranch(
       // every publish path stays disarmed -- the safe direction.
       const branchRef = (await branchGit.revparse(['--abbrev-ref', 'HEAD'])).trim()
       const canPublish = branchRef.length > 0 && branchRef !== 'HEAD'
+      await reconcileMergeConflicts(ctx, {
+        git: branchGit,
+        branchPath,
+        branchDir,
+        branchRef: canPublish ? branchRef : null,
+      })
 
       const commitArgs: GitHubCommitsArgs | null =
         canPublish && metaFile !== null
@@ -1264,6 +1427,12 @@ async function rebaseOneBranch(
         else if (outcome.kind !== 'in-step') {
           return editorDirt.length > 0 ? { kind: 'skippedDirty' } : { kind: 'none' }
         }
+        // A merge of the base this worker published and never moved the clone to comes first.
+        const caughtUp = await catchUpWithPublished(ctx, commitArgs)
+        if (caughtUp?.kind === 'blocked') {
+          return recordBlocked(ctx, branchDir, branchPath, branchRef, caughtUp.reason)
+        }
+        if (caughtUp) return editorDirt.length > 0 ? { kind: 'skippedDirty' } : { kind: 'none' }
       }
 
       if (editorDirt.length > 0) {
@@ -1323,8 +1492,10 @@ async function rebaseOneBranch(
         10,
       )
       const meta = getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath)
+      probe.baseSha = fetchedBaseTip
 
       if (behindCount === 0) {
+        probe.upToDate = true
         // Already in sync -- the overwhelmingly common outcome per branch per
         // cycle, so skip the save entirely when metadata already reflects a
         // clean state. save() eager-regenerates the branch registry
@@ -1335,9 +1506,8 @@ async function rebaseOneBranch(
         // concurrent editor-driven metadata change in that window is not
         // clobbered by a stale skip decision.
         //
-        // Catching up leaves the conflict record alone: it names entries whose
-        // base change this branch's version replaced, which stays true until
-        // the branch merges (see recordConflicts). A lingering rebaseFailure
+        // Catching up leaves the conflict record alone: it names values a person
+        // has yet to choose, which stays true until they do. A lingering rebaseFailure
         // is cleared, or it sticks as a stale warning forever: nothing else
         // touches a caught-up branch, so no other save site clears it. One
         // whose cause stands stays: remote.git still holds a commit this clone
@@ -1358,19 +1528,46 @@ async function rebaseOneBranch(
       }
 
       // `git rebase` drops merge commits and replays what they merged, so whatever one settled
-      // (a kept version, a maintainer's conflict resolution) would be undone, then force-published.
-      // A branch holding one merges the base instead. So does one whose commits touch canopycms
-      // state: a replay writes their bytes over the live files, and a pair that adds then removes
-      // a file deletes it.
+      // (a value a person chose, a maintainer's conflict resolution) would be undone, then
+      // force-published. A branch holding one merges the base instead. So does one whose commits
+      // touch canopycms state: a replay writes their bytes over the live files, and a pair that
+      // adds then removes a file deletes it.
       const aboveBase = `${fetchedBaseTip}..HEAD`
       const countAboveBase = async (args: string[]) =>
         (await branchGit.raw(['rev-list', '--count', ...args])).trim()
       const cannotReplay =
         (await countAboveBase(['--merges', '--end-of-options', aboveBase])) !== '0' ||
         (await countAboveBase(['--end-of-options', aboveBase, '--', CANOPY_META_DIR])) !== '0'
-      if (commitArgs !== null && (cannotReplay || unpushed)) {
+      const head = (await branchGit.revparse(['HEAD'])).trim()
+      // Commits on top of what this branch published, as "Get latest changes" makes from saved work
+      // on a branch submitted once, or a submit whose push failed: a rebase would rewrite the
+      // published commit under them, which reads as a push this clone never saw. A merge publishes
+      // them as a fast-forward. A same-named ref at a commit the base holds is no work of this branch.
+      const published = canPublish ? await readPublishedSha(ctx, branchRef) : null
+      const aheadOfPublished =
+        published !== null &&
+        published !== head &&
+        metaFile?.branch.name === branchRef &&
+        isPublished(metaFile) &&
+        (await contains(branchGit, head, published)) &&
+        !(await contains(branchGit, fetchedBaseTip, published))
+      /**
+       * The base taken in by a merge (github-commits.ts), which decides each value against the fork
+       * point and leaves what both sides changed differently for a person, rather than a rebase,
+       * whose rounds can only settle a conflict by rule. A clone with no branch checked out, or no
+       * `branch.json`, cannot name the ref the merge publishes, so it stays behind.
+       */
+      const takeBaseByMerge = async (): Promise<BranchRebaseOutcome> => {
+        if (commitArgs === null) {
+          const reason =
+            `the base conflicts with this clone's work, and the clone has no branch checked out, ` +
+            `or no branch.json, to merge it into`
+          workerLogWarn(`  Skipping ${branchDir}: ${reason}`)
+          await recordRebaseFailure(ctx, branchPath, branchDir, reason)
+          return { kind: 'failed', error: reason }
+        }
         const outcome = await mergeIntoBranch(ctx, commitArgs, {
-          head: (await branchGit.revparse(['HEAD'])).trim(),
+          head,
           other: fetchedBaseTip,
           message: `Merge ${ctx.baseBranch} into ${branchRef}`,
           fromGitHub: false,
@@ -1378,9 +1575,34 @@ async function rebaseOneBranch(
         if (outcome.kind === 'blocked') {
           return recordBlocked(ctx, branchDir, branchPath, branchRef, outcome.reason)
         }
-        if (outcome.kind !== 'merged') return { kind: 'none' }
+        if (outcome.kind !== 'merged') {
+          if (!lockCompromised()) return { kind: 'none' }
+          workerLogWarn(
+            `  Skipping ${branchDir}: a lock it held was lost mid-merge (retrying next cycle)`,
+          )
+          return { kind: 'skippedLocked' }
+        }
+        probe.keptEntries = outcome.keptEntries
         await clearRebaseFailure(ctx, branchPath, branchRef)
         return { kind: 'rebased' }
+      }
+      if (commitArgs !== null && (cannotReplay || unpushed || aheadOfPublished)) {
+        return await takeBaseByMerge()
+      }
+      // A rebase only where it takes in exactly what a merge would, with nothing for a person: git
+      // conflicts nowhere, and the field merge decides no file otherwise than git does.
+      if (
+        commitArgs !== null &&
+        !mergesAsGitDoes(
+          await planMerge(branchGit, branchPath, {
+            head,
+            other: fetchedBaseTip,
+            contentRoot: ctx.contentRoot,
+            timeoutMs: ctx.taskTimeoutMs,
+          }),
+        )
+      ) {
+        return await takeBaseByMerge()
       }
 
       workerLog(`Rebasing ${branchDir} (${behindCount} commits behind)...`)
@@ -1389,11 +1611,11 @@ async function rebaseOneBranch(
       // rebase compares what remote.git published against what this clone is
       // about to rebase away, and the clone's pre-rebase tip is exactly what
       // the rebase makes unreadable.
-      const preRebaseHead = (await branchGit.revparse(['HEAD'])).trim()
-      const publishedSha = canPublish ? await readPublishedSha(ctx, branchRef) : null
+      const preRebaseHead = head
+      const publishedSha = published
       await assertNoIncomingSubmodules(branchGit, branchPath, preRebaseHead, fetchedBaseTip)
 
-      const { completed, conflictedFiles, failureReason } = await runRebaseRounds(
+      const { completed, conflicted, failureReason } = await runRebaseRounds(
         ctx,
         branchGit,
         branchDir,
@@ -1439,6 +1661,12 @@ async function rebaseOneBranch(
         )
       }
 
+      if (conflicted) {
+        // The round loop aborted the rebase; this tells the caches the tree moved back.
+        await abortRebase(branchGit, branchPath).catch(() => {})
+        return await takeBaseByMerge()
+      }
+
       if (!completed) {
         // failureReason is only set on the "unexpected error" break above;
         // MAX_REBASE_ROUNDS exhaustion is a distinct exit with no message of
@@ -1470,22 +1698,16 @@ async function rebaseOneBranch(
       // sharing this filesystem.
       await invalidateBranchContentCaches(branchPath)
 
-      const conflictIdsDeduped = conflictFilesToContentIds(conflictedFiles, ctx.contentRoot)
-
-      const hadConflicts = conflictIdsDeduped.length > 0
-      workerLog(
-        hadConflicts
-          ? `  Rebased ${branchDir} (kept branch version for ${conflictIdsDeduped.length} conflicting file(s))`
-          : `  Rebased ${branchDir} successfully`,
-      )
-      // Recorded only on a branch.json that still names the branch this cycle read.
+      probe.keptEntries = 0
+      workerLog(`  Rebased ${branchDir} successfully`)
+      // Recorded only on a branch.json that still names the branch this cycle read. The cycle
+      // completed, so any prior failure record goes, whatever conflicts stay on record.
       await meta.update((existing) =>
         existing !== null && existing.branch.name === metaFile?.branch.name
           ? {
               branch: {
-                ...recordConflicts(existing.branch.conflictFiles, conflictIdsDeduped),
-                // The cycle completed, so clear any prior failure record regardless
-                // of the conflict outcome.
+                conflictStatus:
+                  (existing.branch.conflictFiles?.length ?? 0) > 0 ? 'conflicts-detected' : 'clean',
                 rebaseFailure: undefined,
               },
             }

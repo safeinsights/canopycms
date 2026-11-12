@@ -1113,6 +1113,14 @@ export class ContentStore {
     input: WriteInput,
     entryTypeName?: string,
     existingId?: ContentId,
+    options: {
+      /**
+       * Runs once the file is written, under both of the write's locks, so what it changes about
+       * the entry no other writer or rebase sees before it does. A throw rejects the write, though
+       * the file is already written.
+       */
+      afterWrite?: (written: { id?: string; relativePath: PhysicalPath }) => Promise<void>
+    } = {},
   ): Promise<ContentDocument> {
     // Warm the index outside the lock (a full scan must not hold the entry lock)
     await this.idIndex()
@@ -1398,6 +1406,7 @@ export class ContentStore {
             })
           }
           await this.recordOwnMutation(liveIndex)
+          await options.afterWrite?.({ id, relativePath })
 
           const afterStat = await fs.stat(absolutePath)
           const base = {
@@ -1566,8 +1575,21 @@ export class ContentStore {
    */
   protected async afterPrePassForTesting(): Promise<void> {}
 
-  /** Delete an entry and remove it from the index. */
-  async delete(collectionPath: LogicalPath, slug: Slug): Promise<void> {
+  /**
+   * Delete an entry and remove it from the index. With `expectId`, only the entry of that content
+   * ID: another at the slug, or none, is `EntryGoneError`. `beforeDelete` runs under both of the
+   * delete's locks before anything changes, and throwing refuses; `afterDelete` runs once it is
+   * gone, under them too.
+   */
+  async delete(
+    collectionPath: LogicalPath,
+    slug: Slug,
+    options: {
+      expectId?: string
+      beforeDelete?: () => Promise<void>
+      afterDelete?: (deleted: { id?: string }) => Promise<void>
+    } = {},
+  ): Promise<void> {
     // Warm the index outside the lock (a full scan must not hold the entry lock)
     await this.idIndex()
     const collection = this.assertCollection(collectionPath)
@@ -1577,7 +1599,8 @@ export class ContentStore {
     const prePass = await this.buildPaths(collection, slug)
     if (prePass.existed) this.assertEntryTypeAvailable(collection, prePass.entryTypeName)
 
-    if (!prePass.existed) {
+    if (!prePass.existed || (options.expectId !== undefined && prePass.id !== options.expectId)) {
+      if (options.expectId !== undefined) throw new EntryGoneError()
       // Nothing on disk for this slug -- no shared resource to lock on, and fs.unlink on the
       // freshly generated (necessarily nonexistent) path throws ENOENT, as callers expect.
       await fs.unlink(prePass.absolutePath)
@@ -1605,7 +1628,14 @@ export class ContentStore {
             return RETRY_KEY
           }
           const { absolutePath, relativePath } = inLock
+          if (
+            options.expectId !== undefined &&
+            (!inLock.existed || inLock.id !== options.expectId)
+          ) {
+            throw new EntryGoneError()
+          }
 
+          await options.beforeDelete?.()
           await fs.unlink(absolutePath)
 
           // Remove from the LIVE index — lookup and mutation in one synchronous
@@ -1616,6 +1646,7 @@ export class ContentStore {
             liveIndex.remove(id)
           }
           await this.recordOwnMutation(liveIndex)
+          await options.afterDelete?.({ id: id ?? inLock.id })
           return undefined
         })
         if (outcome !== RETRY_KEY) return
@@ -1645,6 +1676,8 @@ export class ContentStore {
     options: {
       /** Runs under the content-write lock before anything is written; throwing refuses. */
       beforeWrite?: () => Promise<void>
+      /** Runs once the entry is back, under the restore's locks. */
+      afterWrite?: () => Promise<void>
     } = {},
   ): Promise<{ relativePath: PhysicalPath }> {
     await this.idIndex()
@@ -1708,9 +1741,43 @@ export class ContentStore {
           })
         }
         await this.recordOwnMutation(index)
+        await options.afterWrite?.()
         return { relativePath: target.relativePath }
       })
     })
+  }
+
+  /**
+   * Replace the file of entry `id`, at `slug` in `collectionPath`, with `raw`, verbatim, under
+   * write()'s locks; `beforeWrite` runs under them first, and throwing refuses, and `afterWrite`
+   * after. For a file no parse can be trusted with, so nothing is re-serialised. `EntryGoneError`
+   * when no file of that id is there.
+   */
+  async replaceRaw(
+    collectionPath: LogicalPath,
+    slug: Slug,
+    entry: { id: ContentId; raw: string },
+    options: { beforeWrite?: () => Promise<void>; afterWrite?: () => Promise<void> } = {},
+  ): Promise<void> {
+    await this.idIndex()
+    const collection = this.assertCollection(collectionPath)
+    const prePass = await this.buildPaths(collection, slug)
+    if (!prePass.existed || prePass.id !== entry.id) throw new EntryGoneError()
+    this.assertEntryTypeAvailable(collection, prePass.entryTypeName)
+    const lockKey = this.entryLockKey(collection, slug, prePass)
+    return this.withContentWriteExclusion(() =>
+      withLock(lockKey, async () => {
+        const inLock = await this.buildPaths(collection, slug)
+        if (!inLock.existed || inLock.id !== entry.id) throw new EntryGoneError()
+        if (this.entryLockKey(collection, slug, inLock) !== lockKey) {
+          throw new ContentConflictError()
+        }
+        await options.beforeWrite?.()
+        await atomicWriteFile(inLock.absolutePath, entry.raw)
+        await this.recordOwnMutation(this._idIndex)
+        await options.afterWrite?.()
+      }),
+    )
   }
 
   /**
