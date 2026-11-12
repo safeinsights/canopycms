@@ -424,7 +424,7 @@ describe('ConflictsGroup choosing', () => {
     expect(within(card).queryByTestId('conflict-choice-note')).toBeNull()
   })
 
-  it('drops a choice the form was edited away from, keeping the edit to mark resolved', async () => {
+  it('turns a choice the form was edited away from into the edit, marked resolved', async () => {
     const { onChoose, held } = renderGroup({
       only: ['summary'],
       value: { ...savedValue, summary: 'My own wording.' },
@@ -433,14 +433,26 @@ describe('ConflictsGroup choosing', () => {
     await waitFor(() =>
       expect(onChoose).toHaveBeenLastCalledWith(
         expect.objectContaining({ key: 'summary' }),
-        undefined,
-        false,
+        { how: 'edited' },
+        true,
       ),
     )
-    const card = screen.getByTestId('conflict-card')
-    expect(screen.queryByTestId('conflict-choice-note')).toBeNull()
-    expect(within(card).getByRole('button', { name: /^Mark resolved:/ })).toBeTruthy()
+    expect(screen.getByTestId('conflict-choice-note').textContent).toBe(
+      'Marked resolved. Save to keep this choice.',
+    )
     expect(held.value.summary).toBe('My own wording.')
+  })
+
+  it('keeps every choice as made while locked, though the form shows the saved value', () => {
+    const { onChoose } = renderGroup({
+      only: ['summary'],
+      choices: { summary: { mergeSha: MERGE_SHA, choice: { how: 'latest' } } },
+      props: { lockedReason: 'This branch is in review. Withdraw it to make changes.' },
+    })
+    expect(onChoose).not.toHaveBeenCalled()
+    expect(screen.getByTestId('conflict-choice-note').textContent).toBe(
+      'Using the latest version. Save to keep this choice.',
+    )
   })
 
   it('says each kind of choice in its note', async () => {

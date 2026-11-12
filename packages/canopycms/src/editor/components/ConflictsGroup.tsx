@@ -724,30 +724,39 @@ export const ConflictsGroup: React.FC<ConflictsGroupProps> = ({
   const entryKind = data.kind === 'fields' ? undefined : data.kind
 
   // A stored choice stands while the form still holds what it chose. One the form was edited away
-  // from since, or a region choice on text that now shows whole, chose nothing the save would
-  // write: it is dropped, and the card offers "Mark resolved" for the edit instead.
+  // from since stands for the edit: a decided choice becomes "Mark resolved", which the save
+  // resolves as it would the choice, open drawer or not; an undecided region choice, or one on text
+  // that now shows whole, is dropped. A locked form shows the saved value over the draft it keeps,
+  // so while locked every choice stands as made.
   const standing = new Map<string, FieldChoice>()
-  const stale: FieldConflict[] = []
+  const stale: Array<{ field: FieldConflict; next: FieldChoice | undefined }> = []
   if (form) {
     for (const field of conflicts.fields) {
       const chosen = choices[field.key]
       if (!chosen || chosen.mergeSha !== field.mergeSha) continue
       const placed = chosen.choice.how !== 'regions' || !!field.text
       const held =
+        !!lockedReason ||
         chosen.choice.how === 'edited' ||
         holdsChoice(form.value, form.saved, field, chosen.choice, form.bodyField)
-      if (placed && held) standing.set(field.key, chosen.choice)
-      else stale.push(field)
+      if (placed && held) {
+        standing.set(field.key, chosen.choice)
+      } else if (placed && isDecided(field, chosen.choice)) {
+        standing.set(field.key, { how: 'edited' })
+        stale.push({ field, next: { how: 'edited' } })
+      } else {
+        stale.push({ field, next: undefined })
+      }
     }
   }
-  const staleKeys = stale.map((f) => f.key).join(',')
+  const staleKeys = stale.map(({ field, next }) => `${field.key}:${next?.how ?? ''}`).join(',')
   const open = entryKind
     ? 1
     : conflicts.fields.filter(
         (f) => !isDecided(f, form ? standing.get(f.key) : choices[f.key]?.choice),
       ).length
   useEffect(() => {
-    for (const field of stale) onChoose?.(field, undefined, false)
+    for (const { field, next } of stale) onChoose?.(field, next, !!next)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `stale` is this render's, keyed by `staleKeys`
   }, [staleKeys])
 
