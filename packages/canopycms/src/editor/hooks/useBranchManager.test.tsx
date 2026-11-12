@@ -1253,43 +1253,30 @@ describe('useBranchManager', () => {
         b.name === 'feature' ? { ...b, hold: { kind: 'conflicts' as const } } : b,
       )
 
-      it('withdraws, then gets the latest changes, where a worker answers', async () => {
-        mockClient.workflow.withdraw.mockResolvedValueOnce({ ok: true, status: 200 })
-        const requestLatestChanges = vi.fn().mockResolvedValue(undefined)
-        const { result } = await loaded(listing, {
-          operatingMode: 'prod',
-          latestChangesAfterWithdraw: () => requestLatestChanges,
-        })
+      it.each(['prod', 'dev'] as const)(
+        'withdraws, then gets the latest changes, in %s mode',
+        async (operatingMode) => {
+          mockClient.workflow.withdraw.mockResolvedValueOnce({ ok: true, status: 200 })
+          const requestLatestChanges = vi.fn().mockResolvedValue(undefined)
+          const { result } = await loaded(listing, {
+            operatingMode,
+            latestChangesAfterWithdraw: () => requestLatestChanges,
+          })
 
-        await act(async () => {
-          await result.current.handleWithdraw('feature')
-        })
+          await act(async () => {
+            await result.current.handleWithdraw('feature')
+          })
 
-        const { options, body } = await lastDialog()
-        expect(options.labels).toEqual({
-          confirm: 'Withdraw and get latest changes',
-          cancel: 'Cancel',
-        })
-        expect(body).toContain('• Bring in the latest changes made on the site')
-        expect(mockClient.workflow.withdraw).toHaveBeenCalled()
-        expect(requestLatestChanges).toHaveBeenCalledTimes(1)
-      })
-
-      it('only withdraws in dev mode, where no worker answers', async () => {
-        mockClient.workflow.withdraw.mockResolvedValueOnce({ ok: true, status: 200 })
-        const requestLatestChanges = vi.fn().mockResolvedValue(undefined)
-        const { result } = await loaded(listing, {
-          latestChangesAfterWithdraw: () => requestLatestChanges,
-        })
-
-        await act(async () => {
-          await result.current.handleWithdraw('feature')
-        })
-
-        const { options } = await lastDialog()
-        expect(options.labels).toEqual({ confirm: 'Withdraw from review', cancel: 'Cancel' })
-        expect(requestLatestChanges).not.toHaveBeenCalled()
-      })
+          const { options, body } = await lastDialog()
+          expect(options.labels).toEqual({
+            confirm: 'Withdraw and get latest changes',
+            cancel: 'Cancel',
+          })
+          expect(body).toContain('• Bring in the latest changes made on the site')
+          expect(mockClient.workflow.withdraw).toHaveBeenCalled()
+          expect(requestLatestChanges).toHaveBeenCalledTimes(1)
+        },
+      )
 
       it("only withdraws where the editor says it can't apply, as for a branch not open", async () => {
         mockClient.workflow.withdraw.mockResolvedValueOnce({ ok: true, status: 200 })

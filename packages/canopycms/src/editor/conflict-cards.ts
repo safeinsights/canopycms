@@ -93,7 +93,8 @@ export interface FieldConflict {
    * a removal on its side took out, so its value there can be found and placed. It is keyed as the
    * merge named the place along the base's own path ({@link alignedTo}), so this fails only where
    * the record gives no such path, one that runs another way, or one whose merged key another of
-   * its items holds.
+   * its items holds; and where your saved value holds another item at the key of one your version
+   * lacks.
    */
   latestPlaceable: boolean
   /**
@@ -265,7 +266,17 @@ export function buildEntryConflicts(
     const realigned = (['before', 'latest', 'yours'] as const).some((v) => versions[v] !== read[v])
     if (Object.values(versions).some((v) => v === undefined)) incomplete = true
     const latest = versions.latest ? formValueOfSide(versions.latest) : undefined
-    const latestPlaceable =
+    // Your saved value where a save since the merge changed it, which is what keeping yours keeps:
+    // the branch's version is only how it read at the merge.
+    const savedHere = saved && valueAtChange(saved, { dataPath: field.dataPath }, bodyField)
+    const branchHere =
+      versions.yours &&
+      valueAtChange(formValueOfSide(versions.yours), { dataPath: field.dataPath }, bodyField)
+    // A read of the merged file can key another item, one alike or a copy, as the merge named an
+    // item your version lacks: a choice would land on that other item.
+    const otherItemHere =
+      field.item && !!versions.yours && branchHere === undefined && savedHere !== undefined
+    const latestFound =
       !!latest &&
       field.dataPath.every(
         (segment, i) =>
@@ -274,6 +285,7 @@ export function buildEntryConflicts(
           valueAtChange(latest, { dataPath: field.dataPath.slice(0, i + 1) }, bodyField) !==
             undefined,
       )
+    const latestPlaceable = latestFound && !otherItemHere
     const common = {
       key: field.key,
       mergeSha: field.mergeSha,
@@ -299,14 +311,8 @@ export function buildEntryConflicts(
     const named = toLatest.get(field.drawerKey) ?? toYours.get(field.drawerKey)
     const along = fieldAlong(fields, field.dataPath)
     const path = named?.path ?? between.get(field.drawerKey)?.path ?? along.path
-    // Your saved value where a save since the merge changed it, which is what keeping yours keeps:
-    // the branch's version is only how it read at the merge.
-    const savedHere = saved && valueAtChange(saved, { dataPath: field.dataPath }, bodyField)
-    const branchHere =
-      versions.yours &&
-      valueAtChange(formValueOfSide(versions.yours), { dataPath: field.dataPath }, bodyField)
     const savedYours =
-      saved && !equal(savedHere, branchHere)
+      saved && !otherItemHere && !equal(savedHere, branchHere)
         ? displayWhole(along.field, savedHere, referenceTitle)
         : undefined
     const savedMarks = (before: DisplayValue): TextDiff | undefined =>
@@ -387,7 +393,7 @@ export function buildEntryConflicts(
             path,
             before,
             latest: latestValue,
-            ...(!latestPlaceable && { latestUnavailable: true as const }),
+            ...(!latestFound && { latestUnavailable: true as const }),
             yours: savedYours ?? yoursValue,
             ...(latestText && { latestText }),
             ...(yoursText && { yoursText }),
@@ -409,7 +415,7 @@ export function buildEntryConflicts(
           path,
           before,
           latest: fromLatest ? (fromLatest.after ?? EMPTY) : (across?.before ?? EMPTY),
-          ...(!latestPlaceable && { latestUnavailable: true as const }),
+          ...(!latestFound && { latestUnavailable: true as const }),
           yours: savedYours ?? (fromYours ? (fromYours.after ?? EMPTY) : (across?.after ?? EMPTY)),
           ...(fromLatest?.text && { latestText: fromLatest.text }),
           ...(yoursText && { yoursText }),

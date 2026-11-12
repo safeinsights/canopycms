@@ -598,9 +598,38 @@ describe('ConflictsGroup entry-level conflicts', () => {
       onResolveEntry.mockClear()
       await userEvent.click(screen.getByRole('button', { name: label }))
       expect(onResolveEntry).toHaveBeenCalledTimes(1)
-      expect(onResolveEntry).toHaveBeenCalledWith(choice)
+      // "Keep it deleted" promises the entry stays gone, which the server checks (issue 1257).
+      const promise = label === 'Keep it deleted' ? { entryGone: true } : {}
+      expect(onResolveEntry).toHaveBeenCalledWith(choice, promise)
     }
   })
+
+  it('says what a choice settled in place, and nothing for one that confirms first or failed', async () => {
+    const onEntryDone = vi.fn()
+    const { onResolveEntry } = setup('deleted-on-branch', { onEntryDone })
+    await userEvent.click(screen.getByRole('button', { name: 'Keep it deleted' }))
+    expect(onEntryDone).toHaveBeenCalledWith({
+      message: 'Conflict cleared. The entry stays deleted.',
+      entryGone: true,
+    })
+    onEntryDone.mockClear()
+    onResolveEntry.mockResolvedValueOnce({ message: 'The save failed.', tone: 'error' })
+    await userEvent.click(screen.getByRole('button', { name: 'Restore entry' }))
+    expect(onEntryDone).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['deleted-on-base', 'Delete entry'],
+    ['unreadable', 'Use latest version'],
+  ] as const)(
+    'reports nothing done for a %s choice the editor confirms first',
+    async (kind, label) => {
+      const onEntryDone = vi.fn()
+      setup(kind, { onEntryDone })
+      await userEvent.click(screen.getByRole('button', { name: label }))
+      expect(onEntryDone).not.toHaveBeenCalled()
+    },
+  )
 
   it('shows why the API refused a choice', async () => {
     const message = 'Another entry now has this URL. Change it, then restore this one.'
@@ -621,7 +650,7 @@ describe('ConflictsGroup entry-level conflicts', () => {
     expect(onResolveEntry).toHaveBeenCalledTimes(1)
     await userEvent.click(within(refused).getByRole('button', { name: 'Retry' }))
     expect(onResolveEntry).toHaveBeenCalledTimes(2)
-    expect(onResolveEntry).toHaveBeenLastCalledWith('restore')
+    expect(onResolveEntry).toHaveBeenLastCalledWith('restore', {})
     await waitFor(() => expect(screen.queryByTestId('conflict-entry-refused')).toBeNull())
   })
 
@@ -636,7 +665,7 @@ describe('ConflictsGroup entry-level conflicts', () => {
     await userEvent.click(del)
     expect(onResolveEntry).not.toHaveBeenCalled()
     await userEvent.click(keep)
-    expect(onResolveEntry).toHaveBeenCalledWith('keep')
+    expect(onResolveEntry).toHaveBeenCalledWith('keep', {})
   })
 
   it('holds "Use latest version" on an unreadable entry with unsaved edits', async () => {
@@ -845,6 +874,6 @@ describe('an entry deleted with field conflicts open', () => {
   it('keeps it deleted through resolve-entry, which clears its field conflicts', async () => {
     const { onResolveEntry } = setup()
     await userEvent.click(screen.getByRole('button', { name: 'Keep it deleted' }))
-    expect(onResolveEntry).toHaveBeenCalledWith('keep')
+    expect(onResolveEntry).toHaveBeenCalledWith('keep', { entryGone: true })
   })
 })

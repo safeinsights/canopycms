@@ -293,7 +293,7 @@ const entryConflict = (ctx: ApiContext, entryPath: string, id?: string) =>
 const resolveEntry = (
   ctx: ApiContext,
   entryPath: string,
-  body: { id: string; mergeSha: string; choice: ResolveEntryConflictBody['choice'] },
+  body: Omit<ResolveEntryConflictBody, 'id'> & { id: string },
 ) =>
   MERGE_CONFLICT_ROUTES.resolveEntry.handler(
     ctx,
@@ -873,6 +873,56 @@ describe('POST /:branch/resolve-entry/...entryPath', () => {
     expect(await recorded()).toEqual({})
     expect(await conflictFiles()).toEqual([])
     await expect(fs.stat(path.join(branchRoot, files.gone))).rejects.toThrow()
+  })
+
+  it('keeps deleted, as the card promised, only while the entry is still gone', async () => {
+    await recordAs({ [ID.gone]: { ...helloRecord(), path: files.gone } })
+    const res = await resolveEntry(createCtx(), 'content/blog/gone', {
+      id: ID.gone,
+      mergeSha: MERGE,
+      choice: 'keep',
+      entryGone: true,
+    })
+    expect(res.ok).toBe(true)
+    expect(await recorded()).toEqual({})
+  })
+
+  it('refuses "keep it deleted" for an entry back in the branch since, clearing nothing', async () => {
+    // A restore the drawer never heard about: the entry is in the tree under its content id.
+    await recordAs({ [ID.hello]: helloRecord() })
+    const res = await resolveEntry(createCtx(), 'blog/hello', {
+      id: ID.hello,
+      mergeSha: MERGE,
+      choice: 'keep',
+      entryGone: true,
+    })
+    expect(res).toMatchObject({ ok: false, status: 409, code: 'CONFLICT_CHANGED' })
+    expect((await recorded())[ID.hello].fields).toHaveLength(2)
+  })
+
+  it('refuses "keep it deleted" for an entry restored after the request read the tree', async () => {
+    await recordAs({ [ID.gone]: { ...helloRecord(), path: files.gone } })
+    // The restore lands as the content-write lock is taken, after the request located the record.
+    const read = MergeConflictStore.prototype.read
+    let reads = 0
+    vi.spyOn(MergeConflictStore.prototype, 'read').mockImplementation(async function (
+      this: MergeConflictStore,
+    ) {
+      if (++reads === 2) {
+        await fs.writeFile(path.join(branchRoot, files.gone), json({ title: 'Back again' }))
+      }
+      return read.call(this)
+    })
+    onTestFinished(() => vi.restoreAllMocks())
+    const res = await resolveEntry(createCtx(), 'content/blog/gone', {
+      id: ID.gone,
+      mergeSha: MERGE,
+      choice: 'keep',
+      entryGone: true,
+    })
+    expect(reads).toBeGreaterThanOrEqual(2)
+    expect(res).toMatchObject({ ok: false, status: 409, code: 'CONFLICT_CHANGED' })
+    expect((await recorded())[ID.gone].fields).toHaveLength(2)
   })
 
   it('replaces an entry that can’t merge field by field with the latest version (rows 33, 43)', async () => {

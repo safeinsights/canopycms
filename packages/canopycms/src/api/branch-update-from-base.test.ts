@@ -47,6 +47,7 @@ describe('POST /:branch/update-from-base', () => {
 
   afterEach(async () => {
     vi.useRealTimers()
+    vi.restoreAllMocks()
     consoleSpy.restore()
     if (savedWorkspace === undefined) delete process.env.CANOPYCMS_WORKSPACE_ROOT
     else process.env.CANOPYCMS_WORKSPACE_ROOT = savedWorkspace
@@ -227,6 +228,15 @@ describe('POST /:branch/update-from-base', () => {
   })
 
   describe('in dev mode, which runs the merge in the request', () => {
+    // Dev's queue sits under the working directory, here the test's own.
+    beforeEach(() => {
+      vi.spyOn(process, 'cwd').mockReturnValue(tmpDir)
+    })
+    const devTasks = async () =>
+      (await listTasks(path.join(tmpDir, '.canopy-dev', '.tasks'), 'pending')).filter(
+        (t) => t.action === SYNC_BRANCH_ACTION,
+      )
+
     it('commits the saved work, then answers the request before responding', async () => {
       const { res, commitSavedWork, runBaseUpdateNow } = await request(await branchWith(), {
         mode: 'dev',
@@ -242,7 +252,7 @@ describe('POST /:branch/update-from-base', () => {
       const requestedAt = res.data?.requestedAt
       expect(res.data?.branch.baseUpdateRequestedAt).toBe(requestedAt)
       expect(res.data?.branch.lastBaseUpdate).toEqual({ at: requestedAt, outcome: 'conflicts' })
-      expect(await syncTasks()).toHaveLength(0)
+      expect(await devTasks()).toHaveLength(0)
     })
 
     it('runs nothing for a request it joins: the run that made it answers', async () => {
@@ -255,7 +265,7 @@ describe('POST /:branch/update-from-base', () => {
       expect(res.status).toBe(202)
       expect(res.data?.requestedAt).toBe(pending)
       expect(runBaseUpdateNow).not.toHaveBeenCalled()
-      expect(await syncTasks()).toHaveLength(0)
+      expect(await devTasks()).toHaveLength(0)
     })
 
     it('says to try again in a moment when a lock held the merge back', async () => {

@@ -13,7 +13,7 @@ import {
   type EntryChangesDrawerProps,
   type EntryChangesSubject,
 } from './EntryChangesDrawer'
-import { conflictFields, fieldsConflictData } from './__test__/conflict-fixtures'
+import { conflictFields, entryConflictData, fieldsConflictData } from './__test__/conflict-fixtures'
 
 afterEach(() => cleanup())
 
@@ -547,7 +547,7 @@ describe('the conflicts of an entry the branch deleted', () => {
       },
     })
     await userEvent.click(within(drawer()).getByRole('button', { name: 'Keep it deleted' }))
-    expect(onResolveEntry).toHaveBeenCalledWith('keep')
+    expect(onResolveEntry).toHaveBeenCalledWith('keep', { entryGone: true })
   })
 
   it('offers no "Keep it deleted" for an entry the branch still has', () => {
@@ -566,5 +566,59 @@ describe('the conflicts of an entry the branch deleted', () => {
       },
     })
     expect(within(drawer()).queryByRole('button', { name: 'Keep it deleted' })).toBeNull()
+  })
+})
+
+describe('focus after an entry-level choice, its card gone (issue 1258)', () => {
+  const conflictsOf = (data: ReturnType<typeof entryConflictData>) => ({
+    state: { data, error: undefined, isValidating: false, reload: vi.fn() },
+    choices: {},
+    onChoose: vi.fn(),
+    onResolveEntry: vi.fn(async () => undefined),
+  })
+  const deleted: Partial<EntryChangesDrawerProps> = {
+    subject: { ...subject, status: 'deleted', fields: conflictFields },
+    state: loaded(sides({ title: 'Hello' }, null)),
+    onRestoreEntry: vi.fn(async () => undefined),
+  }
+  const show = (props: Partial<EntryChangesDrawerProps>) => (
+    <CanopyCMSProvider>
+      <EntryChangesDrawer
+        opened
+        onClose={() => {}}
+        base="main"
+        subject={subject}
+        state={loaded(sides({ title: 'Hello' }, { title: 'Hello there' }))}
+        {...props}
+      />
+    </CanopyCMSProvider>
+  )
+
+  it('moves to "Restore entry" once the entry is kept deleted, and says so', async () => {
+    const view = render(
+      show({ ...deleted, conflicts: conflictsOf(entryConflictData('deleted-on-branch')) }),
+    )
+    await userEvent.click(within(drawer()).getByRole('button', { name: 'Keep it deleted' }))
+    const restore = within(drawer()).getByTestId('entry-changes-restore')
+    expect(document.activeElement).toBe(restore)
+    expect(within(drawer()).getByTestId('entry-choice-done').textContent).toBe(
+      'Conflict cleared. The entry stays deleted.',
+    )
+    // The conflicts reload empty: the card goes, and "Restore entry" keeps its focus.
+    view.rerender(show(deleted))
+    expect(within(drawer()).queryByTestId('conflict-card')).toBeNull()
+    expect(document.activeElement).toBe(within(drawer()).getByTestId('entry-changes-restore'))
+  })
+
+  it('moves to the drawer\'s title where no "Restore entry" remains', async () => {
+    render(show({ conflicts: conflictsOf(entryConflictData('deleted-on-base')) }))
+    await userEvent.click(within(drawer()).getByRole('button', { name: 'Keep it' }))
+    const titleId = drawer().getAttribute('aria-labelledby')
+    expect(titleId).toBeTruthy()
+    expect(document.activeElement?.id).toBe(titleId)
+    expect(document.activeElement?.textContent).toBe('Changes to Hello')
+    expect(within(drawer()).getByTestId('entry-choice-done').textContent).toBe(
+      'Conflict cleared. Your version of the entry stays.',
+    )
   })
 })

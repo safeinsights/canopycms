@@ -66,7 +66,7 @@ import {
   plural,
   type Side,
 } from './change-parts'
-import { ConflictsGroup, type ConflictsGroupProps } from './ConflictsGroup'
+import { ConflictsGroup, type ConflictsGroupProps, type EntryChoiceDone } from './ConflictsGroup'
 import { LoadingCards, LoadingSummary } from './EntryChangesSkeleton'
 
 /** The entry a drawer compares, as the editor knows it. */
@@ -534,7 +534,8 @@ const ConflictsSection: React.FC<{
   undo?: EntryChangesUndo
   noEditReason?: string
   lockedReason?: string
-}> = ({ conflicts, subject, referenceTitle, undo, noEditReason, lockedReason }) => {
+  onEntryDone: (done: EntryChoiceDone) => void
+}> = ({ conflicts, subject, referenceTitle, undo, noEditReason, lockedReason, onEntryDone }) => {
   const { data, error, isValidating, reload } = conflicts.state
   const bodyField = useMemo(() => {
     const side =
@@ -587,6 +588,7 @@ const ConflictsSection: React.FC<{
       onChoose={conflicts.onChoose}
       onEdit={conflicts.onEdit}
       onResolveEntry={conflicts.onResolveEntry}
+      onEntryDone={onEntryDone}
       noEditReason={noEditReason}
       lockedReason={lockedReason}
       unsavedEdits={conflicts.unsavedEdits ?? subject.unsavedEdits}
@@ -595,23 +597,58 @@ const ConflictsSection: React.FC<{
   )
 }
 
-/** The drawer's body: the entry's conflicts, if any, above its changes. */
-export const EntryChangesView: React.FC<EntryChangesViewProps> = (props) =>
-  props.conflicts ? (
-    <Stack gap="lg">
-      <ConflictsSection
-        conflicts={props.conflicts}
-        subject={props.subject}
-        referenceTitle={props.referenceTitle}
-        undo={props.undo}
-        noEditReason={props.noEditReason}
-        lockedReason={props.lockedReason}
-      />
-      <EntryChangesBody {...props} />
-    </Stack>
-  ) : (
-    <EntryChangesBody {...props} />
+/**
+ * Where focus goes once an entry-level choice's card is gone: "Restore entry" while the entry stays
+ * deleted and the drawer offers it, else the drawer's title.
+ */
+const focusAfterEntryChoice = (root: HTMLElement | null, entryGone: boolean) => {
+  const restore = entryGone
+    ? root?.querySelector<HTMLElement>('[data-testid="entry-changes-restore"]')
+    : null
+  if (restore) return restore.focus()
+  const titleId = root?.closest('[role="dialog"]')?.getAttribute('aria-labelledby')
+  const title = titleId ? document.getElementById(titleId) : null
+  if (!title) return
+  title.tabIndex = -1
+  title.focus()
+}
+
+/**
+ * The drawer's body: what an entry-level choice settled, then the entry's conflicts, if any, above
+ * its changes, which keep their place in the tree as the conflicts go.
+ */
+export const EntryChangesView: React.FC<EntryChangesViewProps> = (props) => {
+  const rootRef = useRef<HTMLDivElement>(null)
+  const [entryDone, setEntryDone] = useState<{ id: number; message: string }>()
+  useEffect(() => setEntryDone(undefined), [props.subject.logicalPath])
+  const onEntryDone = (done: EntryChoiceDone) => {
+    setEntryDone((last) => ({ id: (last?.id ?? 0) + 1, message: done.message }))
+    focusAfterEntryChoice(rootRef.current, done.entryGone)
+  }
+  return (
+    <div ref={rootRef}>
+      {(props.conflicts || entryDone) && (
+        <Text size="sm" role="status" mb={entryDone ? 'md' : 0} data-testid="entry-choice-done">
+          {entryDone && <span key={entryDone.id}>{entryDone.message}</span>}
+        </Text>
+      )}
+      <Stack gap="lg">
+        {props.conflicts && (
+          <ConflictsSection
+            conflicts={props.conflicts}
+            subject={props.subject}
+            referenceTitle={props.referenceTitle}
+            undo={props.undo}
+            noEditReason={props.noEditReason}
+            lockedReason={props.lockedReason}
+            onEntryDone={onEntryDone}
+          />
+        )}
+        <EntryChangesBody {...props} />
+      </Stack>
+    </div>
   )
+}
 
 /** The changes: their states, then the summary and one card per change. */
 const EntryChangesBody: React.FC<EntryChangesViewProps> = ({
