@@ -723,7 +723,7 @@ export function mergeEntry({
   visitItems(ancestor.data, (_item, key) => ancestorKeys.add(key))
   // Each list by the own keys of the items enclosing it, as a parent's read key changes with its
   // content and its own key does not; by its field path alone where the ancestor has no such
-  // parent, as a side may key a keyless parent.
+  // parent, as for a keyless parent a side edited and then keyed.
   const exact = new Map<string, Set<string>>()
   const byField = new Map<string, Set<string>>()
   const parents = new Set<string>()
