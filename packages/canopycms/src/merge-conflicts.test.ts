@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   MergeConflictStore,
@@ -296,6 +296,24 @@ describe('MergeConflictStore', () => {
     await store.update((current) => current && { ...current, held: undefined })
     expect((await store.read())?.held).toBeUndefined()
     await expect(assertNoOpenConflicts(root)).resolves.toBeUndefined()
+  })
+
+  it('leaves a record that refuses the gate whichever step of setting one aside fails', async () => {
+    const file = path.join(root, '.canopy-meta', 'merge-conflicts.json')
+    await fs.mkdir(path.dirname(file))
+    for (const step of ['copyFile', 'writeFile', 'link', 'rename'] as const) {
+      await fs.writeFile(file, '{"oops"')
+      const spy = vi.spyOn(fs, step).mockRejectedValueOnce(new Error(`killed at ${step}`))
+      await expect(new MergeConflictStore(root, 0).quarantine()).rejects.toThrow(
+        `killed at ${step}`,
+      )
+      spy.mockRestore()
+      await expect(fs.readFile(file, 'utf8')).resolves.toBe('{"oops"')
+      await expect(assertNoOpenConflicts(root)).rejects.toMatchObject({ count: null })
+    }
+    // The next cycle sets it aside again, and the branch is held.
+    await new MergeConflictStore(root, 0).quarantine()
+    await expect(assertNoOpenConflicts(root)).rejects.toMatchObject({ held: true })
   })
 
   it('refuses a file that is not a record, rather than reading it as none', async () => {

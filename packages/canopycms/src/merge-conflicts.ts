@@ -550,20 +550,25 @@ export class MergeConflictStore {
   }
 
   /**
-   * Move a file that does not parse as a record aside, and start a new one that is `held`, as which
-   * conflicts were open is lost with it. Resolves the name it was moved to.
+   * Copy a file that does not parse as a record aside, and replace it with a new one that is
+   * `held`, as which conflicts were open is lost with it. Resolves the name of the copy. The new
+   * record is written beside the file and renamed over it, so a worker killed at any step leaves
+   * a record that still refuses the gate: the damaged one, or the held one.
    */
   async quarantine(): Promise<string> {
     return withLock(this.filePath, () =>
       withOccFileLock(this.filePath, async () => {
-        const aside = `${this.filePath}.malformed-${Date.now()}`
-        await fs.rename(this.filePath, aside)
+        const stamp = Date.now()
+        const aside = `${this.filePath}.malformed-${stamp}`
+        await fs.copyFile(this.filePath, aside)
         const held: Held = { aside: path.basename(aside), at: new Date().toISOString() }
+        const next = `${this.filePath}.held-${stamp}`
         await writeOccJsonFile(
-          this.filePath,
+          next,
           { schema: RECORD_SCHEMA, entries: {}, held },
           { expectedVersion: null, settleMs: this.settleMs },
         )
+        await fs.rename(next, this.filePath)
         return aside
       }),
     )
