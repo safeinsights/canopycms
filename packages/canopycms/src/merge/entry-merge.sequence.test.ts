@@ -293,7 +293,7 @@ type Keys = {
  * item it took out of that list: the two swapped, so the other item stayed as it was and the
  * edited one went where the other went, or was dropped. Swaps of different items read together too.
  */
-function readAsDropped(o: Model, x: Model, keys?: Keys): Model[] {
+function readAsDropped(o: Model, x: Model, keys?: Keys): Reading[] {
   const swaps: Array<[string, string]> = []
   for (const [dropped, item] of o) {
     if (x.get(dropped)?.list === item.list) continue
@@ -309,22 +309,38 @@ function readAsDropped(o: Model, x: Model, keys?: Keys): Model[] {
       swaps.push([dropped, holder])
     }
   }
-  const reads: Model[] = []
-  const grow = (from: number, read: Model, used: ReadonlySet<string>) => {
+  const reads: Reading[] = []
+  const grow = (from: number, read: Reading, used: ReadonlySet<string>) => {
     for (let n = from; n < swaps.length; n++) {
       const [dropped, holder] = swaps[n]
       if (used.has(dropped) || used.has(holder)) continue
       const went = x.get(dropped)
-      const next = new Map(read)
-      next.set(dropped, { ...x.get(holder)! })
-      if (went) next.set(holder, went)
-      else next.delete(holder)
+      const model = new Map(read.model)
+      model.set(dropped, { ...x.get(holder)! })
+      if (went) model.set(holder, went)
+      else model.delete(holder)
+      const next = { model, swaps: [...read.swaps, swaps[n]] }
       reads.push(next)
       grow(n + 1, next, new Set([...used, dropped, holder]))
     }
   }
-  grow(0, x, new Set())
+  grow(0, { model: x, swaps: [] }, new Set())
   return reads
+}
+
+/** A side's model read one way, and the swaps of identity that reading made. */
+type Reading = { model: Model; swaps: Array<[string, string]> }
+
+/** `side` with the identities `swaps` exchanged, as the reading that made them names its items. */
+function relabel(side: Side, swaps: ReadonlyArray<[string, string]>): Side {
+  const to = new Map<string, string>()
+  for (const [dropped, holder] of swaps) {
+    to.set(holder, dropped)
+    to.set(dropped, holder)
+  }
+  const ids = { items: side.ids.items, l2: side.ids.l2 }
+  for (const list of LISTS) ids[list] = side.ids[list].map((id) => to.get(id) ?? id)
+  return { file: side.file, ids }
 }
 
 /**
@@ -498,25 +514,20 @@ function life(seed: number, syncs: number, mix: Mix = EVERY): string {
       }
       return { wasFresh, fresh: (item, id) => hashes(keyOf.get(id), item) }
     }
+    const as = (model: Model): Reading => ({ model, swaps: [] })
     const read = (changedOnly: boolean) =>
-      [ma, ...readAsDropped(mo, ma, changedOnly ? keysOf(base) : undefined)].flatMap((x) =>
-        [mb, ...readAsDropped(mo, mb, changedOnly ? keysOf(mine) : undefined)].map(
-          (y): [Model, Model] => [x, y],
+      [as(ma), ...readAsDropped(mo, ma, changedOnly ? keysOf(base) : undefined)].flatMap((x) =>
+        [as(mb), ...readAsDropped(mo, mb, changedOnly ? keysOf(mine) : undefined)].map(
+          (y): [Reading, Reading] => [x, y],
         ),
       )
     // Twins a side dropped read either way too, where the data allows, but in editor-only lives
     // their keys tell them apart: only an item made to read like another excuses those checks.
     const readings = read(false)
-    const [want, ...others] = readings.map(([x, y]) => intended(mo, x, y))
+    const want = intended(mo, ma, mb)
     if (want === 'ambiguous') break
-    const edited = [
-      want,
-      ...read(true)
-        .slice(1)
-        .map(([x, y]) => intended(mo, x, y)),
-    ]
-    const broad = [want, ...others.filter((w) => w !== 'ambiguous')]
-    const answers = byEditor ? edited.filter((w) => w !== 'ambiguous') : broad
+    const accepted = byEditor ? read(true) : readings
+    const edited = read(true).map(([x, y]) => intended(mo, x.model, y.model))
     if (readings.length === 1 && !both && want !== 'conflict' && g.next() < 0.4) {
       byEditor = false
       branch = gitMerged(want, base, mine)
@@ -537,31 +548,35 @@ function life(seed: number, syncs: number, mix: Mix = EVERY): string {
       break
     }
     const merged = result.data as File
-    const fits = answers.find(
-      (w): w is Model =>
-        w !== 'conflict' &&
-        LISTS.every(
-          (l) => JSON.stringify(merged[l].map(contentOf).sort()) === JSON.stringify(contents(w, l)),
-        ),
-    )
-    if (!fits) {
+    const holds = (w: Model | 'conflict' | 'ambiguous'): w is Model =>
+      w !== 'conflict' &&
+      w !== 'ambiguous' &&
+      LISTS.every(
+        (l) => JSON.stringify(merged[l].map(contentOf).sort()) === JSON.stringify(contents(w, l)),
+      )
+    const fitting = accepted.flatMap(([x, y]) => {
+      const w = intended(mo, x.model, y.model)
+      return holds(w) ? [{ w, base: relabel(base, x.swaps), mine: relabel(mine, y.swaps) }] : []
+    })
+    if (fitting.length === 0) {
       return `${at}: merged to ${JSON.stringify(merged)}, meant ${JSON.stringify(want === 'conflict' ? want : [...want])}`
     }
     checked++
-    // Read the other way, the merge named items as the identities don't: the life ends here.
-    if (fits !== want) break
-    o = base
-    const { dropped, ...next } = identify(merged, fits, [mine, base])
-    // A merged key naming an item the identities dropped: where the data reads more than one way,
-    // the merge read it the other way and the life ends here; in an editor-only life it misnames.
-    if (dropped > 0 && readings.length > 1) break
-    if (dropped > 0 && byEditor) return `${at}: a merged key names an item the merge dropped`
+    // The reading the merge took: one whose items its keys name, the swaps it made carried on.
+    const took = fitting
+      .map((f) => ({ ...f, ...identify(merged, f.w, [f.mine, f.base]) }))
+      .find((f) => f.dropped === 0)
+    if (!took) {
+      if (byEditor) return `${at}: a merged key names an item no reading kept`
+      break
+    }
     // Keys name items only where the data reads one way.
     if (byEditor && edited.length === 1) {
-      const wrong = keyedWrongly(mine, next, result.keyRemaps)
+      const wrong = keyedWrongly(took.mine, took, result.keyRemaps)
       if (wrong) return `${at}: ${wrong}`
     }
-    branch = next
+    o = took.base
+    branch = { file: took.file, ids: took.ids }
   }
   return checked >= 2 ? 'merged' : 'short'
 }
@@ -571,8 +586,9 @@ function life(seed: number, syncs: number, mix: Mix = EVERY): string {
  * by seed: each still fails, so this list ends with the re-key at the git-level take-in.
  */
 const STALE_TWIN_KEY: ReadonlyMap<number, string> = new Map([
+  [446, '#1268: an edited twin under the key of a twin copied beside it'],
+  [13073, "#1268: twins under each other's keys after a git-level merge"],
   [14268, '#1279: a twin key on an item whose own key went stale undoes a base deletion'],
-  [15742, '#1268: a copy under a minted key is new beside a twin key that names its item'],
   [19503, "#1268: twins under each other's keys after a git-level merge"],
 ])
 

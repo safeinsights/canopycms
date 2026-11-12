@@ -2135,7 +2135,7 @@ describe('an item edited to read exactly like one deleted, with no git-level mer
     ])
   })
 
-  it('a copy under a minted key, beside B made to read like a deleted C, is new: never B found again', () => {
+  it('a copy of B under a minted key beside B made to read like a deleted C: B is its key, rewritten', () => {
     const M = '1mmmmmmmmmmm'
     const base: Page = {
       ...o,
@@ -2143,7 +2143,62 @@ describe('an item edited to read exactly like one deleted, with no git-level mer
     }
     const result = merge(base, edit(1, { text: 'branch edits B' }))
     expect(result.items).toContainEqual([M, 'Read the docs', '/documentation'])
-    expect(result.conflicts).toEqual([[`items.${KB}`, 'removed-on-base']])
+    expect(result.conflicts).toEqual([[`items.${KB}.text`, 'changed']])
+  })
+
+  it('a copy beside an item rewritten to read like one the other side kept: never brought back', () => {
+    const [X0, X1] = [
+      { title: 't2', detail: 'd0' },
+      { title: 't2', detail: 'd0-A1' },
+    ]
+    const K0 = itemKeysAsRead([X0])[0] as string
+    const M = '1mmmmmmmmmmm'
+    const result = mergeEntry({
+      format: 'json',
+      fields: [{ name: 'items', type: 'object', list: true, fields: text('title', 'detail') }],
+      ancestor: { data: { items: [X0, X1] } },
+      base: { data: { items: [X1] } },
+      branch: {
+        data: {
+          items: [
+            { ...X1, _key: K0 },
+            { ...X0, _key: M },
+          ],
+        },
+      },
+    })
+    if (result.kind !== 'merged') throw new Error('expected a merge')
+    expect(result.conflicts.map((c) => [c.key, c.kind])).toEqual([
+      [`items.${K0}`, 'removed-on-base'],
+    ])
+  })
+
+  it('a claimant named through an alias, beside a copy of its item: the copy stays', () => {
+    const day = new Date('2024-01-01T00:00:00.000Z')
+    const [P, Q, R] = [
+      { h: 'a', t: 'ta' },
+      { h: 'b', t: 'tb', d: day },
+      { h: 'c', t: 'tc' },
+    ]
+    const [KP] = itemKeysAsRead([P]) as string[]
+    const KQ = itemKeysAsRead([{ ...Q, d: '2024-01-01' }])[0] as string
+    const M = '1mmmmmmmmmmm'
+    const result = mergeEntry({
+      format: 'json',
+      ancestor: { data: { items: [P, Q, R] } },
+      base: {
+        data: {
+          items: [
+            { ...P, _key: KP },
+            { ...R, _key: KQ },
+            { ...Q, _key: M },
+          ],
+        },
+      },
+      branch: { data: { items: [P, R] } },
+    })
+    if (result.kind !== 'merged') throw new Error('expected a merge')
+    expect((result.data.items as Data[]).map((i) => i.t)).toContain('tb')
   })
 
   it('an item under a key naming no item takes the content before one a key names', () => {

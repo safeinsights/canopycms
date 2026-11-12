@@ -144,6 +144,15 @@ export function alignToAncestor(
     if (!isMinted(item)) unheldFresh.add(token)
   })
   const at = new Map(ancestorKeys.map((key, i) => [key, i]))
+  // Content a copy this side made holds, under a key minted for it that the ancestor doesn't know.
+  const copied = new Set(
+    items.flatMap((item) => {
+      const own = ownKey(item)
+      return own !== undefined && !hasContentKeyShape(own) && !known.has(own)
+        ? [valueToken(item)]
+        : []
+    }),
+  )
   // Whether the item may be the unheld item holding its content, and whether its key names another.
   const claim = (j: number, own: string): 'named' | 'unnamed' | undefined => {
     if (!hasContentKeyShape(own)) return undefined
@@ -158,7 +167,9 @@ export function alignToAncestor(
       if (isMinted(ancestorItems[i]) && isMinted(items[j])) return undefined
       // A key takes only an unheld item still under its read key: one gone stale was edited.
       if (!unheldFresh.has(content)) return undefined
-      return valueToken(ancestorItems[i]) !== content ? 'named' : undefined
+      // With a copy of the item its key names beside it, the side rewrote that item: read by key.
+      const was = valueToken(ancestorItems[i])
+      return was !== content && !copied.has(was) ? 'named' : undefined
     }
     // A key naming no item here pairs by content only where one item holds it, twins by place.
     return holders === 1 ? 'unnamed' : undefined
@@ -258,15 +269,9 @@ export function alignToAncestor(
       : [i],
   )
   const open = (i: number) => !taken.has(ancestorKeys[i])
-  // An item whose key a claimant here holds was rewritten: a minted-key item never refinds it.
-  const rewritten = new Set(items.flatMap((item, j) => (usurped(j) ? (ownKey(item) ?? []) : [])))
   for (const j of byContent) {
-    const own = ownKey(items[j])
     const i = candidates.find(
-      (k) =>
-        open(k) &&
-        valueToken(ancestorItems[k]) === valueToken(items[j]) &&
-        !(rewritten.has(ancestorKeys[k]) && own !== undefined && !hasContentKeyShape(own)),
+      (k) => open(k) && valueToken(ancestorItems[k]) === valueToken(items[j]),
     )
     if (i !== undefined) match(j, i)
   }
