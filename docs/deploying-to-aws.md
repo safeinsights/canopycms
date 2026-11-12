@@ -684,8 +684,8 @@ generate a private key from the App's "Private keys" section.
 | Commit statuses: read & write | the `CanopyCMS conflicts` status on each pull request's head                                |
 | Metadata: read                | granted automatically alongside any repository permission                                   |
 
-An existing App gains a permission only once an owner of its account accepts the
-request on the installation; `init-github-app verify` reports it missing until then.
+An existing App gains a permission once its owner adds it in the App's settings
+and its installation accepts it; `init-github-app verify` reports it missing until then.
 
 **Nothing else.** Not Issues, not Workflows, not Administration, and no
 organisation permissions. That set is not advice — it is derived from every

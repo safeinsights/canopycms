@@ -672,6 +672,38 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     expect(meta.branch.syncStatus).toBe('synced')
   })
 
+  it("wakes the branch's sync once its new PR number is recorded, for the conflicts status", async () => {
+    const { worker, octokit } = makePrWorker()
+    await setupBranchDir('canopycms/prod/feature-x')
+    octokit.pulls.list.mockResolvedValue({ data: [] })
+    octokit.pulls.create.mockResolvedValue({ data: { number: 1, html_url: 'https://x.test/1' } })
+    octokit.pulls.update.mockResolvedValue({ data: {} })
+    const wake = vi.spyOn(
+      worker as unknown as { requestBranchSync(branchRef?: string): void },
+      'requestBranchSync',
+    )
+    const submit = () =>
+      enqueueTask(taskDir, {
+        action: 'push-and-create-or-update-pr',
+        payload: { branch: 'canopycms/prod/feature-x', title: 'T', body: 'B' },
+      })
+
+    await submit()
+    await worker.processTaskQueue()
+    expect(
+      (await readBranchMeta('canopycms/prod/feature-x')).branch.pullRequestNumber,
+    ).toBeDefined()
+    expect(wake).toHaveBeenCalledExactlyOnceWith('canopycms/prod/feature-x')
+
+    // The same pull request again: nothing new to wake for.
+    octokit.pulls.list.mockResolvedValue({
+      data: [{ number: 1, html_url: 'https://x.test/1', updated_at: '2026-01-01T00:00:00Z' }],
+    })
+    await submit()
+    await worker.processTaskQueue()
+    expect(wake).toHaveBeenCalledTimes(1)
+  })
+
   it('keeps the human text of an existing PR body when the task carries mergeSectionIntoBody', async () => {
     const { worker, octokit } = makePrWorker()
     await setupBranchDir('canopycms/prod/feature-x')

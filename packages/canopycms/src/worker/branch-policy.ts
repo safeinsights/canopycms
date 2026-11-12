@@ -621,7 +621,7 @@ export function assertPullRequestText(
 export const MAX_COMMIT_STATUS_DESCRIPTION_LENGTH = 140
 
 /** The longest commit status target URL the gateway sends, as the editor URL is capped. */
-const MAX_COMMIT_STATUS_URL_LENGTH = 2048
+export const MAX_COMMIT_STATUS_URL_LENGTH = 2048
 
 /**
  * Refuse a commit status description over GitHub's cap or holding a control character, and a target

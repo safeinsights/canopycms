@@ -12,6 +12,7 @@ import {
 import { getErrorMessage } from '../utils/error'
 import { isStaleLeaseRejection, workflowPushRefusalFile } from '../utils/git'
 import { isTransientAuthFailure, type ResolvedGitHubAuth } from './github-auth'
+import { isPermissionDenial } from './github-errors'
 import {
   GitHubMirror,
   GitHubTransientError,
@@ -1258,8 +1259,8 @@ class LocalGitHubGateway implements GitHubGateway {
           `${refusing}: ${sha.slice(0, 7)} is not its head, ${pr.head.sha.slice(0, 7)}`,
         )
       }
-      await this.api(reach, () =>
-        this.octokit.repos.createCommitStatus({
+      try {
+        await this.octokit.repos.createCommitStatus({
           ...this.repo,
           sha,
           state,
@@ -1267,8 +1268,14 @@ class LocalGitHubGateway implements GitHubGateway {
           description,
           ...(targetUrl !== undefined && { target_url: targetUrl }),
           request: { signal },
-        }),
-      )
+        })
+      } catch (err) {
+        // A credential without the Commit statuses permission, which the worker meets every cycle
+        // until it is granted: the `pulls.get` above just proved the credential works, so a
+        // re-read would only spend the refresh floor.
+        if (!isPermissionDenial(err)) reach.failed = true
+        throw err
+      }
     })
   }
 

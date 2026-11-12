@@ -631,6 +631,28 @@ describe('the conflicts status on a pull request head', () => {
     )
   })
 
+  it('re-reads the credential after a failed write, but not for a missing permission', async () => {
+    for (const [code, rereads] of [
+      [403, 0],
+      [500, 1],
+    ] as const) {
+      const refresh = vi.fn(async () => 'fake-token-for-policy')
+      const octokit = octokitStub()
+      octokit.pulls.get.mockResolvedValue({
+        data: withHead(pullRequestHead('canopycms/prod/feature')),
+      })
+      octokit.repos.createCommitStatus.mockRejectedValue(
+        await octokitErrorFor(code, { message: 'Resource not accessible by integration' }),
+      )
+      const github = gateway({ octokit: octokit as unknown as Octokit }, refresh)
+      await expect(github.setConflictsStatus(status)).rejects.toMatchObject({ status: code })
+      // The next operation joins any re-read the failure armed.
+      octokit.repos.createCommitStatus.mockResolvedValue({ data: {} })
+      await github.setConflictsStatus(status)
+      expect(refresh).toHaveBeenCalledTimes(rereads)
+    }
+  })
+
   it('refuses a commit that is not the head, and a pull request it would not update', async () => {
     for (const [answer, reason] of [
       [withHead(pullRequestHead('canopycms/prod/feature'), 'd'.repeat(40)), 'not-head'],

@@ -1062,7 +1062,11 @@ describe('SystemHealthPanel', () => {
       renderPanel()
 
       const alert = await screen.findByTestId('conflicts-status-alert')
-      expect(alert.textContent).toContain('Conflicts status not set on GitHub')
+      expect(alert.textContent).toContain('Conflicts status not set on 5 pull requests')
+      expect(alert.textContent).toContain('Where it is a required check, merging waits on it.')
+      expect(alert.textContent).toContain(
+        'its owner adds "Commit statuses: read and write" in the App\'s permissions',
+      )
       expect(alert.textContent).toContain('"CanopyCMS conflicts" check')
       expect(alert.textContent).toContain('lacks the "Commit statuses" permission')
       expect(alert.textContent).toContain('canopycms init-github-app verify')
@@ -1089,8 +1093,9 @@ describe('SystemHealthPanel', () => {
       renderPanel()
 
       const alert = await screen.findByTestId('conflicts-status-alert')
+      expect(alert.textContent).toContain('Conflicts status not set on 1 pull request')
       expect(alert.textContent).toContain(
-        "GitHub couldn't be reached. The next git sync tries again.",
+        "GitHub couldn't be reached, or was busy. The next git sync tries again.",
       )
       expect(alert.textContent).not.toContain('Commit statuses')
       expect(alert.textContent).not.toContain('more.')

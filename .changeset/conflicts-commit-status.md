@@ -18,7 +18,8 @@ Make it a required check in branch protection to stop a by-hand merge of undecid
 reports an installation without it. Until an installation has it, only the status is refused, and
 System health says so.
 
-**To adopt.** On a GitHub App, an owner of the account it is installed on accepts the new
-permission request in the installation's settings, then runs `canopycms init-github-app verify`.
-A fine-grained token needs "Commit statuses: read and write"; a classic token's `repo` scope
-already covers it. See [Submitting for Review](../README.md#submitting-for-review).
+**To adopt.** On an existing GitHub App, its owner adds "Commit statuses: read and write" in the
+App's permissions on GitHub, an owner of the account it is installed on accepts the request in the
+installation's settings, then `canopycms init-github-app verify` confirms it. A fine-grained token
+needs "Commit statuses: read and write"; a classic token's `repo` scope already covers it. See
+[Submitting for Review](../README.md#submitting-for-review).

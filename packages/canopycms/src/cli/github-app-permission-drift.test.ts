@@ -402,6 +402,7 @@ async function observeEverything(): Promise<Coverage> {
       github: () => statusGitHub,
       conflictsStatusesSet: () => new Map(),
       shutdownSignal: () => signal,
+      taskTimeoutMs: 1000,
     } satisfies ConflictsStatusContext,
     new Map([['canopycms/prod/content/a', 'c'.repeat(40)]]),
   )

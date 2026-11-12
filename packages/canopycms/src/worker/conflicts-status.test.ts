@@ -47,6 +47,7 @@ const ctx = (): ConflictsStatusContext => ({
   github: () => ({ setConflictsStatus: setStatus }) as unknown as GitHubGateway,
   conflictsStatusesSet: () => statusesSet,
   shutdownSignal: () => new AbortController().signal,
+  taskTimeoutMs: 5_000,
 })
 
 /** A branch workspace whose branch.json holds `branch`. */
@@ -243,11 +244,11 @@ describe('setConflictsStatuses', () => {
     expect(setStatus).toHaveBeenCalledTimes(3)
   })
 
-  it('reports a refused credential over a failure to reach GitHub before it', async () => {
+  it('reports a refused credential over another refusal before it', async () => {
     await giveBranch('a', { name: 'canopycms/prod/a', pullRequestNumber: 1 })
     await giveBranch('b', { name: 'canopycms/prod/b', pullRequestNumber: 2 })
     setStatus
-      .mockRejectedValueOnce(Object.assign(new Error('Bad Gateway'), { status: 502 }))
+      .mockRejectedValueOnce(Object.assign(new Error('Not Found'), { status: 404 }))
       .mockRejectedValueOnce(Object.assign(new Error('Resource not accessible'), { status: 403 }))
     const failure = await setConflictsStatuses(
       ctx(),
@@ -257,6 +258,25 @@ describe('setConflictsStatuses', () => {
       ]),
     )
     expect(failure).toMatchObject({ reason: 'permission', count: 2 })
+  })
+
+  it('stops the cycle at GitHub being unreachable, and bounds each write', async () => {
+    await giveBranch('a', { name: 'canopycms/prod/a', pullRequestNumber: 1 })
+    await giveBranch('b', { name: 'canopycms/prod/b', pullRequestNumber: 2 })
+    setStatus.mockRejectedValueOnce(Object.assign(new Error('Bad Gateway'), { status: 502 }))
+    const failure = await setConflictsStatuses(
+      { ...ctx(), taskTimeoutMs: 20 },
+      new Map([
+        ['canopycms/prod/a', HEAD1],
+        ['canopycms/prod/b', HEAD2],
+      ]),
+    )
+    expect(failure).toMatchObject({ reason: 'unreachable', count: 2 })
+    expect(setStatus).toHaveBeenCalledTimes(1)
+    const signal = setStatus.mock.calls[0][1]
+    expect(signal?.aborted).toBe(false)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(signal?.aborted).toBe(true)
   })
 
   it('tells GitHub being unreachable from a refused credential', async () => {
@@ -274,7 +294,7 @@ describe('setConflictsStatuses', () => {
     expect(await setConflictsStatuses(ctx(), tips)).toMatchObject({ reason: 'other' })
   })
 
-  it('retries a head GitHub moved since the fetch without reporting it, and stops asking about a refused pull request', async () => {
+  it('retries a head GitHub moved since the fetch without reporting it', async () => {
     await giveBranch('a', { name: 'canopycms/prod/a', pullRequestNumber: 1 })
     const tips = new Map([['canopycms/prod/a', HEAD1]])
     setStatus.mockRejectedValueOnce(
@@ -283,15 +303,53 @@ describe('setConflictsStatuses', () => {
     expect(await setConflictsStatuses(ctx(), tips)).toBeUndefined()
     expect(await setConflictsStatuses(ctx(), tips)).toBeUndefined()
     expect(setStatus).toHaveBeenCalledTimes(2)
+  })
 
-    setStatus.mockClear()
-    statusesSet.clear()
+  it('reports a pull request the gateway refuses, and asks again next cycle', async () => {
+    await giveBranch('a', { name: 'canopycms/prod/a', pullRequestNumber: 1 })
+    const tips = new Map([['canopycms/prod/a', HEAD1]])
     setStatus.mockRejectedValueOnce(
-      new GatewayRefusalError('pull-request', 'canopycms/prod/a', 'protected', 'protected'),
+      new GatewayRefusalError('pull-request', 'canopycms/prod/a', 'protected', 'it is protected'),
     )
+    expect(await setConflictsStatuses(ctx(), tips)).toMatchObject({
+      reason: 'other',
+      message: 'it is protected',
+      branches: ['canopycms/prod/a'],
+    })
     expect(await setConflictsStatuses(ctx(), tips)).toBeUndefined()
-    await setConflictsStatuses(ctx(), tips)
-    expect(setStatus).toHaveBeenCalledTimes(1)
-    expect(consoleSpy).toHaveWarned(/Not setting the conflicts status/)
+    expect(setStatus).toHaveBeenCalledTimes(2)
+  })
+
+  it('leaves the last report standing when it cannot say: no branch listing, or a drain', async () => {
+    await fs.rm(branches, { recursive: true })
+    await fs.writeFile(branches, 'not a directory')
+    expect(await setConflictsStatuses(ctx(), new Map())).toBeNull()
+    expect(consoleSpy).toHaveWarned(/Could not read the branches/)
+
+    await fs.rm(branches)
+    await fs.mkdir(branches)
+    await giveBranch('a', { name: 'canopycms/prod/a', pullRequestNumber: 1 })
+    const drain = new AbortController()
+    setStatus.mockImplementationOnce(async () => {
+      drain.abort()
+      throw new Error('aborted')
+    })
+    expect(
+      await setConflictsStatuses(
+        { ...ctx(), shutdownSignal: () => drain.signal },
+        new Map([['canopycms/prod/a', HEAD1]]),
+      ),
+    ).toBeNull()
+  })
+
+  it('leaves off a link longer than the gateway takes, and sets the status without it', async () => {
+    await giveBranch('a', {
+      name: 'canopycms/prod/a',
+      pullRequestNumber: 1,
+      editorUrl: `https://cms.example.org/${'x'.repeat(2010)}`,
+    })
+    await setConflictsStatuses(ctx(), new Map([['canopycms/prod/a', HEAD1]]))
+    expect(posted()[0]).not.toHaveProperty('targetUrl')
+    expect(posted()[0]).toMatchObject({ state: 'success' })
   })
 })

@@ -267,7 +267,9 @@ function DivergedBranchesAlert({ names }: { names: readonly string[] }) {
         </Text>
         <Group gap={4}>
           {names.map((name) => (
-            <Code key={name}>{escapeForLog(name)}</Code>
+            <Code key={name} style={{ overflowWrap: 'anywhere' }}>
+              {escapeForLog(name)}
+            </Code>
           ))}
         </Group>
       </Stack>
@@ -321,7 +323,9 @@ function BranchRefs({ branches }: { branches: UnpublishableBranch[] }) {
   return (
     <Group gap={4}>
       {branches.map((branch, i) => (
-        <Code key={i}>{escapeForLog(branch.name)}</Code>
+        <Code key={i} style={{ overflowWrap: 'anywhere' }}>
+          {escapeForLog(branch.name)}
+        </Code>
       ))}
     </Group>
   )

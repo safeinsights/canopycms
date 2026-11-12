@@ -25,7 +25,7 @@ import {
 import type { ConflictsStatusFailure } from '../types'
 import { getErrorMessage, isNodeError, sanitizeErrorMessage } from '../utils/error'
 import { escapeForLog } from '../utils/escape-text'
-import { GatewayRefusalError } from './branch-policy'
+import { GatewayRefusalError, MAX_COMMIT_STATUS_URL_LENGTH } from './branch-policy'
 import { getHttpStatus, isPermissionDenial } from './github-errors'
 import type { GitHubConflictsStatus } from './github-gateway'
 import { workerLog, workerLogWarn } from './log'
@@ -38,6 +38,7 @@ export type ConflictsStatusContext = Pick<
   | 'github'
   | 'conflictsStatusesSet'
   | 'shutdownSignal'
+  | 'taskTimeoutMs'
 >
 
 /** The most branch names a failure report lists. */
@@ -89,13 +90,14 @@ interface DueStatus {
 
 /**
  * Set the conflicts status on every pull request whose head, as `githubTips` (this cycle's GitHub
- * fetch) holds it, lacks the one its branch calls for. Returns the failure to report, or undefined
- * when every status was set. Never throws.
+ * fetch) holds it, lacks the one its branch calls for. Returns the failure to report, undefined
+ * when every status was set, or null when the stage could not say: the branches could not be
+ * listed, or a drain cut it off. Never throws.
  */
 export async function setConflictsStatuses(
   ctx: ConflictsStatusContext,
   githubTips: ReadonlyMap<string, string>,
-): Promise<ConflictsStatusFailure | undefined> {
+): Promise<ConflictsStatusFailure | undefined | null> {
   let due: DueStatus[]
   try {
     due = await dueStatuses(ctx, githubTips)
@@ -103,40 +105,49 @@ export async function setConflictsStatuses(
     workerLogWarn(
       `Could not read the branches' conflicts for their status: ${getErrorMessage(err)}`,
     )
-    return undefined
+    return null
   }
   const set = ctx.conflictsStatusesSet()
   const failed: string[] = []
   let failure: Omit<ConflictsStatusFailure, 'branches' | 'count' | 'at'> | undefined
   for (const [index, { branch, status, key }] of due.entries()) {
-    if (ctx.shutdownSignal().aborted) break
+    if (ctx.shutdownSignal().aborted) return null
     try {
-      await ctx.github().setConflictsStatus(status, ctx.shutdownSignal())
+      // Bounded, so a GitHub that stalls holds the sync for one timeout, not one per branch.
+      await ctx
+        .github()
+        .setConflictsStatus(
+          status,
+          AbortSignal.any([ctx.shutdownSignal(), AbortSignal.timeout(ctx.taskTimeoutMs)]),
+        )
       set.set(branch, key)
       workerLog(
         `Set the conflicts status of PR #${status.pullRequest} (${escapeForLog(branch)}) at ` +
           `${status.sha.slice(0, 7)}: ${status.state}`,
       )
     } catch (err) {
+      if (ctx.shutdownSignal().aborted) return null
+      // A head GitHub moved since this cycle's fetch gets its status next cycle.
+      if (err instanceof GatewayRefusalError && err.reason === 'not-head') continue
       const message = sanitizeErrorMessage(getErrorMessage(err))
-      if (err instanceof GatewayRefusalError) {
-        if (err.reason !== 'not-head') {
-          // Refused for the pull request itself, which no retry changes until the head does.
-          set.set(branch, key)
-          workerLogWarn(`Not setting the conflicts status of ${escapeForLog(branch)}: ${message}`)
-        }
-        // A head GitHub moved since this cycle's fetch gets its status next cycle.
-        continue
-      }
       failed.push(branch)
       workerLogWarn(`Could not set the conflicts status of ${escapeForLog(branch)}: ${message}`)
-      if (isPermissionDenial(err)) {
-        // The remedy the report names; GitHub answers every later write in the cycle the same way.
-        failure = { reason: 'permission', message }
+      // The gateway's refusals for the pull request itself report as `other`, retried each cycle.
+      const reason =
+        err instanceof GatewayRefusalError
+          ? 'other'
+          : isPermissionDenial(err)
+            ? 'permission'
+            : isUnreachable(err)
+              ? 'unreachable'
+              : 'other'
+      // A refused credential names its remedy over any other failure.
+      if (reason === 'permission' || !failure) failure = { reason, message }
+      // GitHub answers every later write in the cycle the same way; the next cycle tries again.
+      if (reason !== 'other') {
         failed.push(...due.slice(index + 1).map((d) => d.branch))
         break
       }
-      failure ??= { reason: isUnreachable(err) ? 'unreachable' : 'other', message }
     }
   }
   if (!failure) return undefined
@@ -199,11 +210,13 @@ async function dueStatuses(
       continue
     }
     const editorUrl = branch.editorUrl && resolveEditorUrl({ configured: branch.editorUrl })
+    const link = editorUrl && editorDeepLink(editorUrl, branch.name)
     const status: GitHubConflictsStatus = {
       pullRequest: branch.pullRequestNumber,
       sha,
       ...text,
-      ...(editorUrl && { targetUrl: editorDeepLink(editorUrl, branch.name) }),
+      // A link the gateway would refuse is left off, so it never costs the status.
+      ...(link && link.length <= MAX_COMMIT_STATUS_URL_LENGTH && { targetUrl: link }),
     }
     const key = JSON.stringify(status)
     if (set.get(branch.name) !== key) due.push({ branch: branch.name, status, key })

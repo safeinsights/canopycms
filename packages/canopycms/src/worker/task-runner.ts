@@ -686,6 +686,7 @@ export async function updateBranchMetadata(
       return
     }
     let found = false
+    let newPullRequest = false
     // Bookkeeping: the save that queued this already said when the branch last changed.
     await meta.update(
       (existing) => {
@@ -710,6 +711,7 @@ export async function updateBranchMetadata(
         }
         if (result.prUrl && !archived) updates.pullRequestUrl = result.prUrl
         if (result.prNumber && !archived) {
+          newPullRequest = existing.branch.pullRequestNumber !== result.prNumber
           updates.pullRequestNumber = result.prNumber
           // As soon as the PR exists the field reads 'open', rather than staying
           // absent until the next poll cycle observes it. Exception: the git-sync
@@ -727,6 +729,8 @@ export async function updateBranchMetadata(
       { keepUpdatedAt: true },
     )
     if (!found) noMetadataToRecord(branch, `${task.action} outcome`)
+    // The sync its push woke may have run before the number was recorded, and skipped the branch.
+    if (newPullRequest) ctx.requestBranchSync(branch)
   } catch (err) {
     workerLogError(
       `Failed to update metadata for ${branch}:`,

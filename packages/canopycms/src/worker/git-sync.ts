@@ -763,8 +763,9 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     const report = ctx.ensureStatusReport()
     report.lastGitSyncAt = new Date().toISOString()
     delete report.lastGitSyncError
+    // null: the stage could not say, so the last report stands.
     if (conflictsStatusFailure) report.conflictsStatusFailure = conflictsStatusFailure
-    else delete report.conflictsStatusFailure
+    else if (conflictsStatusFailure === undefined) delete report.conflictsStatusFailure
     // Recorded once the cycle has done everything it can, so System health shows it.
     if (needsOperator !== null) {
       report.lastGitSyncError = { message: needsOperator, at: report.lastGitSyncAt }

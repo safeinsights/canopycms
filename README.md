@@ -1906,7 +1906,7 @@ When your changes are ready, click "Submit for review" in the branch bar: that c
 
 **A submitted branch is locked for content editing.** The editor disables Save and other write actions and marks the branch "In review · read-only" — and the server rejects edit requests too, so this is not merely a UI restriction. To resume editing, click "Withdraw from review" in the branch bar or Branches drawer, which converts the PR back to a draft and returns the branch to `editing` status. A reviewer's "Request changes" returns it to `editing` too, with an optional note; "Approve" marks it `approved`.
 
-**Conflicts on GitHub:** the worker sets a `CanopyCMS conflicts` status on each PR's head, failing while choices are open in the editor. Make it a required check to block by-hand merges. It needs the "Commit statuses" permission, which an existing App installation must accept.
+**Conflicts on GitHub:** the worker sets a `CanopyCMS conflicts` status on each PR's head, failing while choices are open in the editor. Make it a required check to block by-hand merges, but only on a branch that takes no other PRs: those never get it. An existing GitHub App needs "Commit statuses: read and write" added in its settings, then accepted on its installation.
 
 The base branch (the PR target, usually `main`) can never be submitted, so "Submit for review" is hidden whenever you are viewing it. In production it is read-only (see [Getting Started](#getting-started)); in dev mode it stays editable, but your work must move to a branch before it can be submitted.
 
