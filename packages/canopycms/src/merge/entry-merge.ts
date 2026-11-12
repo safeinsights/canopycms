@@ -728,11 +728,18 @@ export function mergeEntry({
   const byField = new Map<string, Set<string>>()
   const parents = new Set<string>()
   const field = (list: string) => list.replace(/\[[^\]]*\]/g, '[]')
-  visitByOwnKey(ancestor.data, (_item, read, list, at) => {
-    exact.set(list, (exact.get(list) ?? new Set()).add(read))
-    byField.set(field(list), (byField.get(field(list)) ?? new Set()).add(read))
-    parents.add(at)
-  })
+  // A keyless ancestor item by its place, and by the key a side's first save gave it.
+  for (const keylessByRead of [false, true]) {
+    visitByOwnKey(
+      ancestor.data,
+      (_item, read, list, at) => {
+        exact.set(list, (exact.get(list) ?? new Set()).add(read))
+        byField.set(field(list), (byField.get(field(list)) ?? new Set()).add(read))
+        parents.add(at)
+      },
+      keylessByRead,
+    )
+  }
   const movedIn = (data: unknown) => {
     const keys = new Set<string>()
     visitByOwnKey(data, (item, _read, list) => {
@@ -842,25 +849,30 @@ function keyedItems(data: unknown): Map<string, KeyedItem | null> {
 const contentName = (item: unknown): string => `${ITEM_KEY}:${valueToken(item)}`
 
 /**
- * Each list item of `node` with the key a read gives it, the path of its list, and its own path,
- * which names every enclosing item by its own key, or its place where it has none.
+ * Each list item of `node` with its read key, its list's path and its own: enclosing items by own
+ * key, else by place, or with `keylessByRead` by read key.
  */
 function visitByOwnKey(
   node: unknown,
   onItem: (item: unknown, read: string, list: string, at: string) => void,
+  keylessByRead = false,
   list = '',
 ): void {
   if (Array.isArray(node)) {
     const reads = itemKeysAsRead(node)
     node.forEach((item, index) => {
-      const at = `${list}[${usableKey(item) ?? `#${index}`}]`
+      const own = usableKey(item)
       const read = reads[index]
+      // A key a list holds twice names only its first holder.
+      const name = own !== undefined && own === read ? own : keylessByRead ? read : undefined
+      const at = `${list}[${name ?? `#${index}`}]`
       if (read !== undefined) onItem(item, read, list, at)
-      visitByOwnKey(item, onItem, at)
+      visitByOwnKey(item, onItem, keylessByRead, at)
     })
   } else if (isPlainRecord(node)) {
-    for (const [name, value] of Object.entries(node))
-      visitByOwnKey(value, onItem, `${list}.${name}`)
+    for (const [name, value] of Object.entries(node)) {
+      visitByOwnKey(value, onItem, keylessByRead, `${list}.${name}`)
+    }
   }
 }
 

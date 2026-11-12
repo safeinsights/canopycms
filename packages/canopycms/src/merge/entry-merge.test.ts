@@ -2330,6 +2330,84 @@ describe('twins in a nested list, after a git-level merge that also edited their
     ])
   })
 
+  describe('a twin moved to a sibling section, beside an item made to read like it', () => {
+    const sections: FieldConfig[] = [
+      {
+        name: 'sections',
+        type: 'object',
+        list: true,
+        fields: [
+          ...text('name'),
+          { name: 'cards', type: 'object', list: true, fields: text('h', 't') },
+        ],
+      },
+    ]
+    const [T, U, Q] = [
+      { h: 'T', t: 't' },
+      { h: 'U', t: 'u' },
+      { h: 'Q', t: 'q' },
+    ]
+    type Doc = { sections: Array<{ _key?: string; name: string; cards: Data[] }> }
+    const raw: Doc = {
+      sections: [
+        { name: 's1', cards: [T, T, U] },
+        { name: 's2', cards: [Q] },
+      ],
+    }
+    const keyed = entryAsRead(sections, structuredClone(raw)) as Doc
+    // The editor moves the second twin to s2 and makes U read like the twins; the base edits the
+    // first twin.
+    const moved = (o: Doc): Doc => {
+      const [K, K2, KU] = o.sections[0].cards
+      return {
+        sections: [
+          { ...o.sections[0], cards: [K, { ...T, _key: KU._key }] },
+          { ...o.sections[1], cards: [...o.sections[1].cards, K2] },
+        ],
+      }
+    }
+    const edited = (o: Doc): Doc => {
+      const base = structuredClone(o)
+      base.sections[0].cards[0].t = 'base'
+      return base
+    }
+    const merge = (ancestor: Doc, base: Doc, branch: Doc) => {
+      const result = mergeEntry({
+        format: 'json',
+        ancestor: { data: ancestor },
+        base: { data: base },
+        branch: { data: branch },
+        fields: sections,
+      })
+      if (result.kind !== 'merged') throw new Error('expected a merge')
+      const merged = result.data.sections as Doc['sections']
+      return {
+        conflicts: result.conflicts,
+        cards: merged.map((s) => s.cards.map((c) => c.t)),
+        keys: merged.flatMap((s) => s.cards.map((c) => c._key)),
+      }
+    }
+    const meant = [
+      ['base', 't'],
+      ['q', 't'],
+    ]
+
+    it('in a file a person wrote, both sides then saved by the editor', () => {
+      const result = merge(raw, edited(keyed), moved(keyed))
+      expect(result.conflicts).toEqual([])
+      expect(result.cards).toEqual(meant)
+    })
+
+    it('where both sections carry one key', () => {
+      const twice = structuredClone(keyed)
+      twice.sections[1]._key = twice.sections[0]._key
+      const result = merge(twice, edited(twice), moved(twice))
+      expect(result.conflicts).toEqual([])
+      expect(result.cards).toEqual(meant)
+      expect(new Set(result.keys).size).toBe(result.keys.length)
+    })
+  })
+
   it('the base deletes the reworded twin: it stays deleted', () => {
     const base = structuredClone(ancestor)
     base.sections[1].cards.splice(0, 1)
