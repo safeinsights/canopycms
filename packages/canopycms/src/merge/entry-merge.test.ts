@@ -1728,7 +1728,7 @@ describe('keys as a read gives them', () => {
     expect((result.data.items as Data[])[0]).toEqual({ ...x, d: 'd2', _key: hX })
   })
 
-  it('remaps an ambiguous key whose item changes key anyway: one of the two threads follows', () => {
+  it("never remaps an ambiguous key, which would move the twin list's thread too", () => {
     const page: FieldConfig[] = [
       ...text('title'),
       { name: 'items', type: 'object', list: true, fields: text('t', 'd') },
@@ -1738,52 +1738,38 @@ describe('keys as a read gives them', () => {
     const hX = itemKeysAsRead([x])[0]
     const edited = { ...x, d: 'd2' }
     const hEdited = itemKeysAsRead([edited])[0]
+    const keyedBoth = { title: 'T', items: [{ ...x, _key: hX }], l2: [{ ...x, _key: hX }] }
     // The base backfilled its own keys: the edited item's key replaces the branch's.
     const backfilled = run(
       { data: { title: 'T', items: [x], l2: [x] } },
       { data: { title: 'T', items: [{ ...edited, _key: hEdited }], l2: [{ ...x, _key: hX }] } },
-      { data: { title: 'T', items: [{ ...x, _key: hX }], l2: [{ ...x, _key: hX }] } },
+      { data: keyedBoth },
       'json',
       page,
     )
-    expect(backfilled.keyRemaps).toEqual([{ within: [], from: hX, to: hEdited }])
-    // No version keyed anything: the edited item reads under a new hash.
-    const keyless = run(
-      { data: { title: 'T', items: [x], l2: [x] } },
-      { data: { title: 'T', items: [edited], l2: [x] } },
-      { data: { title: 'T2', items: [x], l2: [x] } },
-      'json',
-      page,
-    )
-    expect(keyless.keyRemaps).toEqual([{ within: [], from: hX, to: hEdited }])
-    // The base re-keyed both lists: the first list's thread follows rather than neither.
-    const other = { t: 'x', d: 'd3' }
-    const both = run(
-      { data: { title: 'T', items: [x], l2: [x] } },
-      {
-        data: {
-          title: 'T',
-          items: [{ ...edited, _key: hEdited }],
-          l2: [{ ...other, _key: itemKeysAsRead([other])[0] }],
-        },
-      },
-      { data: { title: 'T', items: [{ ...x, _key: hX }], l2: [{ ...x, _key: hX }] } },
-      'json',
-      page,
-    )
-    const moved = both.keyRemaps.find((r) => r.from === hX)?.to
-    const merged = entryAsRead(page, both.data)
-    expect(resolveThreadPath(page, merged, 'items[0].d', [moved as string])).toBe('items[0].d')
-    // The base replaced the item in place with one sharing no value: it stands in the branch's place.
-    const replaced = { t: 'z', d: 'z' }
+    expect(backfilled.keyRemaps).toEqual([])
+    // The base replaced the item in place with one sharing no value.
     const inPlace = run(
       { data: { title: 'T', items: [x], l2: [x] } },
-      { data: { title: 'T', items: [replaced], l2: [x] } },
-      { data: { title: 'T', items: [{ ...x, _key: hX }], l2: [{ ...x, _key: hX }] } },
+      { data: { title: 'T', items: [{ t: 'z', d: 'z' }], l2: [x] } },
+      { data: keyedBoth },
       'json',
       page,
     )
-    expect(inPlace.keyRemaps).toEqual([{ within: [], from: hX, to: itemKeysAsRead([replaced])[0] }])
+    expect(inPlace.keyRemaps).toEqual([])
+    // No version keyed anything, and the twin list also holds the edited item: a remap to its
+    // key would move the twin's thread onto that other item.
+    const twin = { title: 'T', items: [x], l2: [x, edited] }
+    const keyless = run(
+      { data: twin },
+      { data: { ...twin, items: [edited] } },
+      { data: { ...twin, title: 'T2' } },
+      'json',
+      page,
+    )
+    expect(keyless.keyRemaps).toEqual([])
+    const merged = entryAsRead(page, keyless.data)
+    expect(resolveThreadPath(page, merged, 'l2[0].d', [hX as string])).toBe('l2[0].d')
   })
 
   it('keeps the keys and remaps of a list only the base changed, beside an item under a stale key', () => {
@@ -1814,6 +1800,39 @@ describe('keys as a read gives them', () => {
     const moved = result.keyRemaps.find((m) => m.from === hR)?.to
     const merged = entryAsRead(page, result.data)
     expect(resolveThreadPath(page, merged, 'items[2].t', [moved as string])).toBe('items[1].t')
+  })
+
+  it('merges a list as one value when the side that left it alone does not align item for item', () => {
+    const page: FieldConfig[] = [
+      { name: 'items', type: 'object', list: true, fields: text('h', 't', 'k') },
+    ]
+    // A content-shaped key no item here hashes to, as a rebase leaves.
+    const st = (s: string) => itemKeysAsRead([{ h: s, t: '0', k: '0' }])[0] as string
+    const r = { h: 'r', t: '2', k: 'k' }
+    const u = { h: 'u', t: '1', k: 'm' }
+    const o = [
+      { ...r, _key: itemKeysAsRead([r])[0] },
+      { ...u, _key: st('main') },
+    ]
+    // The base deletes r, edits u and adds q under a stale key; the branch holds the same
+    // content under stale keys of its own, so its u matches no ancestor item.
+    const base = [
+      { ...u, t: '1x', _key: st('main') },
+      { h: 'q', t: '2', k: 'm', _key: st('q') },
+    ]
+    const branch = [
+      { ...r, _key: st('m1') },
+      { ...u, _key: st('m2') },
+    ]
+    const result = run(
+      { data: { items: o } },
+      { data: { items: base } },
+      { data: { items: branch } },
+      'json',
+      page,
+    )
+    expect(result.conflicts).toEqual([])
+    expect(result.data.items).toEqual(base)
   })
 
   it('reads a list the schema lacks as no ambiguity, so an item the base changed is re-keyed', () => {
