@@ -44,6 +44,8 @@ import type { GitHubPullRequest } from './github-gateway'
 import {
   bringInGitHubCommits,
   catchUpWithPublished,
+  contains,
+  isPublished,
   mergeIntoBranch,
   reconcileMergeConflicts,
   returnToReview,
@@ -859,16 +861,19 @@ async function lacksPublishedCommits(
 /**
  * {@link reconcileMergeConflicts} for a submitted or approved branch, whose merges of GitHub's
  * commits can leave records too, under the content-write lock as for a branch being edited. Only
- * for a clone with a record, so others cost one stat. Never throws.
+ * for a clone with a record, or with `conflictFiles` to clear, so others cost one stat. Never
+ * throws.
  */
 async function reconcileInReview(
   ctx: RebaseContext,
   branchDir: string,
   branchPath: string,
+  metaFile: BranchMetadataFile,
   isProvisioningLockCompromised: () => boolean,
 ): Promise<void> {
   try {
-    if (!(await new MergeConflictStore(branchPath).exists())) return
+    const flagged = (metaFile.branch.conflictFiles?.length ?? 0) > 0
+    if (!flagged && !(await new MergeConflictStore(branchPath).exists())) return
     await assertSharedRepoConfig(branchPath, 'worktree')
     await withContentLockInReview(
       branchDir,
@@ -1213,7 +1218,7 @@ async function rebaseOneBranch(
     // - archived: finished, with no PR left to poll.
     if (metaFile !== null && (branchStatus === 'submitted' || branchStatus === 'approved')) {
       workerLog(`  Skipping ${branchDir} (${branchStatus})`)
-      await reconcileInReview(ctx, branchDir, branchPath, isProvisioningLockCompromised)
+      await reconcileInReview(ctx, branchDir, branchPath, metaFile, isProvisioningLockCompromised)
       const outcome = await bringInCommitsForBranchInReview(
         ctx,
         branchDir,
@@ -1534,6 +1539,18 @@ async function rebaseOneBranch(
         (await countAboveBase(['--merges', '--end-of-options', aboveBase])) !== '0' ||
         (await countAboveBase(['--end-of-options', aboveBase, '--', CANOPY_META_DIR])) !== '0'
       const head = (await branchGit.revparse(['HEAD'])).trim()
+      // Commits on top of what this branch published, as "Get latest changes" makes from saved work
+      // on a branch submitted once, or a submit whose push failed: a rebase would rewrite the
+      // published commit under them, which reads as a push this clone never saw. A merge publishes
+      // them as a fast-forward. A same-named ref at a commit the base holds is no work of this branch.
+      const published = canPublish ? await readPublishedSha(ctx, branchRef) : null
+      const aheadOfPublished =
+        published !== null &&
+        published !== head &&
+        metaFile?.branch.name === branchRef &&
+        isPublished(metaFile) &&
+        (await contains(branchGit, head, published)) &&
+        !(await contains(branchGit, fetchedBaseTip, published))
       /**
        * The base taken in by a merge (github-commits.ts), which decides each value against the fork
        * point and leaves what both sides changed differently for a person, rather than a rebase,
@@ -1569,7 +1586,9 @@ async function rebaseOneBranch(
         await clearRebaseFailure(ctx, branchPath, branchRef)
         return { kind: 'rebased' }
       }
-      if (commitArgs !== null && (cannotReplay || unpushed)) return await takeBaseByMerge()
+      if (commitArgs !== null && (cannotReplay || unpushed || aheadOfPublished)) {
+        return await takeBaseByMerge()
+      }
       // A rebase only where it takes in exactly what a merge would, with nothing for a person: git
       // conflicts nowhere, and the field merge decides no file otherwise than git does.
       if (
@@ -1593,7 +1612,7 @@ async function rebaseOneBranch(
       // about to rebase away, and the clone's pre-rebase tip is exactly what
       // the rebase makes unreadable.
       const preRebaseHead = head
-      const publishedSha = canPublish ? await readPublishedSha(ctx, branchRef) : null
+      const publishedSha = published
       await assertNoIncomingSubmodules(branchGit, branchPath, preRebaseHead, fetchedBaseTip)
 
       const { completed, conflicted, failureReason } = await runRebaseRounds(

@@ -4,8 +4,8 @@
  * The working tree holds the author's value at each one (merge/entry-merge.ts), so nothing here is
  * needed to read the branch; it is what says which values a person still has to choose.
  *
- * `branch.json` `conflictFiles` is derived from it: the content IDs it names. A clone with no such
- * file keeps whatever `conflictFiles` it has.
+ * `branch.json` `conflictFiles` is derived from it: the content IDs it names, none for a clone with
+ * no such file (`reconcileMergeConflicts`, worker/github-commits.ts).
  *
  * Writers run under the comment store's three layers (comment-store.ts): the in-process mutex, the
  * cross-host lockfile, then version OCC. The worker writes it holding the branch's provisioning and
