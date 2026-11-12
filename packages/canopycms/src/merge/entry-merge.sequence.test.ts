@@ -41,6 +41,7 @@ type Op =
   | 'editTitle'
   | 'editBoth'
   | 'becomeOther'
+  | 'takeOver'
   | 'delete'
   | 'reorder'
   | 'moveAcross'
@@ -51,6 +52,7 @@ const OPS: Op[] = [
   'editTitle',
   'editBoth',
   'becomeOther',
+  'takeOver',
   'delete',
   'reorder',
   'moveAcross',
@@ -108,17 +110,26 @@ function apply(
   for (const list of LISTS) {
     const read =
       mode === 'editor' ? keyAll(side.file[list]) : side.file[list].map((i) => ({ ...i }))
+    // The editor's edit that makes an item read exactly like another of its list, and with
+    // `takeOver` the deletion of that other.
+    const like = new Map<number, number>()
+    const dropped = new Set<number>()
+    read.forEach((_item, k) => {
+      const op = ops.get(side.ids[list][k])
+      if ((op !== 'becomeOther' && op !== 'takeOver') || mode !== 'editor' || read.length < 2)
+        return
+      const other = (k + 1 + g.int(read.length - 1)) % read.length
+      like.set(k, other)
+      if (op === 'takeOver') dropped.add(other)
+    })
     read.forEach((item, k) => {
       const id = side.ids[list][k]
-      const op = ops.get(id)
+      const op = dropped.has(k) ? 'delete' : ops.get(id)
       const next = { ...item }
       if (op === 'editDetail' || op === 'editBoth') next.detail = `${item.detail}-${name}${n}`
       if (op === 'editTitle' || op === 'editBoth') next.title = `${item.title}~${name}${n}`
-      // The editor's edit that makes an item read exactly like another of its list.
-      if (op === 'becomeOther' && mode === 'editor' && read.length > 1) {
-        const like = read[(k + 1 + g.int(read.length - 1)) % read.length]
-        ;[next.title, next.detail] = [like.title, like.detail]
-      }
+      const other = like.get(k)
+      if (other !== undefined) [next.title, next.detail] = [read[other].title, read[other].detail]
       if (op === 'delete') return
       if (op === 'reorder') moved.push([list, next, id, list])
       else if (op === 'moveAcross') moved.push([list === 'items' ? 'l2' : 'items', next, id, list])
@@ -218,15 +229,17 @@ const contents = (model: Model, list: List) =>
 /**
  * Twins the data cannot tell apart: in the ancestor, both sides touched one of them, unless both
  * keyed them as the editor does (`keyed`); or a side took an item out of a list while holding a
- * copy of it there, which reads as the item itself.
+ * copy of it there, which reads as the item itself, or an item it made read like it.
  */
-function twinsAmbiguous(o: Model, a: Model, b: Model, keyed: boolean): boolean {
+function twinsAmbiguous(o: Model, a: Model, b: Model, keyed: boolean, rekeyed: boolean): boolean {
   const groups = new Map<string, string[]>()
   for (const [id, item] of o) {
     const group = `${item.list}${contentOf(item)}`
     groups.set(group, [...(groups.get(group) ?? []), id])
   }
   const differs = (x: Model, id: string) => JSON.stringify(o.get(id)) !== JSON.stringify(x.get(id))
+  // A hand edit that keys a list anew deals its twins' keys out by order, whichever twin is which.
+  if (rekeyed && [...groups.values()].some((ids) => ids.length > 1)) return true
   const bothTouched =
     !keyed &&
     [...groups.values()].some(
@@ -241,7 +254,31 @@ function twinsAmbiguous(o: Model, a: Model, b: Model, keyed: boolean): boolean {
           ([k, v]) => !o.has(k) && v.list === item.list && contentOf(v) === contentOf(item),
         ),
     )
-  return bothTouched || copyKept(a) || copyKept(b)
+  // Made to read like twins it took one of out of the list: which one it took is not in the data.
+  const likeTwins = (x: Model) =>
+    [...groups.values()].some(
+      (ids) =>
+        ids.length > 1 &&
+        ids.some((id) => x.get(id)?.list !== o.get(id)!.list) &&
+        [...x].some(
+          ([k, v]) =>
+            o.has(k) &&
+            contentOf(o.get(k)!) !== contentOf(v) &&
+            `${v.list}${contentOf(v)}` === `${o.get(ids[0])!.list}${contentOf(o.get(ids[0])!)}`,
+        ),
+    )
+  return bothTouched || copyKept(a) || copyKept(b) || likeTwins(a) || likeTwins(b)
+}
+
+/** Whether `key` is missing or a key a read gives `item`'s content, a repeat's suffix aside. */
+const hashes = (key: string | undefined, item: { title: string; detail: string }) => {
+  const read = itemKeysAsRead([{ title: item.title, detail: item.detail }])[0] as string
+  return key === undefined || key === read || key.startsWith(`${read}-`)
+}
+/** Which keys hash their content: an ancestor item's then, a side's item's now. */
+type Keys = {
+  wasFresh: ReadonlySet<string>
+  fresh: (item: { title: string; detail: string }, id: string) => boolean
 }
 
 /**
@@ -249,15 +286,20 @@ function twinsAmbiguous(o: Model, a: Model, b: Model, keyed: boolean): boolean {
  * item it took out of that list: the two swapped, so the other item stayed as it was and the
  * edited one went where the other went, or was dropped.
  */
-function readAsDropped(o: Model, x: Model, changedOnly: boolean): Model[] {
+function readAsDropped(o: Model, x: Model, keys?: Keys): Model[] {
   const reads: Model[] = []
   for (const [dropped, item] of o) {
     if (x.get(dropped)?.list === item.list) continue
     for (const [holder, kept] of x) {
       if (holder === dropped || !o.has(holder) || kept.list !== item.list) continue
       if (contentOf(kept) !== contentOf(item)) continue
-      // `changedOnly`: an item the side changed into the other's content, not a twin all along.
-      if (changedOnly && contentOf(o.get(holder)!) === contentOf(item)) continue
+      // With `keys`: only an item the side changed into the other's content, not a twin all
+      // along, and only where the keys leave the data reading both ways. Under a key that no
+      // longer hashes its content, the holder names its item where the item it names, or the
+      // one it took, also went stale.
+      if (keys && contentOf(o.get(holder)!) === contentOf(item)) continue
+      const named = keys && !keys.fresh(kept, holder)
+      if (named && !(keys.wasFresh.has(holder) && keys.wasFresh.has(dropped))) continue
       const went = x.get(dropped)
       const read = new Map(x)
       read.set(dropped, { ...kept })
@@ -396,7 +438,10 @@ function life(seed: number, syncs: number): string {
     // other side it is the hand-edited case the heuristic can misread.
     const lookalikes = (ops: Map<string, Op>) =>
       new Map(
-        [...ops].map(([id, op]) => [id, op === 'becomeOther' && !byEditor ? 'editDetail' : op]),
+        [...ops].map(([id, op]) => [
+          id,
+          (op === 'becomeOther' || op === 'takeOver') && !byEditor ? 'editDetail' : op,
+        ]),
       )
     const base = apply(o, lookalikes(opsA), 'A', baseMode, g, sync)
     const mine = apply(branch, lookalikes(opsB), 'B', 'editor', g, sync)
@@ -407,12 +452,28 @@ function life(seed: number, syncs: number): string {
       JSON.stringify(mo.get(id)) !== JSON.stringify(x.get(id))
     const both = [...mo.keys()].some((id) => differs(ma, id) && differs(mb, id))
     if (both && baseMode !== 'editor') break
-    if (twinsAmbiguous(mo, ma, mb, byEditor)) break
+    if (twinsAmbiguous(mo, ma, mb, byEditor, baseMode === 'devRekey')) break
     // Where a side made an item read exactly like one it dropped, the data also reads as that
     // item kept and the other dropped: either answer is right.
+    // Ancestor items whose key, if any, still hashes their content.
+    const wasFresh = new Set<string>()
+    for (const list of LISTS) {
+      o.file[list].forEach((item, k) => {
+        if (hashes(item._key, item)) wasFresh.add(o.ids[list][k])
+      })
+    }
+    const keysOf = (side: Side): Keys => {
+      const keyOf = new Map<string, string | undefined>()
+      for (const list of LISTS) {
+        side.ids[list].forEach((id, k) => keyOf.set(id, side.file[list][k]._key))
+      }
+      return { wasFresh, fresh: (item, id) => hashes(keyOf.get(id), item) }
+    }
     const read = (changedOnly: boolean) =>
-      [ma, ...readAsDropped(mo, ma, changedOnly)].flatMap((x) =>
-        [mb, ...readAsDropped(mo, mb, changedOnly)].map((y): [Model, Model] => [x, y]),
+      [ma, ...readAsDropped(mo, ma, changedOnly ? keysOf(base) : undefined)].flatMap((x) =>
+        [mb, ...readAsDropped(mo, mb, changedOnly ? keysOf(mine) : undefined)].map(
+          (y): [Model, Model] => [x, y],
+        ),
       )
     // Twins a side dropped read either way too, where the data allows, but in editor-only lives
     // their keys tell them apart: only an item made to read like another excuses those checks.

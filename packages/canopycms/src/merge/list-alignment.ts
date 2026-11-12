@@ -136,10 +136,12 @@ export function alignToAncestor(
   // deleted. A key this side moved to another list still names its item there.
   const held = new Set([...movedIn, ...items.flatMap((item) => ownKey(item) ?? [])])
   const unheld = new Map<string, number>()
+  const unheldFresh = new Set<string>()
   ancestorItems.forEach((item, i) => {
     if (held.has(ancestorKeys[i])) return
     const token = valueToken(item)
     unheld.set(token, (unheld.get(token) ?? 0) + 1)
+    if (!isMinted(item)) unheldFresh.add(token)
   })
   const at = new Map(ancestorKeys.map((key, i) => [key, i]))
   const usurped = (j: number, own: string): boolean => {
@@ -153,6 +155,8 @@ export function alignToAncestor(
     // A key that has gone stale on both sides is history, not content: it names its item.
     if (i !== undefined) {
       if (isMinted(ancestorItems[i]) && isMinted(items[j])) return false
+      // A stale key takes only an unheld item still under its read key: one gone stale was edited.
+      if (isMinted(items[j]) && !unheldFresh.has(content)) return false
       return valueToken(ancestorItems[i]) !== content
     }
     // A key naming no item here pairs by content only where one item holds it, twins by place.

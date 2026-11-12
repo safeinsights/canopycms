@@ -2174,6 +2174,55 @@ describe('an item edited to read exactly like one deleted, with no git-level mer
     ])
   })
 
+  describe("only B edited since its first save, so A's key still hashes A", () => {
+    const first = entryAsRead(page, {
+      title: 't',
+      items: [A, { ...B, text: 'v0 b' }, C],
+    }) as Page
+    const lived: Page = {
+      ...first,
+      items: first.items.map((item, n) => (n === 1 ? { ...item, text: B.text } : item)),
+    }
+    const [LA, LB, LC] = lived.items.map((i) => i._key as string)
+    const mine: Page = {
+      ...lived,
+      items: [{ ...lived.items[0], link: '/documentation' }, lived.items[2]],
+    }
+    const change = (n: number, to: Data): Page => ({
+      ...lived,
+      items: lived.items.map((item, k) => (k === n ? { ...item, ...to } : item)),
+    })
+
+    it('the other side also deleted B: the rewritten A stands, by its key', () => {
+      const deleted = { ...lived, items: [lived.items[0], lived.items[2]] }
+      expect(merge(deleted, mine, lived)).toEqual({
+        items: [
+          [LA, 'Read the docs', '/documentation'],
+          [LC, 'c', '/c'],
+        ],
+        conflicts: [],
+        remaps: [],
+      })
+    })
+
+    it('the other side edited B: a conflict on B, which this side deleted', () => {
+      expect(merge(change(1, { text: 'base edits B' }), mine, lived).conflicts).toEqual([
+        [`items.${LB}`, 'removed-by-you'],
+      ])
+    })
+
+    it('the other side edited another field of A: both edits stand', () => {
+      expect(merge(change(0, { text: 'base edits A' }), mine, lived)).toEqual({
+        items: [
+          [LA, 'base edits A', '/documentation'],
+          [LC, 'c', '/c'],
+        ],
+        conflicts: [],
+        remaps: [],
+      })
+    })
+  })
+
   describe('both edited since their first save, so neither key hashes its content', () => {
     const first = entryAsRead(page, {
       title: 't',
@@ -2422,6 +2471,63 @@ describe('twins in a nested list, after a git-level merge that also edited their
     expect(result.conflicts).toEqual([])
     const sections = result.data.sections as Array<{ cards: Data[] }>
     expect(sections[1].cards.map((c) => c.t)).toEqual(['same', 'p'])
+  })
+})
+
+describe('sections, one rewritten to read like a twin section deleted, by key', () => {
+  const page: FieldConfig[] = [
+    ...text('title'),
+    {
+      name: 'sections',
+      type: 'object',
+      list: true,
+      fields: [
+        ...text('name', 'note'),
+        {
+          name: 'items',
+          type: 'object',
+          list: true,
+          fields: [
+            ...text('title', 'detail', 'kind'),
+            { name: 'subs', type: 'object', list: true, fields: text('t', 'd') },
+          ],
+        },
+      ],
+    },
+  ]
+  const i2 = { title: 'i2', detail: 'd0', kind: 'k1', subs: [], _key: 'h5d5Ay2CSU' }
+  const i3 = { title: 'i3', detail: 'd1', kind: 'k0', subs: [], _key: 'hnsDzNs6zb' }
+  const section = (key: string, items: Data[], name = 's1') => ({
+    name,
+    note: 'n1',
+    items,
+    _key: key,
+  })
+  // The first section was saved holding i3 alone, then given i2: its key went stale. The second,
+  // its twin as saved, still reads under its key. The branch moved i2 out of the first and
+  // deleted the second; the base deleted i2.
+  const [S, S2] = ['hGDpoYqCgw', 'hGDpoYqCgw-2']
+
+  it('the rewritten first section is the first, and nothing conflicts', () => {
+    const result = mergeEntry({
+      format: 'json',
+      ancestor: { data: { title: 'T', sections: [section(S, [i2, i3]), section(S2, [i3])] } },
+      base: { data: { title: 'T', sections: [section(S, [i3]), section(S2, [i3])] } },
+      branch: {
+        data: {
+          title: 'T',
+          sections: [section(S, [i3]), section('EFGfpBpEdYv8', [], 'newB17')],
+        },
+      },
+      fields: page,
+    })
+    if (result.kind !== 'merged') throw new Error('expected a merge')
+    expect(result.conflicts).toEqual([])
+    const sections = result.data.sections as Data[]
+    expect(sections.map((s) => [s._key, s.name])).toEqual([
+      [S, 's1'],
+      ['EFGfpBpEdYv8', 'newB17'],
+    ])
   })
 })
 

@@ -23,7 +23,7 @@ The **code comment at the point of the rule is authoritative**; this file is the
 Aligning list items no key names (`list-alignment.ts`) is the engine's one heuristic.
 It covers items no ancestor key names, or under a stale first-save key. It can misread an
 item keeping none of its values, holding another's, or changed under a stale key; and, with no
-git-level merge, one a side made read exactly like an item it deleted, read as that item
+git-level merge, one a side made read exactly like a deleted item whose key still hashes it
 (KNOWN LIMIT tests). Backfilled keys remove hand-edited cases.
 `entry-merge.ground-truth.test.ts` and `entry-merge.sequence.test.ts` pin that edits to
 different items, and two editors' edits to one item, never merge wrongly.
