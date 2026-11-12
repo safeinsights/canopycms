@@ -14,7 +14,7 @@ import { clientOperatingStrategy } from '../operating-mode'
 import { DELETE_NEEDS_ADMIN_REASON } from '../editor/copy'
 import { getErrorMessage } from '../utils/error'
 import { filePathExists } from '../utils/fs'
-import { isNetworkRemoteUrl } from '../utils/git'
+import { isNetworkRemoteUrl, readHeadCommitFromFiles } from '../utils/git'
 import { parseCreatedBranchName, sanitizeBranchName, isSettingsBranchName } from '../paths'
 import { GitManager } from '../git-manager'
 import { syncDeleteRemoteBranch } from './github-sync'
@@ -94,6 +94,11 @@ export interface BranchListItem extends Omit<
    * privileged user lookup. Absent for a privileged caller, who gets the whole list.
    */
   withheldAccess?: { users: number; groups: number }
+  /**
+   * The commit a branch in review held when it was listed, which Approve and Request changes send
+   * back to say what the reviewer saw (api/branch-review.ts). Only on a listing.
+   */
+  headSha?: string
 }
 
 /**
@@ -767,17 +772,41 @@ const branchListResponse = async (
       console.error('CanopyCMS: Failed to look up branch owners:', getErrorMessage(error))
     }
   }
+  const heads = await Promise.all(branches.map((context) => reviewedHead(ctx, context)))
   return {
     ok: true,
     status: 200,
     data: {
-      branches: branches.map((context) =>
-        toBranchListItem(ctx.services.config, context.branch, req.user),
-      ),
+      branches: branches.map((context, i) => {
+        const item = toBranchListItem(ctx.services.config, context.branch, req.user)
+        const headSha = heads[i]
+        return headSha ? { ...item, headSha } : item
+      }),
       defaultBranch,
       users,
       serverTime: Date.now(),
     },
+  }
+}
+
+/**
+ * A branch in review's head commit, from the clone's files, so a listing of many spawns no git;
+ * git reads only a layout the files can't answer. Undefined when unreadable: the editor then has
+ * nothing to send, and the review is refused until a listing reads it.
+ */
+const reviewedHead = async (
+  ctx: ApiContext,
+  { branch, branchRoot }: BranchContext,
+): Promise<string | undefined> => {
+  if (branch.status !== 'submitted' && branch.status !== 'approved') return undefined
+  try {
+    const fromFiles = await readHeadCommitFromFiles(branchRoot)
+    if (fromFiles) return fromFiles
+    const git = ctx.services.createGitManagerFor(branchRoot, { baseBranch: branch.baseBranch })
+    return await git.headSha()
+  } catch (err) {
+    console.error(`CanopyCMS: Could not read the head of ${branch.name}:`, getErrorMessage(err))
+    return undefined
   }
 }
 

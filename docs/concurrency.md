@@ -316,8 +316,8 @@ schema mutations (`SchemaOps`, and CLI migrate in a branch clone, via `withBranc
 on a conflict lands on the branch and its `--abort` resets the branch past it; `commitFiles`;
 CLI sync's content
 replace, merge and merge abort; and, try-only, the worker's rebase, base-branch refresh,
-sparse-cone re-apply and GitHub-commit step. Approve and resolve-entry's `keep` take it too, to
-see no half-recorded merge; resolves clear conflicts under it.
+sparse-cone re-apply and GitHub-commit step. Approve, Request changes and resolve-entry's `keep`
+take it against a half-recorded merge or moved head; resolves clear conflicts under it.
 Outside it by design: the asset store, which lives outside every clone (assets/factory.ts); provisioning, already exclusive with the rebase; and the settings
 workspace, which no rebase touches.
 

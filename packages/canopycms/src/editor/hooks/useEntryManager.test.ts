@@ -330,6 +330,33 @@ describe('useEntryManager', () => {
     expect(result.current.getEntryVersion(mockEntry.contentId)).toBeUndefined()
   })
 
+  it('loadEntry records no version token for a read its caller says is no longer current', async () => {
+    mockClient.content.read.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { format: 'json', data: { title: 'Older' }, version: 776 } as any,
+    })
+    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+
+    expect(await result.current.loadEntry(mockEntry, () => false)).toEqual({ title: 'Older' })
+    expect(result.current.getEntryVersion(mockEntry.contentId)).toBeUndefined()
+  })
+
+  it('leaves the changes to a caller that refreshes without them', async () => {
+    const onContentRefresh = vi.fn()
+    const { result } = renderHook(() => useEntryManager({ ...defaultOptions, onContentRefresh }), {
+      wrapper,
+    })
+    await act(async () => {
+      await result.current.refreshEntries('main', { withChanges: false })
+    })
+    expect(onContentRefresh).not.toHaveBeenCalled()
+    await act(async () => {
+      await result.current.refreshEntries('main')
+    })
+    expect(onContentRefresh).toHaveBeenCalledWith('main')
+  })
+
   /** saveEntry refuses an entry it holds no token for, so a save test reads the entry first. */
   const LOADED_VERSION = 4242
   const loadForSave = async (

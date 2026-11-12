@@ -48,6 +48,8 @@ export interface BranchReview {
   by: { userId: CanopyUserId; name?: string }
   /** ISO timestamp of the verdict. */
   at: string
+  /** The head commit the reviewer's page showed, which the API checked against the clone's. */
+  commit?: string
 }
 
 /** What keeps a pull request behind its base. `base` is the branch GitHub says it targets now. */
