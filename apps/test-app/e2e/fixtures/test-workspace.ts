@@ -6,7 +6,7 @@ import { testLogger as log } from '../../../../packages/canopycms/src/utils/debu
 import { bumpResourceGeneration } from '../../../../packages/canopycms/src/resource-generation'
 import { resetTaskQueue } from './admin-workspace'
 import { resetAssetStore } from './media-workspace'
-import { branchKey, branchShort } from './branch-page'
+import { branchKey, branchRef, branchShort } from './branch-page'
 
 /**
  * Base path for the test-app workspace.
@@ -565,7 +565,27 @@ export async function withdrawBranchViaAPI(
 }
 
 /**
- * Approve a branch (reviewer action) via API.
+ * The head commit the branch listing shows `userId` for the branch created from `branchName`,
+ * which a review sends back as the commit the reviewer saw (api/branch-review.ts).
+ */
+async function listedHeadSha(
+  baseUrl: string,
+  branchName: string,
+  userId: string,
+): Promise<string | undefined> {
+  const response = await fetch(`${baseUrl}/api/canopycms/branches`, {
+    headers: { 'X-Test-User': userId },
+  })
+  if (!response.ok) throw new Error(`listedHeadSha: ${response.status} ${await response.text()}`)
+  const listing = (await response.json()) as {
+    data: { branches: Array<{ name: string; headSha?: string }> }
+  }
+  const ref = branchRef(branchName)
+  return listing.data.branches.find((b) => b.name === ref)?.headSha
+}
+
+/**
+ * Approve a branch (reviewer action) via API, naming the head the listing shows.
  * @param baseUrl - Base URL of the test app
  * @param branchName - Name of the branch to approve (the name it was created from; the API path carries its short name)
  * @param userId - User ID to make the request as (should be reviewer or admin)
@@ -575,19 +595,20 @@ export async function approveBranchViaAPI(
   branchName: string,
   userId: string,
 ): Promise<Response> {
+  const headSha = await listedHeadSha(baseUrl, branchName, userId)
   const response = await fetch(`${baseUrl}/api/canopycms/${branchShort(branchName)}/approve`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'X-Test-User': userId,
     },
-    body: JSON.stringify({}),
+    body: JSON.stringify({ headSha }),
   })
   return response
 }
 
 /**
- * Request changes on a branch (reviewer action) via API.
+ * Request changes on a branch (reviewer action) via API, naming the head the listing shows.
  * @param baseUrl - Base URL of the test app
  * @param branchName - Name of the branch (the name it was created from; the API path carries its short name)
  * @param userId - User ID to make the request as (should be reviewer or admin)
@@ -597,6 +618,7 @@ export async function requestChangesViaAPI(
   branchName: string,
   userId: string,
 ): Promise<Response> {
+  const headSha = await listedHeadSha(baseUrl, branchName, userId)
   const response = await fetch(
     `${baseUrl}/api/canopycms/${branchShort(branchName)}/request-changes`,
     {
@@ -605,7 +627,7 @@ export async function requestChangesViaAPI(
         'Content-Type': 'application/json',
         'X-Test-User': userId,
       },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ headSha }),
     },
   )
   return response

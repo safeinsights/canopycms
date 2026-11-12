@@ -900,7 +900,7 @@ in `server.ts` and `client.ts`. See
 - `entry-url.ts` — `computeEntryUrl` (collection plus slug to URL) and `isIndexSlug`
 - `typed-filename.ts` — `parseTypedFilename`, the `{type}.{slug}.{id}.{ext}` grammar
 - `flatten-group-fields.ts` — `flattenGroupFields`, flattens inline groups
-- `git.ts` — `detectHeadBranch`, `readHeadBranch`, `resolveBaseBranch`, `isNonFastForwardRejection`, `workflowPushRefusalFile`, `isRebaseInProgress`, `CANOPY_META_DIR`, `isCanopyInternalPath`, `stageAllExceptCanopyState`
+- `git.ts` — `detectHeadBranch`, `readHeadBranch`, `resolveBaseBranch`, `isNonFastForwardRejection`, `workflowPushRefusalFile`, `isRebaseInProgress`, `readHeadCommitFromFiles`, `CANOPY_META_DIR`, `isCanopyInternalPath`, `stageAllExceptCanopyState`
 - `base-branch.ts` — `baseBranchOf`, resolved base branch; prod throws `BaseBranchUnresolvedError`
 - `fs.ts` — `filePathExists`
 - `sanitize-href.ts` — `sanitizeHref` for content, `isHttpUrlOrSameOriginPath` for config, `neutralizeImplicitOffOrigin`

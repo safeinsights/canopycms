@@ -619,10 +619,13 @@ export async function contains(git: SimpleGit, commit: string, ancestor: string)
 }
 
 /**
- * Whether moving an approved branch from `from` to `to` changes what was approved: yes unless `to`
- * is exactly `from` with the base up to where `to` has it, which leaves the pull request's diff as
- * it was reviewed. A hand-made change inside a merge commit therefore counts. Read fresh, so an
- * approval given since the cycle's start counts too.
+ * Whether moving an approved branch to `to` changes what was approved: yes unless `to` is exactly
+ * the approved commit with the base up to where `to` has it, which leaves the pull request's diff
+ * as it was reviewed. The approved commit is the one the approval recorded, so clean merges since
+ * it are judged together; `from`, the head before this move, stands in for an approval that
+ * recorded none. A recorded commit this clone doesn't hold counts as a change, as does a
+ * hand-made change inside a merge commit. Read fresh, so an approval given since the cycle's
+ * start counts too.
  */
 async function changesWhatWasReviewed(
   ctx: GitHubCommitsContext,
@@ -632,10 +635,12 @@ async function changesWhatWasReviewed(
 ): Promise<boolean> {
   const fresh = (await BranchMetadataFileManager.loadOnly(branchPath))?.branch
   if (fresh?.status !== 'approved') return false
+  const approved = fresh.review?.commit ?? from
+  if (!(await holdsCommit(git, approved))) return true
   await fetchFromRemoteGit(git, ctx.remoteGitPath, fresh.baseBranch ?? ctx.baseBranch)
   const base = (await git.revparse(['FETCH_HEAD'])).trim()
   const forkPoint = (await git.raw(['merge-base', '--end-of-options', to, base])).trim()
-  return forkPoint === '' || !(await isCleanMergeOf(git, to, from, forkPoint))
+  return forkPoint === '' || !(await isCleanMergeOf(git, to, approved, forkPoint))
 }
 
 /**
