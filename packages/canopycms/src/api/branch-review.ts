@@ -73,7 +73,8 @@ const headUnreadable: BranchListItemResponse = {
  * Throws unless the clone's HEAD is `sent`, the commit the reviewer saw, and returns it. A request
  * naming none, from a page loaded before the editor sent one, is refused: what it showed is
  * unknown. Called under the content-write lock: a submit and the worker move HEAD only while
- * holding it, so the head checked is the one the verdict is written against.
+ * holding it (docs/concurrency.md, "Who takes it"), so the head checked is the one the verdict is
+ * written against.
  */
 const assertReviewedHead = async (
   ctx: ApiContext,

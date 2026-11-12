@@ -769,24 +769,23 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const latest = useRef({ branchName, resolved, branches, branchesData })
   latest.current = { branchName, resolved, branches, branchesData }
 
-  // The head a review sends for each branch, never newer than what the page shows of it. A branch
-  // whose content the page hasn't shown follows each listing. Opening one, its first head while
-  // open, and a refusal's recovery pin it from a listing already fetched, but only once its content
-  // has been read again; null until then. No other listing moves the pin of a branch shown.
+  // The head a review sends, never newer than what the page shows of the branch. One not shown
+  // follows each listing; opening one, a head listed for the open one while its pin is null, and a
+  // refusal's recovery pin it from a listing already fetched once its content is read again.
   const reviewPins = useRef(new Map<string, string | null>())
   const shown = useRef(new Set<string>())
   const pinning = useRef(new Map<string, symbol>())
   const pinThenReread = async (branch: string, data: BranchesData | undefined) => {
     const headSha = data?.branches.find((b) => b.name === branch)?.headSha
-    const token = Symbol(branch)
-    pinning.current.set(branch, token)
+    const claim = Symbol(branch)
+    pinning.current.set(branch, claim)
     reviewPins.current.set(branch, null)
     try {
       if (headSha) await options.onReviewPinned?.(branch)
       // A failed read leaves it null, for the next listing to try again.
-      if (pinning.current.get(branch) === token) reviewPins.current.set(branch, headSha ?? null)
+      if (pinning.current.get(branch) === claim) reviewPins.current.set(branch, headSha ?? null)
     } finally {
-      if (pinning.current.get(branch) === token) pinning.current.delete(branch)
+      if (pinning.current.get(branch) === claim) pinning.current.delete(branch)
     }
   }
   useEffect(() => {
@@ -977,7 +976,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     },
   ) => {
     if (err instanceof BranchMovedError) {
-      // A listing that fails, or leaves the branch out, pins none until a listing and a read do.
+      // A listing that fails, or leaves the branch out, pins none for now.
       void pinThenReread(branch, await reloadBranches()).catch(console.error)
       const id = reviewFailureId(kind, branch)
       notifications.hide(id)
