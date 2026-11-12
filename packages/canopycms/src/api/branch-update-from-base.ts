@@ -145,10 +145,12 @@ const updateFromBaseHandler = async (
       const answer = existing.branch.lastBaseUpdate
       const pending = isBaseUpdatePending(existing.branch)
       // An unanswered request is joined until the editor stops waiting on it. An answer under the
-      // interval old stands for a new click too, except a failure, whose Retry must ask again.
+      // interval old stands for a new click too, except a failure, whose Retry must ask again, and
+      // except where the request runs the merge itself, which costs no worker cycle.
       const joinsPending =
         pending && age < BASE_UPDATE_GIVE_UP_MS && (queued || age < BASE_UPDATE_REQUEST_INTERVAL_MS)
       const answeredRecently =
+        !runsInRequest &&
         !pending &&
         answer !== undefined &&
         answer.outcome !== 'failed' &&

@@ -638,7 +638,7 @@ export interface EntryChoiceDone {
   entryGone: boolean
 }
 
-export type ResolveEntryChoice = (
+type ResolveEntryChoice = (
   choice: EntryConflictChoice,
   options: { entryGone?: true },
 ) => Promise<EntryChoiceRefusal | undefined>

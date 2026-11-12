@@ -268,6 +268,23 @@ describe('POST /:branch/update-from-base', () => {
       expect(await devTasks()).toHaveLength(0)
     })
 
+    it('runs again for a click after a recent answer, which may predate new changes', async () => {
+      const requestedAt = new Date(Date.now() - 5_000).toISOString()
+      await branchWith({ baseUpdateRequestedAt: requestedAt })
+      await BranchMetadataFileManager.get(branchRoot, baseRoot).save({
+        branch: { lastBaseUpdate: { at: new Date().toISOString(), outcome: 'merged' } },
+      })
+
+      const { res, runBaseUpdateNow } = await request(
+        { branchRoot, baseRoot, branch: (await loadBranch())! },
+        { mode: 'dev', runBaseUpdateNow: answerNow('conflicts') },
+      )
+
+      expect(runBaseUpdateNow).toHaveBeenCalledTimes(1)
+      expect(res.data?.requestedAt).not.toBe(requestedAt)
+      expect(res.data?.branch.lastBaseUpdate?.outcome).toBe('conflicts')
+    })
+
     it('says to try again in a moment when a lock held the merge back', async () => {
       const { res } = await request(await branchWith(), {
         mode: 'dev',

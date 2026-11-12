@@ -619,10 +619,15 @@ const focusAfterEntryChoice = (root: HTMLElement | null, entryGone: boolean) => 
  */
 export const EntryChangesView: React.FC<EntryChangesViewProps> = (props) => {
   const rootRef = useRef<HTMLDivElement>(null)
-  const [entryDone, setEntryDone] = useState<{ id: number; message: string }>()
-  useEffect(() => setEntryDone(undefined), [props.subject.logicalPath])
+  const [said, setSaid] = useState<{ id: number; message: string; path: string }>()
+  // What was said is about the entry it was said on.
+  const entryDone = said?.path === props.subject.logicalPath ? said : undefined
   const onEntryDone = (done: EntryChoiceDone) => {
-    setEntryDone((last) => ({ id: (last?.id ?? 0) + 1, message: done.message }))
+    setSaid((last) => ({
+      id: (last?.id ?? 0) + 1,
+      message: done.message,
+      path: props.subject.logicalPath,
+    }))
     focusAfterEntryChoice(rootRef.current, done.entryGone)
   }
   return (

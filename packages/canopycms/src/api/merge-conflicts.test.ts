@@ -913,7 +913,9 @@ describe('POST /:branch/resolve-entry/...entryPath', () => {
       }
       return read.call(this)
     })
-    onTestFinished(() => vi.restoreAllMocks())
+    onTestFinished(() => {
+      vi.restoreAllMocks()
+    })
     const res = await resolveEntry(createCtx(), 'content/blog/gone', {
       id: ID.gone,
       mergeSha: MERGE,

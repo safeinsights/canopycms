@@ -14,7 +14,6 @@ import { mergeEntry } from '../merge/entry-merge'
 import { entryAsRead } from '../utils/calendar-day'
 import { buildEntryConflicts, type FieldConflict } from './conflict-cards'
 import { withLatest } from './conflict-choices'
-import { valueAtChange } from './undo-change'
 
 /** mulberry32: a small seeded generator, so a failure names its seed. */
 const generator = (seed: number) => {
