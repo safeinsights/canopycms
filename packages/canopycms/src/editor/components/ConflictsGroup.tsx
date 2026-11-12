@@ -163,7 +163,7 @@ const ENTRY_KINDS: Record<
   // Keeping it deleted clears the record: `keep` resolves a `fields` record whole (api/merge-conflicts.ts).
   'fields-on-deleted': {
     heading: 'You deleted this entry, but fields in it were changed by you and by someone else',
-    body: `Keeping it deleted drops these changes. To keep them instead, use "${EDITOR_ACTIONS.restoreEntry}", then choose in its form.`,
+    body: `Keeping it deleted drops the latest version's changes to it. You can still use "${EDITOR_ACTIONS.restoreEntry}" afterwards, to bring it back as the latest version has it.`,
     choices: [{ choice: 'keep', label: EDITOR_ACTIONS.keepItDeleted }],
   },
   unreadable: {

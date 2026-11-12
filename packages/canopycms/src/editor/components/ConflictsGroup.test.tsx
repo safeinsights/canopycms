@@ -823,9 +823,9 @@ describe('an entry deleted with field conflicts open', () => {
       'You deleted this entry, but fields in it were changed by you and by someone else',
     )
     expect(actionsOf(card)).toEqual(['Keep it deleted'])
-    // The other way out, and what this one gives up, are said on the card.
+    // What this way out gives up, and what is still possible after it, are said on the card.
     expect(within(card).getByTestId('conflict-entry-body').textContent).toBe(
-      'Keeping it deleted drops these changes. To keep them instead, use "Restore entry", then choose in its form.',
+      'Keeping it deleted drops the latest version\'s changes to it. You can still use "Restore entry" afterwards, to bring it back as the latest version has it.',
     )
     expect(screen.queryByTestId('conflicts-open-to-choose')).toBeNull()
     expect(screen.getByTestId('conflicts-summary').textContent).toBe(
