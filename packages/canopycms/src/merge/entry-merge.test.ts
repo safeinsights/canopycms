@@ -1802,7 +1802,7 @@ describe('keys as a read gives them', () => {
     expect(resolveThreadPath(page, merged, 'items[2].t', [moved as string])).toBe('items[1].t')
   })
 
-  it('merges a list as one value when the side that left it alone does not align item for item', () => {
+  it('takes the changed list beside one left alone under other keys, and remaps those keys', () => {
     const page: FieldConfig[] = [
       { name: 'items', type: 'object', list: true, fields: text('h', 't', 'k') },
     ]
@@ -1833,6 +1833,56 @@ describe('keys as a read gives them', () => {
     )
     expect(result.conflicts).toEqual([])
     expect(result.data.items).toEqual(base)
+    // The branch's u reads under the base's key now: its threads follow.
+    expect(result.keyRemaps).toEqual([{ within: [], from: st('m2'), to: st('main') }])
+    // The other way round: the branch's changed list is the merge, under the base's keys.
+    const mirror = run(
+      { data: { items: o } },
+      { data: { items: branch } },
+      { data: { items: base } },
+      'json',
+      page,
+    )
+    expect(mirror.conflicts).toEqual([])
+    const content = (items: unknown) => (items as Data[]).map(({ _key, ...rest }) => rest)
+    expect(content(mirror.data.items)).toEqual(content(base))
+  })
+
+  it('deletes an item the base deleted that both versions held under other stale keys', () => {
+    const page: FieldConfig[] = [
+      { name: 'items', type: 'object', list: true, fields: text('h', 't', 'k') },
+    ]
+    const st = (s: string) => itemKeysAsRead([{ h: s, t: '0', k: '0' }])[0] as string
+    const [x, y] = [
+      { h: 'x', t: '1', k: 'a' },
+      { h: 'y', t: '2', k: 'b' },
+    ]
+    const [w, v] = [
+      { h: 'a', t: 'c', k: 'b' },
+      { h: 'c', t: 'b', k: 'c' },
+    ]
+    const o = [x, y, { ...w, _key: st('w0') }, v]
+    const branch = [x, y, { ...w, _key: st('w1') }, { ...v, _key: st('v1') }]
+    const result = run(
+      { data: { items: o } },
+      { data: { items: [x, y] } },
+      { data: { items: branch } },
+      'json',
+      page,
+    )
+    expect(result.conflicts).toEqual([])
+    expect(result.data.items).toEqual([x, y])
+  })
+
+  it('with no schema, reads every list as keyed, so a twin list keeps its thread', () => {
+    const x = { t: 'x', d: 'd' }
+    const result = mergeEntry({
+      format: 'json',
+      ancestor: { data: { title: 'T', items: [x], l2: [x] } },
+      base: { data: { title: 'T', items: [{ ...x, d: 'd2' }], l2: [x] } },
+      branch: { data: { title: 'T2', items: [x], l2: [x] } },
+    })
+    expect(result.kind === 'merged' && result.keyRemaps).toEqual([])
   })
 
   it('reads a list the schema lacks as no ambiguity, so an item the base changed is re-keyed', () => {

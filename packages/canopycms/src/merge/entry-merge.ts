@@ -126,10 +126,9 @@ interface Walk {
   /** Every key the ancestor's read gives its list items, across the entry. */
   ancestorKeys: ReadonlySet<string>
   /**
-   * True when the branch holds the item key `key` inside enclosing items `within` in more than
-   * one list. A remap names an item by those alone, so it would move the other list's threads
-   * too, maybe onto another item: no remap is recorded, and a thread whose key changes is
-   * orphaned rather than misplaced.
+   * True when the branch holds `key` inside enclosing items `within` in more than one list. A
+   * remap names an item by those alone, so it would move the other list's threads too, maybe
+   * onto another item: none is recorded, and a thread whose key changes is orphaned instead.
    */
   ambiguous: (within: readonly string[], key: string) => boolean
 }
@@ -393,13 +392,17 @@ function mergeList(
       : identifyByName(O, a, b, namedBy)
   // A list too far apart to align in time, or whose items can't all be told apart, is one value.
   // So is one with an item not clearly new or old, unless the other side holds the ancestor's
-  // items as they were, each matched in its place: then the changed side's list is the merge
-  // whichever the item is.
+  // items as they were: that side is the ancestor item for item, whatever its keys, and the
+  // changed side's list is the merge whichever the item is.
   if (!identities) return undefined
-  const { oKeys, aIds, bIds, aByPlace, bByPlace } = identities
-  const asAncestor = (side: readonly unknown[], ids: readonly string[]) =>
-    sameValue(O, side) && ids.length === oKeys.length && ids.every((id, n) => id === oKeys[n])
-  if (identities.unsure && !asAncestor(a, aIds) && !asAncestor(b, bIds)) return undefined
+  let { aIds, bIds, aByPlace, bByPlace } = identities
+  const { oKeys } = identities
+  if (identities.unsure) {
+    const asAncestor = (side: readonly unknown[]) => side.length === O.length && sameValue(O, side)
+    if (asAncestor(a)) [aIds, aByPlace] = [oKeys, new Set()]
+    else if (asAncestor(b)) [bIds, bByPlace] = [oKeys, new Set()]
+    else return undefined
+  }
   const readList = (v: unknown, raw: readonly unknown[]) =>
     Array.isArray(v) && v.length === raw.length ? v : raw
   const [aRead, bRead] = [readList(at.asRead.a, a), readList(at.asRead.b, b)]
@@ -630,7 +633,7 @@ export function mergeEntry({
     pendingRemaps: [],
     texts: [],
     ancestorKeys,
-    ambiguous: ambiguityOf(root.asRead.b),
+    ambiguous: ambiguityOf(root.asRead.b, fields !== undefined),
   }
   const data = mergeRecord(ancestor.data, base.data, branch.data, root, walk)
   if (fields) undoUnparseableMdx(fields, data, walk)
@@ -668,14 +671,18 @@ export function mergeEntry({
   }
 }
 
-/** {@link Walk.ambiguous} for `branch`, as read: how often each key sits inside the same keys. */
-function ambiguityOf(branch: unknown): Walk['ambiguous'] {
+/**
+ * {@link Walk.ambiguous} for `branch`, as read. A schema's read keys each list a thread can name,
+ * so only keyed items count; with no schema, every list's items count by their read keys.
+ */
+function ambiguityOf(branch: unknown, schemaRead: boolean): Walk['ambiguous'] {
   const seen = new Map<string, number>()
   const name = (within: readonly string[], key: string) => JSON.stringify([...within, key])
   const visit = (node: unknown, within: string[]) => {
     if (Array.isArray(node)) {
-      node.forEach((item) => {
-        const key = usableKey(item)
+      const readKeys = schemaRead ? [] : itemKeysAsRead(node)
+      node.forEach((item, n) => {
+        const key = schemaRead ? usableKey(item) : readKeys[n]
         if (key === undefined) return
         seen.set(name(within, key), (seen.get(name(within, key)) ?? 0) + 1)
         visit(item, [...within, key])

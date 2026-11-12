@@ -243,7 +243,11 @@ export function alignToAncestor(
       if (place) byPlace.add(j)
     }
   }
-  const unmatched_ = ancestorItems.some((item, i) => !taken.has(ancestorKeys[i]) && !isMinted(item))
+  // An ancestor item under a stale key of its own is one a side may hold under another.
+  const unmatched_ = ancestorItems.some(
+    (item, i) =>
+      !taken.has(ancestorKeys[i]) && (!isMinted(item) || hasContentKeyShape(ancestorKeys[i])),
+  )
   const unsure = unmatched_ && [...stale].some((j) => ids[j] === undefined)
   return { ids: ids.map((id, j) => id ?? newIdentity(side, j)), byPlace, unsure }
 }
