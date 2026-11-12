@@ -110,9 +110,8 @@ export async function setConflictsStatuses(
     return null
   }
   const set = ctx.conflictsStatusesSet()
-  const failed = unreadable.map((u) => u.branch)
-  let failure: Omit<ConflictsStatusFailure, 'branches' | 'count' | 'at'> | undefined =
-    unreadable[0] && { reason: 'other', message: unreadable[0].message }
+  const failed: string[] = []
+  let failure: Omit<ConflictsStatusFailure, 'branches' | 'count' | 'at'> | undefined
   for (const [index, { branch, status, key }] of due.entries()) {
     if (ctx.shutdownSignal().aborted) return null
     try {
@@ -161,6 +160,9 @@ export async function setConflictsStatuses(
       }
     }
   }
+  // After GitHub's answers, whose reason and remedy come first.
+  for (const u of unreadable) failed.push(u.branch)
+  failure ??= unreadable[0] && { reason: 'other', message: unreadable[0].message }
   if (!failure) return undefined
   return {
     ...failure,
@@ -179,15 +181,16 @@ function isUnreachable(err: unknown): boolean {
   return status === null || status === 403 || status === 408 || status === 429 || status >= 500
 }
 
-/** A branch whose branch.json or conflict record could not be read, by its directory. */
+/** A branch with a pull request whose conflict record could not be read. */
 interface Unreadable {
   branch: string
   message: string
 }
 
 /**
- * Each branch with a pull request whose head lacks the status it calls for, and each branch that
- * could not be read, which costs only its own status. Throws only when the branches directory
+ * Each branch with a pull request whose head lacks the status it calls for, and each whose conflict
+ * record could not be read, which costs only its own status. A branch.json that cannot be read says
+ * nothing of a pull request, so it is logged and skipped. Throws only when the branches directory
  * cannot be listed.
  */
 async function dueStatuses(
@@ -218,9 +221,14 @@ async function dueStatuses(
     try {
       meta = await BranchMetadataFileManager.loadOnly(branchRoot)
     } catch (err) {
-      if (err instanceof BranchMetadataCorruptError || (isNodeError(err) && err.code === 'ENOENT'))
-        continue
-      cannotRead(dir, err)
+      if (
+        !(err instanceof BranchMetadataCorruptError) &&
+        !(isNodeError(err) && err.code === 'ENOENT')
+      )
+        workerLogWarn(
+          `Could not read ${escapeForLog(dir)}'s branch.json for its conflicts status: ` +
+            sanitizeErrorMessage(getErrorMessage(err)),
+        )
       continue
     }
     const branch = meta?.branch

@@ -316,14 +316,33 @@ describe('setConflictsStatuses', () => {
     expect(setStatus).toHaveBeenCalledTimes(3)
   })
 
-  it('reports a branch it cannot read, and sets every other status', async () => {
+  it('reports a branch whose conflicts it cannot read, after any GitHub failure, and sets every other status', async () => {
     await giveBranch('a', { name: 'canopycms/prod/a', pullRequestNumber: 1 })
-    const unreadable = path.join(branches, 'b', '.canopy-meta', 'branch.json')
-    await fs.mkdir(unreadable, { recursive: true })
-    const failure = await setConflictsStatuses(ctx(), new Map([['canopycms/prod/a', HEAD1]]))
-    expect(failure).toMatchObject({ reason: 'other', branches: ['b'], count: 1 })
+    const b = await giveBranch('b', { name: 'canopycms/prod/b', pullRequestNumber: 2 })
+    await fs.mkdir(path.join(b, '.canopy-meta', 'merge-conflicts.json'))
+    // A branch.json that can't be read says nothing of a pull request: skipped, not reported.
+    await fs.mkdir(path.join(branches, 'c', '.canopy-meta', 'branch.json'), { recursive: true })
+    const tips = new Map([
+      ['canopycms/prod/a', HEAD1],
+      ['canopycms/prod/b', HEAD2],
+    ])
+
+    const failure = await setConflictsStatuses(ctx(), tips)
+    expect(failure).toMatchObject({ reason: 'other', branches: ['canopycms/prod/b'], count: 1 })
     expect(posted()).toEqual([expect.objectContaining({ pullRequest: 1, state: 'success' })])
-    expect(consoleSpy).toHaveWarned(/Could not read b for its conflicts status/)
+    expect(consoleSpy).toHaveWarned(/Could not read canopycms\/prod\/b for its conflicts status/)
+    expect(consoleSpy).toHaveWarned(/Could not read c's branch.json/)
+
+    // GitHub down as well: its reason and remedy are the ones reported.
+    statusesSet.clear()
+    setStatus.mockRejectedValueOnce(
+      Object.assign(new Error('Service Unavailable'), { status: 503 }),
+    )
+    expect(await setConflictsStatuses(ctx(), tips)).toMatchObject({
+      reason: 'unreachable',
+      message: 'Service Unavailable',
+      count: 2,
+    })
   })
 
   it('reports a pull request the gateway refuses, and asks again next cycle', async () => {
