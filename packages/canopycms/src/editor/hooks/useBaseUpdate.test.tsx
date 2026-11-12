@@ -385,7 +385,7 @@ describe('useBaseUpdate', () => {
     const { result } = render()
     await waitFor(() => expect(result.current.branch).toBeDefined())
     await act(() => result.current.request())
-    expect(shown()[0]).toMatchObject({ color: 'red', message: 'This branch is in review.' })
+    expect(shown()[0]).toMatchObject({ color: 'yellow', message: 'This branch is in review.' })
     await waitFor(() => expect(result.current.available).toBe(false))
   })
 
@@ -399,7 +399,20 @@ describe('useBaseUpdate', () => {
     await waitFor(() => expect(result.current.branch).toBeDefined())
     await act(() => result.current.request())
     expect(shown()).toHaveLength(1)
-    expect(shown()[0]).toMatchObject({ color: 'red', autoClose: false })
+    // A 409 is a conflict with the branch's state, which the guidelines colour yellow.
+    expect(shown()[0]).toMatchObject({ color: 'yellow', autoClose: false })
     expect(result.current.wait).toBe('none')
+  })
+
+  it('reports a refusal that is no conflict in red', async () => {
+    client.workflow.updateFromBase.mockResolvedValue({
+      ok: false,
+      status: 500,
+      error: "Your saved changes couldn't be prepared, so the latest changes weren't requested.",
+    })
+    const { result } = render()
+    await waitFor(() => expect(result.current.branch).toBeDefined())
+    await act(() => result.current.request())
+    expect(shown()[0]).toMatchObject({ color: 'red', autoClose: false })
   })
 })

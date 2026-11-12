@@ -17,6 +17,7 @@
  */
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { CanopyConfig } from './config'
 import type { EntrySchemaRegistry } from './schema/types'
 import { getConfigDefaults } from './config'
@@ -39,6 +40,7 @@ import { BranchSchemaCache } from './branch-schema-cache'
 import { enqueueTask } from './task-queue/cms-task-queue'
 import { getTaskQueueDir } from './task-queue/task-queue-config'
 import { baseBranchOf } from './utils/base-branch'
+import type { BaseUpdateRun } from './base-update'
 import { shortNameOf } from './branch-param'
 import { detectHeadBranch, isCanopyInternalPath, isRebaseInProgress } from './utils/git'
 import { readsFromCheckout } from './build-mode'
@@ -247,9 +249,10 @@ export interface CanopyServices {
    * Bring the base into the branch now and answer its request for the latest changes, where the
    * mode's strategy runs that in the request (operating-mode `baseUpdateRunsInRequest`); rejects
    * in any other mode, where only the worker may. Resolves `busy` when a lock held the merge back,
-   * the request then answered `failed`.
+   * the request then answered `failed`, and `other-remote`, running nothing, for a clone of another
+   * remote than the workspace's `remote.git`.
    */
-  runBaseUpdateNow: (context: BranchContext) => Promise<'answered' | 'busy'>
+  runBaseUpdateNow: (context: BranchContext) => Promise<BaseUpdateRun>
   /** Commit to the settings branch (for permissions/groups) and push it; never opens a PR */
   commitToSettingsBranch: (options: {
     branchRoot: string
@@ -307,6 +310,12 @@ export const createTestCanopyServices = async (
     defaultActiveBranch: config.defaultActiveBranch ?? config.defaultBaseBranch ?? 'main',
   }
   return _createCanopyServicesInternal(testConfig, options)
+}
+
+/** Whether two paths name one directory, symlinks resolved where they exist. */
+const samePath = async (a: string, b: string): Promise<boolean> => {
+  const real = (p: string) => fs.realpath(p).catch(() => path.resolve(p))
+  return (await real(a)) === (await real(b))
 }
 
 /** Shared implementation; call createCanopyServices or createTestCanopyServices. */
@@ -785,7 +794,7 @@ async function _createCanopyServicesInternal(
     }
   }
 
-  const runBaseUpdateNow = async (context: BranchContext): Promise<'answered' | 'busy'> => {
+  const runBaseUpdateNow = async (context: BranchContext): Promise<BaseUpdateRun> => {
     const mode = services.config.mode
     const strategy = operatingStrategy(mode)
     if (!strategy.baseUpdateRunsInRequest()) {
@@ -793,11 +802,17 @@ async function _createCanopyServicesInternal(
         `CanopyCMS: in ${mode} mode the worker answers requests for the latest changes, never a request.`,
       )
     }
+    // baseRoot is the workspace's content-branches directory, where the worker looks.
+    const workspacePath = path.dirname(context.baseRoot)
+    const origin = await createGitManagerFor(context.branchRoot).getRemoteUrl()
+    const originPath = origin && (/^file:\/\//i.test(origin) ? fileURLToPath(origin) : origin)
+    if (!originPath || !(await samePath(originPath, path.join(workspacePath, 'remote.git')))) {
+      return 'other-remote'
+    }
     // Loaded here alone, so no other request loads the worker's code.
     const { createLocalWorker } = await import('./worker/cms-worker')
     const worker = createLocalWorker({
-      // baseRoot is the workspace's content-branches directory, where the worker looks.
-      workspacePath: path.dirname(context.baseRoot),
+      workspacePath,
       baseBranch: context.branch.baseBranch ?? baseBranchOf(services.config),
       contentRoot: services.config.contentRoot || 'content',
       settingsBranch: strategy.getSettingsBranchName(services.config),

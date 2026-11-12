@@ -615,6 +615,15 @@ async function answerBaseUpdate(
   }
 }
 
+/** A run with no GitHub publishes nothing there: an empty namespace is a gateway that pushes nothing. */
+const NO_GITHUB_POLICY: BranchPolicyDescription = {
+  configured: [],
+  githubDefault: null,
+  namespace: '',
+  legacy: [],
+  settingsBranch: null,
+}
+
 /** The GitHub fetch's answer source: when it began, and the base it found. */
 const sourceOf = (ctx: RebaseContext, gitHub: GitHubSnapshot): BaseUpdateSource => ({
   fetchedAt: gitHub.fetchedAt,
@@ -626,7 +635,8 @@ const sourceOf = (ctx: RebaseContext, gitHub: GitHubSnapshot): BaseUpdateSource 
  *
  * The per-branch work is {@link syncBranchDir}; what stays here is the walk
  * over `content-branches/` and folding each branch's outcome into the summary.
- * `source` answers requests for the latest changes; the GitHub fetch's by default.
+ * `source` answers requests for the latest changes; the GitHub fetch's by default. `local` is a
+ * run with no GitHub (see {@link syncBranchDir}).
  *
  * Deliberately sequential rather than concurrent: each branch's rebase holds
  * that branch's cross-host content-write lock and runs a series of git
@@ -638,6 +648,7 @@ export async function runRebaseCycle(
   gitHub?: GitHubSnapshot,
   requested: ReadonlySet<string> = new Set(),
   source: BaseUpdateSource | undefined = gitHub && sourceOf(ctx, gitHub),
+  local = false,
 ): Promise<RebaseSummary> {
   const rebased: string[] = []
   const skippedDirty: string[] = []
@@ -668,6 +679,7 @@ export async function runRebaseCycle(
       source,
       requested.has(branchDir),
       {},
+      local,
     )
     if (outcome === null) continue
     if (outcome.kind === 'rebased') rebased.push(branchDir)
@@ -688,7 +700,8 @@ export async function runRebaseCycle(
  * One entry of `content-branches/`: the structural pre-filter (entries that are not branch
  * workspaces at all, the base branch's own clone, a settings branch), then
  * {@link holdAndRebaseOneBranch} and the answer to its request. Null for an entry skipped before
- * any of that. Never throws.
+ * any of that. Never throws. A `local` run has no GitHub: it publishes nothing there, and
+ * `remote.git` is where a branch's work is published.
  */
 async function syncBranchDir(
   ctx: RebaseContext,
@@ -698,6 +711,7 @@ async function syncBranchDir(
   source: BaseUpdateSource | undefined,
   requested: boolean,
   probe: BaseUpdateProbe,
+  local = false,
 ): Promise<BranchRebaseOutcome | null> {
   // Known structural entries under content-branches/, not branch workspaces:
   // branches.json (registry snapshot) and dot-prefixed entries
@@ -741,9 +755,10 @@ async function syncBranchDir(
     ctx,
     branchDir,
     branchPath,
-    gatewayPolicy,
+    local ? NO_GITHUB_POLICY : gatewayPolicy,
     gitHub,
     probe,
+    local,
   )
   await answerBaseUpdate(ctx, branchDir, branchPath, probe, outcome, source, requested)
   return outcome
@@ -771,6 +786,7 @@ export async function syncBranchNow(
     { fetchedAt: startedAt },
     true,
     probe,
+    true,
   )
   const busy = outcome?.kind === 'skippedLocked'
   const branchPath = path.join(ctx.contentBranchesPath, branchDir)
@@ -862,6 +878,7 @@ async function holdAndRebaseOneBranch(
   gatewayPolicy: BranchPolicyDescription | undefined,
   gitHub: GitHubSnapshot | undefined,
   probe: BaseUpdateProbe,
+  local: boolean,
 ): Promise<BranchRebaseOutcome> {
   let hold: ProvisionedWorkspaceHold
   try {
@@ -888,6 +905,7 @@ async function holdAndRebaseOneBranch(
       gatewayPolicy,
       gitHub,
       probe,
+      local,
     )
   } finally {
     await releaseProvisionedWorkspace(hold.release, branchDir)
@@ -1262,6 +1280,7 @@ async function rebaseOneBranch(
   gatewayPolicy: BranchPolicyDescription | undefined,
   gitHub: GitHubSnapshot | undefined,
   probe: BaseUpdateProbe = {},
+  local = false,
 ): Promise<BranchRebaseOutcome> {
   // Read only by the catch below. See the `rebased` rider on
   // BranchRebaseOutcome.
@@ -1621,11 +1640,11 @@ async function rebaseOneBranch(
       // published commit under them, which reads as a push this clone never saw. A merge publishes
       // them as a fast-forward. A same-named ref at a commit the base holds is no work of this branch.
       const published = canPublish ? await readPublishedSha(ctx, branchRef) : null
+      // With no GitHub, a commit of the branch's in remote.git is published however it got there.
       const aheadOfPublished =
         published !== null &&
-        published !== head &&
         metaFile?.branch.name === branchRef &&
-        isPublished(metaFile) &&
+        (local || (published !== head && isPublished(metaFile))) &&
         (await contains(branchGit, head, published)) &&
         !(await contains(branchGit, fetchedBaseTip, published))
       /**

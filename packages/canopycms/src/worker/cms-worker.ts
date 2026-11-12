@@ -1739,7 +1739,14 @@ export class CmsWorker {
 
   /** Bring the base into every branch now, answering their requests from this run's start. */
   async syncBranchesNow(): Promise<RebaseSummary> {
-    return runRebaseCycle(this.ctx(), undefined, undefined, new Set(), { fetchedAt: Date.now() })
+    return runRebaseCycle(
+      this.ctx(),
+      undefined,
+      undefined,
+      new Set(),
+      { fetchedAt: Date.now() },
+      true,
+    )
   }
 
   // --- Git-sync cluster (worker/git-sync.ts) -----------------------------

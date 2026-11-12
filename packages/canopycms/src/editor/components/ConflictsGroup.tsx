@@ -345,6 +345,8 @@ interface CardActions {
   choice?: FieldChoice
   /** The form still holds the place as the last choice left it, so a new choice loses nothing. */
   held: boolean
+  /** "Mark resolved" is offered though the form is unchanged: only a hand edit reaches the latest. */
+  markable?: boolean
   choose: (choice: FieldChoice | undefined) => void
   chooseRegion: (region: number, choice: RegionChoice) => void
   /** Takes back one region's choice, leaving the others. */
@@ -521,7 +523,7 @@ const FieldCardActions: React.FC<{ card: ConflictCard; actions: CardActions; lab
       <Group gap="xs" wrap="wrap" align="center">
         {side(EDITOR_ACTIONS.removeIt, removeIs, 'conflict-remove-it')}
         {side(EDITOR_ACTIONS.keepIt, keepIs, 'conflict-keep-it')}
-        {!held &&
+        {(!held || actions.markable) &&
           btn(
             EDITOR_ACTIONS.markResolved,
             () => actions.choose({ how: 'edited' }),
@@ -658,12 +660,15 @@ const EntryCard: React.FC<{
     const made = choices.find((c) => c.choice === choice)
     setWorking(choice)
     setRefusal(undefined)
+    // A choice settled in place keeps its button working until the reload takes the card away.
+    let settled = false
     try {
       const refused = await onResolve(choice, made?.entryGone ? { entryGone: true } : {})
       setRefusal(refused && { ...refused, choice })
-      if (!refused && made?.done) onDone?.({ message: made.done, entryGone: !!made.entryGone })
+      settled = !refused && !!made?.done
+      if (settled) onDone?.({ message: made!.done!, entryGone: !!made!.entryGone })
     } finally {
-      setWorking(undefined)
+      if (!settled) setWorking(undefined)
     }
   }
   return (
@@ -675,6 +680,7 @@ const EntryCard: React.FC<{
       style={CARD_ACCENT}
       data-testid="conflict-card"
       data-conflict-kind={kind}
+      data-entry-card
     >
       <Stack gap="xs">
         <Group gap="xs" wrap="nowrap" align="flex-start">
@@ -846,6 +852,7 @@ export const ConflictsGroup: React.FC<ConflictsGroupProps> = ({
     return {
       reason: lockedReason,
       latestReason,
+      markable: field.otherItemHere,
       choice,
       held,
       choose: (next) => {

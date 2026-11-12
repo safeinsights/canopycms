@@ -14,6 +14,7 @@ import {
   BASE_UPDATE_REQUEST_INTERVAL_MS,
   SYNC_BRANCH_ACTION,
   isBaseUpdatePending,
+  type BaseUpdateRun,
 } from '../base-update'
 import { ContentWriteLockBusyError } from '../utils/content-write-lock'
 import { getErrorMessage, redactCredentials } from '../utils/error'
@@ -181,16 +182,10 @@ const updateFromBaseHandler = async (
 
   // A joined request is answered by the run that made it.
   if (runsInRequest && !joined) {
-    let run: 'answered' | 'busy'
-    try {
-      run = await ctx.services.runBaseUpdateNow(branchContext)
-    } catch (err) {
-      console.error(
-        `CanopyCMS: Could not bring the latest changes into ${branch.name}:`,
-        redactCredentials(getErrorMessage(err)),
-      )
-      // Answered here, as nothing else would: an open request holds the form read-only.
-      await meta
+    // Answered here where the run couldn't, as nothing else would: an open request holds the form
+    // read-only.
+    const answerFailed = () =>
+      meta
         .update(
           (existing) =>
             existing?.branch.name === branch.name &&
@@ -201,10 +196,28 @@ const updateFromBaseHandler = async (
           { keepUpdatedAt: true },
         )
         .catch(() => undefined)
+    let run: BaseUpdateRun
+    try {
+      run = await ctx.services.runBaseUpdateNow(branchContext)
+    } catch (err) {
+      console.error(
+        `CanopyCMS: Could not bring the latest changes into ${branch.name}:`,
+        redactCredentials(getErrorMessage(err)),
+      )
+      await answerFailed()
       return {
         ok: false,
         status: 500,
         error: "The latest changes couldn't be added. Your work is safe.",
+      }
+    }
+    if (run === 'other-remote') {
+      await answerFailed()
+      return {
+        ok: false,
+        status: 409,
+        error:
+          "This branch uses a git remote other than the local one, so its latest changes can't be brought in here. Nothing changed.",
       }
     }
     if (run === 'busy') {

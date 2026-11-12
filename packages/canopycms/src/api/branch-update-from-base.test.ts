@@ -297,6 +297,21 @@ describe('POST /:branch/update-from-base', () => {
       )
     })
 
+    it('answers the request failed, saying why, for a branch of another remote', async () => {
+      const { res } = await request(await branchWith(), {
+        mode: 'dev',
+        runBaseUpdateNow: async () => 'other-remote',
+      })
+
+      expect(res.status).toBe(409)
+      expect(res.error).toContain('a git remote other than the local one')
+      const branch = await loadBranch()
+      expect(branch?.lastBaseUpdate).toEqual({
+        at: branch?.baseUpdateRequestedAt,
+        outcome: 'failed',
+      })
+    })
+
     it('answers the request failed when the run throws, so the form is not held', async () => {
       const { res } = await request(await branchWith(), {
         mode: 'dev',

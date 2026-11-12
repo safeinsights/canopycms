@@ -313,7 +313,12 @@ export function useBaseUpdate(options: UseBaseUpdateOptions): UseBaseUpdateRetur
         if (!stillOpen()) return
         const now = fresh?.branches.find((b) => b.name === target)
         const canRetry = now === undefined || now.status === 'editing'
-        showResult('red', result.error ?? REQUEST_FAILED_MESSAGE, canRetry ? retry : undefined)
+        // A 409 is a conflict with the branch's state, which a moment or a withdraw settles.
+        showResult(
+          result.status === 409 ? 'yellow' : 'red',
+          result.error ?? REQUEST_FAILED_MESSAGE,
+          canRetry ? retry : undefined,
+        )
       } catch (err) {
         if (!isUnanswered(err)) throw err
         // It may have gone through, and a reload that shows the wait settles it.

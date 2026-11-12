@@ -28,6 +28,7 @@ import {
   IconAlertTriangle,
   IconExternalLink,
   IconArrowsMove,
+  IconCircleCheck,
   IconInfoCircle,
   IconMinus,
   IconPencil,
@@ -614,44 +615,68 @@ const focusAfterEntryChoice = (root: HTMLElement | null, entryGone: boolean) => 
 }
 
 /**
- * The drawer's body: what an entry-level choice settled, then the entry's conflicts, if any, above
- * its changes, which keep their place in the tree as the conflicts go.
+ * The drawer's body: the entry's conflicts, if any, then what an entry-level choice settled, above
+ * the changes, which keep their place in the tree as the conflicts go.
  */
 export const EntryChangesView: React.FC<EntryChangesViewProps> = (props) => {
   const rootRef = useRef<HTMLDivElement>(null)
   const [said, setSaid] = useState<{ id: number; message: string; path: string }>()
   // What was said is about the entry it was said on.
   const entryDone = said?.path === props.subject.logicalPath ? said : undefined
+  // Focus waits for the card to go: only then may "Restore entry" be offered in its place.
+  const focusAfter = useRef<{ entryGone: boolean }>()
   const onEntryDone = (done: EntryChoiceDone) => {
     setSaid((last) => ({
       id: (last?.id ?? 0) + 1,
       message: done.message,
       path: props.subject.logicalPath,
     }))
-    focusAfterEntryChoice(rootRef.current, done.entryGone)
+    focusAfter.current = { entryGone: done.entryGone }
   }
+  useEffect(() => {
+    const root = rootRef.current
+    const pending = focusAfter.current
+    if (!root || !pending || root.querySelector('[data-entry-card]')) return
+    focusAfter.current = undefined
+    // A person who has moved on within the drawer keeps their place.
+    const dialog = root.closest('[role="dialog"]')
+    const active = document.activeElement
+    if (active && active !== document.body && active !== dialog && dialog?.contains(active)) return
+    focusAfterEntryChoice(root, pending.entryGone)
+  })
   return (
-    <div ref={rootRef}>
-      {(props.conflicts || entryDone) && (
-        <Text size="sm" role="status" mb={entryDone ? 'md' : 0} data-testid="entry-choice-done">
-          {entryDone && <span key={entryDone.id}>{entryDone.message}</span>}
-        </Text>
+    <Stack gap="lg" ref={rootRef}>
+      {props.conflicts && (
+        <ConflictsSection
+          conflicts={props.conflicts}
+          subject={props.subject}
+          referenceTitle={props.referenceTitle}
+          undo={props.undo}
+          noEditReason={props.noEditReason}
+          lockedReason={props.lockedReason}
+          onEntryDone={onEntryDone}
+        />
       )}
-      <Stack gap="lg">
-        {props.conflicts && (
-          <ConflictsSection
-            conflicts={props.conflicts}
-            subject={props.subject}
-            referenceTitle={props.referenceTitle}
-            undo={props.undo}
-            noEditReason={props.noEditReason}
-            lockedReason={props.lockedReason}
-            onEntryDone={onEntryDone}
-          />
+      <div>
+        {(props.conflicts || entryDone) && (
+          <Group
+            gap={6}
+            wrap="nowrap"
+            role="status"
+            mb={entryDone ? 'md' : 0}
+            data-testid="entry-choice-done"
+          >
+            {entryDone && (
+              <React.Fragment key={entryDone.id}>
+                <IconCircleCheck size={16} color="var(--mantine-color-green-filled)" aria-hidden />
+                <Text size="sm">{entryDone.message}</Text>
+              </React.Fragment>
+            )}
+          </Group>
         )}
         <EntryChangesBody {...props} />
-      </Stack>
-    </div>
+      </div>
+    </Stack>
   )
 }
 

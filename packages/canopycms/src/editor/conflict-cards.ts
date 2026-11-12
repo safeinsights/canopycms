@@ -97,6 +97,8 @@ export interface FieldConflict {
    * lacks.
    */
   latestPlaceable: boolean
+  /** Your saved value holds another item at the key of the one your version lacks here. */
+  otherItemHere?: true
   /**
    * Long text found again by region from its three versions: the text the merge left, and its
    * regions, each holding your lines there. Absent when the text is one whole value.
@@ -292,6 +294,7 @@ export function buildEntryConflicts(
       dataPath: field.dataPath,
       item: !!field.item,
       latestPlaceable,
+      ...(otherItemHere && { otherItemHere: true as const }),
       ...(latest && { latest }),
     }
     const card = { key: field.key, mergeSha: field.mergeSha }

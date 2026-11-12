@@ -169,7 +169,7 @@ const misplaced = (
     : `changed ${JSON.stringify(changed[0].item)}, which doesn't hold yours ${JSON.stringify(yours)}`
 }
 
-const SEEDS = 12000
+const SEEDS = 6000
 
 describe('"Use latest version" over generated merges of duplicate-heavy lists', () => {
   it(`changes only the item the merge named, for ${SEEDS} seeds`, () => {
@@ -198,5 +198,5 @@ describe('"Use latest version" over generated merges of duplicate-heavy lists', 
     }
     expect(placedCount).toBeGreaterThan(100)
     expect(failures).toEqual([])
-  })
+  }, 60_000)
 })

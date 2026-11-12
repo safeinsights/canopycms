@@ -593,9 +593,10 @@ describe('ConflictsGroup entry-level conflicts', () => {
   })
 
   it.each(cases)('settles a %s entry through onResolveEntry', async (kind, choices) => {
-    const { onResolveEntry } = setup(kind)
     for (const [label, choice] of choices) {
-      onResolveEntry.mockClear()
+      // A choice settled in place keeps its card busy until the card goes, so each is its own.
+      cleanup()
+      const { onResolveEntry } = setup(kind)
       await userEvent.click(screen.getByRole('button', { name: label }))
       expect(onResolveEntry).toHaveBeenCalledTimes(1)
       // "Keep it deleted" promises the entry stays gone, which the server checks (issue 1257).
@@ -875,5 +876,36 @@ describe('an entry deleted with field conflicts open', () => {
     const { onResolveEntry } = setup()
     await userEvent.click(screen.getByRole('button', { name: 'Keep it deleted' }))
     expect(onResolveEntry).toHaveBeenCalledWith('keep', { entryGone: true })
+  })
+})
+
+describe('an item you removed, whose key a look-alike holds in the form (issue 1264)', () => {
+  it('holds "Keep it", saying why, and offers "Mark resolved" for a hand edit', async () => {
+    const data = fieldsConflictData(['tagline'])
+    const built = buildEntryConflicts(data, conflictFields, 'body', undefined, savedValue)
+    const conflicts = {
+      ...built,
+      fields: built.fields.map((f) => ({
+        ...f,
+        latestPlaceable: false,
+        otherItemHere: true as const,
+      })),
+    }
+    const onChoose = vi.fn()
+    render(
+      <CanopyCMSProvider>
+        <ConflictsGroup
+          data={data}
+          conflicts={conflicts}
+          choices={{}}
+          form={{ value: savedValue, saved: savedValue, bodyField: 'body', update: vi.fn() }}
+          onChoose={onChoose}
+        />
+      </CanopyCMSProvider>,
+    )
+    const card = screen.getByTestId('conflict-card')
+    expect(within(card).getByTestId('conflict-keep-it').getAttribute('aria-disabled')).toBe('true')
+    await userEvent.click(within(card).getByTestId('conflict-mark-resolved'))
+    expect(onChoose).toHaveBeenCalledWith(expect.anything(), { how: 'edited' }, true)
   })
 })

@@ -1651,6 +1651,42 @@ describe('a run in the request (createLocalWorker), as dev runs "Get latest chan
     expect((await readMeta(setup.branchPath))?.lastBaseUpdate).toBeUndefined()
   })
 
+  it.each([
+    ['with nothing saved since', false],
+    ['with work saved since', true],
+  ])(
+    'merges the base into a branch submitted once, %s, keeping what remote.git published',
+    async (_case, savedSince) => {
+      // A dev submit pushes the branch to remote.git and records no GitHub push.
+      const setup = await createBranchSetup(tmpDir, 'my-feature')
+      await setup.commitToBranch({ 'mine.txt': 'submitted' })
+      await setup.branchGit.raw(['push', '-q', path.join(tmpDir, 'remote.git'), 'my-feature'])
+      if (savedSince) await setup.commitToBranch({ 'mine.txt': 'saved after the withdraw' })
+      await setup.pushToRemote({ 'new-file.txt': 'from main' })
+      await requestNow(setup)
+      const published = (
+        await simpleGit(path.join(tmpDir, 'remote.git')).revparse(['refs/heads/my-feature'])
+      ).trim()
+
+      await localWorker().syncBranchNow('my-feature')
+
+      const meta = await readMeta(setup.branchPath)
+      expect(meta?.lastBaseUpdate?.outcome).toBe('merged')
+      expect(meta?.rebaseFailure).toBeUndefined()
+      const head = (await setup.branchGit.revparse(['HEAD'])).trim()
+      // A merge, so remote.git's commit is still in the branch, which it now names.
+      await expect(
+        setup.branchGit.raw(['merge-base', '--is-ancestor', published, head]),
+      ).resolves.toBeDefined()
+      const remoteNow = (
+        await simpleGit(path.join(tmpDir, 'remote.git')).revparse(['refs/heads/my-feature'])
+      ).trim()
+      expect(remoteNow).toBe(head)
+      // Nothing waits on a GitHub push that dev never makes.
+      await expect(fs.readdir(path.join(tmpDir, '.tasks', 'pending'))).rejects.toThrow()
+    },
+  )
+
   it('syncs every branch for the e2e route, answering their requests', async () => {
     const setup = await createBranchSetup(tmpDir, 'my-feature')
     await setup.pushToRemote({ 'new-file.txt': 'from main' })
