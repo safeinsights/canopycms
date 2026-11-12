@@ -12,6 +12,8 @@ import { flattenGroupFields } from '../utils/flatten-group-fields'
 import { isBlockStructuralKey } from '../validation/block-structural-keys'
 import { isPlainRecord } from '../validation/field-traversal'
 
+export const LOCATION_CONFLICT_KEY = '@location'
+
 /**
  * A step the merge took: a record's member, a merged list's item by its place, or, for an item no
  * longer in the merged list, the key naming it.
@@ -114,4 +116,34 @@ export function describePath(
     }
   }
   return { key, dataPath, depth: n, ...(n === at.length && field && { field }) }
+}
+
+/**
+ * The drawer's key for the place `dataPath` names in `read`, under `fields`: how a conflict the
+ * worker recorded without the entry's schema, which names an unknown field with `?`, is named with
+ * it. A path deeper than the drawer goes is named where the drawer stops.
+ */
+export function keyOfDataPath(
+  fields: readonly FieldConfig[],
+  read: unknown,
+  dataPath: readonly DataPathSegment[],
+): string {
+  const at: RawSegment[] = []
+  let node = read
+  for (const segment of dataPath) {
+    if ('field' in segment) {
+      at.push({ field: segment.field })
+      node = member(node, segment.field)
+    } else if ('item' in segment) {
+      const items = Array.isArray(node) ? node : []
+      const index = keysOf(items).indexOf(segment.item)
+      at.push(index >= 0 ? { index } : { item: segment.item })
+      node = index >= 0 ? items[index] : undefined
+    } else if (typeof member(node, 'template') === 'string') {
+      // A canonical block's data is its `value`; an inline block's is the item itself.
+      at.push({ field: 'value' })
+      node = member(node, 'value')
+    }
+  }
+  return describePath(fields, read, at).key
 }

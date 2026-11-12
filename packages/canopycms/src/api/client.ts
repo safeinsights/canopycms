@@ -17,6 +17,7 @@ import type { OperatingMode } from '../operating-mode/types'
 import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, CreateBranchBody, UpdateBranchAccessBody } from './branch'
 import type { BranchChangesResponse } from './branch-changes'
 import type { BranchEntryChangeResponse, RestoreEntryBody, RestoreEntryResponse } from './branch-entry-changes'
+import type { EntryConflictResponse, MergeConflictsResponse, ResolveEntryConflictBody, ResolveEntryConflictResponse } from './merge-conflicts'
 import type { BranchMergeResponse, RequestChangesBody, SubmitBranchBody, SubmitBranchResponse, UpdateFromBaseResponse } from './branch-status'
 import type { AdminDeleteTaskResponse, AdminRetryTaskResponse, AdminStatusResponse, AdminTasksResponse, BranchHealthResponse, DeleteArchivedBranchesBody, DeleteArchivedBranchesResponse, DismissUnpublishedResponse, PurgeBranchDirResponse, RepairBranchDirResponse, RepairContentDuplicatesResponse } from './admin'
 import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from './comments'
@@ -126,6 +127,23 @@ export class CanopyApiClient {
     /** POST /:branch/restore-entry/...entryPath */
     restore: (params: Record<string, string>, body: RestoreEntryBody, options?: RequestOptions): Promise<RestoreEntryResponse> => {
       return this.request('POST', this.buildPath('/:branch/restore-entry/...entryPath', params), body, 'standard', options)
+    },
+  }
+
+  readonly conflicts = {
+    /** GET /:branch/conflicts */
+    list: (params: Record<string, string>, options?: RequestOptions): Promise<MergeConflictsResponse> => {
+      return this.request('GET', this.buildPath('/:branch/conflicts', params), undefined, 'standard', options)
+    },
+
+    /** GET /:branch/conflicts/...entryPath */
+    entry: (params: Record<string, string>, options?: RequestOptions): Promise<EntryConflictResponse> => {
+      return this.request('GET', this.buildPath('/:branch/conflicts/...entryPath', params), undefined, 'standard', options)
+    },
+
+    /** POST /:branch/resolve-entry/...entryPath */
+    resolveEntry: (params: Record<string, string>, body: ResolveEntryConflictBody, options?: RequestOptions): Promise<ResolveEntryConflictResponse> => {
+      return this.request('POST', this.buildPath('/:branch/resolve-entry/...entryPath', params), body, 'standard', options)
     },
   }
 

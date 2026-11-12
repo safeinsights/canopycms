@@ -124,6 +124,7 @@ Route handlers, one file per endpoint namespace:
 - `branch-review.ts` — `/branch-review`: approve, request changes
 - `branch-changes.ts` — `GET /:branch/changes`
 - `branch-entry-changes.ts` — `GET /:branch/changes/...entryPath`; `POST /:branch/restore-entry/...entryPath` (`ContentStore.restore`)
+- `merge-conflicts.ts` — `GET /:branch/conflicts[/...entryPath]`, `POST /:branch/resolve-entry/...entryPath`; `clearFieldConflicts`
 - `branch-merge.ts` — `/branch-merge`: merge and clean up
 - `content.ts` — `/content`: read and write; runs entry-link and adopter `validateEntry` validation on write
 - `entries.ts` — `/entries`: entry management; cursor-paginated listing
@@ -532,6 +533,7 @@ Top-level components and helpers:
 - `field-breadcrumb.ts` / `field-target.ts` — a field path's label breadcrumb; `findFieldTarget`, `focusFieldTarget`, `revealField`
 - `entry-diff.ts` — `computeEntryDiff`
 - `undo-change.ts` — "Undo change"
+- `conflict-cards.ts` / `conflict-choices.ts` / `conflict-notice.ts` / `components/ConflictsGroup.tsx` — conflicts
 - `schema-label.ts` — `schemaLabel`: a field's, group's or template's label, else its humanised name
 - `undo-removal.ts` — `FieldRemoval`, `restoreRemoval`, `openThreadsWithin` — a form Remove or Clear undone
 - `user-display.ts` — `SYSTEM_USER_LABEL`, `userIdLabel`
@@ -578,7 +580,7 @@ Manager hooks, in `editor/hooks/` — see
 - `useUserContext.tsx` / `useUserMetadata.ts` — current user (`EditorAuthGate` identity, else `whoami`); SWR user metadata, `seedUserProfiles`
 - `useReferenceResolution.ts` — preview value and `isLoading`, for `Editor.tsx`
 - `useEntryLinkResolution.ts` — resolves `entry:ID` patterns in preview data
-- `useBranchesData.ts` / `useEntriesData.ts` / `useCommentsData.ts` / `useBranchChangesData.ts` — the SWR hooks; keys in the README
+- `useBranchesData.ts` / `useEntriesData.ts` / `useCommentsData.ts` / `useBranchChangesData.ts` / `useConflictsData.ts` — the SWR hooks; keys in the README
 - `index.ts` — only the nine hooks `Editor.tsx` and `media/MediaLibraryBody.tsx` import
 
 Field components, in `editor/fields/`:

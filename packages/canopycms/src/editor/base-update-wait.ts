@@ -5,6 +5,7 @@ import {
 } from '../base-update'
 
 import type { BranchMetadata, LastBaseUpdate } from '../types'
+import { latestChangesConflictsMessage } from './conflict-notice'
 
 /**
  * The editor's side of a request for the latest changes (base-update.ts): whether the open
@@ -90,8 +91,15 @@ export const UNANSWERED_MESSAGE =
   'Your request for the latest changes may have gone through even though the server didn\'t answer. Choose "Refresh branch" in the branch menu to check.'
 export const REQUEST_FAILED_MESSAGE = "The latest changes couldn't be requested."
 
-/** The toast an answer gets: its colour, its text, and whether it stays until dismissed. */
-export function baseUpdateResultMessage(answer: LastBaseUpdate): {
+/**
+ * The toast an answer gets: its colour, its text, and whether it stays until dismissed.
+ * `openConflicts` is the choices the branch has open once a merge with conflicts lands, read from
+ * the branch's conflicts; undefined when they couldn't be counted.
+ */
+export function baseUpdateResultMessage(
+  answer: LastBaseUpdate,
+  openConflicts?: number,
+): {
   color: 'green' | 'yellow' | 'red'
   message: string
   sticky: boolean
@@ -101,15 +109,14 @@ export function baseUpdateResultMessage(answer: LastBaseUpdate): {
       return { color: 'green', message: 'Latest changes added', sticky: false }
     case 'up-to-date':
       return { color: 'green', message: 'You already have the latest changes', sticky: false }
-    case 'conflicts': {
-      const n = answer.keptEntries
-      const entries = !n ? 'Some entries' : n === 1 ? '1 entry' : `${n} entries`
+    case 'conflicts':
+      if (openConflicts === 0)
+        return { color: 'green', message: 'Latest changes added', sticky: false }
       return {
         color: 'yellow',
-        message: `Latest changes added. ${entries} you also changed kept your version; ${n === 1 ? "it's" : "they're"} flagged in the "Content" panel.`,
+        message: latestChangesConflictsMessage(openConflicts),
         sticky: true,
       }
-    }
     case 'failed':
       return {
         color: 'red',

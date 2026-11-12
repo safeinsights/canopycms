@@ -48,6 +48,12 @@ const { mockSyncPrComments } = vi.hoisted(() => ({
 }))
 vi.mock('./pr-comment-sync', () => ({ syncPrComments: mockSyncPrComments }))
 
+// The branch root here is not on disk; merge-conflict-gates.test.ts takes the real lock.
+vi.mock('../utils/content-write-lock', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../utils/content-write-lock')>()),
+  withContentWriteLock: <T>(_root: string, fn: () => Promise<T>) => fn(),
+}))
+
 vi.mock('../branch-metadata', () => ({
   BranchMetadataFileManager: vi.fn().mockImplementation(() => ({
     save: mockMetadataSave,

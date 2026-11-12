@@ -91,6 +91,16 @@ import {
 import { useBranchActions } from './hooks/useBranchActions'
 import { branchAddress, displayBranchName } from './branch-names'
 import { useBranchChangesData, useEntryChangeData } from './hooks/useBranchChangesData'
+import { useBranchConflictsData, useEntryConflictData } from './hooks/useConflictsData'
+import { useConflictChoices } from './hooks/useConflictChoices'
+import { openConfirm } from './utils/confirm-modal'
+import { canopyPathOf } from './undo-change'
+import type { EntryConflictChoice, MergeConflictListItem } from '../api/merge-conflicts'
+import type { FieldConflict } from './conflict-cards'
+import { placeOf } from './conflict-choices'
+import type { EntryChoiceRefusal } from './components/ConflictsGroup'
+import { findBodyFieldName } from '../utils/body-field'
+import { entryConflictNotice } from './conflict-notice'
 import type {
   EntryChangesSubject,
   EntryChangesUndo,
@@ -110,7 +120,7 @@ import { useEntryLinkResolution } from './hooks/useEntryLinkResolution'
 import { useReferenceResolution } from './hooks/useReferenceResolution'
 import { usePreviewMarks } from './hooks/usePreviewMarks'
 import { branchBarStatus, describeBranchLock } from './branch-lock'
-import { NO_EDIT_ACCESS_REASON } from './copy'
+import { EDITOR_ACTIONS, NO_EDIT_ACCESS_REASON } from './copy'
 import { EditorHeader, EditorRail, EntryHeader } from './components'
 import { showSaveAllResult } from './components/SaveAllResult'
 import { RenameEntryModal } from './components/RenameEntryModal'
@@ -227,6 +237,15 @@ const findCollection = (
     if (found) return found
   }
   return undefined
+}
+
+/** An entry-level choice waiting on its confirm, and the conflict it settles. */
+interface EntryChoiceTarget {
+  logicalPath: string
+  id: string
+  mergeSha: string
+  title: string
+  choice: EntryConflictChoice
 }
 
 export interface EditorProps {
@@ -502,6 +521,24 @@ const EditorContent: React.FC<EditorProps> = ({
   // No lock reason is true yet while the list is unanswered; once it has failed, or answered
   // without this branch, the lock says which.
   const branchPending = !currentBranch && !branchesLoaded && !branchesLoadFailed
+
+  // Conflicts a merge left on the open branch (api/merge-conflicts.ts): read while its listing
+  // names any, and the choices made on their cards that no save has sent yet.
+  const branchConflicts = useBranchConflictsData(
+    apiClient,
+    branchNameState,
+    currentBranch?.conflictFiles,
+  )
+  const openConflictCount = currentBranch?.conflictFiles?.length
+    ? (branchConflicts.data?.openCount ?? currentBranch.conflictFiles.length)
+    : 0
+  const conflictChoices = useConflictChoices(branchNameState)
+  // A save that sent choices re-reads what they resolved; set once the readers exist, below.
+  const conflictsSavedRef = useRef<() => void>(() => {})
+  // An admin's "Keep your version" on a collection's conflicts; set once the resolver exists, below.
+  const keepConflictsRef = useRef<(items: readonly MergeConflictListItem[]) => void>(() => {})
+  // The "Get latest changes" toast's "Show changes"; set once the drawer exists, below.
+  const showConflictsRef = useRef<() => void>(() => {})
   // The same inputs EditorHeader gives its own check, for the lock copy that names the way forward.
   const branchReviewRole = reviewRoleOf(
     {
@@ -589,6 +626,13 @@ const EditorContent: React.FC<EditorProps> = ({
     sameBranch: namesBranch,
     urlBranchName,
     onContentRefresh: (branch) => reloadChangesRef.current(branch),
+    conflictResolutions: {
+      pending: conflictChoices.pending,
+      onSaved: (branch, contentId, sent) => {
+        conflictChoices.sent(branch, contentId, sent)
+        conflictsSavedRef.current()
+      },
+    },
     // To the entry menu, which names the entry opened; a dialog keeps focus.
     onHistoryRestore: () =>
       requestAnimationFrame(() => {
@@ -705,6 +749,7 @@ const EditorContent: React.FC<EditorProps> = ({
     handleDiscardFileDraft,
     handleReload,
     isSelectedDirty,
+    isDirtyForEntry,
     resolveUnsaved,
     fieldErrors,
     draftStorageFailed,
@@ -731,7 +776,12 @@ const EditorContent: React.FC<EditorProps> = ({
       )
     },
     // An Undo built on a discarded draft would put back an item the server's copy already has.
-    onDraftsReset: (contentId) => dismissUndoToasts(contentId),
+    // A conflict choice is part of the draft, so it goes with it.
+    onDraftsReset: (contentId) => {
+      dismissUndoToasts(contentId)
+      conflictChoices.clear(contentId)
+    },
+    pendingIds: conflictChoices.pendingIds,
   })
   resolveUnsavedRef.current = resolveUnsaved
   applySubmitStampsRef.current = applySubmitStamps
@@ -754,6 +804,7 @@ const EditorContent: React.FC<EditorProps> = ({
         console.error,
       )
     },
+    onShowConflicts: () => showConflictsRef.current(),
   })
   requestLatestRef.current = baseUpdate.request
   modifiedCountRef.current = modifiedCount
@@ -1609,6 +1660,14 @@ const EditorContent: React.FC<EditorProps> = ({
       const entries = grouped.get(node.path) ?? []
       const children = node.children?.map((child) => build(child)) ?? []
       const unavailableRefs = unavailableSchemaRefs(node.entryTypes)
+      // Conflicts on the collection's settings or other files, which no entry's "Show changes"
+      // reaches; the API names them to admins only, by the collection's path.
+      const keepable = userIsAdmin
+        ? (branchConflicts.data?.conflicts ?? []).filter(
+            (c) =>
+              c.logicalPath === node.path && !entriesState.some((e) => e.contentId === c.contentId),
+          )
+        : []
       // No entry can be created where every entry type is unavailable.
       const allUnavailable =
         !!node.entryTypes?.length && node.entryTypes.every((et) => et.unavailable)
@@ -1625,9 +1684,17 @@ const EditorContent: React.FC<EditorProps> = ({
         order: node.order,
         entries: entries.length > 0 ? entries : undefined,
         children: children.length > 0 ? children : undefined,
-        conflictNotice: !!(
-          node.contentId && currentBranch?.conflictFiles?.includes(node.contentId)
-        ),
+        conflictNotice:
+          !!(node.contentId && currentBranch?.conflictFiles?.includes(node.contentId)) ||
+          keepable.length > 0,
+        ...(keepable.length > 0 && {
+          conflictKeep: {
+            label: keepable.every((c) => c.path.endsWith('.collection.json'))
+              ? 'Keep your version of its settings'
+              : 'Keep your version of its files',
+            onKeep: () => keepConflictsRef.current(keepable),
+          },
+        }),
         unavailableSchemaRefs: unavailableRefs.length > 0 ? unavailableRefs : undefined,
         addRefused: (addable && node.canAddEntry === false) || undefined,
         onAdd: canAddEntry
@@ -1659,6 +1726,7 @@ const EditorContent: React.FC<EditorProps> = ({
     currentBranch,
     schemaUnavailableKeys,
     userIsAdmin,
+    branchConflicts.data,
   ])
 
   const findShortcut =
@@ -1809,6 +1877,264 @@ const EditorContent: React.FC<EditorProps> = ({
         }
       : undefined,
   )
+  // The drawer's entry's conflicts, read while it shows one the branch lists.
+  const changesConflictTarget =
+    (changesOpen || changesShown) &&
+    changesSubject?.contentId &&
+    currentBranch?.conflictFiles?.includes(changesSubject.contentId as ContentId)
+      ? { logicalPath: changesSubject.logicalPath, id: changesSubject.contentId }
+      : undefined
+  const entryConflict = useEntryConflictData(apiClient, branchNameState, changesConflictTarget)
+  conflictsSavedRef.current = () => {
+    void Promise.all([
+      branchConflicts.reload(),
+      entryConflict.reload(),
+      handleReloadBranchData(),
+    ]).catch(console.error)
+  }
+  // "Edit" on a card closes the drawer, and its exit focuses the field in the form.
+  const focusAfterChangesRef = useRef<FieldConflict>()
+  // An entry-level choice that replaces stored work, "Delete entry" or "Use latest version",
+  // confirms once the drawer has closed; any way out of the confirm but Confirm opens it again.
+  const confirmAfterChangesRef = useRef<EntryChoiceTarget>()
+  const focusConflictField = (field: FieldConflict) => {
+    revealForm()
+    requestAnimationFrame(() => {
+      const id = currentEntry?.contentId
+      const value = id && (draftsRef.current[id] ?? loadedValuesRef.current[id])
+      const schema = currentEntry?.schema
+      if (!value || !schema) return
+      const bodyField =
+        currentEntry.format === 'md' || currentEntry.format === 'mdx'
+          ? findBodyFieldName(schema)
+          : undefined
+      const at = canopyPathOf(value, placeOf(field), bodyField)
+      const target = at && findFieldTarget(formatCanopyPath(at))
+      if (target) focusFieldTarget(target.element)
+    })
+  }
+  const resolveEntryConflict = async (
+    logicalPath: string,
+    id: string,
+    mergeSha: string,
+    choice: EntryConflictChoice,
+  ): Promise<EntryChoiceRefusal | undefined> => {
+    const branch = branchNameState
+    const failed: EntryChoiceRefusal = {
+      tone: 'error',
+      message: 'Couldn’t save your choice. Try again.',
+    }
+    let answer: Awaited<ReturnType<typeof apiClient.conflicts.resolveEntry>> | undefined
+    try {
+      answer = await apiClient.conflicts.resolveEntry(
+        { branch, entryPath: logicalPath },
+        { id: id as ContentId, mergeSha, choice },
+      )
+    } catch (err) {
+      if (!isUnanswered(err)) return failed
+    }
+    if (!answer || isGatewayFailure(answer) || answer.code === 'WRITE_OUTCOME_UNKNOWN') {
+      // Reading the conflict again settles it: the card goes if the choice went through.
+      void Promise.all([entryConflict.reload(), branchConflicts.reload()]).catch(console.error)
+      return {
+        tone: 'warning',
+        message:
+          'Your choice may have gone through even though the server didn’t answer. If this card is still here, choose again.',
+      }
+    }
+    if (!answer.ok) {
+      // The record moved on, or the entry moved or left the branch: what is left to choose shows.
+      if (answer.code === 'CONFLICT_CHANGED' || answer.code === 'ENTRY_GONE') {
+        void Promise.all([
+          entryConflict.reload(),
+          branchConflicts.reload(),
+          refreshEntries(branch),
+        ]).catch(console.error)
+      }
+      if (answer.status !== 409) return { ...failed, message: answer.error ?? failed.message }
+      const error = answer.error ?? failed.message
+      // A latest version that can't replace this entry leaves keeping yours, then editing it.
+      return {
+        tone: 'warning',
+        message:
+          choice === 'use-latest' && !answer.code
+            ? `${error} Choose "${EDITOR_ACTIONS.keepYourVersion}", then edit it to match.`
+            : error,
+      }
+    }
+    // The entry's file may have changed, so its saved copy is read again.
+    setLoadedValues((prev) => {
+      if (!(id in prev)) return prev
+      const { [id]: _reread, ...rest } = prev
+      return rest
+    })
+    void Promise.all([
+      branchConflicts.reload(),
+      entryConflict.reload(),
+      handleReloadBranchData(),
+      refreshEntries(branch),
+    ]).catch(console.error)
+    return undefined
+  }
+  keepConflictsRef.current = (items) => {
+    void Promise.all(
+      items.map((c) =>
+        c.logicalPath
+          ? resolveEntryConflict(c.logicalPath, c.contentId, c.mergeSha, 'keep')
+          : Promise.resolve(undefined),
+      ),
+    ).then((answers) => {
+      const refusals = answers.filter((r): r is EntryChoiceRefusal => r !== undefined)
+      if (refusals.length === 0) return
+      const more =
+        refusals.length > 1 ? ` (${refusals.length} of ${items.length} weren’t kept.)` : ''
+      notifications.show({
+        message: `${refusals[0].message}${more}`,
+        color: refusals.some((r) => r.tone === 'error') ? 'red' : 'yellow',
+        autoClose: false,
+      })
+    })
+  }
+  const changesResolveEntry =
+    changesSubject && entryConflict.data
+      ? async (choice: EntryConflictChoice): Promise<EntryChoiceRefusal | undefined> => {
+          const { contentId: id, mergeSha, kind } = entryConflict.data ?? {}
+          if (!id || !mergeSha) return undefined
+          if (choice === 'delete' || (choice === 'use-latest' && kind === 'unreadable')) {
+            confirmAfterChangesRef.current = {
+              logicalPath: changesSubject.logicalPath,
+              id,
+              mergeSha,
+              title: changesSubject.title,
+              choice,
+            }
+            setChangesOpen(false)
+            return undefined
+          }
+          return resolveEntryConflict(changesSubject.logicalPath, id, mergeSha, choice)
+        }
+      : undefined
+  const confirmEntryChoice = (target: EntryChoiceTarget) => {
+    const branch = branchNameState
+    const deleting = target.choice === 'delete'
+    let confirmed = false
+    openConfirm({
+      title: deleting ? 'Delete entry?' : 'Use the latest version?',
+      children: (
+        <Text size="sm">
+          {deleting
+            ? `“${target.title}” was deleted in the latest version. Deleting it here too removes your changes to it.`
+            : `Your saved changes to “${target.title}” are replaced by the latest version.`}
+        </Text>
+      ),
+      labels: {
+        confirm: deleting ? EDITOR_ACTIONS.deleteEntry : EDITOR_ACTIONS.useLatestVersion,
+        cancel: 'Cancel',
+      },
+      confirmProps: { color: 'red' },
+      // Any way out but Confirm, Escape and the close button included, returns to "Show changes".
+      onClose: () => {
+        if (confirmed) return
+        setChangesOpen(true)
+        setChangesShown(true)
+      },
+      onConfirm: () => {
+        confirmed = true
+        void resolveEntryConflict(
+          target.logicalPath,
+          target.id,
+          target.mergeSha,
+          target.choice,
+        ).then((refusal) => {
+          if (refusal) {
+            notifications.show({
+              message: refusal.message,
+              color: refusal.tone === 'error' ? 'red' : 'yellow',
+              autoClose: false,
+            })
+          } else if (deleting) {
+            closeEntry(target.logicalPath, branch)
+          }
+        })
+      },
+    })
+  }
+  // A choice made on an earlier merge of a field no longer counts once the record moved on, and
+  // an entry whose conflicts are gone keeps none.
+  const retainChoices = conflictChoices.retain
+  const keepEntryChoices = conflictChoices.keepEntries
+  // An entry no longer listed with conflicts, resolved elsewhere or by a later merge, keeps none.
+  const listedConflicts = currentBranch?.conflictFiles?.length
+    ? branchConflicts.data?.conflicts
+    : currentBranch
+      ? []
+      : undefined
+  const listedIds = listedConflicts?.map((c) => c.contentId).join(',')
+  useEffect(() => {
+    if (listedIds !== undefined) keepEntryChoices(new Set(listedIds.split(',').filter(Boolean)))
+  }, [listedIds, keepEntryChoices])
+  useEffect(() => {
+    const id = changesConflictTarget?.id
+    if (!id || entryConflict.data === undefined) return
+    retainChoices(id, entryConflict.data?.fields ?? [])
+  }, [changesConflictTarget?.id, entryConflict.data, retainChoices])
+  // The toast's "Show changes" opens the first entry with conflicts, then, once it is open and
+  // listed as changed, its drawer.
+  const [pendingConflictShow, setPendingConflictShow] = useState<string>()
+  showConflictsRef.current = () => {
+    const branch = branchNameState
+    void apiClient.conflicts
+      .list({ branch })
+      .then((answer) => {
+        if (branch !== currentBranchRef.current) return
+        const first = answer.ok
+          ? answer.data?.conflicts.find(
+              (c) => c.logicalPath && entriesState.some((e) => e.path === c.logicalPath),
+            )
+          : undefined
+        if (!first?.logicalPath) return
+        setPendingConflictShow(first.logicalPath)
+        openEntry(first.logicalPath)
+      })
+      .catch(console.error)
+  }
+  useEffect(() => {
+    if (!pendingConflictShow) return
+    if (selectedPath !== pendingConflictShow) {
+      setPendingConflictShow(undefined)
+      return
+    }
+    if (currentEntry?.path !== pendingConflictShow) return
+    const change = branchChanges.data?.entries.find(
+      (e) => e.status !== 'deleted' && e.logicalPath === pendingConflictShow,
+    )
+    if (!change) return
+    setPendingConflictShow(undefined)
+    showEntryChanges(change, currentEntry.label ?? currentEntry.slug ?? '', 'header')
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- showEntryChanges reads this render
+  }, [pendingConflictShow, selectedPath, currentEntry, branchChanges.data])
+  const showOpenEntryChanges = () => {
+    const change =
+      currentEntry &&
+      branchChanges.data?.entries.find(
+        (e) => e.status !== 'deleted' && e.logicalPath === currentEntry.path,
+      )
+    if (change) showEntryChanges(change, currentEntry.label ?? currentEntry.slug ?? '', 'header')
+  }
+  // The open entry's conflicts, said above its form, with the way to "Show changes".
+  const openEntryConflictNotice =
+    currentEntry?.contentId && currentBranch?.conflictFiles?.includes(currentEntry.contentId)
+      ? {
+          message: entryConflictNotice(
+            branchConflicts.data?.conflicts.find((c) => c.contentId === currentEntry.contentId),
+          ),
+          onShowChanges: branchChanges.data?.entries.some(
+            (e) => e.status !== 'deleted' && e.logicalPath === currentEntry.path,
+          )
+            ? showOpenEntryChanges
+            : undefined,
+        }
+      : undefined
   const openEntryChange =
     currentEntry &&
     branchChanges.data?.entries.find(
@@ -2531,6 +2857,7 @@ const EditorContent: React.FC<EditorProps> = ({
               branchServerProtected={currentBranch?.isProtected}
               branchReadOnly={currentBranch?.readOnly}
               branchHold={currentBranch?.hold}
+              openConflicts={openConflictCount}
               branchApproveBlocked={currentBranch?.approveBlocked}
               branchWriteBlocked={branchContentLocked}
               branchLoading={branchLoading}
@@ -2798,12 +3125,7 @@ const EditorContent: React.FC<EditorProps> = ({
                               onResolveThread={handleResolveThread}
                               fieldErrors={fieldErrors}
                               format={currentEntry.format}
-                              conflictNotice={
-                                !!(
-                                  currentEntry?.contentId &&
-                                  currentBranch?.conflictFiles?.includes(currentEntry.contentId)
-                                )
-                              }
+                              conflictNotice={openEntryConflictNotice}
                             />
                           </PreviewFollowContext.Provider>
                         </SiteMdxAllowContext.Provider>
@@ -2919,6 +3241,12 @@ const EditorContent: React.FC<EditorProps> = ({
                   onClose={() => setChangesOpen(false)}
                   onExited={() => {
                     setChangesShown(false)
+                    const editing = focusAfterChangesRef.current
+                    focusAfterChangesRef.current = undefined
+                    if (editing) focusConflictField(editing)
+                    const confirming = confirmAfterChangesRef.current
+                    confirmAfterChangesRef.current = undefined
+                    if (confirming) confirmEntryChoice(confirming)
                     const deleting = deleteAfterChangesRef.current
                     deleteAfterChangesRef.current = undefined
                     // Opened as from the entry menu, whose trigger stands in for the gone button.
@@ -2945,7 +3273,38 @@ const EditorContent: React.FC<EditorProps> = ({
                   }
                   lockedReason={changesLockReason}
                   onDeleteEntry={changesDeleteEntry}
-                  onRestoreEntry={changesRestoreEntry}
+                  onRestoreEntry={
+                    // An entry the branch deleted while it changed in the latest version is put
+                    // back through its conflict card, which resolves the conflict too.
+                    entryConflict.data?.kind === 'deleted-on-branch'
+                      ? undefined
+                      : changesRestoreEntry
+                  }
+                  conflicts={
+                    changesConflictTarget
+                      ? {
+                          state: entryConflict,
+                          adminBaseBranch: userIsAdmin ? currentBranch?.baseBranch : undefined,
+                          choices: conflictChoices.choicesFor(changesConflictTarget.id),
+                          onChoose: (field, choice, decided) =>
+                            conflictChoices.choose(
+                              changesConflictTarget.id,
+                              field.key,
+                              field.mergeSha,
+                              choice,
+                              decided,
+                            ),
+                          onEdit: changesSubjectOpen
+                            ? (field) => {
+                                focusAfterChangesRef.current = field
+                                setChangesOpen(false)
+                              }
+                            : undefined,
+                          onResolveEntry: changesResolveEntry,
+                          unsavedEdits: isDirtyForEntry(changesSubject.logicalPath),
+                        }
+                      : undefined
+                  }
                 />
               )}
               {branchNameState && (

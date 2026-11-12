@@ -568,6 +568,8 @@ A submitted or approved PR that GitHub reports `behind` or `dirty` gets the base
 The merge records each conflict in `.canopy-meta/merge-conflicts.json` in the clone, **per ContentId, not file path**, because ContentIds are stable across slug renames and file moves. A record holds the three blob ids compared and the field keys in conflict (src/merge-conflicts.ts). It is written before the merge is published, and a per-cycle reconcile turns back records of merges the branch never got (`reconcileMergeConflicts`).
 The branch's metadata `conflictStatus` (`clean` or `conflicts-detected`) and `conflictFiles` are **derived from that record**: the IDs with a conflict a person has yet to resolve.
 
+**People resolve conflicts through the API** (api/merge-conflicts.ts): a save naming a field conflict clears it inside the save's locks, `resolve-entry` resolves an entry-level one, and Submit and Approve answer 409 while any is open.
+
 ### Rebase Failure Tracking
 
 A conflict is the expected case. A rebase can also fail outright — an unexpected git error, or exhausting the safety limit on rounds — which means the automatic recovery itself broke down and the branch is stuck behind base until someone intervenes. The worker records that as a distinct, persistent `rebaseFailure` marker (a message plus first-seen and last-seen timestamps), separate from `conflictStatus`/`conflictFiles`, and surfaces it only in the admin System Health panel's branch list: a stuck rebase means the worker needs attention, which is not something an editor can act on.
@@ -576,7 +578,7 @@ To avoid write amplification, a branch failing every cycle is re-recorded roughl
 
 ### Editor Conflict Notification
 
-Conflicts reach editors at three levels, all driven by matching each item's ContentId against the recorded `conflictFiles`: a non-blocking notice at the top of an affected entry's form, a badge on a collection whose `.collection.json` conflicted (its ordering or entry type configuration may need attention even when its entries are fine), and a conflict count in the branch picker alongside a sync-status badge whose tooltip shows the recorded `syncFailureReason`. Unlike the admin-only panel, the branch badges are visible to anyone who can see the branch — informational summaries of state every editor on it already needs, not a recovery surface.
+Conflicts reach editors by matching each item's ContentId against `conflictFiles`: a notice above an affected entry's form counting fields to choose, a badge on the entry or collection in the content tree, a conflict count in the branch picker, and "Needs action" on the bar while Submit for review waits. "Show changes" opens with a "Conflicts" group: a card per field, list item or whole value, and per region of long text, each showing Before, the latest version and yours (editor/conflict-cards.ts). A field's choice is a draft edit that the next save resolves. The copy names no branch, except to admins.
 
 Conflicts are deliberately **non-blocking**, so editors keep editing and submitting rather than being stuck on a merge conflict they don't understand; the PR diff on GitHub shows both versions, so whoever reviews it — who understands the content — decides how to reconcile; the notices use plain language about recent changes rather than git terminology; and per-item granularity is possible precisely because conflicts are tracked by ContentId.
 

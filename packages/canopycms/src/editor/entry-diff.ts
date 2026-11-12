@@ -660,7 +660,6 @@ const splitLines = (value: string): string[] => {
  * text's spacing, so one side read back from its parts would not be the text it was.
  * Undefined once `deadline` (a `Date.now()`) passes: no line diff starts after it. A short word
  * diff runs until the later `wordDeadline`.
- * @internal Exported for tests.
  */
 export function textDiff(
   before: string,
@@ -757,6 +756,15 @@ const withContext = (lines: DiffRow[]): DiffRow[] => {
     i = end
   }
   return out
+}
+
+/** `value` of `field` as the drawer shows it whole, for a value a conflict compares whole. */
+export function displayWhole(
+  field: FieldConfig | undefined,
+  value: unknown,
+  referenceTitle?: (id: string) => string | undefined,
+): DisplayValue {
+  return new Walker(referenceTitle, 0, 0).display(field, value)
 }
 
 /** The entry's changes between `before` and `after`, in schema order. */

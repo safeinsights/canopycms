@@ -11,6 +11,7 @@ import type { ContentId } from '../../paths'
 import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, CreateBranchBody, UpdateBranchAccessBody } from '../branch'
 import type { BranchChangesResponse } from '../branch-changes'
 import type { BranchEntryChangeResponse, RestoreEntryBody, RestoreEntryResponse } from '../branch-entry-changes'
+import type { EntryConflictResponse, MergeConflictsResponse, ResolveEntryConflictBody, ResolveEntryConflictResponse } from '../merge-conflicts'
 import type { BranchMergeResponse, RequestChangesBody, SubmitBranchBody, SubmitBranchResponse, UpdateFromBaseResponse } from '../branch-status'
 import type { AdminDeleteTaskResponse, AdminRetryTaskResponse, AdminStatusResponse, AdminTasksResponse, BranchHealthResponse, DeleteArchivedBranchesBody, DeleteArchivedBranchesResponse, DismissUnpublishedResponse, PurgeBranchDirResponse, RepairBranchDirResponse, RepairContentDuplicatesResponse } from '../admin'
 import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from '../comments'
@@ -54,6 +55,12 @@ export function createMockApiClient(): MockApiClient {
     list: vi.fn().mockResolvedValue(mockSuccess({"base":"main","entries":[],"collections":[],"hiddenChanges":false})),
     entry: vi.fn().mockResolvedValue(mockSuccess({"before":null,"after":null,"mergeBaseSha":""})),
     restore: vi.fn().mockResolvedValue(mockSuccess({"logicalPath":"","contentId":""})),
+  },
+
+  conflicts: {
+    list: vi.fn().mockResolvedValue(mockSuccess({"conflicts":[],"hiddenCount":0,"openCount":0})),
+    entry: vi.fn().mockResolvedValue(mockSuccess({"contentId":"","kind":"fields","path":"","logicalPath":"","mergeSha":"","sides":{},"fields":[],"versions":{}})),
+    resolveEntry: vi.fn().mockResolvedValue(mockSuccess({"contentId":"","openCount":0})),
   },
 
   workflow: {
@@ -181,6 +188,18 @@ export function mockBranchEntryChangeResponse(): BranchEntryChangeResponse {
 
 export function mockRestoreEntryResponse(): RestoreEntryResponse {
   return mockSuccess({"logicalPath":"","contentId":""})
+}
+
+export function mockMergeConflictsResponse(): MergeConflictsResponse {
+  return mockSuccess({"conflicts":[],"hiddenCount":0,"openCount":0})
+}
+
+export function mockEntryConflictResponse(): EntryConflictResponse {
+  return mockSuccess({"contentId":"","kind":"fields","path":"","logicalPath":"","mergeSha":"","sides":{},"fields":[],"versions":{}})
+}
+
+export function mockResolveEntryConflictResponse(): ResolveEntryConflictResponse {
+  return mockSuccess({"contentId":"","openCount":0})
 }
 
 export function mockUpdateFromBaseResponse(): UpdateFromBaseResponse {
