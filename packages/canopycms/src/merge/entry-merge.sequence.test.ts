@@ -1,10 +1,11 @@
 /**
  * The merge over a branch's life: several syncs in a row, each merge's result becoming the
  * branch the next one merges, against the base it last took in. Some syncs are a git-level merge
- * instead (a clean rebase, or "Update branch" on the pull request), which takes the base's
- * changes in under the branch's own keys: an item keeps the key a read gave it before the base
- * changed it, so a later merge meets keys that no longer hash its content, or that hash another
- * item's. Lists hold twins, identical items whose read keys differ only by their repeat suffix,
+ * instead ("Update branch" on the pull request), which takes the base's changes in under the
+ * branch's own keys: an item keeps the key a read gave it before the base changed it. The worker
+ * re-keys what it takes in as the field merge would ({@link takenIn}); where that merge disagrees,
+ * a later merge meets keys that no longer hash an item's content, or that hash another item's.
+ * Lists hold twins, identical items whose read keys differ only by their repeat suffix,
  * and the editor sometimes makes an item read exactly like another: where that side also dropped
  * the other, the data reads either way, and either answer passes.
  *
@@ -20,6 +21,7 @@ import { describe, expect, it } from 'vitest'
 import type { FieldConfig } from '../config'
 import { itemKeysAsRead } from '../item-keys'
 import { mergeEntry, type KeyRemap } from './entry-merge'
+import { rekeyAsMerged } from './rekey'
 
 const text = (...names: string[]): FieldConfig[] => names.map((name) => ({ name, type: 'string' }))
 const fields: FieldConfig[] = [
@@ -442,6 +444,32 @@ const LOOKALIKES: Mix = {
   modes: ['editor'],
 }
 
+/**
+ * What the worker keeps of a git-level merge it takes in (worker/github-commits.ts): where the field
+ * merge of the same three versions holds the same content with no conflict, git's items under the
+ * field merge's keys ({@link rekeyAsMerged}), with its remaps; else git's merge as it is.
+ */
+function takenIn(
+  o: Side,
+  base: Side,
+  mine: Side,
+  git: Side,
+  want: Model,
+): { side: Side; remaps?: readonly KeyRemap[] } {
+  const result = mergeEntry({
+    format: 'json',
+    ancestor: { data: structuredClone(o.file) },
+    base: { data: structuredClone(base.file) },
+    branch: { data: structuredClone(mine.file) },
+    fields,
+  })
+  if (result.kind !== 'merged' || result.conflicts.length > 0) return { side: git }
+  const rekeyed = rekeyAsMerged(git.file, result.data) as File | undefined
+  if (rekeyed === undefined) return { side: git }
+  const { dropped: _dropped, ...side } = identify(rekeyed, want, [mine, base])
+  return { side, remaps: result.keyRemaps }
+}
+
 /** One branch's life of `syncs` syncs, each a merge or a git-level one: `merged` when all merged as meant. */
 function life(seed: number, syncs: number, mix: Mix = EVERY): string {
   const g = generator(seed)
@@ -529,8 +557,14 @@ function life(seed: number, syncs: number, mix: Mix = EVERY): string {
     const accepted = byEditor ? read(true) : readings
     const edited = read(true).map(([x, y]) => intended(mo, x.model, y.model))
     if (readings.length === 1 && !both && want !== 'conflict' && g.next() < 0.4) {
-      byEditor = false
-      branch = gitMerged(want, base, mine)
+      const taken = takenIn(o, base, mine, gitMerged(want, base, mine), want)
+      // Re-keyed, the merge's keys name items as a field merge's do; as git wrote them, they don't.
+      if (taken.remaps === undefined) byEditor = false
+      else if (byEditor) {
+        const wrong = keyedWrongly(mine, taken.side, taken.remaps)
+        if (wrong) return `seed ${seed}, sync ${sync} [editor, taken in]: ${wrong}`
+      }
+      branch = taken.side
       o = base
       continue
     }
@@ -581,26 +615,13 @@ function life(seed: number, syncs: number, mix: Mix = EVERY): string {
   return checked >= 2 ? 'merged' : 'short'
 }
 
-/**
- * Lives a git-level merge leaves a stale twin key in, which the merge reads as the other twin,
- * by seed: each still fails, so this list ends with the re-key at the git-level take-in.
- */
-const STALE_TWIN_KEY: ReadonlyMap<number, string> = new Map([
-  [446, '#1268: an edited twin under the key of a twin copied beside it'],
-  [13073, "#1268: twins under each other's keys after a git-level merge"],
-  [14268, '#1279: a twin key on an item whose own key went stale undoes a base deletion'],
-  [19503, "#1268: twins under each other's keys after a git-level merge"],
-])
-
 const lives = (count: number, mix: Mix) =>
   Array.from({ length: count }, (_, i): [number, string] => [i + 1, life(i + 1, 5, mix)])
 
 describe('the merge over several syncs', () => {
   it('never merges wrongly across syncs when each sync changed different items', () => {
     const results = lives(20_000, EVERY)
-    const wrong = results.filter(([, r]) => r.startsWith('seed'))
-    expect(wrong.filter(([seed]) => !STALE_TWIN_KEY.has(seed))).toEqual([])
-    expect(wrong.map(([seed]) => seed)).toEqual([...STALE_TWIN_KEY.keys()])
+    expect(results.filter(([, r]) => r.startsWith('seed'))).toEqual([])
     // Enough lives ran two syncs or more, so no divergence is not a vacuous pass.
     expect(results.filter(([, r]) => r === 'merged').length).toBeGreaterThan(results.length / 4)
   })

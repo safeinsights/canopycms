@@ -27,6 +27,7 @@ import { escapeForLog } from '../utils/escape-text'
 import { isCanopyInternalPath } from '../utils/git'
 import { publishesBranch, type BranchPolicyDescription } from './branch-policy'
 import {
+  buildRekey,
   commitMerge,
   commitsApart,
   isCleanMergeOf,
@@ -240,6 +241,11 @@ export async function bringInGitHubCommits(
   // below builds on remote.git's head whenever it can.
   if (published !== null && published !== head) {
     if ((await commitsApart(git, head, published)).onlyA === 0) {
+      // GitHub's commits, which reconcile moved `remote.git` to, come in re-keyed where they need it.
+      if (gitHubTip === published) {
+        const rekeyed = await rekeyTakenIn(ctx, args, head, published)
+        if (rekeyed) return rekeyed
+      }
       const stopped = await fastForward(ctx, args, head, published)
       if (stopped) return stopped
       head = published
@@ -254,6 +260,8 @@ export async function bringInGitHubCommits(
       if (gitHubTip !== undefined && published !== null && published !== tip) {
         return { kind: 'wait' }
       }
+      const rekeyed = await rekeyTakenIn(ctx, args, head, tip)
+      if (rekeyed) return rekeyed
       const stopped = await fastForward(ctx, args, head, tip)
       if (stopped) return stopped
       head = tip
@@ -483,6 +491,65 @@ async function fastForward(
     )
   }
   return null
+}
+
+/**
+ * GitHub's commits brought in under the item keys a field merge gives, where a merge among them
+ * left an item under a key that names another item (branch-merge.ts `buildRekey`): one commit on
+ * `tip`, recorded, published and moved to in {@link mergeIntoBranch}'s order, its remaps moving the
+ * branch's comment threads once it lands. Null, for the caller to fast-forward to `tip` as git
+ * keyed it, where no item needs a new key or the commit could not reach GitHub, as it would leave
+ * the clone ahead of it.
+ */
+async function rekeyTakenIn(
+  ctx: GitHubCommitsContext,
+  args: GitHubCommitsArgs,
+  head: string,
+  tip: string,
+): Promise<GitHubCommitsOutcome | null> {
+  const { git, branchPath, branchDir, branchRef, gatewayPolicy, lockLost } = args
+  if (gatewayPolicy && !publishesBranch(gatewayPolicy, branchRef)) return null
+  const published = await readPublishedSha(ctx, branchRef)
+  if ((await decidePublish(git, { head, published })).kind !== 'publish') return null
+  const built = await buildRekey(git, branchPath, {
+    from: head,
+    tip,
+    contentRoot: ctx.contentRoot,
+    timeoutMs: ctx.taskTimeoutMs,
+    message: `Key the items that merges on GitHub brought into ${branchRef}`,
+  })
+  if (built === null) return null
+  const { sha } = built
+  if (published !== null && !(await contains(git, sha, published))) return null
+  const refused = await refuseIncoming(args, head, sha)
+  if (refused) return refused
+  if (lockLost()) return { kind: 'wait' }
+  // Judged on content: the commit changes item keys only, which `isCleanMergeOf` sets aside.
+  if (await changesWhatWasReviewed(ctx, args, head, sha)) await returnToReview(ctx, args)
+  await recordMerge(ctx, args, built, { head, fromGitHub: true })
+  if (lockLost()) return { kind: 'wait' }
+  await recordSeenOnGitHub(ctx, branchRef, tip)
+  if (!(await publishPlainToLocalRemote(ctx, branchPath, branchRef, sha))) return { kind: 'wait' }
+  await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
+  if (lockLost()) return { kind: 'wait' }
+  try {
+    await moveClone(git, branchPath, sha)
+  } catch (err) {
+    if (!/would be overwritten/.test(getErrorMessage(err))) throw err
+    // Published: the next cycle fast-forwards to it once the saves are submitted.
+    workerLog(`  ${branchDir}: local changes overlap commits from GitHub, which wait for a submit`)
+    return { kind: 'wait' }
+  }
+  await landed(ctx, args, sha).catch((err: unknown) =>
+    workerLogWarn(
+      `  ${branchDir}: what this re-key moves is noted on the next cycle: ${getErrorMessage(err)}`,
+    ),
+  )
+  await recordGitHubTip(ctx, args, tip)
+  workerLog(
+    `  ${branchDir}: brought in commits from GitHub, with the items its merges brought in keyed anew (now at ${sha.slice(0, 7)})`,
+  )
+  return { kind: 'merged', keptEntries: 0 }
 }
 
 /**

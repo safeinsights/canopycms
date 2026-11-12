@@ -15,17 +15,17 @@ The **code comment at the point of the rule is authoritative**; this file is the
 - **One conflict name.** `conflict-path.ts` rebuilds `entry-diff.ts`' `EntryChange.key` and
   `dataPath` rules; the "agree with the drawer" tests in `entry-merge.test.ts` pin the two
   together.
+- **One re-key.** `rekey.ts` serves the worker's take-in and the sequence test's model of it.
 - **One body parser.** The mdx re-parse check uses `utils/markdown-parse.ts`, as the save
   path's `utils/markdown-body-splice.ts` does.
 
 ## The one heuristic
 
-Aligning list items no key names (`list-alignment.ts`) is the engine's one heuristic.
-A stale first-save key yields to content only from an item under its read key, and keeps
-its item where more items claim the content than hold it, or a copy shows a rewrite. It
-can misread an item keeping none of its values, changed under a stale key, or made to
-read like a deleted one (KNOWN LIMIT tests). `entry-merge.sequence.test.ts` pins that
-edits never merge wrongly, naming by seed the stale-twin-key lives it exempts.
+`list-alignment.ts` holds the engine's one heuristic. A stale first-save key yields to
+content only from an item under its read key, and keeps its item where more items claim
+the content than hold it, or a copy shows a rewrite. It can misread an item keeping none
+of its values, changed under a stale key, or made to read like a deleted one (KNOWN LIMIT
+tests). `entry-merge.sequence.test.ts` pins that edits never merge wrongly.
 
 `entry-merge.test.ts`' header maps the plan's conflict-case rows to tests; the golden
 fixtures are in `entry-merge.golden.test.ts`.

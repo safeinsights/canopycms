@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { simpleGit, type SimpleGit } from 'simple-git'
 
 import { CommentStore } from '../comment-store'
+import { itemKeysAsRead } from '../item-keys'
 import { MergeConflictStore } from '../merge-conflicts'
 import { BranchMetadataFileManager } from '../branch-metadata'
 import { SCHEMA_GENERATION_RESOURCE } from '../branch-schema-cache'
@@ -2482,5 +2483,172 @@ describe('a branch the automatic sync skips for its saved work', () => {
     await s.commit({}, 'saved work committed')
     await cycle(s)
     expect((await readMeta(s))?.latestChangesWaiting).toBeUndefined()
+  })
+})
+
+describe('a merge on GitHub that leaves an item under a key naming another', () => {
+  const LIST = 'content/list.page.aaa111bbb222.json'
+  const item = (t: string) => ({ a: 'pad', b: 'pad', t })
+  const [KX, KX2] = itemKeysAsRead([item('x'), item('x')]) as string[]
+  const [KP, KQ] = itemKeysAsRead([item('p'), item('q')]) as string[]
+  const KP2 = itemKeysAsRead([item('p2')])[0] as string
+  const list = (title: string, items: Array<Record<string, string>>) =>
+    `${JSON.stringify({ title, items }, null, 2)}\n`
+  const keysIn = async (s: Setup, ref: string) =>
+    (
+      JSON.parse(await simpleGit().raw(['--git-dir', s.remoteGit, 'show', `${ref}:${LIST}`])) as {
+        items: Array<{ _key?: string }>
+      }
+    ).items.map((i) => i._key)
+  const REKEY = `Key the items that merges on GitHub brought into ${BRANCH}`
+  let tmpDir: string
+  let s: Setup
+
+  /**
+   * Two items on base and in the branch, which the editor keyed (`keys`) and retitled; then base
+   * edits the first, and Update branch merges that in on GitHub, git keeping the editor's key on it.
+   */
+  async function stale(
+    [first, second]: [string, string],
+    keys: [string, string],
+    meta: Partial<BranchMetadata> = {},
+  ): Promise<string> {
+    await s.advanceBase({ [LIST]: list('L', [item(first), item(second)]) })
+    await s.clone.fetch('origin', BASE)
+    await s.clone.raw(['merge', '--ff-only', 'FETCH_HEAD'])
+    await s.commit({
+      [LIST]: list('L-branch', [
+        { _key: keys[0], ...item(first) },
+        { _key: keys[1], ...item(second) },
+      ]),
+    })
+    await s.push()
+    const review =
+      meta.status === 'approved'
+        ? {
+            review: {
+              state: 'approved',
+              by: { userId: 'r' },
+              at: '2026-10-01T00:00:00.000Z',
+              commit: await s.head(),
+            } as const,
+          }
+        : {}
+    await writeMeta(s, { status: 'submitted', pullRequestNumber: 7, ...review, ...meta })
+    await cycle(s)
+    await s.advanceBase({ [LIST]: list('L', [item(`${first}2`), item(second)]) })
+    return s.updateBranchOnGitHub()
+  }
+  const distinct = (meta?: Partial<BranchMetadata>) => stale(['p', 'q'], [KP, KQ], meta)
+
+  beforeEach(async () => {
+    mockConsole()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-rekey-taken-in-'))
+    s = await createSetup(tmpDir)
+  })
+  afterEach(async () => {
+    vi.restoreAllMocks()
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it("takes the merge in under the field merge's keys, published and pushed, threads following", async () => {
+    const remap = vi.spyOn(CommentStore.prototype, 'remapItemKeys')
+    const merge = await distinct()
+    expect(await keysIn(s, merge)).toEqual([KP, KQ])
+
+    await cycle(s)
+
+    const head = await s.head()
+    expect((await s.clone.raw(['rev-parse', `${head}^`])).trim()).toBe(merge)
+    expect(await keysIn(s, head)).toEqual([KP2, KQ])
+    expect(await s.remoteSha(`refs/heads/${BRANCH}`)).toBe(head)
+    expect(await queued(s, 'push-branch')).toEqual([BRANCH])
+    expect(remap).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.arrayContaining([expect.objectContaining({ from: KP, to: KP2 })]),
+    )
+    expect((await new MergeConflictStore(s.branchPath).read())?.landing).toBeUndefined()
+  })
+
+  it("takes a twin's key off the twin the base edited", async () => {
+    const merge = await stale(['x', 'x'], [KX, KX2])
+    expect(await keysIn(s, merge)).toEqual([KX, KX2])
+
+    await cycle(s)
+
+    // The base reads its own unedited twin as KX now, and the edited one by its content.
+    expect(await keysIn(s, await s.head())).toEqual([undefined, KX])
+    expect(await s.log(BRANCH)).toContain(REKEY)
+  })
+
+  it('changes nothing where git kept each item under its own key', async () => {
+    await distinct()
+    await cycle(s)
+    const head = await s.head()
+    await s.advanceBase({ 'other.txt': 'base\n' })
+    const merge = await s.updateBranchOnGitHub()
+
+    await cycle(s)
+
+    expect(await s.head()).toBe(merge)
+    expect(await keysIn(s, merge)).toEqual(await keysIn(s, head))
+  })
+
+  it('leaves an entry a later commit on GitHub changed again as that commit wrote it', async () => {
+    const merge = await distinct()
+    const fixed = (
+      await simpleGit().raw(['--git-dir', s.remoteGit, 'show', `${merge}:${LIST}`])
+    ).replace('"L-branch"', '"L-fix"')
+    await s.commitOnGitHub({ [LIST]: fixed })
+
+    await cycle(s)
+
+    expect(await s.file(LIST)).toBe(fixed)
+    expect(await s.log(BRANCH)).not.toContain(REKEY)
+  })
+
+  it('keeps an approved branch approved, through the re-key and a later clean Update branch', async () => {
+    await distinct({ status: 'approved' })
+    await cycle(s)
+    expect(await s.log(BRANCH)).toContain(REKEY)
+    expect((await readMeta(s))?.status).toBe('approved')
+    await s.landPushOnGitHub({ stamp: false })
+
+    await s.advanceBase({ 'other.txt': 'base\n' })
+    await s.updateBranchOnGitHub()
+    await cycle(s)
+
+    expect((await readMeta(s))?.status).toBe('approved')
+  })
+
+  it('never publishes a re-key over commits the author has not submitted', async () => {
+    const merge = await distinct()
+    await s.commit({ 'unsubmitted.txt': 'saved\n' }, 'unsubmitted work')
+
+    await cycle(s)
+
+    expect(await s.remoteSha(`refs/heads/${BRANCH}`)).toBe(merge)
+    expect(await s.log(BRANCH)).not.toContain(REKEY)
+  })
+
+  it('lands the re-key on the next cycle when the clone could not move to it', async () => {
+    const remap = vi.spyOn(CommentStore.prototype, 'remapItemKeys')
+    await distinct()
+    const lock = path.join(s.branchPath, '.git', 'index.lock')
+    await fs.writeFile(lock, '')
+    await cycle(s)
+    await fs.rm(lock)
+    const published = await s.remoteSha(`refs/heads/${BRANCH}`)
+    expect(published).not.toBe(await s.head())
+    expect(remap).not.toHaveBeenCalled()
+
+    await cycle(s)
+
+    expect(await s.head()).toBe(published)
+    expect(await keysIn(s, await s.head())).toEqual([KP2, KQ])
+    expect(remap).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.arrayContaining([expect.objectContaining({ from: KP, to: KP2 })]),
+    )
   })
 })
