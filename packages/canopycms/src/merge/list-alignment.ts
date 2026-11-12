@@ -144,28 +144,44 @@ export function alignToAncestor(
     if (!isMinted(item)) unheldFresh.add(token)
   })
   const at = new Map(ancestorKeys.map((key, i) => [key, i]))
-  const usurped = (j: number, own: string): boolean => {
-    if (!hasContentKeyShape(own)) return false
+  // Whether the item may be the unheld item holding its content, and whether its key names another.
+  const claim = (j: number, own: string): 'named' | 'unnamed' | undefined => {
+    if (!hasContentKeyShape(own)) return undefined
     const content = valueToken(items[j])
     const holders = unheld.get(content) ?? 0
-    if (holders === 0) return false
+    if (holders === 0) return undefined
     const read = readKeys[j]
     const named = read !== undefined && known.has(read) ? read : aliases.get(own)
     const i = named === undefined ? undefined : at.get(named)
     // A key that has gone stale on both sides is history, not content: it names its item.
     if (i !== undefined) {
-      if (isMinted(ancestorItems[i]) && isMinted(items[j])) return false
+      if (isMinted(ancestorItems[i]) && isMinted(items[j])) return undefined
       // A key takes only an unheld item still under its read key: one gone stale was edited.
-      if (!unheldFresh.has(content)) return false
-      return valueToken(ancestorItems[i]) !== content
+      if (!unheldFresh.has(content)) return undefined
+      return valueToken(ancestorItems[i]) !== content ? 'named' : undefined
     }
     // A key naming no item here pairs by content only where one item holds it, twins by place.
-    return holders === 1
+    return holders === 1 ? 'unnamed' : undefined
+  }
+  const claims = items.map((item, j) => {
+    const own = ownKey(item)
+    return own === undefined ? undefined : claim(j, own)
+  })
+  const claimants = new Map<string, number>()
+  claims.forEach((c, j) => {
+    const content = valueToken(items[j])
+    if (c !== undefined) claimants.set(content, (claimants.get(content) ?? 0) + 1)
+  })
+  // More claimants than holders can't all be those items: one a key names is that item instead.
+  const usurped = (j: number): boolean => {
+    const content = valueToken(items[j])
+    if (claims[j] !== 'named') return claims[j] === 'unnamed'
+    return (claimants.get(content) ?? 0) <= (unheld.get(content) ?? 0)
   }
   items.forEach((item, j) => {
     const own = ownKey(item)
     const read = readKeys[j]
-    if (own !== undefined && usurped(j, own)) {
+    if (own !== undefined && usurped(j)) {
       minted.add(j)
       byContent.add(j)
       stale.add(j)
@@ -242,9 +258,15 @@ export function alignToAncestor(
       : [i],
   )
   const open = (i: number) => !taken.has(ancestorKeys[i])
+  // An item whose key a claimant here holds was rewritten: a minted-key item never refinds it.
+  const rewritten = new Set(items.flatMap((item, j) => (usurped(j) ? (ownKey(item) ?? []) : [])))
   for (const j of byContent) {
+    const own = ownKey(items[j])
     const i = candidates.find(
-      (k) => open(k) && valueToken(ancestorItems[k]) === valueToken(items[j]),
+      (k) =>
+        open(k) &&
+        valueToken(ancestorItems[k]) === valueToken(items[j]) &&
+        !(rewritten.has(ancestorKeys[k]) && own !== undefined && !hasContentKeyShape(own)),
     )
     if (i !== undefined) match(j, i)
   }
