@@ -18,7 +18,7 @@ import type { Dirent } from 'node:fs'
 import matter from 'gray-matter'
 import { parse as yamlParse } from 'yaml'
 import { atomicWriteFile } from './utils/atomic-write'
-import { serializeFrontmatter, serializeYaml } from './utils/content-serialize'
+import { serializeEntry, serializeFrontmatter, serializeYaml } from './utils/content-serialize'
 import { serializeJson } from './utils/json-source-splice'
 import { withLock } from './utils/async-mutex'
 import {
@@ -1369,20 +1369,7 @@ export class ContentStore {
           // reachable, read the ID's current path instead of `absolutePath`.
           const existingRaw = current?.content
 
-          let content: string
-          if (input.format === 'json') {
-            content = serializeJson(input.data ?? {}, existingRaw)
-          } else if (input.format === 'yaml') {
-            content = serializeYaml(input.data ?? {}, existingRaw)
-          } else {
-            content = serializeFrontmatter(
-              input.body,
-              input.data ?? {},
-              existingRaw,
-              input.format,
-              fields,
-            )
-          }
+          const content = serializeEntry(input, existingRaw, fields)
 
           await atomicWriteFile(absolutePath, content)
 

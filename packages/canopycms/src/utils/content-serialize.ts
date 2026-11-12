@@ -42,6 +42,7 @@ import { withCalendarDays } from './calendar-day'
 import type { FieldConfig } from '../config'
 import { createDebugLogger } from './debug'
 import { getErrorMessage } from './error'
+import { serializeJson } from './json-source-splice'
 import { preserveMarkdownSource } from './markdown-body-splice'
 import type { MarkdownBodyFormat } from './markdown-parse'
 import { snapshotDocument, spliceSource, withSourceLineEndings } from './yaml-source-splice'
@@ -753,4 +754,24 @@ export function serializeFrontmatter(
     'reconciled frontmatter reads back differently; writing as gray-matter prints it',
   )
   return matter.stringify(file, data)
+}
+
+/** What a save hands the serialiser: `ContentStore.write`'s input, less its version token. */
+export type SerializableEntry =
+  | { format: MarkdownBodyFormat; data?: Record<string, unknown>; body: string }
+  | { format: 'json'; data: Record<string, unknown> }
+  | { format: 'yaml'; data: Record<string, unknown> }
+
+/**
+ * An entry's file text as a save writes it: `entry` serialised onto `existingRaw`, the file's
+ * current text (absent for a new file). `fields` is the entry type's schema.
+ */
+export function serializeEntry(
+  entry: SerializableEntry,
+  existingRaw: string | undefined,
+  fields: readonly FieldConfig[],
+): string {
+  if (entry.format === 'json') return serializeJson(entry.data, existingRaw)
+  if (entry.format === 'yaml') return serializeYaml(entry.data, existingRaw)
+  return serializeFrontmatter(entry.body, entry.data ?? {}, existingRaw, entry.format, fields)
 }
