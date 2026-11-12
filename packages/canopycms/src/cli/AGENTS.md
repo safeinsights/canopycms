@@ -7,7 +7,7 @@ where those rules live.
 
 ## Overview
 
-CLI commands (`init`, `init-deploy`, `init-github-app`, `worker run-once`, `generate-ai-content`, `collect-asset-refs` and `materialize-assets` in `asset-refs.ts`, `sync`, `migrate`); project-root discovery (`project-root.ts`)
+CLI commands (`init`, `init-deploy`, `init-github-app`, `worker run-once`, `generate-ai-content`, `collect-asset-refs` and `materialize-assets` in `asset-refs.ts`, `sync`, `migrate`, `backfill-item-keys`); project-root discovery (`project-root.ts`); site module loading via jiti (`site-config.ts`)
 
 `asset-refs.ts`'s `resolveStore` builds an `S3AssetStore` from `--bucket`/`--region`, else imports `configured-asset-store.ts` (jiti) and refuses a non-S3 store without `--allow-local`; `MATERIALIZE_EXIT_CODES` is the exit contract a release gates on
 

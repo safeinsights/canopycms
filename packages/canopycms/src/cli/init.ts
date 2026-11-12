@@ -557,7 +557,7 @@ async function excludeFromTsconfig(
  * omitted value fails Zod validation inside defineCanopyConfig, surfacing here as an
  * import failure re-thrown loudly rather than treated as absent.
  *
- * Accepts the same export shapes as `cli/generate-ai-content.ts`: default or named
+ * Accepts the same export shapes as `importSiteServerConfig` (`site-config.ts`): default or named
  * `config` export of defineCanopyConfig(...), or a plain object (used in tests).
  */
 async function detectMode(projectDir: string): Promise<'prod' | 'dev'> {
