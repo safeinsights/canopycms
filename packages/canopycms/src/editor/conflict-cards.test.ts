@@ -330,9 +330,11 @@ describe('buildEntryConflicts', () => {
         [shas.branch]: asServed(versions.branch),
       },
     }
-    const saved = entryAsRead(schema, versions.branch)
+    // The merge re-keys the outer item as the base's version reads: the form holds it there.
+    const saved = entryAsRead(schema, merged.data)
+    const baseOuterKey = itemKeysAsRead(versions.base.items)[0]
     const built = buildEntryConflicts(data, schema, undefined, undefined, saved)
-    const removed = built.fields.find((f) => f.key === `items.${outerKey}.rows.${k1}`)
+    const removed = built.fields.find((f) => f.key === `items.${baseOuterKey}.rows.${k1}`)
     expect(removed?.latestPlaceable).toBe(true)
     const placed = withLatest(saved, removed!, undefined)
     const rows = (placed?.items as Array<{ rows: Array<{ _key: string }> }>)[0].rows

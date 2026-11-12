@@ -12,6 +12,7 @@ import {
   conflictFilesOf,
   openConflictCount,
   withFoundConflicts,
+  withRemappedItemKeys,
   withoutEntryConflict,
   withoutMergesGone,
   withoutResolvedFields,
@@ -501,5 +502,196 @@ describe('assertNoOpenConflicts', () => {
     const err = await assertNoOpenConflicts(root).catch((e: unknown) => e)
     expect(err).toBeInstanceOf(OpenMergeConflictsError)
     expect(err).toMatchObject({ count: null })
+  })
+})
+
+describe('withRemappedItemKeys', () => {
+  const itemField = (
+    key: string,
+    dataPath: NonNullable<FoundEntryConflict['fields']>[number]['dataPath'],
+  ): FoundEntryConflict => ({
+    contentId: ID,
+    path: 'content/page.home.aboutAbc1234.json',
+    kind: 'fields',
+    sides: { ancestor: 'o1', base: 'a1', branch: 'b1' },
+    fields: [
+      {
+        key,
+        dataPath,
+        sidePaths: { ancestor: dataPath, base: dataPath, branch: dataPath },
+        kind: 'changed',
+      },
+    ],
+  })
+  const recorded = withFoundConflicts(
+    {},
+    [
+      itemField('items.hOld1.links.hIn1.href', [
+        { field: 'items' },
+        { item: 'hOld1' },
+        { field: 'links' },
+        { item: 'hIn1' },
+        { field: 'href' },
+      ]),
+    ],
+    M1,
+  )
+
+  it('renames a remapped item key in the key and data path of a conflict on record', () => {
+    const renamed = withRemappedItemKeys(
+      recorded,
+      [{ contentId: ID, remaps: [{ within: [], from: 'hOld1', to: 'hNew1' }] }],
+      M2,
+    )
+    expect(renamed[ID]?.fields?.map((f) => [f.key, f.dataPath])).toEqual([
+      [
+        'items.hNew1.links.hIn1.href',
+        [
+          { field: 'items' },
+          { item: 'hNew1' },
+          { field: 'links' },
+          { item: 'hIn1' },
+          { field: 'href' },
+        ],
+      ],
+    ])
+    expect(renamed[ID]?.mergeSha).toBe(M2)
+    expect(renamed[ID]?.previous).toEqual(recorded[ID])
+    // Each version's own path addresses its stored blob, which keeps its keys.
+    expect(renamed[ID]?.fields?.[0].sidePaths).toEqual(recorded[ID]?.fields?.[0].sidePaths)
+  })
+
+  it('renames an inner item only inside the outer item the remap names, inner first', () => {
+    const remaps = [
+      { within: ['hOld1'], from: 'hIn1', to: 'hIn2' },
+      { within: [], from: 'hOld1', to: 'hNew1' },
+    ]
+    expect(
+      withRemappedItemKeys(recorded, [{ contentId: ID, remaps }], M2)[ID]?.fields?.[0].key,
+    ).toBe('items.hNew1.links.hIn2.href')
+    const elsewhere = [{ within: ['hOther'], from: 'hIn1', to: 'hIn2' }]
+    expect(withRemappedItemKeys(recorded, [{ contentId: ID, remaps: elsewhere }], M2)[ID]).toBe(
+      recorded[ID],
+    )
+  })
+
+  it('matches every remap against the path on record: the first wins, and none compounds', () => {
+    const key = (remaps: Array<{ within: string[]; from: string; to: string }>) =>
+      withRemappedItemKeys(recorded, [{ contentId: ID, remaps }], M2)[ID]?.fields?.[0].key
+    // As the comment store applies them (`remapItemKeys`): the first match for a thread's keys.
+    expect(
+      key([
+        { within: [], from: 'hOld1', to: 'hFirst' },
+        { within: [], from: 'hOld1', to: 'hSecond' },
+      ]),
+    ).toBe('items.hFirst.links.hIn1.href')
+    expect(
+      key([
+        { within: [], from: 'hOld1', to: 'hMid1' },
+        { within: [], from: 'hMid1', to: 'hNew1' },
+      ]),
+    ).toBe('items.hMid1.links.hIn1.href')
+  })
+
+  it('leaves records it renames nothing in, and other entries, as they were', () => {
+    const remaps = [{ contentId: OTHER, remaps: [{ within: [], from: 'hOld1', to: 'hNew1' }] }]
+    expect(withRemappedItemKeys(recorded, remaps, M2)[ID]).toBe(recorded[ID])
+  })
+
+  it('lets a conflict found again under the new key replace the one on record', () => {
+    const renamed = withRemappedItemKeys(
+      recorded,
+      [{ contentId: ID, remaps: [{ within: [], from: 'hOld1', to: 'hNew1' }] }],
+      M2,
+    )
+    const again = withFoundConflicts(
+      renamed,
+      [
+        itemField('items.hNew1.links.hIn1.href', [
+          { field: 'items' },
+          { item: 'hNew1' },
+          { field: 'links' },
+          { item: 'hIn1' },
+          { field: 'href' },
+        ]),
+      ],
+      M2,
+    )
+    expect(again[ID]?.fields?.map((f) => f.key)).toEqual(['items.hNew1.links.hIn1.href'])
+    expect(again[ID]?.fields?.[0].sides.ancestor).toBe('o1')
+  })
+
+  it('renames the item token, never a field or an outer item of the same name', () => {
+    const faq = withFoundConflicts(
+      {},
+      [itemField('faq.faq.answer', [{ field: 'faq' }, { item: 'faq' }, { field: 'answer' }])],
+      M1,
+    )
+    const remaps = [{ contentId: ID, remaps: [{ within: [], from: 'faq', to: 'NEW' }] }]
+    expect(withRemappedItemKeys(faq, remaps, M2)[ID]?.fields?.[0].key).toBe('faq.NEW.answer')
+    const nested = withFoundConflicts(
+      {},
+      [
+        itemField('items.a.links.a.href', [
+          { field: 'items' },
+          { item: 'a' },
+          { field: 'links' },
+          { item: 'a' },
+          { field: 'href' },
+        ]),
+      ],
+      M1,
+    )
+    const inner = [{ contentId: ID, remaps: [{ within: ['a'], from: 'a', to: 'b' }] }]
+    expect(withRemappedItemKeys(nested, inner, M2)[ID]?.fields?.[0].key).toBe(
+      'items.a.links.b.href',
+    )
+  })
+
+  it('counts the key tokens past a block data step, which has none', () => {
+    const block = withFoundConflicts(
+      {},
+      [
+        itemField('blocks.b1.items.i1.t', [
+          { field: 'blocks' },
+          { item: 'b1' },
+          { blockData: true },
+          { field: 'items' },
+          { item: 'i1' },
+          { field: 't' },
+        ]),
+      ],
+      M1,
+    )
+    const remaps = [{ contentId: ID, remaps: [{ within: ['b1'], from: 'i1', to: 'i2' }] }]
+    expect(withRemappedItemKeys(block, remaps, M2)[ID]?.fields?.[0].key).toBe(
+      'blocks.b1.items.i2.t',
+    )
+  })
+
+  it('matches every remap against the keys before the merge, as the comment store does', () => {
+    const remaps = [
+      {
+        contentId: ID,
+        remaps: [
+          { within: [], from: 'hOld1', to: 'hMid1' },
+          { within: [], from: 'hMid1', to: 'hNew1' },
+        ],
+      },
+    ]
+    expect(withRemappedItemKeys(recorded, remaps, M2)[ID]?.fields?.[0].key).toBe(
+      'items.hMid1.links.hIn1.href',
+    )
+  })
+
+  it('gives the old keys back when the merge that renamed them never lands', () => {
+    const renamed = withRemappedItemKeys(
+      recorded,
+      [{ contentId: ID, remaps: [{ within: [], from: 'hOld1', to: 'hNew1' }] }],
+      M2,
+    )
+    expect(withoutMergesGone(renamed, (sha) => sha === M1)[ID]?.fields?.[0].key).toBe(
+      'items.hOld1.links.hIn1.href',
+    )
   })
 })

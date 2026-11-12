@@ -321,6 +321,73 @@ export function withFoundConflicts(
   return entries
 }
 
+/** The item keys one merge changed in one entry, which the entry's records follow. */
+export interface EntryKeyRemaps {
+  contentId?: string
+  remaps: readonly KeyRemap[]
+}
+
+/**
+ * `field` with the item keys `remaps` changed renamed in its key and data path. Each remap names
+ * an item by the keys it had before this merge, as the comment store's do, so all match against
+ * the original path and apply at once. The key holds one token per data path step but `blockData`.
+ */
+function withRemappedKeys(
+  field: MergeConflictField,
+  remaps: readonly KeyRemap[],
+): MergeConflictField {
+  const renamed = new Map<number, string>()
+  for (const { within, from, to } of remaps) {
+    const enclosing: string[] = []
+    field.dataPath.forEach((segment, n) => {
+      if (!('item' in segment)) return
+      const hit =
+        segment.item === from &&
+        enclosing.length === within.length &&
+        enclosing.every((k, m) => k === within[m])
+      if (hit && !renamed.has(n)) renamed.set(n, to)
+      enclosing.push(segment.item)
+    })
+  }
+  if (renamed.size === 0) return field
+  const dataPath = field.dataPath.map((segment, n) => {
+    const to = renamed.get(n)
+    return to === undefined ? segment : { item: to }
+  })
+  const tokens = [...field.key.matchAll(/([.?]?)([^.?]+)/g)].map(([, sep, name]) => [sep, name])
+  let token = 0
+  field.dataPath.forEach((segment, n) => {
+    if ('blockData' in segment) return
+    const to = renamed.get(n)
+    if (to !== undefined && tokens[token]) tokens[token] = [tokens[token][0], to]
+    token++
+  })
+  const key = tokens.map(([sep, name]) => `${sep}${name}`).join('')
+  return { ...field, key, dataPath }
+}
+
+/**
+ * `entries` with the item keys a merge, `mergeSha`, changed renamed in the conflicts on record,
+ * as the branch's comment threads are, so a conflict found again under the new key is the same
+ * one. A record this renames keeps the one it replaced as `previous`, so a merge that never lands
+ * gives the old keys back. Pure.
+ */
+export function withRemappedItemKeys(
+  entries: Readonly<Record<string, MergeConflictEntry>>,
+  remaps: readonly EntryKeyRemaps[],
+  mergeSha: string,
+): Record<string, MergeConflictEntry> {
+  const out: Record<string, MergeConflictEntry> = { ...entries }
+  for (const { contentId, remaps: changed } of remaps) {
+    const entry = contentId === undefined ? undefined : out[contentId]
+    if (!entry?.fields) continue
+    const fields = entry.fields.map((field) => withRemappedKeys(field, changed))
+    if (fields.every((field, n) => field === entry.fields?.[n])) continue
+    out[contentId as string] = { ...entry, fields, mergeSha, previous: entry }
+  }
+  return out
+}
+
 /**
  * `entries` as the branch's history has them: a record whose `mergeSha` fails `holds` gives back the
  * one it replaced, or goes when it replaced none, and a record whose merge the branch holds drops

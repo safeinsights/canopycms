@@ -105,23 +105,26 @@ describe('fixture 1: keys an editor first save wrote beside items the base rewor
     branch: guide(steps, true, summary),
   }
 
-  it('merges with no conflicts: the rewordings, the summary, and the branch keys', () => {
+  it('merges with no conflicts: the rewordings, the summary, and keys the base reads them by', () => {
     const result = merge(texts, 'md', guideFields)
     expect(result.conflicts).toEqual([])
     expect(result.data).toEqual({
       title: 'Getting started',
       summary: 'A short walk through your first page.',
-      steps: reworded.map((s, i) => ({ ...s, _key: readKey(steps[i]) })),
+      steps: reworded.map((s) => ({ ...s, _key: readKey(s) })),
     })
     expect(result.body).toBe(guideBody)
-    expect(result.keyRemaps).toEqual([])
   })
 
-  it('carries the keys rather than comparing them as content: the branch keys survive', () => {
+  it('carries the keys rather than comparing them as content: each branch key is remapped', () => {
+    // The reworded items take the key the base's version reads under, which the next sync's
+    // ancestor knows; the branch's threads follow each one.
     const result = merge(texts, 'md')
     const keys = (result.data.steps as Item[]).map((s) => s._key)
-    expect(keys).toEqual(steps.map(readKey))
-    expect(keys.every((k) => typeof k === 'string')).toBe(true)
+    expect(keys).toEqual(reworded.map(readKey))
+    expect(result.keyRemaps).toEqual(
+      steps.map((s, i) => ({ within: [], from: readKey(s), to: readKey(reworded[i]) })),
+    )
   })
 })
 
@@ -273,7 +276,7 @@ describe('fixture 2: four entries, most hunks disjoint, two real clashes', () =>
     expect(result.data).toEqual({
       title: 'About the team',
       description: 'Who we are and what we make.',
-      team: teamBase.map((m, i) => ({ ...m, _key: readKey(teamA[i]) })),
+      team: teamBase.map((m) => ({ ...m, _key: readKey(m) })),
     })
     expect(result.body).toBe(
       aboutBody(
@@ -306,7 +309,7 @@ describe('fixture 2: four entries, most hunks disjoint, two real clashes', () =>
     expect(result.data).toEqual({
       hero: { heading: 'Plans for every team', sub: 'Pick a plan.' },
       cta: 'Try it free',
-      plans: basePlans.map((p, i) => ({ ...p, _key: readKey(plans[i]) })),
+      plans: basePlans.map((p) => ({ ...p, _key: readKey(p) })),
     })
   })
 
@@ -355,7 +358,7 @@ describe('fixture 2: four entries, most hunks disjoint, two real clashes', () =>
     expect(result.data).toEqual({
       copyright: '2026 Example Co',
       links: [
-        ...baseLinks.map((l, i) => ({ ...l, _key: readKey(links[i]) })),
+        ...baseLinks.map((l) => ({ ...l, _key: readKey(l) })),
         { ...statusLink, _key: readKey(statusLink) },
       ],
     })

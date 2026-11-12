@@ -1,8 +1,9 @@
 /**
  * A conflict inside a list the base left keyless, end to end: real repositories, the worker's own
  * merge (`planMerge`), the record as the worker writes it, `GET /:branch/conflicts/...`, and
- * the editor's cards and "Use latest version". The base's read keys the item it edited by that
- * item's new content, so only each version's own path (`sidePaths`) finds the latest value there.
+ * the editor's cards and "Use latest version". The merge keys the item the base edited as the
+ * base's version reads, so only each version's own path (`sidePaths`) finds the branch's value in
+ * the version the branch stored.
  */
 import fs from 'node:fs/promises'
 import os from 'node:os'
@@ -120,70 +121,70 @@ const createCtx = () => {
   })
 }
 
-describe('a conflict in a list the base left keyless', () => {
-  it('shows the latest version’s value and places it with "Use latest version"', async () => {
-    const head = (await git.raw(['rev-parse', 'feature'])).trim()
-    const other = (await git.raw(['rev-parse', 'main'])).trim()
-    const plan = await planMerge(git, clonePath, {
+/** The worker's merge of `feature` with `main`, its conflicts on record, and the API's answer. */
+const mergeAndRead = async () => {
+  const head = (await git.raw(['rev-parse', 'feature'])).trim()
+  const other = (await git.raw(['rev-parse', 'main'])).trim()
+  const plan = await planMerge(git, clonePath, {
+    head,
+    other,
+    contentRoot: 'content',
+    timeoutMs: 30_000,
+  })
+  if (plan.kind !== 'planned') throw new Error(`expected a merge, got ${plan.kind}`)
+  // The merge commit, as the worker makes it from the plan: `head` first, then the base.
+  const mergeSha = (
+    await git.raw([
+      'commit-tree',
+      '-p',
       head,
+      '-p',
       other,
-      contentRoot: 'content',
-      timeoutMs: 30_000,
-    })
-    if (plan.kind !== 'planned') throw new Error(`expected a merge, got ${plan.kind}`)
-    // The merge commit, as the worker makes it from the plan: `head` first, then the base.
-    const mergeSha = (
-      await git.raw([
-        'commit-tree',
-        '-p',
-        head,
-        '-p',
-        other,
-        '-m',
-        'merge',
-        '--end-of-options',
-        plan.tree,
-      ])
-    ).trim()
-    await new MergeConflictStore(clonePath, 0).update(() => ({
-      entries: withFoundConflicts({}, plan.conflicts, mergeSha),
-    }))
+      '-m',
+      'merge',
+      '--end-of-options',
+      plan.tree,
+    ])
+  ).trim()
+  await new MergeConflictStore(clonePath, 0).update(() => ({
+    entries: withFoundConflicts({}, plan.conflicts, mergeSha),
+  }))
+  const res = await MERGE_CONFLICT_ROUTES.entry.handler(
+    createCtx(),
+    { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+    { branch: unsafeAsBranchName('feature'), entryPath: unsafeAsLogicalPath('content/pages/home') },
+  )
+  expect(res).toMatchObject({ ok: true, status: 200 })
+  const merged = JSON.parse(await git.raw(['show', `${mergeSha}:${FILE}`])) as typeof branchData
+  return { data: res.data!, merged }
+}
 
-    const res = await MERGE_CONFLICT_ROUTES.entry.handler(
-      createCtx(),
-      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      {
-        branch: unsafeAsBranchName('feature'),
-        entryPath: unsafeAsLogicalPath('content/pages/home'),
-      },
-    )
-    expect(res).toMatchObject({ ok: true, status: 200 })
-    const data = res.data!
-    const [field] = data.fields
+describe('a conflict in a list the base left keyless', () => {
+  it('shows a re-keyed item’s versions on its card, and places the latest under its new key', async () => {
+    const { data, merged } = await mergeAndRead()
+    // The merge keys the item as the base's version reads, so the next sync's ancestor knows it.
     const baseKey = itemKeysAsRead([base.items[0]])[0]
-    expect(field.sidePaths.base).toEqual([
+    expect(merged.items[0]._key).toBe(baseKey)
+    const [field] = data.fields
+    expect(field.dataPath).toEqual([{ field: 'items' }, { item: baseKey }, { field: 'title' }])
+    expect(field.sidePaths.branch).toEqual([
       { field: 'items' },
-      { item: baseKey },
+      { item: branchData.items[0]._key },
       { field: 'title' },
     ])
-    expect(field.sidePaths.base).not.toEqual(field.dataPath)
-
-    const saved = entryAsRead(fields, branchData)
+    const saved = entryAsRead(fields, merged)
     const { fields: cards } = buildEntryConflicts(data, fields, undefined, undefined, saved)
-    const conflict = cards[0]
-    expect(conflict.latestPlaceable).toBe(true)
-    expect(conflict.cards[0]).toMatchObject({
+    expect(cards[0].latestPlaceable).toBe(true)
+    expect(cards[0].cards[0]).toMatchObject({
       type: 'value',
       before: { kind: 'text', text: 'Started' },
       latest: { kind: 'text', text: 'Latest' },
       yours: { kind: 'text', text: 'Mine' },
     })
-    expect(conflict.cards[0]).not.toHaveProperty('latestUnavailable')
-    const placed = withLatest(saved, conflict, undefined)
+    const placed = withLatest(saved, cards[0], undefined)
     expect((placed?.items as Array<Record<string, unknown>>)[0]).toMatchObject({
       title: 'Latest',
-      detail: 'd',
-      _key: branchData.items[0]._key,
+      _key: baseKey,
     })
   })
 })
