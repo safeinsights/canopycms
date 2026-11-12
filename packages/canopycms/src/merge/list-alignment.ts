@@ -145,16 +145,21 @@ export function alignToAncestor(
     if (!isMinted(item)) unheldFresh.add(token)
   })
   const at = new Map(ancestorKeys.map((key, i) => [key, i]))
-  // Content a copy holds, under a key minted for it that the ancestor doesn't know. Either side's
-  // copy counts, so both read an item they rewrote alike the same way.
-  const copied = new Set(
-    [...items, ...otherSide].flatMap((item) => {
-      const own = ownKey(item)
-      return own !== undefined && !hasContentKeyShape(own) && !known.has(own)
-        ? [valueToken(item)]
-        : []
-    }),
-  )
+  // Content a copy holds, under a key minted for it that the ancestor doesn't know.
+  const copies = (list: readonly unknown[]) =>
+    new Set(
+      list.flatMap((item) => {
+        const own = ownKey(item)
+        return own !== undefined && !hasContentKeyShape(own) && !known.has(own)
+          ? [valueToken(item)]
+          : []
+      }),
+    )
+  const [copied, otherCopied] = [copies(items), copies(otherSide)]
+  // The other side's copy counts where it holds the same rewrite, so both read that item alike.
+  const otherHolds = new Set(otherSide.map((item) => `${ownKey(item)}\u0000${valueToken(item)}`))
+  const sameRewrite = (j: number, own: string) =>
+    otherHolds.has(`${own}\u0000${valueToken(items[j])}`)
   // Whether the item may be the unheld item holding its content, and whether its key names another.
   const claim = (j: number, own: string): 'named' | 'keyed' | 'unnamed' | undefined => {
     if (!hasContentKeyShape(own)) return undefined
@@ -171,7 +176,8 @@ export function alignToAncestor(
       if (!unheldFresh.has(content)) return undefined
       // With a copy of the item its key names beside it, the side rewrote that item: read by key.
       const was = valueToken(ancestorItems[i])
-      return was === content ? undefined : copied.has(was) ? 'keyed' : 'named'
+      if (was === content) return undefined
+      return copied.has(was) || (otherCopied.has(was) && sameRewrite(j, own)) ? 'keyed' : 'named'
     }
     // A key naming no item here pairs by content only where one item holds it, twins by place.
     return holders === 1 ? 'unnamed' : undefined

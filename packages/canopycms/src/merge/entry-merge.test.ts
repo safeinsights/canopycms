@@ -2224,6 +2224,35 @@ describe('an item edited to read exactly like one deleted, with no git-level mer
     })
   })
 
+  it("the other side's copy of an item it didn't rewrite leaves the claim to the content", () => {
+    const fields: FieldConfig[] = [
+      { name: 'items', type: 'object', list: true, fields: text('title', 'detail') },
+    ]
+    const [b, c] = [
+      { title: 't2', detail: 'd0' },
+      { title: 't3', detail: 'd0' },
+    ]
+    const [Kb, Kc] = itemKeysAsRead([b, c]) as string[]
+    const result = mergeEntry({
+      format: 'json',
+      ancestor: { data: { items: [b, c] } },
+      base: {
+        data: {
+          items: [
+            { ...b, _key: Kb },
+            { ...b, _key: '1mmmmmmmmmmm' },
+            { ...c, title: 't3~A1', _key: Kc },
+          ],
+        },
+      },
+      branch: { data: { items: [{ ...c, _key: Kb }] } },
+      fields,
+    })
+    if (result.kind !== 'merged') throw new Error('expected a merge')
+    expect(result.conflicts).toEqual([])
+    expect((result.data.items as Data[]).map((i) => i.title)).toEqual(['t2', 't3~A1'])
+  })
+
   it('a claimant named through an alias, beside a copy of its item: the copy stays', () => {
     const day = new Date('2024-01-01T00:00:00.000Z')
     const [P, Q, R] = [
