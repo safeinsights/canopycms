@@ -1906,6 +1906,8 @@ When your changes are ready, click "Submit for review" in the branch bar: that c
 
 **A submitted branch is locked for content editing.** The editor disables Save and other write actions and marks the branch "In review · read-only" — and the server rejects edit requests too, so this is not merely a UI restriction. To resume editing, click "Withdraw from review" in the branch bar or Branches drawer, which converts the PR back to a draft and returns the branch to `editing` status. A reviewer's "Request changes" returns it to `editing` too, with an optional note; "Approve" marks it `approved`.
 
+**Conflicts on GitHub:** the worker sets a `CanopyCMS conflicts` status on each PR's head, failing while choices are open in the editor. Make it a required check to block by-hand merges, but only on a branch that takes no other PRs: those never get it. An existing GitHub App needs "Commit statuses: read and write" added in its settings, then accepted on its installation.
+
 The base branch (the PR target, usually `main`) can never be submitted, so "Submit for review" is hidden whenever you are viewing it. In production it is read-only (see [Getting Started](#getting-started)); in dev mode it stays editable, but your work must move to a branch before it can be submitted.
 
 ### Drafts and Unpublishing
@@ -1924,7 +1926,7 @@ Admins configure access control from Settings (the gear icon): **Groups** to cre
 
 ### System Health (Admins)
 
-From the same Settings menu, **System Health** shows the **worker** (whether the CMS worker daemon is alive, and its last heartbeat), the **task queue** (queued and failed background tasks, which you can retry or delete), and **branch directories** (per-branch workspace health, which you can repair or purge). It also flags a branch namespace that differs from the GitHub gateway's, and branches the gateway would refuse to publish.
+From the same Settings menu, **System Health** shows the **worker** (whether the CMS worker daemon is alive, and its last heartbeat), the **task queue** (queued and failed background tasks, which you can retry or delete), and **branch directories** (per-branch workspace health, which you can repair or purge). It also flags a branch namespace that differs from the GitHub gateway's, branches the gateway would refuse to publish, and refused conflicts statuses.
 
 ## Adopter Touchpoints Summary
 

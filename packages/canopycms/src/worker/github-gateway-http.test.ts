@@ -94,6 +94,7 @@ function fakeGateway(): FakeGateway {
       created: true,
     })),
     convertPullRequestToDraft: vi.fn(async () => undefined),
+    setConflictsStatus: vi.fn(async () => undefined),
     deleteBranch: vi.fn(async () => undefined),
     authSnapshot: vi.fn(async () => ({ users: [], groups: [], memberships: {} })),
     termination: vi.fn(async () => null),
@@ -203,6 +204,8 @@ describe('errors across the socket', () => {
     ['delete', 'protected'],
     ['pull-request', 'too-long'],
     ['pull-request', 'invalid'],
+    ['commit-status', 'not-head'],
+    ['commit-status', 'too-long'],
   ] as const)('rebuilds a %s GatewayRefusalError (%s) as itself, permanent', async (op, reason) => {
     const original = new GatewayRefusalError(op, 'release/1', reason, `Refusing ${op}: ${reason}`)
 
@@ -814,6 +817,14 @@ describe('operations across the socket', () => {
       }),
     ).toEqual({ number: 1, url: 'https://example.test/1', created: true })
     await client.convertPullRequestToDraft(3)
+    const status = {
+      pullRequest: 3,
+      sha: SHA,
+      state: 'success',
+      description: 'No conflicting changes to resolve',
+      targetUrl: 'https://cms.example.org/edit?branch=f',
+    } as const
+    await client.setConflictsStatus(status)
     await client.deleteBranch('f')
 
     expect(gateway.isProtectedBranch).toHaveBeenCalledWith('main', expect.any(AbortSignal))
@@ -826,6 +837,7 @@ describe('operations across the socket', () => {
       { head: 'f', base: 'main', title: 'T', body: 'B', markReadyIfDraft: true },
       expect.any(AbortSignal),
     )
+    expect(gateway.setConflictsStatus).toHaveBeenCalledWith(status, expect.any(AbortSignal))
     expect(gateway.deleteBranch).toHaveBeenCalledWith('f', expect.any(AbortSignal))
   })
 
