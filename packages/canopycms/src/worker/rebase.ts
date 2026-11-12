@@ -44,6 +44,8 @@ import type { GitHubPullRequest } from './github-gateway'
 import {
   bringInGitHubCommits,
   catchUpWithPublished,
+  contains,
+  isPublished,
   mergeIntoBranch,
   reconcileMergeConflicts,
   returnToReview,
@@ -859,16 +861,19 @@ async function lacksPublishedCommits(
 /**
  * {@link reconcileMergeConflicts} for a submitted or approved branch, whose merges of GitHub's
  * commits can leave records too, under the content-write lock as for a branch being edited. Only
- * for a clone with a record, so others cost one stat. Never throws.
+ * for a clone with a record, or with `conflictFiles` to clear, so others cost one stat. Never
+ * throws.
  */
 async function reconcileInReview(
   ctx: RebaseContext,
   branchDir: string,
   branchPath: string,
+  metaFile: BranchMetadataFile,
   isProvisioningLockCompromised: () => boolean,
 ): Promise<void> {
   try {
-    if (!(await new MergeConflictStore(branchPath).exists())) return
+    const flagged = (metaFile.branch.conflictFiles?.length ?? 0) > 0
+    if (!flagged && !(await new MergeConflictStore(branchPath).exists())) return
     await assertSharedRepoConfig(branchPath, 'worktree')
     await withContentLockInReview(
       branchDir,
@@ -996,7 +1001,8 @@ function pullRequestHoldOf(
 /**
  * Record {@link pullRequestHoldOf} for the branch card, when it changed: every save regenerates the
  * branch registry. It's bookkeeping, so it leaves `updatedAt`, which the card shows as an edit.
- * Best-effort: a failure leaves the card as it was until the next cycle.
+ * `tookBase` says this cycle merged the base in, which GitHub measured the pull request before, so
+ * nothing holds it. Best-effort: a failure leaves the card as it was until the next cycle.
  */
 async function recordPullRequestHold(
   ctx: RebaseContext,
@@ -1004,11 +1010,17 @@ async function recordPullRequestHold(
   branchPath: string,
   metaFile: BranchMetadataFile,
   pullRequest: GitHubPullRequest,
+  tookBase: boolean,
 ): Promise<void> {
   const { name, baseBranch, pullRequestHold, submittedAt } = metaFile.branch
-  const hold = pullRequestHoldOf(pullRequest, baseBranch ?? ctx.baseBranch)
-  if (hold === null || JSON.stringify(hold) === JSON.stringify(pullRequestHold)) return
   try {
+    let hold = tookBase ? undefined : pullRequestHoldOf(pullRequest, baseBranch ?? ctx.baseBranch)
+    // A conflict counts only on the commit the clone holds: one measured on an older head, as while
+    // the worker's own merge is on its way to GitHub, says nothing about the branch now.
+    if (hold?.kind === 'conflicts' && pullRequest.headSha !== (await cloneHead(branchPath))) {
+      hold = pullRequestHold?.kind === 'conflicts' ? null : undefined
+    }
+    if (hold === null || JSON.stringify(hold) === JSON.stringify(pullRequestHold)) return
     await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update(
       // A newer submit's pull request isn't the one measured.
       (current) =>
@@ -1022,18 +1034,25 @@ async function recordPullRequestHold(
   }
 }
 
+/** The commit a branch clone holds. */
+async function cloneHead(branchPath: string): Promise<string> {
+  await assertSharedRepoConfig(branchPath, 'worktree')
+  return (await sharedRepoGit(branchPath, 'worktree').revparse(['HEAD'])).trim()
+}
+
 /**
  * Merge the base into a submitted or approved branch whose open pull request GitHub reports
- * `behind`, so it can merge. It keeps the approval and the PR body: the pull request's diff is what
- * was reviewed. Only from a clone, `remote.git` and GitHub all at one commit, since anything else
- * is work still on its way, and only for the base GitHub measured against: a pull request someone
- * retargeted would gain another branch's commits under its approval. A branch with a failed sync
- * is left for its next submit or a retry of the task, as a push here would clear that failure with
- * the PR still stale. Only git's own merge with nothing to decide lands (`mergeIntoBranch`'s
- * `stopOnConflict`); any other leaves the branch as it is, and withdrawing it lets the merge for a
- * branch being edited take the base in, where an editor can see the result. A failure goes in the cycle's summary
- * only: the step before this one clears `rebaseFailure` each cycle, so recording it would reset its
- * age every time.
+ * `behind` or `dirty`, so it can merge. A submitted branch stays submitted: the pull request's diff
+ * is still the author's changes. An approved branch keeps its approval only for git's own clean
+ * merge; any merge the field merge settled sends it back to review (`mergeIntoBranch`). Only from a
+ * clone, `remote.git` and GitHub all at one commit, since anything else is work still on its way,
+ * and only for the base GitHub measured against: a pull request someone retargeted would gain
+ * another branch's commits under its approval. A branch with a failed sync is left for its next
+ * submit or a retry of the task, as a push here would clear that failure with the PR still stale. A
+ * merge that leaves a value or file for a person leaves the branch as it is (`mergeIntoBranch`'s
+ * `inReview`), and withdrawing it lets the merge for a branch being edited record the conflicts,
+ * where an editor can resolve them. A failure goes in the cycle's summary only: the step before
+ * this one clears `rebaseFailure` each cycle, so recording it would reset its age every time.
  * Never throws.
  */
 async function updateBranchInReviewFromBase(
@@ -1093,7 +1112,7 @@ async function updateBranchInReviewFromBase(
           other: baseTip,
           message: `Merge ${base} into ${branchRef}`,
           fromGitHub: false,
-          stopOnConflict: true,
+          inReview: true,
         })
         if (outcome.kind === 'blocked') {
           const error = redactCredentials(outcome.reason)
@@ -1199,7 +1218,7 @@ async function rebaseOneBranch(
     // - archived: finished, with no PR left to poll.
     if (metaFile !== null && (branchStatus === 'submitted' || branchStatus === 'approved')) {
       workerLog(`  Skipping ${branchDir} (${branchStatus})`)
-      await reconcileInReview(ctx, branchDir, branchPath, isProvisioningLockCompromised)
+      await reconcileInReview(ctx, branchDir, branchPath, metaFile, isProvisioningLockCompromised)
       const outcome = await bringInCommitsForBranchInReview(
         ctx,
         branchDir,
@@ -1210,27 +1229,27 @@ async function rebaseOneBranch(
         gitHub,
       )
       const pullRequest = await pollMergeState(ctx, branchDir, branchPath, metaFile)
-      if (pullRequest !== null) {
-        await recordPullRequestHold(ctx, branchDir, branchPath, metaFile, pullRequest)
-      }
-      // GitHub reports `behind` only where up-to-date branches are required, so a repository
-      // that doesn't require them gets no commits or CI runs from this.
-      if (
+      // GitHub reports `behind` only where up-to-date branches are required, and `dirty` only where
+      // git's merge conflicts, so a pull request that merges as it is gets no commits or CI runs.
+      const updated =
         outcome.kind === 'none' &&
         pullRequest?.state === 'open' &&
-        pullRequest.mergeable_state === 'behind'
-      ) {
-        return updateBranchInReviewFromBase(
-          ctx,
-          branchDir,
-          branchPath,
-          pullRequest,
-          isProvisioningLockCompromised,
-          gatewayPolicy,
-          gitHub,
-        )
+        (pullRequest.mergeable_state === 'behind' || pullRequest.mergeable_state === 'dirty')
+          ? await updateBranchInReviewFromBase(
+              ctx,
+              branchDir,
+              branchPath,
+              pullRequest,
+              isProvisioningLockCompromised,
+              gatewayPolicy,
+              gitHub,
+            )
+          : outcome
+      if (pullRequest !== null) {
+        const tookBase = updated.kind === 'rebased'
+        await recordPullRequestHold(ctx, branchDir, branchPath, metaFile, pullRequest, tookBase)
       }
-      return outcome
+      return updated
     }
     if (branchStatus === 'archived') {
       workerLog(`  Skipping ${branchDir} (${branchStatus})`)
@@ -1520,6 +1539,18 @@ async function rebaseOneBranch(
         (await countAboveBase(['--merges', '--end-of-options', aboveBase])) !== '0' ||
         (await countAboveBase(['--end-of-options', aboveBase, '--', CANOPY_META_DIR])) !== '0'
       const head = (await branchGit.revparse(['HEAD'])).trim()
+      // Commits on top of what this branch published, as "Get latest changes" makes from saved work
+      // on a branch submitted once, or a submit whose push failed: a rebase would rewrite the
+      // published commit under them, which reads as a push this clone never saw. A merge publishes
+      // them as a fast-forward. A same-named ref at a commit the base holds is no work of this branch.
+      const published = canPublish ? await readPublishedSha(ctx, branchRef) : null
+      const aheadOfPublished =
+        published !== null &&
+        published !== head &&
+        metaFile?.branch.name === branchRef &&
+        isPublished(metaFile) &&
+        (await contains(branchGit, head, published)) &&
+        !(await contains(branchGit, fetchedBaseTip, published))
       /**
        * The base taken in by a merge (github-commits.ts), which decides each value against the fork
        * point and leaves what both sides changed differently for a person, rather than a rebase,
@@ -1555,7 +1586,9 @@ async function rebaseOneBranch(
         await clearRebaseFailure(ctx, branchPath, branchRef)
         return { kind: 'rebased' }
       }
-      if (commitArgs !== null && (cannotReplay || unpushed)) return await takeBaseByMerge()
+      if (commitArgs !== null && (cannotReplay || unpushed || aheadOfPublished)) {
+        return await takeBaseByMerge()
+      }
       // A rebase only where it takes in exactly what a merge would, with nothing for a person: git
       // conflicts nowhere, and the field merge decides no file otherwise than git does.
       if (
@@ -1579,7 +1612,7 @@ async function rebaseOneBranch(
       // about to rebase away, and the clone's pre-rebase tip is exactly what
       // the rebase makes unreadable.
       const preRebaseHead = head
-      const publishedSha = canPublish ? await readPublishedSha(ctx, branchRef) : null
+      const publishedSha = published
       await assertNoIncomingSubmodules(branchGit, branchPath, preRebaseHead, fetchedBaseTip)
 
       const { completed, conflicted, failureReason } = await runRebaseRounds(

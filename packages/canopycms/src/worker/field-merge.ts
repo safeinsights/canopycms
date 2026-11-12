@@ -73,7 +73,7 @@ interface Unit {
   ambiguous: boolean
 }
 
-/** What the resolver makes of a merge, for `buildMergeCommit` to stage. */
+/** What the resolver makes of a merge, for `planMerge` to stage. */
 export interface FieldMergeResult {
   /** Paths whose blob in the merge replaces git's: a file, or null for none. */
   updates: Map<string, TreeFile | null>

@@ -831,13 +831,14 @@ describe('operations across the socket', () => {
 
   it('carries only the pull request fields the worker reads, and a withheld body as null', async () => {
     const gateway = fakeGateway()
-    // More than the type holds: the server sends the five fields alone.
+    // More than the type holds: the server sends the type's fields alone.
     const full = {
       merged: true,
       merged_at: '2026-01-01T00:00:00Z',
       state: 'closed' as const,
       node_id: 'PR_2',
       body: null,
+      headSha: 'b'.repeat(40),
       title: 'a title the worker never reads',
     }
     gateway.getPullRequest.mockResolvedValue(full)
@@ -849,6 +850,7 @@ describe('operations across the socket', () => {
       state: 'closed',
       node_id: 'PR_2',
       body: null,
+      headSha: 'b'.repeat(40),
     })
   })
 

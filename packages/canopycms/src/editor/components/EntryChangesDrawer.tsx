@@ -590,6 +590,7 @@ const ConflictsSection: React.FC<{
       noEditReason={noEditReason}
       lockedReason={lockedReason}
       unsavedEdits={conflicts.unsavedEdits ?? subject.unsavedEdits}
+      entryDeleted={subject.status === 'deleted'}
     />
   )
 }

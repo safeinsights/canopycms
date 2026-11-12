@@ -3300,11 +3300,11 @@ const EditorContent: React.FC<EditorProps> = ({
                   lockedReason={changesLockReason}
                   onDeleteEntry={changesDeleteEntry}
                   onRestoreEntry={
-                    // An entry the branch deleted while it changed in the latest version is put
-                    // back through its conflict card, which resolves the conflict too.
-                    entryConflict.data?.kind === 'deleted-on-branch'
-                      ? undefined
-                      : changesRestoreEntry
+                    // A deleted entry with conflicts open is settled on its conflict card first: a
+                    // deleted-on-branch card restores it, and with field conflicts a restore would
+                    // bring back the latest version unchanged, which "Show changes" doesn't list,
+                    // leaving them with nowhere to be chosen. Once they're kept, this offers it.
+                    entryConflict.data ? undefined : changesRestoreEntry
                   }
                   conflicts={
                     changesConflictTarget
