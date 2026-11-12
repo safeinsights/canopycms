@@ -2821,6 +2821,20 @@ describe('a merge on GitHub that leaves an item under a key naming another', () 
     })
   }
 
+  it('keeps an entry deleted in the clone, unsubmitted, through a stale merge it also changed', async () => {
+    await stale(['p', 'q'], [KP, KQ], {}, { [ENTRY]: '{"title":"base"}\n' })
+    const head = await s.head()
+    await fs.rm(path.join(s.branchPath, ENTRY))
+
+    await cycle(s)
+
+    expect(await s.file(ENTRY)).toBeNull()
+    expect(await s.head()).toBe(head)
+    expect(
+      await simpleGit().raw(['--git-dir', s.remoteGit, 'log', '--format=%s', BRANCH]),
+    ).not.toContain(REKEY)
+  })
+
   it('notes what a landing kept over GitHub when a merge of the base replaces it', async () => {
     await landingPublished()
     const update = BranchMetadataFileManager.prototype.update
@@ -2938,5 +2952,83 @@ describe('a merge on GitHub that leaves an item under a key naming another', () 
       expect.any(String),
       expect.arrayContaining([expect.objectContaining({ from: KP, to: KP2 })]),
     )
+  })
+})
+
+describe('an entry deleted or renamed in the clone, not yet submitted', () => {
+  const RENAMED = `content/renamed.page.${CONFLICTED_ID}.json`
+  let tmpDir: string
+  let s: Setup
+
+  beforeEach(async () => {
+    mockConsole()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-saved-delete-'))
+    s = await createSetup(tmpDir)
+    await s.commit({ 'editor.txt': 'v1\n' })
+    await s.push()
+    await writeMeta(s)
+  })
+  afterEach(async () => {
+    vi.restoreAllMocks()
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  /** The editor's rename, as `renameEntry` saves it: the old file gone, the new one written. */
+  const rename = async () => {
+    await fs.writeFile(path.join(s.branchPath, RENAMED), '{"title":"seed"}\n')
+    await fs.rm(path.join(s.branchPath, ENTRY))
+  }
+
+  it('stays deleted while GitHub changes it, and the delete reaches the merge once submitted', async () => {
+    const head = await s.head()
+    await s.commitOnGitHub({ [ENTRY]: '{"title":"github"}\n' })
+    await fs.rm(path.join(s.branchPath, ENTRY))
+
+    expect((await cycle(s)).skippedDirty).toEqual([BRANCH])
+
+    expect(await s.file(ENTRY)).toBeNull()
+    expect(await s.head()).toBe(head)
+
+    // Submitted: committed, the merge with GitHub's commits follows.
+    await s.clone.raw(['rm', '-q', '--cached', ENTRY])
+    await s.clone.commit('submit the delete')
+    await cycle(s)
+
+    expect(await s.file(ENTRY)).toBeNull()
+    expect((await readMeta(s))?.conflictFiles).toEqual([CONFLICTED_ID])
+  })
+
+  it("keeps a renamed entry's old path gone while GitHub changes it", async () => {
+    const head = await s.head()
+    await s.commitOnGitHub({ [ENTRY]: '{"title":"github"}\n' })
+    await rename()
+
+    expect((await cycle(s)).skippedDirty).toEqual([BRANCH])
+
+    expect(await s.file(ENTRY)).toBeNull()
+    expect(await s.file(RENAMED)).toBe('{"title":"seed"}\n')
+    expect(await s.head()).toBe(head)
+  })
+
+  it("keeps a renamed entry as the editor saved it where GitHub's commits add its new path", async () => {
+    const head = await s.head()
+    await s.commitOnGitHub({ [RENAMED]: '{"title":"github"}\n' })
+    await rename()
+
+    expect((await cycle(s)).skippedDirty).toEqual([BRANCH])
+
+    expect(await s.file(ENTRY)).toBeNull()
+    expect(await s.file(RENAMED)).toBe('{"title":"seed"}\n')
+    expect(await s.head()).toBe(head)
+  })
+
+  it('still fast-forwards past a delete of a file the commits leave alone', async () => {
+    const tip = await s.commitOnGitHub({ 'fix.txt': 'fix\n' })
+    await fs.rm(path.join(s.branchPath, ENTRY))
+
+    await cycle(s)
+
+    expect(await s.head()).toBe(tip)
+    expect(await s.file(ENTRY)).toBeNull()
   })
 })

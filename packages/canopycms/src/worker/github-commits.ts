@@ -478,7 +478,7 @@ async function fastForward(
   try {
     await moveClone(git, branchPath, to)
   } catch (err) {
-    if (!/would be overwritten/.test(getErrorMessage(err))) throw err
+    if (!overwritesSaves(err)) throw err
     workerLog(`  ${branchDir}: local changes overlap commits from GitHub, which wait for a submit`)
     return { kind: 'wait' }
   }
@@ -537,7 +537,7 @@ async function rekeyTakenIn(
   try {
     await moveClone(git, branchPath, sha)
   } catch (err) {
-    if (!/would be overwritten/.test(getErrorMessage(err))) throw err
+    if (!overwritesSaves(err)) throw err
     // Saves made since `savesMeet` looked: published, so the next cycle catches up with it.
     workerLog(`  ${branchDir}: local changes overlap commits from GitHub, which wait for a submit`)
     return { kind: 'wait' }
@@ -590,12 +590,37 @@ async function savesMeet(git: SimpleGit, from: string, to: string): Promise<bool
   return changed.some((file) => saved.has(file))
 }
 
+/** A move of the clone refused for saves it would overwrite, as git refuses a changed file. */
+class SavesInTheWay extends Error {}
+
+/** Whether `err` is a move refused for the clone's saves: git's own refusal, or {@link moveClone}'s. */
+const overwritesSaves = (err: unknown): boolean =>
+  err instanceof SavesInTheWay || /would be overwritten/.test(getErrorMessage(err))
+
 /**
  * Fast-forward the clone to `to`. The caches' markers move after it, as for any bulk mutation, and
  * before it too: nothing repairs a marker lost after the move, as the next cycle sees a clone in
- * step, and the earlier bump leaves only a read racing the move able to stamp the old tree.
+ * step, and the earlier bump leaves only a read racing the move able to stamp the old tree. Git
+ * refuses to move over a saved change to a file the commits change, but writes a file deleted in
+ * the working tree back: an entry the editor deleted, or a renamed entry's old path. So a move over
+ * such a deletion is refused here alike ({@link SavesInTheWay}), until the deletion is submitted.
  */
 async function moveClone(git: SimpleGit, branchPath: string, to: string): Promise<void> {
+  const deleted = (await git.status([...SHARED_REPO_STATUS_ARGS])).files.flatMap((f) => [
+    ...(f.working_dir === 'D' || f.index === 'D' ? [f.path] : []),
+    ...(f.from ? [f.from] : []),
+  ])
+  if (deleted.some((file) => !isCanopyInternalPath(file))) {
+    const changed = new Set(
+      (await git.raw(['diff-tree', '-r', '-z', '--name-only', '--end-of-options', 'HEAD', to]))
+        .split('\0')
+        .filter(Boolean),
+    )
+    const lost = deleted.filter((file) => changed.has(file) && !isCanopyInternalPath(file))
+    if (lost.length > 0) {
+      throw new SavesInTheWay(`saved deletions would be brought back: ${listPaths(lost)}`)
+    }
+  }
   await invalidateBranchContentCaches(branchPath)
   await git.raw(['merge', '--ff-only', '--end-of-options', to])
   await invalidateBranchContentCaches(branchPath)
@@ -696,7 +721,14 @@ export async function mergeIntoBranch(
   // Published and not yet in the clone: the next cycle brings it in, by `bringInGitHubCommits` or
   // `catchUpWithPublished`.
   if (lockLost()) return { kind: 'wait' }
-  await moveClone(git, branchPath, sha)
+  try {
+    await moveClone(git, branchPath, sha)
+  } catch (err) {
+    if (!overwritesSaves(err)) throw err
+    // Published or held: the next cycle catches up with it once the saves are submitted.
+    workerLog(`  ${branchDir}: local changes overlap the merge, which waits for a submit`)
+    return { kind: 'wait' }
+  }
   // Landed: a failure here leaves the remaps and the stamp for the next cycle's reconcile.
   await landed(ctx, args, sha).catch((err: unknown) =>
     workerLogWarn(
