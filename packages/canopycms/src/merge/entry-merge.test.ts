@@ -2126,7 +2126,7 @@ describe('an item edited to read exactly like one deleted, with no git-level mer
     expect((result.data.l2 as Data[]).map((i) => i.t)).toEqual(['t'])
   })
 
-  it('a key a hand edit re-hashed names its content, against ancestor keys gone stale', () => {
+  it('KNOWN LIMIT: a key a hand edit re-hashed onto a stale one is read by key: a false conflict', () => {
     const list: FieldConfig[] = [
       { name: 'items', type: 'object', list: true, fields: text('title', 'detail') },
     ]
@@ -2167,11 +2167,86 @@ describe('an item edited to read exactly like one deleted, with no git-level mer
       fields: list,
     })
     if (result.kind !== 'merged') throw new Error('expected a merge')
-    expect(result.conflicts).toEqual([])
-    expect((result.data.items as Data[]).map((i) => [i.title, i.detail])).toEqual([
-      ['w~A', 'd0'],
-      ['v~A', 'd1-A-B'],
+    // The same data as an editor putting an item back to its first-save content, where the key
+    // is right: read by key, the hand re-key's deletion of V meets the edit of X as a conflict.
+    expect(result.conflicts.map((c) => [c.key, c.kind])).toEqual([
+      [`items.${hash('v', 'd1')}.detail`, 'changed'],
     ])
+  })
+
+  describe("only B edited since its first save, so A's key still hashes A", () => {
+    const first = entryAsRead(page, {
+      title: 't',
+      items: [A, { ...B, text: 'v0 b' }, C],
+    }) as Page
+    const lived: Page = {
+      ...first,
+      items: first.items.map((item, n) => (n === 1 ? { ...item, text: B.text } : item)),
+    }
+    const [LA, LB, LC] = lived.items.map((i) => i._key as string)
+    const mine: Page = {
+      ...lived,
+      items: [{ ...lived.items[0], link: '/documentation' }, lived.items[2]],
+    }
+    const change = (n: number, to: Data): Page => ({
+      ...lived,
+      items: lived.items.map((item, k) => (k === n ? { ...item, ...to } : item)),
+    })
+
+    it('the other side also deleted B: the rewritten A stands, by its key', () => {
+      const deleted = { ...lived, items: [lived.items[0], lived.items[2]] }
+      expect(merge(deleted, mine, lived)).toEqual({
+        items: [
+          [LA, 'Read the docs', '/documentation'],
+          [LC, 'c', '/c'],
+        ],
+        conflicts: [],
+        remaps: [],
+      })
+    })
+
+    it('the other side edited B: a conflict on B, which this side deleted', () => {
+      expect(merge(change(1, { text: 'base edits B' }), mine, lived).conflicts).toEqual([
+        [`items.${LB}`, 'removed-by-you'],
+      ])
+    })
+
+    it("a side put A back to its first-save content and deleted B: B's edit is a conflict", () => {
+      const X = { heading: 'X', text: 'x', link: '/x' }
+      const Z = { heading: 'Z', text: 'z', link: '/z' }
+      const saved = entryAsRead(page, { title: 't', items: [X, Z, C] }) as Page
+      const [KX, KZ] = saved.items.map((i) => i._key as string)
+      // Since its first save, KX's item read B and KZ's item read X; this side puts KX's back.
+      const ancestor: Page = {
+        ...saved,
+        items: [{ ...saved.items[0], ...B }, { ...saved.items[1], ...X }, saved.items[2]],
+      }
+      const branch: Page = {
+        ...ancestor,
+        items: [{ ...ancestor.items[0], ...X }, ancestor.items[2]],
+      }
+      const base: Page = {
+        ...ancestor,
+        items: ancestor.items.map((item, n) => (n === 1 ? { ...item, text: 'base' } : item)),
+      }
+      expect(merge(base, branch, ancestor).conflicts).toEqual([[`items.${KZ}`, 'removed-by-you']])
+      const deleted: Page = { ...ancestor, items: [ancestor.items[0], ancestor.items[2]] }
+      expect(merge(deleted, branch, ancestor).items).toEqual([
+        [KX, 'x', '/x'],
+        [saved.items[2]._key, 'c', '/c'],
+      ])
+    })
+
+    it('the other side edited another field of A: both edits stand', () => {
+      expect(merge(change(0, { text: 'base edits A' }), mine, lived)).toEqual({
+        items: [
+          [LA, 'base edits A', '/documentation'],
+          [LC, 'c', '/c'],
+        ],
+        conflicts: [],
+        remaps: [],
+      })
+    })
   })
 
   describe('both edited since their first save, so neither key hashes its content', () => {
@@ -2422,6 +2497,63 @@ describe('twins in a nested list, after a git-level merge that also edited their
     expect(result.conflicts).toEqual([])
     const sections = result.data.sections as Array<{ cards: Data[] }>
     expect(sections[1].cards.map((c) => c.t)).toEqual(['same', 'p'])
+  })
+})
+
+describe('sections, one rewritten to read like a twin section deleted, by key', () => {
+  const page: FieldConfig[] = [
+    ...text('title'),
+    {
+      name: 'sections',
+      type: 'object',
+      list: true,
+      fields: [
+        ...text('name', 'note'),
+        {
+          name: 'items',
+          type: 'object',
+          list: true,
+          fields: [
+            ...text('title', 'detail', 'kind'),
+            { name: 'subs', type: 'object', list: true, fields: text('t', 'd') },
+          ],
+        },
+      ],
+    },
+  ]
+  const i2 = { title: 'i2', detail: 'd0', kind: 'k1', subs: [], _key: 'h5d5Ay2CSU' }
+  const i3 = { title: 'i3', detail: 'd1', kind: 'k0', subs: [], _key: 'hnsDzNs6zb' }
+  const section = (key: string, items: Data[], name = 's1') => ({
+    name,
+    note: 'n1',
+    items,
+    _key: key,
+  })
+  // The second section was saved as the first's twin and since lost i2: its key went stale,
+  // while the first's still hashes it. The branch moved i2 out of the first and deleted the
+  // second; the base deleted i2.
+  const [S, S2] = ['hGDpoYqCgw', 'hGDpoYqCgw-2']
+
+  it('the rewritten first section is the first, and nothing conflicts', () => {
+    const result = mergeEntry({
+      format: 'json',
+      ancestor: { data: { title: 'T', sections: [section(S, [i2, i3]), section(S2, [i3])] } },
+      base: { data: { title: 'T', sections: [section(S, [i3]), section(S2, [i3])] } },
+      branch: {
+        data: {
+          title: 'T',
+          sections: [section(S, [i3]), section('EFGfpBpEdYv8', [], 'newB17')],
+        },
+      },
+      fields: page,
+    })
+    if (result.kind !== 'merged') throw new Error('expected a merge')
+    expect(result.conflicts).toEqual([])
+    const sections = result.data.sections as Data[]
+    expect(sections.map((s) => [s._key, s.name])).toEqual([
+      [S, 's1'],
+      ['EFGfpBpEdYv8', 'newB17'],
+    ])
   })
 })
 

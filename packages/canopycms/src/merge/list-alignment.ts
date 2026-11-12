@@ -132,14 +132,16 @@ export function alignToAncestor(
   // base's edit of one twin leaves its key on the edited copy, which the ancestor then reads, or a
   // backfill keys, as another item's. So an item under a read key holding the item it names is
   // that item, and one holding exactly another ancestor item no key on this side names is that
-  // one: also, with no git-level merge at all, an item a side edited to read exactly like one it
-  // deleted. A key this side moved to another list still names its item there.
+  // one (an item a key names gives way only to one under its read key): also, with no git-level
+  // merge, an item a side edited to read exactly like one it deleted. A moved key names its item.
   const held = new Set([...movedIn, ...items.flatMap((item) => ownKey(item) ?? [])])
   const unheld = new Map<string, number>()
+  const unheldFresh = new Set<string>()
   ancestorItems.forEach((item, i) => {
     if (held.has(ancestorKeys[i])) return
     const token = valueToken(item)
     unheld.set(token, (unheld.get(token) ?? 0) + 1)
+    if (!isMinted(item)) unheldFresh.add(token)
   })
   const at = new Map(ancestorKeys.map((key, i) => [key, i]))
   const usurped = (j: number, own: string): boolean => {
@@ -153,6 +155,8 @@ export function alignToAncestor(
     // A key that has gone stale on both sides is history, not content: it names its item.
     if (i !== undefined) {
       if (isMinted(ancestorItems[i]) && isMinted(items[j])) return false
+      // A key takes only an unheld item still under its read key: one gone stale was edited.
+      if (!unheldFresh.has(content)) return false
       return valueToken(ancestorItems[i]) !== content
     }
     // A key naming no item here pairs by content only where one item holds it, twins by place.
