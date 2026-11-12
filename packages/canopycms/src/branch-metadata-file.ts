@@ -107,6 +107,7 @@ const branchMetadataShape = {
     .object({ message: z.string(), firstAt: z.string(), lastAt: z.string() })
     .optional(),
   historyRewrittenFrom: z.string().optional(),
+  historyRewrittenTo: z.string().optional(),
   lastGitHubTip: z.string().optional(),
   keptOverGitHub: z.array(z.string()).optional(),
   rewrittenOnGitHub: z.string().optional(),
@@ -136,6 +137,7 @@ const branchMetadataShape = {
     .optional()
     .catch(undefined),
   baseUpdateRequestedAt: z.string().optional().catch(undefined),
+  latestChangesWaiting: z.string().optional().catch(undefined),
   // Dropped when malformed: it only ends the editor's wait, which then times out instead.
   lastBaseUpdate: z
     .object({

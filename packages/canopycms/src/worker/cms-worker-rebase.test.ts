@@ -1681,7 +1681,8 @@ describe('a run in the request (createLocalWorker), as dev runs "Get latest chan
       const remoteNow = (
         await simpleGit(path.join(tmpDir, 'remote.git')).revparse(['refs/heads/my-feature'])
       ).trim()
-      expect(remoteNow).toBe(head)
+      // Work saved since the submit stays unpublished until the next submit (publish-decision.ts).
+      expect(remoteNow).toBe(savedSince ? published : head)
       // Nothing waits on a GitHub push that dev never makes.
       await expect(fs.readdir(path.join(tmpDir, '.tasks', 'pending'))).rejects.toThrow()
     },

@@ -215,10 +215,9 @@ export interface CanopyServices {
     message: string
   }) => Promise<void>
   /**
-   * Commit the branch's saved but uncommitted work in its clone, pushing nothing. A later submit
-   * pushes it, or, on a branch published before, the worker's merge of the base once it moves
-   * (worker/rebase.ts, `aheadOfPublished`). Its trailers name the editors who saved since the last
-   * commit.
+   * Commit the branch's saved but uncommitted work in its clone, pushing nothing: only a later
+   * submit publishes it, whatever the worker merges on top (worker/publish-decision.ts). Its
+   * trailers name the editors who saved since the last commit.
    * Holds the branch's content-write lock; rejects with `ContentWriteLockBusyError` when busy.
    * Resolves whether there was anything to commit.
    */
@@ -530,6 +529,9 @@ async function _createCanopyServicesInternal(
     // stopped on a conflict is discarded by its abort.
     const committed = await withContentWriteLock(options.context.branchRoot, async () => {
       await refuseDuringRebase(options.context.branchRoot)
+      // A submit since the caller's read: a branch in review takes no commit until it is withdrawn.
+      const branchStatus = (await readBranchMetadataFile(options.context.branchRoot))?.branch.status
+      if (branchStatus !== undefined && branchStatus !== 'editing') return false
       await git.checkoutBranch(options.context.branch.name)
       const status = await git.status()
       const uncommitted = (await readRecordedEditors(options.context))?.uncommittedEditors ?? []
