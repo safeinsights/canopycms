@@ -419,6 +419,32 @@ describe('buildEntryConflicts', () => {
     expect(titles(withLatest(saved, removed, undefined))).toEqual(['D', 'C'])
   })
 
+  it('acts on no other item a save keyed as the one you removed (issue 1264)', () => {
+    // A look-alike of the removed item took its content key once yours freed it.
+    const key = itemKeysAsRead([{ title: 'C', note: 'n' }])[0]!
+    const ancestor = {
+      items: [
+        { title: 'C', note: 'n' },
+        { title: 'C', note: 'm', _key: key },
+      ],
+    }
+    const base = {
+      items: [
+        { title: 'C', note: 'n' },
+        { title: 'A', note: 'm', _key: key },
+      ],
+    }
+    const branch = { items: [{ title: 'C', note: 'n', _key: key }] }
+    const { built, saved } = throughCards(titled, ancestor, base, branch)
+    const removed = built.fields.find((f) => f.key === `items.${key}`)!
+    expect(removed.item).toBe(true)
+    expect(removed.latestPlaceable).toBe(false)
+    expect(withLatest(saved, removed, undefined)).toBeUndefined()
+    expect(removed.cards[0]).toMatchObject({ yours: { kind: 'empty' } })
+    // The latest version is still shown: only placing it would land on the other item.
+    expect(removed.cards[0]).not.toHaveProperty('latestUnavailable')
+  })
+
   it('puts back an item you removed where the latest version has it, among items keyed otherwise', () => {
     const ancestor = {
       items: [

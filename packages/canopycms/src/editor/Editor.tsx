@@ -1947,6 +1947,7 @@ const EditorContent: React.FC<EditorProps> = ({
     id: string,
     mergeSha: string,
     choice: EntryConflictChoice,
+    entryGone?: true,
   ): Promise<EntryChoiceRefusal | undefined> => {
     const branch = branchNameState
     const failed: EntryChoiceRefusal = {
@@ -1957,7 +1958,7 @@ const EditorContent: React.FC<EditorProps> = ({
     try {
       answer = await apiClient.conflicts.resolveEntry(
         { branch, entryPath: logicalPath },
-        { id: id as ContentId, mergeSha, choice },
+        { id: id as ContentId, mergeSha, choice, ...(entryGone && { entryGone }) },
       )
     } catch (err) {
       if (!isUnanswered(err)) return failed
@@ -2043,7 +2044,10 @@ const EditorContent: React.FC<EditorProps> = ({
   }
   const changesResolveEntry =
     changesSubject && entryConflict.data
-      ? async (choice: EntryConflictChoice): Promise<EntryChoiceRefusal | undefined> => {
+      ? async (
+          choice: EntryConflictChoice,
+          { entryGone }: { entryGone?: true },
+        ): Promise<EntryChoiceRefusal | undefined> => {
           const { contentId: id, mergeSha, kind } = entryConflict.data ?? {}
           if (!id || !mergeSha) return undefined
           if (choice === 'delete' || (choice === 'use-latest' && kind === 'unreadable')) {
@@ -2057,7 +2061,7 @@ const EditorContent: React.FC<EditorProps> = ({
             setChangesOpen(false)
             return undefined
           }
-          return resolveEntryConflict(changesSubject.logicalPath, id, mergeSha, choice)
+          return resolveEntryConflict(changesSubject.logicalPath, id, mergeSha, choice, entryGone)
         }
       : undefined
   const confirmEntryChoice = (target: EntryChoiceTarget) => {
