@@ -12,7 +12,13 @@ import { normalizeFilesystemPath } from '../paths/normalize'
 import { ROOT_COLLECTION_ID, type ContentId } from '../paths/types'
 import { isNonFastForwardRejection } from '../utils/git'
 import { getErrorMessage, redactCredentials } from '../utils/error'
-import { resolveFieldMerge, type FieldMergeResult } from './field-merge'
+import { parseTypedFilename } from '../utils/typed-filename'
+import {
+  changedFiles,
+  resolveFieldMerge,
+  differsInItemKeysOnly,
+  type FieldMergeResult,
+} from './field-merge'
 import { runGit } from './git-process'
 import { pinnedReceivePack, sharedRepoGit, sharedRepoProcessOptions } from './shared-repo-git'
 import type { WorkerContext } from './worker-context'
@@ -277,14 +283,16 @@ export const mergesAsGitDoes = (plan: MergePlan): boolean =>
   plan.kind === 'planned' && plan.asGitDoes
 
 /**
- * Whether `merged` holds exactly what `from` and `other` merge to cleanly, and so nothing else. A
- * conflict counts as no: whoever settled it chose what `merged` holds.
+ * Whether `merged` holds exactly what `from` and `other` merge to cleanly, and so nothing else, the
+ * item keys of entries under `contentRoot` aside: a re-key ({@link buildRekey}) changes no content.
+ * A conflict counts as no: whoever settled it chose what `merged` holds.
  */
 export async function isCleanMergeOf(
   git: SimpleGit,
   merged: string,
   from: string,
   other: string,
+  contentRoot: string,
 ): Promise<boolean> {
   const output = await git.raw([
     'merge-tree',
@@ -296,7 +304,126 @@ export async function isCleanMergeOf(
   ])
   const { tree, stages } = parseMergeTree(output, from, other)
   if (stages.length > 0) return false
-  return (await git.revparse(['--verify', '--end-of-options', `${merged}^{tree}`])).trim() === tree
+  const mergedTree = (
+    await git.revparse(['--verify', '--end-of-options', `${merged}^{tree}`])
+  ).trim()
+  if (mergedTree === tree) return true
+  for (const { before, after } of await changedFiles(git, tree, mergedTree)) {
+    if (!before || !after || !(await differsInItemKeysOnly(git, before, after, contentRoot))) {
+      return false
+    }
+  }
+  return true
+}
+
+/**
+ * A commit on `tip` that gives the items of every entry a merge on the branch's own line in
+ * `from..tip` (first parents: never the base's history) brought in the keys the field merge of
+ * that merge's two parents gives them, where it holds what git merged
+ * (field-merge.ts `rekeyOnly`) and `tip` still holds the merge's version. Git keeps each item under
+ * the key its side's copy held, which can name another item once the other side changed it; the
+ * field merge's are the keys a later merge reads correctly. Null when no item needs a new key.
+ */
+export async function buildRekey(
+  git: SimpleGit,
+  clonePath: string,
+  args: {
+    from: string
+    tip: string
+    contentRoot: string
+    timeoutMs: number
+    message: string
+    /**
+     * Only entries `head` holds as `since` held them: a merge of `head` with the re-key reads an
+     * entry `head` changed against `since`'s keys, which git's merge keeps and a re-key would not.
+     */
+    unchangedIn?: { head: string; since: string }
+  },
+): Promise<BuiltMerge | null> {
+  const { from, tip, contentRoot, timeoutMs, message, unchangedIn } = args
+  const merges = (
+    await git.raw([
+      'rev-list',
+      '--first-parent',
+      '--merges',
+      '--reverse',
+      '--end-of-options',
+      `${from}..${tip}`,
+    ])
+  )
+    .split('\n')
+    .filter((line) => OBJECT_ID.test(line))
+  if (merges.length === 0) return null
+  const flatSchema = await readSchemaSnapshot(clonePath)
+  const updates = new Map<string, { mode: string; oid: string }>()
+  const keyRemaps: BuiltMerge['keyRemaps'] = []
+  for (const merge of merges) {
+    const parents = (await git.raw(['rev-list', '--parents', '-n', '1', '--end-of-options', merge]))
+      .trim()
+      .split(' ')
+      .slice(1)
+    if (parents.length !== 2) continue
+    const bases = (await git.raw(['merge-base', '--all', '--end-of-options', ...parents]))
+      .split('\n')
+      .filter((line) => OBJECT_ID.test(line))
+    if (bases.length !== 1) continue
+    const field = await resolveFieldMerge({
+      git,
+      clonePath,
+      ancestor: bases[0],
+      head: parents[0],
+      other: parents[1],
+      mergedTree: (await git.revparse(['--verify', '--end-of-options', `${merge}^{tree}`])).trim(),
+      conflicted: new Set(),
+      contentRoot,
+      flatSchema,
+      collectionIdOf: (file) => conflictFilesToContentIds([file], contentRoot)[0],
+      timeoutMs,
+      rekeyOnly: true,
+    })
+    const applied = new Set<string>()
+    for (const [file, blob] of field.updates) {
+      // A later commit that changed the entry again decided its keys itself.
+      if (!blob || (await blobAt(git, merge, file)) !== (await blobAt(git, tip, file))) continue
+      if (
+        unchangedIn &&
+        (await blobAt(git, unchangedIn.head, file)) !== (await blobAt(git, unchangedIn.since, file))
+      ) {
+        continue
+      }
+      updates.set(file, blob)
+      const id = parseTypedFilename(path.posix.basename(file))?.id
+      if (id !== undefined) applied.add(id)
+    }
+    keyRemaps.push(
+      ...field.keyRemaps.filter((r) => r.contentId !== undefined && applied.has(r.contentId)),
+    )
+  }
+  if (updates.size === 0) return null
+  const tipTree = (await git.revparse(['--verify', '--end-of-options', `${tip}^{tree}`])).trim()
+  const tree = await withUpdates(clonePath, { gitTree: tipTree, updates, timeoutMs })
+  const sha = (
+    await git.raw(['commit-tree', '-p', tip, '-m', message, '--end-of-options', tree])
+  ).trim()
+  return {
+    kind: 'built',
+    sha,
+    gitConflicted: [],
+    conflicts: [],
+    keptPaths: [],
+    asGitDoes: false,
+    keyRemaps,
+    paths: new Map(),
+  }
+}
+
+/** The blob `commit` holds at `file`, or null for none. */
+async function blobAt(git: SimpleGit, commit: string, file: string): Promise<string | null> {
+  const out = await git
+    .raw(['rev-parse', '--verify', '--quiet', '--end-of-options', `${commit}:${file}`])
+    .catch(() => '')
+  const oid = out.trim()
+  return OBJECT_ID.test(oid) ? oid : null
 }
 
 /** `gitTree` with each of `updates` in place, through a throwaway index. */

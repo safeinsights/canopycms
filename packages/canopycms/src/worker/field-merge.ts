@@ -6,6 +6,7 @@ import { parse as yamlParse } from 'yaml'
 import type { ContentFormat, FieldConfig } from '../config'
 import type { FlatSchemaItem } from '../config/types'
 import { entryLogicalPathOfFile, extractIdFromFilename } from '../content-id-index'
+import { ITEM_KEY } from '../item-keys'
 import { parseEntryParts } from '../content-listing'
 import {
   mergeCollectionMeta,
@@ -15,6 +16,7 @@ import {
   type KeyRemap,
   type MergeSide,
 } from '../merge/entry-merge'
+import { rekeyAsMerged } from '../merge/rekey'
 import { exactToken } from '../merge/value-equality'
 import {
   LOCATION_CONFLICT_KEY,
@@ -49,7 +51,7 @@ import { sharedRepoProcessOptions } from './shared-repo-git'
  */
 
 /** A file in one version of the tree. */
-interface TreeFile {
+export interface TreeFile {
   path: string
   oid: string
   mode: string
@@ -104,6 +106,11 @@ export interface FieldMergeArgs {
   /** The content ID a `.collection.json` path belongs to. */
   collectionIdOf: (file: string) => ContentId | undefined
   timeoutMs: number
+  /**
+   * Git's merge stands, and only the item keys of an entry both sides changed change: to the field
+   * merge's, where it holds the same content with no conflict ({@link rekeyAsMerged}).
+   */
+  rekeyOnly?: boolean
 }
 
 /** The size cap "Show changes" reads with: a bigger version is not merged field by field. */
@@ -135,7 +142,7 @@ function unitKeyOf(
 }
 
 /** `diff-tree --raw` from `from` to `to`, without rename detection: each path's two files. */
-async function changedFiles(
+export async function changedFiles(
   git: SimpleGit,
   from: string,
   to: string,
@@ -475,6 +482,57 @@ interface Candidates {
   serialize: (onto: string | undefined) => string
 }
 
+/** Whether `text` reads back as `merged`, item keys and all. */
+function readsAs(
+  text: string,
+  format: ContentFormat,
+  merged: { data: unknown; body?: string },
+): boolean {
+  try {
+    if (!holdsRecord(text, format)) return false
+    const back = parseEntryParts(text, format)
+    return sameContent(
+      { data: back.data, ...(back.body !== undefined && { body: back.body }) },
+      merged,
+    )
+  } catch {
+    return false
+  }
+}
+
+/** `value` with every item key dropped, and nothing else changed. */
+const withoutItemKeys = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(withoutItemKeys)
+  if (!isPlainRecord(value)) return value
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([name]) => name !== ITEM_KEY)
+      .map(([name, v]) => [name, withoutItemKeys(v)]),
+  )
+}
+
+/**
+ * Whether two versions of one entry file under `contentRoot` differ in item keys alone: what a
+ * re-key changes. False for anything else, a file's mode or path included.
+ */
+export async function differsInItemKeysOnly(
+  git: SimpleGit,
+  x: TreeFile,
+  y: TreeFile,
+  contentRoot: string,
+): Promise<boolean> {
+  const format = formatOf(y.path)
+  if (!format || x.path !== y.path || x.mode !== y.mode) return false
+  if (entryLogicalPathOfFile(y.path, normalizeFilesystemPath(contentRoot)) === null) return false
+  const [a, b] = await Promise.all([readEntry(git, x, format), readEntry(git, y, format)])
+  return (
+    !!a &&
+    !!b &&
+    a.side.body === b.side.body &&
+    exactToken(withoutItemKeys(a.side.data)) === exactToken(withoutItemKeys(b.side.data))
+  )
+}
+
 class Resolver {
   private readonly root: string
   private readonly options: ReturnType<typeof sharedRepoProcessOptions> & {
@@ -643,6 +701,50 @@ class Resolver {
     }
   }
 
+  /** In {@link FieldMergeArgs.rekeyOnly}: git's merged entry under the field merge's item keys. */
+  async rekeyed(unit: Unit, gitFile: TreeFile | undefined): Promise<Resolution | null> {
+    const { git } = this.args
+    const [o, a, b] = [unit.ancestor, sideFile(unit, 'base'), sideFile(unit, 'branch')]
+    if (!a || !b || !gitFile || a.oid === b.oid) return null
+    const format = formatOf(gitFile.path)
+    if (!format || [o, a, b].some((f) => f && formatOf(f.path) !== format)) return null
+    const [oSide, aSide, bSide, gitSide] = await Promise.all(
+      [o, a, b, gitFile].map((f) => (f ? readEntry(git, f, format) : undefined)),
+    )
+    if (!aSide || !bSide || !gitSide || (o && !oSide)) return null
+    const fields = fieldsFor(this.args.flatSchema, b.path, this.root)
+    let result: EntryMergeResult
+    try {
+      result = mergeEntry({
+        format,
+        ancestor: oSide?.side ?? { data: {} },
+        base: aSide.side,
+        branch: bSide.side,
+        ...(fields && { fields }),
+      })
+    } catch {
+      return null
+    }
+    if (result.kind !== 'merged' || result.conflicts.length > 0) return null
+    if (result.body !== gitSide.side.body) return null
+    const data = rekeyAsMerged(gitSide.side.data, result.data)
+    if (!isPlainRecord(data) || exactToken(data) === exactToken(gitSide.side.data)) return null
+    const merged = { data, ...(result.body !== undefined && { body: result.body }) }
+    const file = await this.bytesFor(
+      {
+        base: { file: gitFile, text: gitSide.text },
+        branch: gitFile,
+        isBase: false,
+        isBranch: false,
+        reads: (text) => readsAs(text, format, merged),
+        serialize: (onto) => serializeEntry(format, merged, onto),
+      },
+      gitFile.path,
+    )
+    if (!file) return null
+    return { file, ...(result.keyRemaps.length > 0 && { remaps: result.keyRemaps }) }
+  }
+
   /** A `.collection.json` both sides changed and both still have; else git's rule. */
   async collectionMeta(
     unit: Unit,
@@ -754,7 +856,11 @@ export async function resolveFieldMerge(args: FieldMergeArgs): Promise<FieldMerg
     const only = gitHeld.size === 1 ? [...gitHeld.values()][0] : undefined
 
     let resolution: Resolution | null
-    if (unit.touched.base && unit.touched.branch) {
+    if (args.rekeyOnly) {
+      if (unit.kind !== 'entry' || !unit.touched.base || !unit.touched.branch) continue
+      resolution = await resolver.rekeyed(unit, only)
+      if (resolution === null) continue
+    } else if (unit.touched.base && unit.touched.branch) {
       resolution =
         unit.kind === 'entry'
           ? await resolver.entry(unit, gitClean, only)
