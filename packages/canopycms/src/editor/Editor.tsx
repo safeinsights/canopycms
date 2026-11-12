@@ -1943,7 +1943,14 @@ const EditorContent: React.FC<EditorProps> = ({
       }
     }
     if (!answer.ok) {
-      if (answer.code === 'CONFLICT_CHANGED') void entryConflict.reload()
+      // The record moved on, or the entry moved or left the branch: what is left to choose shows.
+      if (answer.code === 'CONFLICT_CHANGED' || answer.code === 'ENTRY_GONE') {
+        void Promise.all([
+          entryConflict.reload(),
+          branchConflicts.reload(),
+          refreshEntries(branch),
+        ]).catch(console.error)
+      }
       if (answer.status !== 409) return { ...failed, message: answer.error ?? failed.message }
       const error = answer.error ?? failed.message
       // A latest version that can't replace this entry leaves keeping yours, then editing it.
