@@ -167,7 +167,8 @@ export type RewritePublish =
  * delete someone's direct push.
  *
  * Resolves `published`, `moved` for a refused lease (a concurrent Lambda push
- * moved the ref; the self-heal pass retries it), or `failed` with git's message.
+ * moved the ref; the next cycle judges the branch again), or `failed` with
+ * git's message.
  * Never throws.
  */
 export async function forcePublishToLocalRemote(

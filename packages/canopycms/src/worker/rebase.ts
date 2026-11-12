@@ -1546,12 +1546,11 @@ async function rebaseOneBranch(
         return { kind: 'failed', error: reason }
       }
 
-      // [SYNC-H1] Self-heal: finish an interrupted publish even when this
-      // branch is not behind base. Every crash window in the arming sequence
-      // below leaves the marker set with the work unfinished, and this is what
-      // completes it -- without it one lost lease race strands the branch until
-      // the base happens to advance again. Gated on the loop-top snapshot, so
-      // unmarked branches (nearly all of them, every cycle) cost nothing.
+      // [SYNC-H1] Self-heal: finish a publish that never left remote.git at
+      // the marker's commit, even when this branch is not behind base -- a
+      // crash in the arming sequence below, or a failed push. Gated on the
+      // loop-top snapshot, so unmarked branches (nearly all of them, every
+      // cycle) cost nothing.
       if (canPublish && metaFile?.branch.historyRewrittenFrom) {
         const pending = await reconcilePendingRewrite(ctx, {
           branchPath,
