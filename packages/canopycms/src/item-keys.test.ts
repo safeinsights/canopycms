@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import type { BlockFieldConfig, FieldConfig, ObjectFieldConfig } from './config'
 import {
   ITEM_KEY,
+  hasContentKeyShape,
+  itemKeysAsRead,
   isItemKey,
   itemKeysOnPath,
   mintItemKey,
@@ -596,5 +598,20 @@ describe('resolveThreadPath', () => {
     const [outer] = made(value, 'team[0].links[0].href')
 
     expect(resolveThreadPath(schema, value, 'team[0].links[0].href', [outer])).toBeNull()
+  })
+})
+
+describe('hasContentKeyShape', () => {
+  it('holds for every key a read gives from content, repeats included', () => {
+    const items = Array.from({ length: 500 }, (_, i) => ({ t: `item ${i % 400}`, n: i % 7 }))
+    const keys = itemKeysAsRead([...items, ...items]) as string[]
+    expect(keys.some((k) => k.endsWith('-2'))).toBe(true)
+    expect(keys.filter((k) => !hasContentKeyShape(k))).toEqual([])
+  })
+
+  it('never holds for a minted key, though some start with h', () => {
+    const minted = Array.from({ length: 3000 }, mintItemKey)
+    expect(minted.some((k) => k.startsWith('h'))).toBe(true)
+    expect(minted.filter(hasContentKeyShape)).toEqual([])
   })
 })

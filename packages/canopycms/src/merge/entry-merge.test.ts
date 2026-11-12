@@ -347,6 +347,22 @@ describe('lists of records', () => {
       expect(kinds(result)).toEqual([{ key: `items.${k2}.title`, kind: 'changed' }])
     })
 
+    it('row 12: with a bare date and no schema, a key names an item the branch rewrote whole', () => {
+      // Only the key ties the rewritten item to its ancestor: it keeps none of the values.
+      const day = { title: 'Launch', on: new Date('2026-03-01T00:00:00.000Z') }
+      const asRead = itemKeysAsRead([{ title: 'Launch', on: '2026-03-01' }])[0]!
+      const rewritten = { title: 'Release', on: new Date('2026-04-01T00:00:00.000Z'), _key: asRead }
+      const result = run(
+        { data: { items: [day] } },
+        { data: { items: [{ ...day, note: 'base' }] } },
+        { data: { items: [rewritten] } },
+        'md',
+        undefined,
+      )
+      expect(result.data.items).toEqual([{ ...rewritten, note: 'base' }])
+      expect(result.conflicts).toEqual([])
+    })
+
     it('row 12: with a bare date in the item and no schema, the key still names the item', () => {
       const day = { title: 'Launch', on: new Date('2026-03-01T00:00:00.000Z') }
       // A read that knows `on` is a date keys the item with the day as text.
@@ -1388,6 +1404,115 @@ describe('shapes the third review found', () => {
     ]
     const result = merge({ items: [x, y] }, { items: [x] }, { items: [{ ...y, title: 'y2' }] })
     expect(kinds(result).map((c) => c.kind)).toEqual(['removed-on-base'])
+  })
+})
+
+describe('a branch over several syncs', () => {
+  const schema: FieldConfig[] = [
+    ...text('title'),
+    { name: 'items', type: 'object', list: true, fields: text('heading', 'text') },
+  ]
+  type It = { heading: string; text: string; _key?: string }
+  const sync = (o: Data, a: Data, b: Data) =>
+    run({ data: o }, { data: a }, { data: b }, 'json', schema)
+  const ancestor = {
+    title: 't',
+    items: [
+      { heading: 'One', text: 'first item text' },
+      { heading: 'Two', text: 'second item text' },
+      { heading: 'Three', text: 'third item text' },
+    ],
+  }
+  const withItems = (items: It[]) => ({ ...ancestor, items })
+  const reworded = ancestor.items.map((item, i) =>
+    i === 1 ? { ...item, text: 'second item text, reworded' } : item,
+  )
+  // The editor's first save keyed every item as read and changed only the title; a first sync
+  // brings in the base's rewording of Two, under the key Two's old content gave it.
+  const first = sync(ancestor, withItems(reworded), {
+    ...entryAsRead(schema, structuredClone(ancestor)),
+    title: 'mine',
+  })
+  const branch = first.data
+  const headings = (result: Merged) =>
+    (result.data.items as It[]).map((item) => [item.heading, item.text])
+
+  it('row 18: an item the base deletes after a sync brought in its edit is deleted', () => {
+    const result = sync(withItems(reworded), withItems([reworded[0], reworded[2]]), branch)
+    expect(headings(result)).toEqual([
+      ['One', 'first item text'],
+      ['Three', 'third item text'],
+    ])
+    expect(result.conflicts).toEqual([])
+  })
+
+  it('row 18: an item the base edits again after a sync is edited, not doubled', () => {
+    const again = reworded.map((item, i) => (i === 1 ? { ...item, text: 'reworded twice' } : item))
+    const result = sync(withItems(reworded), withItems(again), branch)
+    expect(headings(result)).toEqual(again.map((item) => [item.heading, item.text]))
+    expect(result.conflicts).toEqual([])
+    expect((result.data.items as It[])[1]._key).toBe((branch.items as It[])[1]._key)
+  })
+
+  it('row 16: a reorder by the base after a sync takes the base order', () => {
+    const result = sync(withItems(reworded), withItems([...reworded].reverse()), branch)
+    expect(headings(result)).toEqual(
+      [...reworded].reverse().map((item) => [item.heading, item.text]),
+    )
+    expect(result.conflicts).toEqual([])
+  })
+
+  it('row 18: an item the branch edited, then the base edits in another field, merges', () => {
+    const mine = (branch.items as It[]).map((item, i) =>
+      i === 1 ? { ...item, heading: 'Two (mine)' } : item,
+    )
+    const again = reworded.map((item, i) => (i === 1 ? { ...item, text: 'reworded twice' } : item))
+    const result = sync(withItems(reworded), withItems(again), { ...branch, items: mine })
+    expect(headings(result)[1]).toEqual(['Two (mine)', 'reworded twice'])
+    expect(result.conflicts).toEqual([])
+  })
+
+  it('row 14: an item under a key the base dropped by hand is still the item it names', () => {
+    const minted = { heading: 'Four', text: 'fourth', _key: 'Mfour1234567' }
+    const base = withItems([...reworded, { heading: 'Four', text: 'fourth' }])
+    const mine = { ...branch, items: [...(branch.items as It[]), minted] }
+    const result = sync(base, withItems(reworded), mine)
+    expect(headings(result)).toEqual(reworded.map((item) => [item.heading, item.text]))
+    expect(result.conflicts).toEqual([])
+  })
+
+  it('row 14: a new item with a minted key is not an edit of one the branch deleted', () => {
+    const replaced = (branch.items as It[]).map((item, i) =>
+      i === 1 ? { heading: 'New', text: 'second item text, reworded', _key: 'Mnew12345678' } : item,
+    )
+    const again = reworded.map((item, i) => (i === 1 ? { ...item, heading: 'Two!' } : item))
+    const result = sync(withItems(reworded), withItems(again), { ...branch, items: replaced })
+    expect(result.conflicts.map((c) => c.kind)).toEqual(['removed-by-you'])
+  })
+
+  it('row 14: a new item reading like a deleted one with a minted key is not that item', () => {
+    const k1 = { heading: 'a', text: '1', _key: 'K1aaaaaaaaaa' }
+    const lookalike = { heading: 'a', text: '1', _key: 'Mxaaaaaaaaaa' }
+    const result = sync(withItems([k1]), withItems([{ ...k1, text: '2' }]), withItems([lookalike]))
+    expect(result.conflicts.map((c) => c.kind)).toEqual(['removed-by-you'])
+  })
+
+  it('remaps the branch key of an item the base replaced in its place, so threads follow', () => {
+    const link = (href: string) => ({ heading: href, text: '' })
+    const o = withItems([link('/a'), link('/b')])
+    const keyed = entryAsRead(schema, structuredClone(o)) as { items: It[] }
+    const result = sync(o, withItems([link('/a'), link('/b2')]), { ...o, items: keyed.items })
+    expect(headings(result)).toEqual([
+      ['/a', ''],
+      ['/b2', ''],
+    ])
+    expect(result.keyRemaps).toEqual([
+      {
+        within: [],
+        from: keyed.items[1]._key,
+        to: itemKeysAsRead([link('/b2')])[0],
+      },
+    ])
   })
 })
 

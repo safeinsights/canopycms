@@ -56,6 +56,14 @@ function contentKey(item: Record<string, unknown>): string {
 }
 
 /**
+ * True for a key with the shape {@link contentKey} gives, `h` and a 53-bit hash in at most 10
+ * Base58 digits (`-2` and on for a repeat): one a read wrote down. A key {@link mintItemKey}
+ * minted is 12 digits long, so it never has this shape.
+ */
+export const hasContentKeyShape = (key: string): boolean =>
+  /^h[1-9A-HJ-NP-Za-km-z]{1,10}(-\d+)?$/.test(key)
+
+/**
  * How `withItemKeys` keys an item that lacks a usable key, or repeats one an earlier item of its
  * list holds:
  * - `content`: from a hash of the item, so every reader and writer of the same file names it

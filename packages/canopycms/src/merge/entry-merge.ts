@@ -377,6 +377,7 @@ function mergeList(
   const [oAt, aAt, bAt] = [index(oKeys), index(aIds), index(bIds)]
   const used = new Set<string>()
   const out: unknown[] = []
+  const replacedKeys: Array<{ index: number; from: string }> = []
   for (const id of mergeOrder(oKeys, aIds, bIds)) {
     const i = isNewIdentity(id) ? undefined : oAt.get(id)
     const ja = aAt.get(id)
@@ -412,6 +413,10 @@ function mergeList(
     if (placeOnly && !sameValue(ai, bi)) {
       const [aChanged, bChanged] = [!sameValue(oi, ai), !sameValue(oi, bi)]
       if (aChanged && bChanged) conflict(oi, ai, bi, itemAt, walk)
+      // The base's item stands in the branch's place: the branch's threads follow it there.
+      if (aChanged && !bChanged && bReadKeys[jb] !== undefined) {
+        replacedKeys.push({ index: out.length, from: bReadKeys[jb] })
+      }
       out.push(aChanged && !bChanged ? ai : bi)
       continue
     }
@@ -419,6 +424,11 @@ function mergeList(
     out.push(
       withListKey(merged, ai, bi, (jb !== undefined && bReadKeys[jb]) || undefined, used, at, walk),
     )
+  }
+  const outKeys = itemKeysAsRead(out)
+  for (const { index, from } of replacedKeys) {
+    const to = outKeys[index]
+    if (to !== undefined && to !== from) walk.keyRemaps.push({ within: at.branchKeys, from, to })
   }
   return out
 }

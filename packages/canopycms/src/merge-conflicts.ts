@@ -252,6 +252,59 @@ export function withFoundConflicts(
   return entries
 }
 
+/** The item keys one merge changed in one entry, which the entry's records follow. */
+export interface EntryKeyRemaps {
+  contentId?: string
+  remaps: readonly KeyRemap[]
+}
+
+/** `field` with the item keys `remaps` changed renamed in its key and data path, in order. */
+function withRemappedKeys(
+  field: MergeConflictField,
+  remaps: readonly KeyRemap[],
+): MergeConflictField {
+  let { key, dataPath } = field
+  for (const { within, from, to } of remaps) {
+    const enclosing: string[] = []
+    const at = dataPath.findIndex((segment) => {
+      if (!('item' in segment)) return false
+      const found =
+        segment.item === from &&
+        enclosing.length === within.length &&
+        enclosing.every((k, n) => k === within[n])
+      enclosing.push(segment.item)
+      return found
+    })
+    if (at === -1) continue
+    dataPath = dataPath.map((segment, n) => (n === at ? { item: to } : segment))
+    const escaped = from.replace(/[-]/g, '\\-')
+    key = key.replace(new RegExp(`(^|[.?])${escaped}(?=$|[.?])`), `$1${to}`)
+  }
+  return key === field.key ? field : { ...field, key, dataPath }
+}
+
+/**
+ * `entries` with the item keys a merge, `mergeSha`, changed renamed in the conflicts on record,
+ * as the branch's comment threads are, so a conflict found again under the new key is the same
+ * one. A record this renames keeps the one it replaced as `previous`, so a merge that never lands
+ * gives the old keys back. Pure.
+ */
+export function withRemappedItemKeys(
+  entries: Readonly<Record<string, MergeConflictEntry>>,
+  remaps: readonly EntryKeyRemaps[],
+  mergeSha: string,
+): Record<string, MergeConflictEntry> {
+  const out: Record<string, MergeConflictEntry> = { ...entries }
+  for (const { contentId, remaps: changed } of remaps) {
+    const entry = contentId === undefined ? undefined : out[contentId]
+    if (!entry?.fields) continue
+    const fields = entry.fields.map((field) => withRemappedKeys(field, changed))
+    if (fields.every((field, n) => field === entry.fields?.[n])) continue
+    out[contentId as string] = { ...entry, fields, mergeSha, previous: entry }
+  }
+  return out
+}
+
 /**
  * `entries` as the branch's history has them: a record whose `mergeSha` fails `holds` gives back the
  * one it replaced, or goes when it replaced none, and a record whose merge the branch holds drops

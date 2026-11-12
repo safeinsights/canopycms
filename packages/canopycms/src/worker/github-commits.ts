@@ -14,6 +14,7 @@ import {
   MergeConflictsFileMalformedError,
   conflictFilesOf,
   withFoundConflicts,
+  withRemappedItemKeys,
   withoutMergesGone,
   type MergeConflictEntry,
   type MergeConflictState,
@@ -674,7 +675,11 @@ async function recordMerge(
   const inHead = await settleRecord(git, branchPath, merge.head)
   const state = await new MergeConflictStore(branchPath).update((current) => ({
     entries: withFoundConflicts(
-      current ? withoutMergesGone(current.entries, inHead) : {},
+      withRemappedItemKeys(
+        current ? withoutMergesGone(current.entries, inHead) : {},
+        keyRemaps,
+        sha,
+      ),
       conflicts,
       sha,
       paths,

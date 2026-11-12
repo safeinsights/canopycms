@@ -7,7 +7,7 @@
  * see `merge/AGENTS.md`.
  */
 
-import { ITEM_KEY, isItemKey, itemKeysAsRead } from '../item-keys'
+import { ITEM_KEY, hasContentKeyShape, isItemKey, itemKeysAsRead } from '../item-keys'
 import { isBlockStructuralKey } from '../validation/block-structural-keys'
 import { isPlainRecord } from '../validation/field-traversal'
 import { commonPairs } from './diff3'
@@ -112,6 +112,9 @@ export function alignToAncestor(
   const ids: Array<string | undefined> = items.map(() => undefined)
   const taken = new Set<string>()
   const minted = new Set<number>()
+  // Items whose key the ancestor no longer knows, by how they may still find their item.
+  const byContent = new Set<number>()
+  const stale = new Set<number>()
   items.forEach((item, j) => {
     const own = ownKey(item)
     const read = readKeys[j]
@@ -128,10 +131,16 @@ export function alignToAncestor(
     if (id !== undefined && !taken.has(id)) {
       ids[j] = id
       taken.add(id)
-    } else if (own !== undefined && (known.has(own) || isMinted(item))) {
-      minted.add(j)
-    } else if (own !== undefined && read !== undefined && inEntry.has(read)) {
+    } else if (own !== undefined && read !== undefined && !known.has(own) && inEntry.has(read)) {
       // An ancestor item of another list, moved here with its key: new to this list.
+      minted.add(j)
+    } else if (own !== undefined && !known.has(own) && isMinted(item)) {
+      // A key the ancestor doesn't know: minted for a new item, stripped there by hand, or a read
+      // key for content a sync has since replaced with the base's edit (`stale`). See below.
+      minted.add(j)
+      byContent.add(j)
+      if (hasContentKeyShape(own)) stale.add(j)
+    } else if (own !== undefined && (known.has(own) || isMinted(item))) {
       minted.add(j)
     }
   })
@@ -163,6 +172,24 @@ export function alignToAncestor(
     const i = unmatched.get(valueToken(item))?.shift()
     if (i !== undefined) match(j, i)
   })
+  // Such an item is the ancestor item holding its content, or for a stale key the one holding
+  // most of its values; never one with a minted key, and never by place alone.
+  const candidates = ancestorItems.flatMap((item, i) =>
+    taken.has(ancestorKeys[i]) || isMinted(item) ? [] : [i],
+  )
+  const open = (i: number) => !taken.has(ancestorKeys[i])
+  for (const j of byContent) {
+    const i = candidates.find(
+      (k) => open(k) && valueToken(ancestorItems[k]) === valueToken(items[j]),
+    )
+    if (i !== undefined) match(j, i)
+  }
+  const byValues = valueIndex(candidates, ancestorItems)
+  for (const j of stale) {
+    if (ids[j] !== undefined) continue
+    const i = byValues.best(items[j], open)
+    if (i !== undefined) match(j, i)
+  }
   const bounds: Array<[number, number]> = [
     [-1, -1],
     ...anchors,
@@ -218,34 +245,13 @@ function pairInGap(
   ancestorItems: readonly unknown[],
   movedHere: (j: number) => boolean,
 ): Array<[number, number, boolean]> {
-  // Which ancestor items hold each member value, so an item's score counts only real matches.
-  const holders = new Map<string, number[]>()
-  for (const i of ancestorGap) {
-    for (const [name, value] of contentMembers(ancestorItems[i])) {
-      const at = `${name}\u0000${valueToken(value)}`
-      holders.set(at, [...(holders.get(at) ?? []), i])
-    }
-  }
+  const index = valueIndex(ancestorGap, ancestorItems)
   const free = new Set(ancestorGap)
   const pairs: Array<[number, number, boolean]> = []
   const unpaired: number[] = []
-  let steps = 0
   for (const j of sideGap) {
-    const scores = new Map<number, number>()
-    for (const [name, value] of contentMembers(items[j])) {
-      for (const i of holders.get(`${name}\u0000${valueToken(value)}`) ?? []) {
-        steps++
-        if (free.has(i)) scores.set(i, (scores.get(i) ?? 0) + 1)
-      }
-    }
-    if (steps > MAX_SCORE_STEPS) return byPlace(sideGap, ancestorGap, items, ancestorItems)
-    let best: number | undefined
-    let bestScore = 0
-    for (const [i, score] of scores) {
-      if (score > bestScore || (score === bestScore && best !== undefined && i < best)) {
-        ;[best, bestScore] = [i, score]
-      }
-    }
+    const best = index.best(items[j], (i) => free.has(i))
+    if (index.overBudget()) return byPlace(sideGap, ancestorGap, items, ancestorItems)
     if (best === undefined) {
       // An item with a key of its own that keeps no value of any is not one of them.
       if (ownKey(items[j]) === undefined && !movedHere(j)) unpaired.push(j)
@@ -258,6 +264,42 @@ function pairInGap(
   const left = [...free].filter((i) => !isMinted(ancestorItems[i])).sort((x, y) => x - y)
   if (left.length === unpaired.length) unpaired.forEach((j, k) => pairs.push([j, left[k], true]))
   return pairs
+}
+
+/**
+ * The ancestor items at `indices` indexed by their member values: `best(item, open)` is the open
+ * one holding most of `item`'s values, the earliest on a tie, or undefined when none holds any.
+ * Each value matched counts against {@link MAX_SCORE_STEPS}, past which `overBudget()` is true.
+ */
+function valueIndex(indices: readonly number[], ancestorItems: readonly unknown[]) {
+  const holders = new Map<string, number[]>()
+  for (const i of indices) {
+    for (const [name, value] of contentMembers(ancestorItems[i])) {
+      const at = `${name}\u0000${valueToken(value)}`
+      holders.set(at, [...(holders.get(at) ?? []), i])
+    }
+  }
+  let steps = 0
+  return {
+    best(item: unknown, open: (i: number) => boolean): number | undefined {
+      const scores = new Map<number, number>()
+      for (const [name, value] of contentMembers(item)) {
+        for (const i of holders.get(`${name}\u0000${valueToken(value)}`) ?? []) {
+          steps++
+          if (open(i)) scores.set(i, (scores.get(i) ?? 0) + 1)
+        }
+      }
+      let best: number | undefined
+      let bestScore = 0
+      for (const [i, score] of scores) {
+        if (score > bestScore || (score === bestScore && best !== undefined && i < best)) {
+          ;[best, bestScore] = [i, score]
+        }
+      }
+      return best
+    },
+    overBudget: () => steps > MAX_SCORE_STEPS,
+  }
 }
 
 /** A gap too large to score: pairs as `pairInGap`'s by-place step does, from the start. */
@@ -310,8 +352,7 @@ export function pairNewItems(
       pairedBranch.add(match)
     }
   }
-  // Equal content pairs two additions unless both carry keys minted for them: those are two
-  // items that happen to read alike.
+  // Equal content pairs two additions, unless both carry minted keys: two items reading alike.
   const restBase = baseNew.filter((j) => !pairedBase.has(j))
   const restBranch = branchNew.filter((j) => !pairedBranch.has(j))
   const pairs = (

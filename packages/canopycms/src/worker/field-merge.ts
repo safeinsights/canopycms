@@ -81,7 +81,7 @@ export interface FieldMergeResult {
   covered: Set<string>
   conflicts: FoundEntryConflict[]
   /** Item keys the merge changed, by the logical path the branch's comment threads name. */
-  keyRemaps: Array<{ entryPath: string; remaps: KeyRemap[] }>
+  keyRemaps: Array<{ entryPath: string; contentId?: string; remaps: KeyRemap[] }>
   /** Where each entry or collection with a conflict on record may now be: its path in the merge. */
   paths: Map<string, string>
   /** Why git's merge can't be settled by rule, where it can't. */
@@ -781,7 +781,11 @@ export async function resolveFieldMerge(args: FieldMergeArgs): Promise<FieldMerg
     const branchFile = sideFile(unit, 'branch')
     const entryPath = branchFile && entryLogicalPathOfFile(branchFile.path, root)
     if (resolution.remaps && entryPath) {
-      result.keyRemaps.push({ entryPath, remaps: resolution.remaps })
+      result.keyRemaps.push({
+        entryPath,
+        ...(unit.id && { contentId: unit.id }),
+        remaps: resolution.remaps,
+      })
     }
   }
   if (moves.cyclic) result.unsettled = 'collection directories moved into each other'

@@ -22,10 +22,11 @@ The **code comment at the point of the rule is authoritative**; this file is the
 ## The one heuristic
 
 Aligning list items no key names (`list-alignment.ts`) is the engine's one heuristic.
-It applies only where a side edited a list whose items carry no keys, in practice a
-hand edit. An item edited so that it keeps none of its values, or keeps values of
-another item, can be misread. Keys everywhere (the key backfill) remove the case.
-`entry-merge.ground-truth.test.ts` pins what holds regardless: edits to different items, and
+It applies to items carrying no key the ancestor knows: a list edited by hand, or an item
+whose first-save key went stale when a sync brought in the base's edit. An item keeping
+none of its values, or another item's, can be misread. The key backfill removes
+the hand-edited case. `entry-merge.ground-truth.test.ts` and, over several syncs,
+`entry-merge.sequence.test.ts` pin what holds regardless: edits to different items, and
 two editors' edits to the same item, never merge wrongly.
 
 `entry-merge.test.ts`' header maps the plan's conflict-case rows to tests; the golden

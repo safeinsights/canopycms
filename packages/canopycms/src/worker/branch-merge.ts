@@ -111,7 +111,7 @@ export type MergePlan =
       /** Git's own merge with nothing for a person: no conflict, and every file as git merged it. */
       asGitDoes: boolean
       /** Item keys the merge changed, by the entry path the branch's comment threads name. */
-      keyRemaps: Array<{ entryPath: string; remaps: KeyRemap[] }>
+      keyRemaps: Array<{ entryPath: string; contentId?: string; remaps: KeyRemap[] }>
       /** Where each entry the merge decided stands in it. */
       paths: Map<string, string>
     }
