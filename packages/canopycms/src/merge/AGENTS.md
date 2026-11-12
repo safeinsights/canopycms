@@ -21,12 +21,12 @@ The **code comment at the point of the rule is authoritative**; this file is the
 ## The one heuristic
 
 Aligning list items no key names (`list-alignment.ts`) is the engine's one heuristic.
-It applies to items carrying no key the ancestor knows: a list edited by hand, or an item
-whose first-save key a clean git rebase left stale (a merge re-keys it). An item keeping
-none of its values, or another item's, can be misread. The key backfill removes
-the hand-edited case. `entry-merge.ground-truth.test.ts` and, over several syncs,
-`entry-merge.sequence.test.ts` pin what holds regardless: edits to different items, and
-two editors' edits to the same item, never merge wrongly.
+It applies to items with no key the ancestor knows, or a first-save key a git-level merge
+left stale, which for twins may name another item. An item keeping none of its values, or
+another item's, can be misread, as can one changed under such a key. Backfilling keys
+removes the hand-edited case. `entry-merge.ground-truth.test.ts` and
+`entry-merge.sequence.test.ts` (syncs with twins) pin what holds regardless: edits
+to different items, and two editors' edits to the same item, never merge wrongly.
 
 `entry-merge.test.ts`' header maps the plan's conflict-case rows to tests; the golden
 fixtures are in `entry-merge.golden.test.ts`.
