@@ -26,6 +26,7 @@ let branches: string
 let consoleSpy: MockConsole
 let setStatus: ReturnType<typeof vi.fn<GitHubGateway['setConflictsStatus']>>
 let statusesSet: Map<string, string>
+let wake: ReturnType<typeof vi.fn<(branchRef?: string) => void>>
 
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-conflicts-status-'))
@@ -34,6 +35,7 @@ beforeEach(async () => {
   consoleSpy = mockConsole()
   setStatus = vi.fn<GitHubGateway['setConflictsStatus']>(async () => undefined)
   statusesSet = new Map()
+  wake = vi.fn<(branchRef?: string) => void>()
 })
 
 afterEach(async () => {
@@ -48,6 +50,7 @@ const ctx = (): ConflictsStatusContext => ({
   conflictsStatusesSet: () => statusesSet,
   shutdownSignal: () => new AbortController().signal,
   taskTimeoutMs: 5_000,
+  requestBranchSync: wake,
 })
 
 /** A branch workspace whose branch.json holds `branch`. */
@@ -294,15 +297,33 @@ describe('setConflictsStatuses', () => {
     expect(await setConflictsStatuses(ctx(), tips)).toMatchObject({ reason: 'other' })
   })
 
-  it('retries a head GitHub moved since the fetch without reporting it', async () => {
+  it('retries a head GitHub has not caught up with, without reporting it, waking one more sync per tip', async () => {
     await giveBranch('a', { name: 'canopycms/prod/a', pullRequestNumber: 1 })
     const tips = new Map([['canopycms/prod/a', HEAD1]])
-    setStatus.mockRejectedValueOnce(
-      new GatewayRefusalError('commit-status', 'canopycms/prod/a', 'not-head', 'moved'),
+    const notHead = new GatewayRefusalError(
+      'commit-status',
+      'canopycms/prod/a',
+      'not-head',
+      'moved',
     )
+    setStatus.mockRejectedValueOnce(notHead).mockRejectedValueOnce(notHead)
     expect(await setConflictsStatuses(ctx(), tips)).toBeUndefined()
+    expect(wake).toHaveBeenCalledExactlyOnceWith('canopycms/prod/a')
+    // Still behind at the woken sync: no further wake for the same tip.
     expect(await setConflictsStatuses(ctx(), tips)).toBeUndefined()
-    expect(setStatus).toHaveBeenCalledTimes(2)
+    expect(wake).toHaveBeenCalledTimes(1)
+    expect(await setConflictsStatuses(ctx(), tips)).toBeUndefined()
+    expect(setStatus).toHaveBeenCalledTimes(3)
+  })
+
+  it('reports a branch it cannot read, and sets every other status', async () => {
+    await giveBranch('a', { name: 'canopycms/prod/a', pullRequestNumber: 1 })
+    const unreadable = path.join(branches, 'b', '.canopy-meta', 'branch.json')
+    await fs.mkdir(unreadable, { recursive: true })
+    const failure = await setConflictsStatuses(ctx(), new Map([['canopycms/prod/a', HEAD1]]))
+    expect(failure).toMatchObject({ reason: 'other', branches: ['b'], count: 1 })
+    expect(posted()).toEqual([expect.objectContaining({ pullRequest: 1, state: 'success' })])
+    expect(consoleSpy).toHaveWarned(/Could not read b for its conflicts status/)
   })
 
   it('reports a pull request the gateway refuses, and asks again next cycle', async () => {

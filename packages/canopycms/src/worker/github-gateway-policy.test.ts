@@ -634,6 +634,7 @@ describe('the conflicts status on a pull request head', () => {
   it('re-reads the credential after a failed write, but not for a missing permission', async () => {
     for (const [code, rereads] of [
       [403, 0],
+      [422, 0],
       [500, 1],
     ] as const) {
       const refresh = vi.fn(async () => 'fake-token-for-policy')

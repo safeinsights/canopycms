@@ -403,6 +403,7 @@ async function observeEverything(): Promise<Coverage> {
       conflictsStatusesSet: () => new Map(),
       shutdownSignal: () => signal,
       taskTimeoutMs: 1000,
+      requestBranchSync: () => {},
     } satisfies ConflictsStatusContext,
     new Map([['canopycms/prod/content/a', 'c'.repeat(40)]]),
   )

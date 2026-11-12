@@ -1260,20 +1260,22 @@ class LocalGitHubGateway implements GitHubGateway {
         )
       }
       try {
-        await this.octokit.repos.createCommitStatus({
-          ...this.repo,
-          sha,
-          state,
-          context: CONFLICTS_STATUS_CONTEXT,
-          description,
-          ...(targetUrl !== undefined && { target_url: targetUrl }),
-          request: { signal },
-        })
+        await this.api(reach, () =>
+          this.octokit.repos.createCommitStatus({
+            ...this.repo,
+            sha,
+            state,
+            context: CONFLICTS_STATUS_CONTEXT,
+            description,
+            ...(targetUrl !== undefined && { target_url: targetUrl }),
+            request: { signal },
+          }),
+        )
       } catch (err) {
         // A credential without the Commit statuses permission, which the worker meets every cycle
         // until it is granted: the `pulls.get` above just proved the credential works, so a
         // re-read would only spend the refresh floor.
-        if (!isPermissionDenial(err)) reach.failed = true
+        if (isPermissionDenial(err)) reach.failed = false
         throw err
       }
     })

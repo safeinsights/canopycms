@@ -39,6 +39,7 @@ export type ConflictsStatusContext = Pick<
   | 'conflictsStatusesSet'
   | 'shutdownSignal'
   | 'taskTimeoutMs'
+  | 'requestBranchSync'
 >
 
 /** The most branch names a failure report lists. */
@@ -99,8 +100,9 @@ export async function setConflictsStatuses(
   githubTips: ReadonlyMap<string, string>,
 ): Promise<ConflictsStatusFailure | undefined | null> {
   let due: DueStatus[]
+  let unreadable: Unreadable[]
   try {
-    due = await dueStatuses(ctx, githubTips)
+    ;({ due, unreadable } = await dueStatuses(ctx, githubTips))
   } catch (err) {
     workerLogWarn(
       `Could not read the branches' conflicts for their status: ${getErrorMessage(err)}`,
@@ -108,8 +110,9 @@ export async function setConflictsStatuses(
     return null
   }
   const set = ctx.conflictsStatusesSet()
-  const failed: string[] = []
-  let failure: Omit<ConflictsStatusFailure, 'branches' | 'count' | 'at'> | undefined
+  const failed = unreadable.map((u) => u.branch)
+  let failure: Omit<ConflictsStatusFailure, 'branches' | 'count' | 'at'> | undefined =
+    unreadable[0] && { reason: 'other', message: unreadable[0].message }
   for (const [index, { branch, status, key }] of due.entries()) {
     if (ctx.shutdownSignal().aborted) return null
     try {
@@ -127,8 +130,16 @@ export async function setConflictsStatuses(
       )
     } catch (err) {
       if (ctx.shutdownSignal().aborted) return null
-      // A head GitHub moved since this cycle's fetch gets its status next cycle.
-      if (err instanceof GatewayRefusalError && err.reason === 'not-head') continue
+      if (err instanceof GatewayRefusalError && err.reason === 'not-head') {
+        // GitHub moves a pull request's head a moment after the push, so this cycle's tip can be
+        // ahead of it: one more sync for that tip, and no loop if the two never agree.
+        const asked = `not-head:${branch}`
+        if (set.get(asked) !== status.sha) {
+          set.set(asked, status.sha)
+          ctx.requestBranchSync(branch)
+        }
+        continue
+      }
       const message = sanitizeErrorMessage(getErrorMessage(err))
       failed.push(branch)
       workerLogWarn(`Could not set the conflicts status of ${escapeForLog(branch)}: ${message}`)
@@ -168,20 +179,36 @@ function isUnreachable(err: unknown): boolean {
   return status === null || status === 403 || status === 408 || status === 429 || status >= 500
 }
 
-/** Each branch with a pull request whose head lacks the status it calls for. */
+/** A branch whose branch.json or conflict record could not be read, by its directory. */
+interface Unreadable {
+  branch: string
+  message: string
+}
+
+/**
+ * Each branch with a pull request whose head lacks the status it calls for, and each branch that
+ * could not be read, which costs only its own status. Throws only when the branches directory
+ * cannot be listed.
+ */
 async function dueStatuses(
   ctx: ConflictsStatusContext,
   githubTips: ReadonlyMap<string, string>,
-): Promise<DueStatus[]> {
+): Promise<{ due: DueStatus[]; unreadable: Unreadable[] }> {
   let entries: Dirent[]
   try {
     entries = await fs.readdir(ctx.contentBranchesPath, { withFileTypes: true })
   } catch (err) {
-    if (isNodeError(err) && err.code === 'ENOENT') return []
+    if (isNodeError(err) && err.code === 'ENOENT') return { due: [], unreadable: [] }
     throw err
   }
   const set = ctx.conflictsStatusesSet()
   const due: DueStatus[] = []
+  const unreadable: Unreadable[] = []
+  const cannotRead = (branch: string, err: unknown) => {
+    const message = sanitizeErrorMessage(getErrorMessage(err))
+    workerLogWarn(`Could not read ${escapeForLog(branch)} for its conflicts status: ${message}`)
+    unreadable.push({ branch, message })
+  }
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     const dir = entry.name
     // The base branch has no pull request; `.trash-*` directories hold purged branches.
@@ -193,7 +220,8 @@ async function dueStatuses(
     } catch (err) {
       if (err instanceof BranchMetadataCorruptError || (isNodeError(err) && err.code === 'ENOENT'))
         continue
-      throw err
+      cannotRead(dir, err)
+      continue
     }
     const branch = meta?.branch
     if (!branch || branch.status === 'archived' || branch.pullRequestNumber === undefined) continue
@@ -204,9 +232,7 @@ async function dueStatuses(
     try {
       text = await conflictsStatusOf(branchRoot)
     } catch (err) {
-      workerLogWarn(
-        `Could not read the conflicts of ${escapeForLog(branch.name)}: ${getErrorMessage(err)}`,
-      )
+      cannotRead(branch.name, err)
       continue
     }
     const editorUrl = branch.editorUrl && resolveEditorUrl({ configured: branch.editorUrl })
@@ -221,5 +247,5 @@ async function dueStatuses(
     const key = JSON.stringify(status)
     if (set.get(branch.name) !== key) due.push({ branch: branch.name, status, key })
   }
-  return due
+  return { due, unreadable }
 }
