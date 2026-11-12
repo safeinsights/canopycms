@@ -327,9 +327,20 @@ export async function isCleanMergeOf(
 export async function buildRekey(
   git: SimpleGit,
   clonePath: string,
-  args: { from: string; tip: string; contentRoot: string; timeoutMs: number; message: string },
+  args: {
+    from: string
+    tip: string
+    contentRoot: string
+    timeoutMs: number
+    message: string
+    /**
+     * Only entries `head` holds as `since` held them: a merge of `head` with the re-key reads an
+     * entry `head` changed against `since`'s keys, which git's merge keeps and a re-key would not.
+     */
+    unchangedIn?: { head: string; since: string }
+  },
 ): Promise<BuiltMerge | null> {
-  const { from, tip, contentRoot, timeoutMs, message } = args
+  const { from, tip, contentRoot, timeoutMs, message, unchangedIn } = args
   const merges = (
     await git.raw([
       'rev-list',
@@ -374,6 +385,12 @@ export async function buildRekey(
     for (const [file, blob] of field.updates) {
       // A later commit that changed the entry again decided its keys itself.
       if (!blob || (await blobAt(git, merge, file)) !== (await blobAt(git, tip, file))) continue
+      if (
+        unchangedIn &&
+        (await blobAt(git, unchangedIn.head, file)) !== (await blobAt(git, unchangedIn.since, file))
+      ) {
+        continue
+      }
       updates.set(file, blob)
       const id = parseTypedFilename(path.posix.basename(file))?.id
       if (id !== undefined) applied.add(id)

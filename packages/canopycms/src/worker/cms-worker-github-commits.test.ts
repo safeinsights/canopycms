@@ -2712,29 +2712,109 @@ describe('a merge on GitHub that leaves an item under a key naming another', () 
     expect(await keysIn(s, await s.head())).toEqual([KP2, KQ])
   })
 
-  it('keeps the record of a merge still landing when GitHub merges the base on top of it', async () => {
+  /**
+   * A merge of this worker's, of GitHub's stale merge and a title both sides changed, published and
+   * pushed but not yet in the clone; then Update branch merges a base edit of `p` on top of it.
+   */
+  async function landingThenUpdate(): Promise<void> {
     await s.commit({ 'editor.txt': 'v1\n' })
     await s.push()
     await writeMeta(s)
     await staleOnGitHubOnly({ [ENTRY]: '{"title":"github"}\n' })
     await s.commit({ [ENTRY]: '{"title":"editor"}\n' }, 'editor entry')
     await s.clone.raw(['push', 'origin', `${BRANCH}:${BRANCH}`])
-    // The merge is published, then the clone cannot move to it.
     const lock = path.join(s.branchPath, '.git', 'index.lock')
     await fs.writeFile(lock, '')
     await cycle(s)
     await fs.rm(lock)
     expect((await readMeta(s))?.conflictFiles).toEqual([CONFLICTED_ID])
-    // Its push lands, and Update branch merges a base edit of the same item on top.
     await s.resetOnGitHub((await s.remoteSha(`refs/heads/${BRANCH}`)) as string)
     await s.advanceBase({ [LIST]: list('L', [item('p3'), item('q')]) })
     await s.updateBranchOnGitHub()
+  }
+
+  it('keeps the record of a merge still landing when GitHub merges the base on top of it', async () => {
+    await landingThenUpdate()
 
     await cycle(s)
 
     expect(await s.file(ENTRY)).toBe('{"title":"editor"}\n')
     expect((await readMeta(s))?.conflictFiles).toEqual([CONFLICTED_ID])
     expect((await readMeta(s))?.keptOverGitHub).toEqual([ENTRY])
+  })
+
+  it('notes what the landing kept over GitHub even when the re-key never reaches remote.git', async () => {
+    await landingThenUpdate()
+    const ref = path.join(s.remoteGit, 'refs', 'heads', `${BRANCH}.lock`)
+    await fs.writeFile(ref, '')
+    await cycle(s)
+    await fs.rm(ref)
+
+    await cycle(s)
+
+    expect((await readMeta(s))?.keptOverGitHub).toEqual([ENTRY])
+  })
+
+  it('moves no thread to a landing merge before the clone holds it', async () => {
+    await landingThenUpdate()
+    const remap = vi.spyOn(CommentStore.prototype, 'remapItemKeys')
+    await s.save({ [LIST]: 'saved over the list\n' })
+
+    await cycle(s)
+
+    expect(remap).not.toHaveBeenCalled()
+  })
+
+  /** Twins keyed by the editor; base edits the first; Update branch on GitHub alone. */
+  async function twinsUpdatedOnGitHubOnly(): Promise<void> {
+    await s.advanceBase({ [LIST]: list('L', [item('x'), item('x')]) })
+    await s.clone.fetch('origin', BASE)
+    await s.clone.raw(['merge', '--ff-only', 'FETCH_HEAD'])
+    await s.commit({
+      [LIST]: list('L', [
+        { _key: KX, ...item('x') },
+        { _key: KX2, ...item('x') },
+      ]),
+    })
+    await s.push()
+    await writeMeta(s, { status: 'submitted', pullRequestNumber: 7 })
+    await cycle(s)
+    await s.advanceBase({ [LIST]: list('L', [item('y'), item('x')]) })
+    const o = s.outside
+    await o.fetch(['--force', 'origin', `refs/remotes/github/${BRANCH}:refs/x/gh`])
+    await o.raw(['checkout', '-q', '-B', 'work', 'refs/x/gh'])
+    await o.fetch(['origin', BASE])
+    await o.raw(['merge', '--no-edit', 'FETCH_HEAD'])
+    await o.raw(['push', 'origin', `HEAD:refs/remotes/github/${BRANCH}`])
+  }
+  const itemsIn = async (file: string | null) =>
+    (JSON.parse(file as string) as { items: Array<Record<string, string>> }).items.map(
+      ({ a, t }) => `${a}/${t}`,
+    )
+
+  it("merges the clone's edit of a twin with GitHub's stale merge onto the twin it edited", async () => {
+    await twinsUpdatedOnGitHubOnly()
+    await s.commit({
+      [LIST]: list('L', [
+        { _key: KX, ...item('x'), a: 'B' },
+        { _key: KX2, ...item('x') },
+      ]),
+    })
+    await s.clone.raw(['push', 'origin', `${BRANCH}:${BRANCH}`])
+
+    await cycle(s)
+
+    expect(await itemsIn(await s.file(LIST))).toEqual(['B/y', 'pad/x'])
+  })
+
+  it("keeps the clone's deletion of a twin through GitHub's stale merge", async () => {
+    await twinsUpdatedOnGitHubOnly()
+    await s.commit({ [LIST]: list('L', [{ _key: KX, ...item('x') }]) })
+    await s.clone.raw(['push', 'origin', `${BRANCH}:${BRANCH}`])
+
+    await cycle(s)
+
+    expect(await itemsIn(await s.file(LIST))).toEqual(['pad/y'])
   })
 
   it('lands a published re-key once the branch is no longer published', async () => {

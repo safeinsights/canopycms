@@ -521,8 +521,7 @@ async function rekeyTakenIn(
   if (lockLost()) return { kind: 'wait' }
   // Judged on content: the commit changes item keys only, which `isCleanMergeOf` sets aside.
   if (await changesWhatWasReviewed(ctx, args, head, sha)) await returnToReview(ctx, args)
-  // Settled against `tip`: a merge of this worker's that `tip` holds is landing, not gone.
-  await recordMerge(ctx, args, built, { head: tip, fromGitHub: true })
+  await recordMerge(ctx, args, built, { head, also: tip, fromGitHub: true })
   if (lockLost()) return { kind: 'wait' }
   await recordSeenOnGitHub(ctx, branchRef, tip)
   if (!(await publishPlainToLocalRemote(ctx, branchPath, branchRef, sha))) return { kind: 'wait' }
@@ -548,30 +547,22 @@ async function rekeyTakenIn(
   return { kind: 'merged', keptEntries: 0 }
 }
 
-/**
- * {@link buildRekey} on GitHub's commits from `head` to `tip`, or null when none needs a new key. A
- * failure is logged, and the commits come in as git keyed them, as before the re-key existed.
- */
-async function rekeyOf(
+/** {@link buildRekey} on GitHub's commits from `head` to `tip`, or null when none needs a new key. */
+function rekeyOf(
   ctx: GitHubCommitsContext,
-  { git, branchPath, branchDir, branchRef }: GitHubCommitsArgs,
+  { git, branchPath, branchRef }: GitHubCommitsArgs,
   head: string,
   tip: string,
+  unchangedIn?: { head: string; since: string },
 ): Promise<BuiltMerge | null> {
-  try {
-    return await buildRekey(git, branchPath, {
-      from: head,
-      tip,
-      contentRoot: ctx.contentRoot,
-      timeoutMs: ctx.taskTimeoutMs,
-      message: `Key the items that merges on GitHub brought into ${branchRef}`,
-    })
-  } catch (err) {
-    workerLogWarn(
-      `  ${branchDir}: GitHub's merges come in as git keyed them: ${getErrorMessage(err)}`,
-    )
-    return null
-  }
+  return buildRekey(git, branchPath, {
+    from: head,
+    tip,
+    contentRoot: ctx.contentRoot,
+    timeoutMs: ctx.taskTimeoutMs,
+    message: `Key the items that merges on GitHub brought into ${branchRef}`,
+    ...(unchangedIn && { unchangedIn }),
+  })
 }
 
 /**
@@ -605,8 +596,15 @@ export async function mergeIntoBranch(
 ): Promise<GitHubCommitsOutcome> {
   const { git, branchPath, branchDir, branchRef, gatewayPolicy, lockLost } = args
   const { head, other, message, fromGitHub, inReview } = merge
-  // GitHub's merges come in under the field merge's keys, as a fast-forward takes them in.
-  const rekey = fromGitHub ? await rekeyOf(ctx, args, head, other) : null
+  // GitHub's merges come in under the field merge's keys, as a fast-forward takes them in, for the
+  // entries the merge takes from GitHub whole: one the branch changed too merges by git's keys.
+  const since = fromGitHub
+    ? (await git.raw(['merge-base', '--end-of-options', head, other])).trim()
+    : ''
+  const rekey =
+    fromGitHub && COMMIT_ID.test(since)
+      ? await rekeyOf(ctx, args, head, other, { head, since })
+      : null
   const into = rekey?.sha ?? other
   const plan = await planMerge(git, branchPath, {
     head,
@@ -655,7 +653,7 @@ export async function mergeIntoBranch(
   // Recorded before the merge is visible anywhere: the next cycle only fast-forwards to it, and
   // the conflicts cannot be read back from the merge. A merge that never lands leaves records the
   // next cycle's reconcile turns back.
-  await recordMerge(ctx, args, built, { head, fromGitHub })
+  await recordMerge(ctx, args, built, { head, ...(fromGitHub && { also: other }), fromGitHub })
   if (lockLost()) return { kind: 'wait' }
   // Before `remote.git` holds it, as reconcile does: a crash past this point leaves GitHub's commit
   // in `remote.git`, and a removal then has to read as one (`rewrittenFrom`).
@@ -765,17 +763,23 @@ export async function returnToReview(
  * IDs it names in `branch.json` `conflictFiles`. The record is first settled against `head`, which
  * the merge builds on, so a record of a merge that never landed can't carry into this one. Before
  * the merge is visible: one that never lands leaves records the next
- * {@link reconcileMergeConflicts} turns back.
+ * {@link reconcileMergeConflicts} turns back. A merge `also` holds, GitHub's tip the merge takes in,
+ * is landing rather than gone, and the earlier landing it replaces is on GitHub already: what that
+ * one kept over GitHub's commits is noted for the pull request body now.
  */
 async function recordMerge(
   ctx: GitHubCommitsContext,
   args: GitHubCommitsArgs,
   built: BuiltMerge,
-  merge: { head: string; fromGitHub: boolean },
+  merge: { head: string; also?: string; fromGitHub: boolean },
 ): Promise<void> {
   const { git, branchPath, branchRef } = args
   const { sha, conflicts, keptPaths, keyRemaps, paths } = built
-  const inHead = await settleRecord(git, branchPath, merge.head)
+  const inHead = await settleRecord(git, branchPath, merge.head, merge.also)
+  const earlier = (await new MergeConflictStore(branchPath).read())?.landing
+  if (merge.also !== undefined && earlier && earlier.mergeSha !== sha && inHead(earlier.mergeSha)) {
+    await noteKeptOverGitHub(ctx, args, earlier.keptOverGitHub ?? [])
+  }
   const state = await new MergeConflictStore(branchPath).update((current) => ({
     entries: withFoundConflicts(
       withRemappedItemKeys(
@@ -791,27 +795,15 @@ async function recordMerge(
       ...(current?.remaps ?? []),
       ...keyRemaps.map(({ entryPath, remaps }) => ({ mergeSha: sha, entryPath, remaps })),
     ],
-    landing: landingOf(current?.landing, inHead, sha, merge.fromGitHub ? keptPaths : []),
+    landing: {
+      mergeSha: sha,
+      ...(merge.fromGitHub && keptPaths.length > 0 && { keptOverGitHub: keptPaths }),
+    },
   }))
   if (state === null) return
   await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update((existing) =>
     existing?.branch.name === branchRef ? { branch: conflictFilesOf(state.entries) } : null,
   )
-}
-
-/**
- * The landing of `sha`, keeping what an earlier landing the merge builds on kept over GitHub's
- * commits: that one lands with it, and its note goes in the pull request body then.
- */
-function landingOf(
-  earlier: MergeConflictState['landing'],
-  holds: (mergeSha: string) => boolean,
-  sha: string,
-  keptPaths: readonly string[],
-): NonNullable<MergeConflictState['landing']> {
-  const carried = earlier && holds(earlier.mergeSha) ? (earlier.keptOverGitHub ?? []) : []
-  const kept = [...new Set([...carried, ...keptPaths])]
-  return { mergeSha: sha, ...(kept.length > 0 && { keptOverGitHub: kept }) }
 }
 
 /**
@@ -842,24 +834,35 @@ async function landed(
   )
   const landing = current.landing
   if (landing?.mergeSha !== sha) return
-  const kept = landing.keptOverGitHub ?? []
-  if (kept.length > 0) {
-    await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update((existing) =>
-      existing?.branch.name === branchRef
-        ? {
-            branch: {
-              keptOverGitHub: [...new Set([...(existing.branch.keptOverGitHub ?? []), ...kept])],
-            },
-          }
-        : null,
-    )
-    await enqueueReviewBlockSync(ctx, branchRef, metaFile)
-  }
+  await noteKeptOverGitHub(ctx, { branchPath, branchRef, metaFile }, landing.keptOverGitHub ?? [])
   await store.update((now) => {
     if (now?.landing?.mergeSha !== sha) return null
     const { landing: _done, ...rest } = now
     return rest
   })
+}
+
+/** `kept`, paths a merge kept over GitHub's commits, in `keptOverGitHub` for the PR body. */
+async function noteKeptOverGitHub(
+  ctx: GitHubCommitsContext,
+  {
+    branchPath,
+    branchRef,
+    metaFile,
+  }: Pick<GitHubCommitsArgs, 'branchPath' | 'branchRef' | 'metaFile'>,
+  kept: readonly string[],
+): Promise<void> {
+  if (kept.length === 0) return
+  await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update((existing) =>
+    existing?.branch.name === branchRef
+      ? {
+          branch: {
+            keptOverGitHub: [...new Set([...(existing.branch.keptOverGitHub ?? []), ...kept])],
+          },
+        }
+      : null,
+  )
+  await enqueueReviewBlockSync(ctx, branchRef, metaFile)
 }
 
 /** Every merge a record names, its earlier versions' included. */
@@ -901,21 +904,23 @@ async function settleRecord(
   git: SimpleGit,
   branchPath: string,
   head: string,
+  also?: string,
 ): Promise<(mergeSha: string) => boolean> {
   const store = new MergeConflictStore(branchPath)
   const current = await store.read()
   if (current === null) return () => true
-  const [held] = await mergesHeld(git, current, [head])
+  const [held, alsoHeld] = await mergesHeld(git, current, also ? [head, also] : [head])
   const known = new Set([
     ...Object.values(current.entries).flatMap(mergesNamedBy),
     ...(current.remaps ?? []).map(({ mergeSha }) => mergeSha),
   ])
   const inHead = (sha: string) => held.has(sha) || !known.has(sha)
-  // The threads can wait: the remaps stay for the next cycle.
-  await applyRemaps(branchPath, inHead, (sha) => !inHead(sha)).catch((err: unknown) =>
+  const kept = (sha: string) => inHead(sha) || (alsoHeld?.has(sha) ?? false)
+  // Threads move only to merges the clone holds; the rest wait, unless neither commit holds them.
+  await applyRemaps(branchPath, inHead, (sha) => !kept(sha)).catch((err: unknown) =>
     workerLogWarn(`  comment threads keep their item keys for now: ${getErrorMessage(err)}`),
   )
-  return inHead
+  return kept
 }
 
 /**

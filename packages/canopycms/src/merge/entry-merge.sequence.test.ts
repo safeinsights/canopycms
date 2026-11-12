@@ -465,7 +465,10 @@ function takenIn(
   })
   if (result.kind !== 'merged' || result.conflicts.length > 0) return { side: git }
   const rekeyed = rekeyAsMerged(git.file, result.data) as File | undefined
-  if (rekeyed === undefined) return { side: git }
+  // Nothing to re-key: the worker writes no commit and records no remap.
+  if (rekeyed === undefined || JSON.stringify(rekeyed) === JSON.stringify(git.file)) {
+    return { side: git }
+  }
   const { dropped: _dropped, ...side } = identify(rekeyed, want, [mine, base])
   return { side, remaps: result.keyRemaps }
 }
