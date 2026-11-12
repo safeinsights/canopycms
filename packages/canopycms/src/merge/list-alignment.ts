@@ -103,7 +103,8 @@ export interface Alignment {
  * list holds it, else a hash of its content. A name the ancestor's read gave, or another key a
  * read could have given an ancestor item ({@link ancestorAliases}), is that ancestor item; any
  * other key marks the item new when it was minted for it, the ancestor knows it (a copy), or the
- * ancestor's read gave it to an item of another list (`inEntry`): that item moved here.
+ * ancestor's read gave it to an item of another list (`inEntry`, every key the ancestor's read
+ * gives across the entry): that item moved here.
  *
  * The rest align as diff3 aligns lines: equal content in order, then equal content out of order
  * (a move), then, in each gap between two matches, by shared values and last by place
@@ -115,7 +116,7 @@ export function alignToAncestor(
   ancestorItems: readonly unknown[],
   ancestorKeys: readonly string[],
   side: string,
-  inEntry: ReadonlySet<string> = new Set(),
+  inEntry: ReadonlySet<string>,
 ): Alignment | undefined {
   const known = new Set(ancestorKeys)
   const aliases = ancestorAliases(ancestorItems, ancestorKeys)
@@ -126,9 +127,40 @@ export function alignToAncestor(
   // Items whose key the ancestor no longer knows, by how they may still find their item.
   const byContent = new Set<number>()
   const stale = new Set<number>()
+  // A read keys an item by content (twins as K, K-2, ...), and a git-level merge bringing in the
+  // base's edit of one twin leaves its key on the edited copy, which the ancestor then reads, or a
+  // backfill keys, as another item's. So an item under a read key holding the item it names is
+  // that item, and one holding exactly another ancestor item no key on this side names is that
+  // one, even an item the branch edited to read like one it deleted.
+  const held = new Set(items.flatMap((item) => ownKey(item) ?? []))
+  const unheld = new Map<string, number>()
+  ancestorItems.forEach((item, i) => {
+    if (held.has(ancestorKeys[i])) return
+    const token = valueToken(item)
+    unheld.set(token, (unheld.get(token) ?? 0) + 1)
+  })
+  const at = new Map(ancestorKeys.map((key, i) => [key, i]))
+  const usurped = (j: number, own: string): boolean => {
+    if (!hasContentKeyShape(own)) return false
+    const content = valueToken(items[j])
+    const holders = unheld.get(content) ?? 0
+    if (holders === 0) return false
+    const read = readKeys[j]
+    const named = read !== undefined && known.has(read) ? read : aliases.get(own)
+    const i = named === undefined ? undefined : at.get(named)
+    if (i !== undefined) return valueToken(ancestorItems[i]) !== content
+    // A key naming no item here pairs by content only where one item holds it, twins by place.
+    return holders === 1
+  }
   items.forEach((item, j) => {
     const own = ownKey(item)
     const read = readKeys[j]
+    if (own !== undefined && usurped(j, own)) {
+      minted.add(j)
+      byContent.add(j)
+      stale.add(j)
+      return
+    }
     // A keyless item's read key is a hash of its content, which repeats among identical items:
     // those align by content and order below, never by the hash.
     const id =

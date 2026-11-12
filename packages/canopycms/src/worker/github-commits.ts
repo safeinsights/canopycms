@@ -884,8 +884,11 @@ export async function reconcileMergeConflicts(
     } catch (err) {
       if (!(err instanceof MergeConflictsFileMalformedError)) throw err
       const aside = await store.quarantine()
-      workerLogWarn(`  ${branchDir}: its conflict record does not parse; moved it to ${aside}`)
-      current = null
+      if (aside !== null) {
+        workerLogWarn(`  ${branchDir}: its conflict record does not parse; copied it to ${aside}`)
+      }
+      // The held record, or one another writer left in its place.
+      current = await store.read()
     }
     if (current === null) {
       await followRecord(ctx, branchPath, branchDir, branchRef, {})

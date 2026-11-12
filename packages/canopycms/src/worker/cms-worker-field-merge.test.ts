@@ -24,6 +24,7 @@ import { parseEntryParts } from '../content-listing'
 import { itemKeysAsRead } from '../item-keys'
 import {
   MergeConflictStore,
+  MergeConflictsFileMalformedError,
   assertNoOpenConflicts,
   type MergeConflictsFile,
 } from '../merge-conflicts'
@@ -1175,6 +1176,35 @@ describe('the field merge in the rebase loop', () => {
     // choices lost with the record would read as the branch's own.
     expect(Object.keys((await repo.record())?.entries ?? {})).toEqual(['aboutAbc1234'])
     expect((await repo.record())?.held).toBeDefined()
+  })
+
+  it('follows a record that parses by the time it would set it aside', async () => {
+    const HELD = 'priceAbc1234'
+    const repo = await createRepo(tmpDir, {})
+    const head = await repo.branch({ 'content/x.txt': 'x\n' })
+    await repo.publish()
+    await new MergeConflictStore(repo.clonePath).update(() => ({
+      entries: {
+        [HELD]: {
+          path: 'p2',
+          mergeSha: head,
+          kind: 'unreadable',
+          sides: { branch: 'b'.repeat(40) },
+        },
+      },
+    }))
+    // The first read meets a record another writer is mid-way through replacing.
+    const read = vi
+      .spyOn(MergeConflictStore.prototype, 'read')
+      .mockRejectedValueOnce(new MergeConflictsFileMalformedError('it is not JSON'))
+
+    await repo.cycle()
+    read.mockRestore()
+
+    const dir = path.join(repo.clonePath, '.canopy-meta')
+    expect((await fs.readdir(dir)).filter((f) => f.includes('.malformed-'))).toEqual([])
+    const meta = await BranchMetadataFileManager.loadOnly(repo.clonePath)
+    expect(meta?.branch.conflictFiles).toEqual([HELD])
   })
 
   it('holds the branch when it sets aside a record with nothing to merge', async () => {
