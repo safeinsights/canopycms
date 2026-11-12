@@ -26,6 +26,7 @@ const MOCK_CLIENT_FILE = path.join(API_DIR, '__test__/mock-client.ts')
 import '../src/api/branch.js'
 import '../src/api/branch-changes.js'
 import '../src/api/branch-entry-changes.js'
+import '../src/api/merge-conflicts.js'
 import '../src/api/branch-status.js'
 import '../src/api/comments.js'
 import '../src/api/content.js'
@@ -162,6 +163,7 @@ function namespaceToModule(namespace: string): string {
     branches: 'branch',
     workflow: 'branch-status',
     changes: 'branch-changes',
+    conflicts: 'merge-conflicts',
     comments: 'comments',
     content: 'content',
     resolveReferences: 'resolve-references',

@@ -41,6 +41,9 @@ import { getErrorMessage, isNotFoundError, sanitizeErrorMessage } from '../utils
 import { isDataOnlyFormat } from '../utils/format'
 import { withItemKeys } from '../item-keys'
 import { findBodyFieldName } from '../utils/body-field'
+import { canopyLogWarn } from '../utils/logger'
+import type { ResolvedFieldConflict } from '../merge-conflicts'
+import { clearFieldConflicts, resolvedConflictsSchema } from './merge-conflicts'
 
 /**
  * Parse an API path into logical path segments, prepending the content root if needed.
@@ -72,6 +75,11 @@ export type ContentWriteResponse = ApiResponse<{
    * editor has exactly one save-warnings notification to render (useEntryManager.ts).
    */
   validationWarnings?: EntryValidationIssue[]
+  /**
+   * Of the `resolvedConflicts` sent with an update, the ones this save cleared: one sent but not
+   * here was stale, unless a warning says the choice wasn't recorded.
+   */
+  resolvedConflicts?: ResolvedFieldConflict[]
 }>
 
 export type ReferenceValidationResponse = ApiResponse<{
@@ -108,6 +116,13 @@ export interface WriteContentBody {
    * from "lost the token", so an update has to prove which version it read.
    */
   expectedVersion?: number | null
+  /**
+   * Field conflicts a merge left on this entry that the saved values resolve, each named as
+   * `GET /:branch/conflicts/...entryPath` names it. Cleared once the entry is written, under the
+   * save's locks; a pair the record no longer holds is ignored. A save that leaves a conflicting
+   * field out leaves its conflict open.
+   */
+  resolvedConflicts?: ResolvedFieldConflict[]
 }
 
 export interface ValidateReferencesBody {
@@ -158,6 +173,7 @@ const writeContentBodySchema = z.object({
   body: z.string().max(MAX_CONTENT_BODY_CHARS).optional(),
   // null or omitted = create ("must not already exist"); see WriteContentBody.
   expectedVersion: z.number().nullish(),
+  resolvedConflicts: resolvedConflictsSchema.optional(),
 })
 
 const validateReferencesParamsSchema = z.object({
@@ -646,10 +662,42 @@ const writeContentHandler = async (
           expectedVersion,
         }
 
+    // Under the write's own locks, so no merge records a conflict between the value written and
+    // the record cleared. A failure to clear keeps the save: the conflict stays open, and says so.
+    let resolvedConflicts: ResolvedFieldConflict[] | undefined
+    const resolving = expectedVersion === null ? [] : (body.resolvedConflicts ?? [])
+    const afterWrite = async ({ id }: { id?: string }) => {
+      if (!id || resolving.length === 0) return
+      try {
+        resolvedConflicts = await clearFieldConflicts(branchContext, id, resolving)
+      } catch (err) {
+        canopyLogWarn(
+          `CanopyCMS: saved ${logicalPathSegments.join('/')} but couldn't mark its conflicts resolved:`,
+          getErrorMessage(err),
+        )
+        resolvedConflicts = []
+        validationWarnings = [
+          ...(validationWarnings ?? []),
+          {
+            level: 'warning',
+            message:
+              'Saved, but your choice for its conflicting changes wasn’t recorded. Choose again, then save.',
+          },
+        ]
+      }
+    }
+
     // Pass the resolved entryTypeName (not the raw, possibly-omitted
     // params.entryType) so the store's own format check agrees with the type
     // we just validated against.
-    const result = await store.write(schemaItem.logicalPath, slug, writeInput, entryTypeName)
+    const result = await store.write(
+      schemaItem.logicalPath,
+      slug,
+      writeInput,
+      entryTypeName,
+      undefined,
+      { afterWrite },
+    )
 
     // Validate entry links in body content (warnings only, don't block save).
     // Reuses the entry-type fields resolved above for schema validation. Folded into
@@ -667,7 +715,11 @@ const writeContentHandler = async (
       validationWarnings = [...(validationWarnings ?? []), ...linkWarnings]
     }
 
-    return { ok: true, status: 200, data: { ...result, validationWarnings } }
+    return {
+      ok: true,
+      status: 200,
+      data: { ...result, validationWarnings, ...(resolvedConflicts && { resolvedConflicts }) },
+    }
   } catch (err) {
     if (err instanceof ContentConflictError) {
       // [SYNC-C1] Not an editor collision: the branch is mid-rebase. Usually the write was

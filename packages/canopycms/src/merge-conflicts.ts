@@ -45,7 +45,7 @@ export interface MergeSides {
  * - `unreadable`: a version that can't be merged field by field (it does not parse, is over the
  *   size cap, changed its entry type, or is not an entry at all); the branch's file stands.
  */
-type MergeConflictKind = 'fields' | 'deleted-on-base' | 'deleted-on-branch' | 'unreadable'
+export type MergeConflictKind = 'fields' | 'deleted-on-base' | 'deleted-on-branch' | 'unreadable'
 
 export interface MergeConflictField {
   /** `entry-diff.ts`' `EntryChange.key` for the place, or {@link LOCATION_CONFLICT_KEY}. */
@@ -184,7 +184,7 @@ const fileSchema = z.object({
 })
 
 /** merge-conflicts.json was written in a later format than this module reads. */
-class MergeConflictsFileNewerError extends Error {
+export class MergeConflictsFileNewerError extends Error {
   constructor() {
     super('merge-conflicts.json is in a later format than this worker reads; left as it is')
     this.name = 'MergeConflictsFileNewerError'
@@ -278,6 +278,63 @@ export function withoutMergesGone(
   return kept
 }
 
+/** A field conflict a person resolved, named as the record names it. */
+export interface ResolvedFieldConflict {
+  mergeSha: string
+  key: string
+}
+
+/**
+ * `entries` without the fields of `contentId`'s record that `resolved` names, each by its own
+ * `mergeSha` and `key`, and without the record once no field is left. A pair the record no longer
+ * holds, as after a newer merge found that field again, is left out of `cleared`. A record left with
+ * fields keeps its `previous`; a record left with none goes with it, since a merge keeps every field
+ * the record it replaced held, so those were resolved too. Pure.
+ */
+export function withoutResolvedFields(
+  entries: Readonly<Record<string, MergeConflictEntry>>,
+  contentId: string,
+  resolved: readonly ResolvedFieldConflict[],
+): { entries: Record<string, MergeConflictEntry>; cleared: ResolvedFieldConflict[] } {
+  const entry = entries[contentId] as MergeConflictEntry | undefined
+  if (entry?.kind !== 'fields') return { entries: { ...entries }, cleared: [] }
+  const cleared: ResolvedFieldConflict[] = []
+  const fields = (entry.fields ?? []).filter((field) => {
+    const match = resolved.some((r) => r.mergeSha === field.mergeSha && r.key === field.key)
+    if (match) cleared.push({ mergeSha: field.mergeSha, key: field.key })
+    return !match
+  })
+  const { [contentId]: _resolved, ...rest } = entries
+  if (cleared.length === 0) return { entries: { ...entries }, cleared }
+  return {
+    entries: fields.length > 0 ? { ...rest, [contentId]: { ...entry, fields } } : rest,
+    cleared,
+  }
+}
+
+/**
+ * `entries` without `contentId`'s entry-level record, when `mergeSha` is the merge that last changed
+ * it; null when it is not there, or a later merge changed it. Pure.
+ */
+export function withoutEntryConflict(
+  entries: Readonly<Record<string, MergeConflictEntry>>,
+  contentId: string,
+  mergeSha: string,
+): Record<string, MergeConflictEntry> | null {
+  const entry = entries[contentId] as MergeConflictEntry | undefined
+  if (!entry || entry.kind === 'fields' || entry.mergeSha !== mergeSha) return null
+  const { [contentId]: _resolved, ...rest } = entries
+  return rest
+}
+
+/** How many choices `entries` leave a person: each field conflict, and each entry-level one. */
+export function openConflictCount(entries: Readonly<Record<string, MergeConflictEntry>>): number {
+  return Object.values(entries).reduce(
+    (n, entry) => n + (entry.kind === 'fields' ? (entry.fields ?? []).length : 1),
+    0,
+  )
+}
+
 /** What `branch.json` holds for `entries`: the content IDs with a conflict open, sorted. */
 export function conflictFilesOf(entries: Readonly<Record<string, MergeConflictEntry>>): {
   conflictStatus: ConflictStatus
@@ -288,6 +345,44 @@ export function conflictFilesOf(entries: Readonly<Record<string, MergeConflictEn
     conflictStatus: conflictFiles.length > 0 ? 'conflicts-detected' : 'clean',
     conflictFiles,
   }
+}
+
+/**
+ * A submit or approval refused while the branch has conflicts open, `count` of them, or with a
+ * record that can't be read (`count` null): one that doesn't parse, which the worker's next cycle
+ * sets aside, or one of a later format, which waits for this code to be updated.
+ */
+export class OpenMergeConflictsError extends Error {
+  constructor(readonly count: number | null) {
+    super(
+      count === null
+        ? "Couldn't check this branch for changes that conflict with newer ones. Try again in a moment."
+        : count === 1
+          ? 'A change on this branch conflicts with a newer change on the site.'
+          : `${count} changes on this branch conflict with newer changes on the site.`,
+    )
+    this.name = 'OpenMergeConflictsError'
+  }
+}
+
+/**
+ * Throws {@link OpenMergeConflictsError} while `branchRoot`'s record holds a conflict, or does not
+ * parse. A clone with no record has none open.
+ */
+export async function assertNoOpenConflicts(branchRoot: string): Promise<void> {
+  let record: MergeConflictsFile | null
+  try {
+    record = await new MergeConflictStore(branchRoot).read()
+  } catch (err) {
+    if (
+      err instanceof MergeConflictsFileMalformedError ||
+      err instanceof MergeConflictsFileNewerError
+    )
+      throw new OpenMergeConflictsError(null)
+    throw err
+  }
+  const count = record ? openConflictCount(record.entries) : 0
+  if (count > 0) throw new OpenMergeConflictsError(count)
 }
 
 /** A branch clone's merge-conflicts.json. */

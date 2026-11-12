@@ -55,6 +55,7 @@ import { getBranchMetadataFileManager, recordBranchEditor } from './branch-metad
 import { readBranchMetadataFile } from './branch-metadata-file'
 import { getErrorMessage, redactCredentials } from './utils/error'
 import { ContentWriteLockBusyError, withContentWriteLock } from './utils/content-write-lock'
+import { assertNoOpenConflicts } from './merge-conflicts'
 import { ContentStore } from './content-store'
 import { entryLogicalPathOfFile } from './content-id-index'
 import { stampNewEntries, type StampedEntry } from './stamp-on-publish'
@@ -229,7 +230,8 @@ export interface CanopyServices {
    * and push to remote. Resolves with every path the branch changes against its base,
    * and with `stamped`, the entries this submit stamped.
    * Holds the branch's content-write lock; rejects with
-   * `ContentWriteLockBusyError` when busy, and with `NothingToSubmitError`
+   * `ContentWriteLockBusyError` when busy, with `OpenMergeConflictsError` before committing while
+   * a merge's conflicts are open (merge-conflicts.ts), and with `NothingToSubmitError`
    * before pushing when the branch changes nothing.
    */
   submitBranch: (options: {
@@ -600,6 +602,8 @@ async function _createCanopyServicesInternal(
     let stamped: StampedEntry[] = []
     const submitted = await withContentWriteLock(options.context.branchRoot, async () => {
       await refuseDuringRebase(options.context.branchRoot)
+      // In the lock, as the worker records a merge's conflicts in it before the merge lands.
+      await assertNoOpenConflicts(options.context.branchRoot)
       await git.checkoutBranch(options.context.branch.name)
       // Before the status read, so the stamp joins this commit even when an earlier attempt
       // already committed the entry and only its push failed.

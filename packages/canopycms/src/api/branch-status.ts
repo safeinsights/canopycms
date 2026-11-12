@@ -18,6 +18,7 @@ import { isNonFastForwardRejection } from '../utils/git'
 import { ContentWriteLockBusyError } from '../utils/content-write-lock'
 import { submissionEditorFromUser, type SubmissionEditor } from '../submission-attribution'
 import { NothingToSubmitError } from '../services'
+import { OpenMergeConflictsError } from '../merge-conflicts'
 import { baseBranchOf } from '../utils/base-branch'
 import { shortNameOf } from '../branch-param'
 import { resolveEditorUrl } from '../editor-url'
@@ -164,6 +165,17 @@ const submitBranchForMergeHandler = async (
   } catch (err) {
     if (err instanceof NothingToSubmitError) {
       return { ok: false, status: 400, error: err.message }
+    }
+    if (err instanceof OpenMergeConflictsError) {
+      return {
+        ok: false,
+        status: 409,
+        code: 'OPEN_CONFLICTS',
+        error:
+          err.count === null
+            ? err.message
+            : `${err.message} Choose what to keep in "Show changes", then submit again.`,
+      }
     }
     const shortName = shortNameOf(ctx.services.config, branchContext.branch.name)
     // Retriable either way: a resubmit commits nothing new and pushes only
