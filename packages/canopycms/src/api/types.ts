@@ -60,7 +60,8 @@ export interface ApiResponse<TData = unknown> {
  * `WRITE_OUTCOME_UNKNOWN`: an entry save ran but lost its branch lock mid-write, so it may have
  * landed (a 409); the version the caller holds may be stale, so it must re-read before retrying.
  * `ENTRY_GONE`: an entry update found no file, because the entry was deleted or moved since the
- * caller read it (a 409); it was not saved, and only a create can bring the entry back.
+ * caller read it (a 409); it was not saved, and only a create can bring the entry back. A
+ * resolve-entry answers it too, for an entry no longer where its conflict was shown.
  * `EDITOR_MODE_MISMATCH`: the editor bundle was built for the other operating mode than the
  * server runs (a 412, see operating-mode/editor-mode-check.ts); only a rebuild fixes it.
  * `SETTINGS_CHANGED`: a groups or permissions save named a version the file has moved on from (a

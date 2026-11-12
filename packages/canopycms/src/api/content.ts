@@ -75,7 +75,10 @@ export type ContentWriteResponse = ApiResponse<{
    * editor has exactly one save-warnings notification to render (useEntryManager.ts).
    */
   validationWarnings?: EntryValidationIssue[]
-  /** The `resolvedConflicts` this save cleared; any it sent that are not here were stale. */
+  /**
+   * Of the `resolvedConflicts` sent with an update, the ones this save cleared: one sent but not
+   * here was stale, unless a warning says the choice wasn't recorded.
+   */
   resolvedConflicts?: ResolvedFieldConflict[]
 }>
 

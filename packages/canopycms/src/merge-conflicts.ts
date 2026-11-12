@@ -349,7 +349,8 @@ export function conflictFilesOf(entries: Readonly<Record<string, MergeConflictEn
 
 /**
  * A submit or approval refused while the branch has conflicts open, `count` of them, or with a
- * record that can't be read (`count` null), which the worker's next cycle sets aside.
+ * record that can't be read (`count` null): one that doesn't parse, which the worker's next cycle
+ * sets aside, or one of a later format, which waits for this code to be updated.
  */
 export class OpenMergeConflictsError extends Error {
   constructor(readonly count: number | null) {

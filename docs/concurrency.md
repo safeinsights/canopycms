@@ -310,13 +310,14 @@ branch + contentId, the same key as its drafts, and `saveEntry` refuses a save i
 token for (api/content.ts, editor/hooks/useEntryManager.ts).
 
 **Who takes it:** everything that mutates a branch working tree a rebase could revert —
-`ContentStore` `write`/`delete`/`renameEntry`/`restore`; the admin repair-content-duplicates action;
+`ContentStore` `write`/`delete`/`renameEntry`/`restore`/`replaceRaw`; the admin repair-content-duplicates action;
 schema mutations (`SchemaOps`, and CLI migrate in a branch clone, via `withBranchSchemaLock`);
 `submitBranch` from checkout through push, since a commit made while the rebase is stopped
 on a conflict lands on the branch and its `--abort` resets the branch past it; `commitFiles`;
 CLI sync's content
 replace, merge and merge abort; and, try-only, the worker's rebase, base-branch refresh,
-sparse-cone re-apply and GitHub-commit step.
+sparse-cone re-apply and GitHub-commit step. Approve and resolve-entry's `keep` take it too, to
+see no half-recorded merge; resolves clear conflicts under it.
 Outside it by design: the asset store, which lives outside every clone (assets/factory.ts); provisioning, already exclusive with the rebase; and the settings
 workspace, which no rebase touches.
 
@@ -333,7 +334,6 @@ One global order; nothing holding a lock takes one to its left:
 
 **provisioning → content-write → schema surrogate (`withLock`, then its lockfile) →
 `withLock` content-ID keys and per-file metadata lockfiles (`branch.json`, comments, merge conflicts).**
-A resolve clears merge conflicts inside the resolving write's locks.
 
 The worker takes the first two try-only, so it never waits on a writer; writers take the
 content-write lock with a bounded wait and never take provisioning inside it. None is

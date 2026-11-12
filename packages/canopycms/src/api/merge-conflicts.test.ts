@@ -3,8 +3,10 @@
  * the real path-ACL layer. Plan rows (the field-merge plan's Verification matrix, API layer):
  * 4 scalar, 5 nested, 7/8 removed on one side, 13 item path, 14 item removed vs edited, 21 block,
  * 31 entry deleted vs edited, 33 unreadable, 43 each resolution choice, 44 save without resolving /
- * stale key / version mismatch, 46 a path the user can't read. Rows 23/24/28/30 are named by key
- * and kind here like any field; their values are the engine's (merge/entry-merge.test.ts).
+ * stale key / version mismatch, 46 a path the user can't read. Rows 23 (a body), 28 (a key the
+ * migration removed) and 30 (the location pseudo-key) are named by key and kind here like any
+ * field; their values are the engine's (merge/entry-merge.test.ts). Row 45 is in
+ * merge-conflict-gates.test.ts.
  */
 import fs from 'node:fs/promises'
 import os from 'node:os'
@@ -348,6 +350,61 @@ describe('GET /:branch/conflicts', () => {
         path: files.notes,
         logicalPath: 'content/blog',
         kind: 'unreadable',
+      }),
+    ])
+  })
+
+  it('hides an entry moved out of a place the user may not read, whose versions came from there', async () => {
+    await recordAs({
+      [ID.hello]: { ...helloRecord(), path: `content/${PRIVATE}/post.hello.${ID.hello}.json` },
+    })
+    const ctx = createCtx({ rules: insidersOnly })
+    expect((await list(ctx)).data).toMatchObject({ conflicts: [], hiddenCount: 1 })
+    expect((await entryConflict(ctx, 'blog/hello')).status).toBe(404)
+    expect((await list(createCtx())).data?.conflicts).toEqual([
+      expect.objectContaining({ logicalPath: 'content/blog/hello' }),
+    ])
+  })
+
+  it('judges a conflict where it is now only, once the schema no longer places where it was', async () => {
+    // As after the branch renamed the collection: the recorded directory is named by its shape.
+    await recordAs({
+      [ID.hello]: {
+        ...helloRecord(),
+        path: `content/stories.${BLOG.split('.')[1]}/post.hello.${ID.hello}.json`,
+      },
+    })
+    const storiesClosed: PathPermission[] = [
+      { path: unsafeAsPermissionPath('content/stories/**'), read: { allowedGroups: ['insiders'] } },
+    ]
+    const ctx = createCtx({ rules: storiesClosed })
+    expect((await list(ctx)).data?.conflicts).toEqual([
+      expect.objectContaining({ logicalPath: 'content/blog/hello' }),
+    ])
+    expect((await entryConflict(ctx, 'blog/hello')).status).toBe(200)
+  })
+
+  it('scans nothing when no conflict is open', async () => {
+    await recordAs({})
+    const scan = vi.spyOn(ContentStore.prototype, 'idIndex')
+    expect((await list(createCtx())).data?.openCount).toBe(0)
+    expect(scan).not.toHaveBeenCalled()
+  })
+
+  it('names a collection’s settings where the collection is now, by its id', async () => {
+    const collectionId = BLOG.split('.')[1]
+    await recordAs({
+      [collectionId]: {
+        path: `content/stories.${collectionId}/.collection.json`,
+        mergeSha: MERGE,
+        kind: 'unreadable',
+        sides: {},
+      },
+    })
+    expect((await list(createCtx())).data?.conflicts).toEqual([
+      expect.objectContaining({
+        path: `content/${BLOG}/.collection.json`,
+        logicalPath: 'content/blog',
       }),
     ])
   })
@@ -756,7 +813,7 @@ describe('POST /:branch/resolve-entry/...entryPath', () => {
       mergeSha: MERGE,
       choice: 'delete',
     })
-    expect(res).toMatchObject({ ok: false, status: 409, code: 'CONFLICT_CHANGED' })
+    expect(res).toMatchObject({ ok: false, status: 409, code: 'ENTRY_GONE' })
     await expect(fs.stat(path.join(branchRoot, other))).resolves.toBeTruthy()
     expect(Object.keys(await recorded())).toEqual([ID.old])
   })
@@ -797,6 +854,47 @@ describe('POST /:branch/resolve-entry/...entryPath', () => {
     })
     expect(res).toMatchObject({ ok: false, status: 400 })
     expect(Object.keys(await recorded())).toEqual([ID.hello])
+  })
+
+  it('refuses the latest version from another collection, whose type shares the name', async () => {
+    const moved = `content/${PRIVATE}/post.hello.${ID.hello}.json`
+    const { merge, blobs } = await mergeTaking({ [moved]: json({ title: 'Moved' }) }, [files.hello])
+    await recordAs({
+      [ID.hello]: {
+        path: files.hello,
+        mergeSha: merge,
+        kind: 'unreadable',
+        sides: { base: blobs[moved], branch: helloSides.branch },
+      },
+    })
+    const res = await resolveEntry(createCtx(), 'blog/hello', {
+      id: ID.hello,
+      mergeSha: merge,
+      choice: 'use-latest',
+    })
+    expect(res).toMatchObject({ ok: false, status: 409 })
+    expect(Object.keys(await recorded())).toEqual([ID.hello])
+  })
+
+  it('lets only admins resolve a conflict in a collection’s settings, as only they edit them', async () => {
+    const collectionId = BLOG.split('.')[1]
+    await recordAs({
+      [collectionId]: {
+        path: `content/${BLOG}/.collection.json`,
+        mergeSha: MERGE,
+        kind: 'unreadable',
+        sides: {},
+      },
+    })
+    const body = { id: collectionId, mergeSha: MERGE, choice: 'keep' as const }
+    expect(await resolveEntry(createCtx(), 'content/blog', body)).toMatchObject({ status: 403 })
+    const res = await MERGE_CONFLICT_ROUTES.resolveEntry.handler(
+      createCtx(),
+      { user: adminUser },
+      { branch, entryPath: unsafeAsLogicalPath('content/blog') },
+      { ...body, id: unsafeAsContentId(collectionId) },
+    )
+    expect(res).toMatchObject({ ok: true, status: 200 })
   })
 
   it('lets an admin keep a conflict on a file that is neither entry nor settings, and no one else', async () => {

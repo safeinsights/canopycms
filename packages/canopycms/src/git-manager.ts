@@ -2070,9 +2070,9 @@ export class GitManager {
    */
   async readBlob(sha: string, maxBytes: number): Promise<string | 'too-large' | undefined> {
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(sha)) return undefined
-    let size: number
+    let sizeText: string
     try {
-      size = Number((await this.git.raw(['cat-file', '-s', '--end-of-options', sha])).trim())
+      sizeText = (await this.git.raw(['cat-file', '-s', '--end-of-options', sha])).trim()
     } catch (err) {
       // LC_ALL=C (gitChildEnv), so git's own wording is stable to match.
       if (/could not get object info|Not a valid object name/.test(getErrorMessage(err))) {
@@ -2080,9 +2080,14 @@ export class GitManager {
       }
       throw err
     }
-    if (!Number.isFinite(size)) return undefined
+    // simple-git resolves "" when git exits non-zero without writing to stderr, so anything but
+    // digits is a failed read rather than an empty blob.
+    if (!/^\d+$/.test(sizeText)) throw new Error(`git cat-file -s ${sha} printed no size`)
+    const size = Number(sizeText)
     if (size > maxBytes) return 'too-large'
-    return this.git.raw(['cat-file', 'blob', '--end-of-options', sha])
+    const text = await this.git.raw(['cat-file', 'blob', '--end-of-options', sha])
+    if (size > 0 && text === '') throw new Error(`git cat-file blob ${sha} printed nothing`)
+    return text
   }
 
   async ensureAuthor(author: { name: string; email: string }): Promise<void> {
