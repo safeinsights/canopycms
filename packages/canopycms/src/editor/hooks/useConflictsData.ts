@@ -47,7 +47,7 @@ export function useBranchConflictsData(
   apiClient: Pick<ApiClient, 'conflicts'>,
   branch: string,
   conflictFiles: readonly string[] | undefined,
-  /** Read even with no entry named, as an admin does to learn of a hold on the branch. */
+  /** Read even with no entry named, as the editor does to learn of a hold on the branch. */
   always = false,
 ): ConflictsState<MergeConflictsData> {
   const key = branch && (always || conflictFiles?.length) ? listKey(branch) : null

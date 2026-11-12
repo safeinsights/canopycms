@@ -225,9 +225,10 @@ const fileSchema = z
   .strict()
 
 /**
- * merge-conflicts.json names another format than this module reads, `found`. It is left as it is, unlike a file that doesn't parse: moving it aside would open
- * the gate on conflicts nobody chose. The worker's next merge refuses it too, so the branch shows
- * as failing to take its base in until the file is dealt with.
+ * merge-conflicts.json names another format than this module reads, `found`. It is left as it is,
+ * unlike a file that doesn't parse: a worker of that format reads it, and its choices would be lost
+ * if it were set aside. The worker's next merge refuses it too, so the branch shows as failing to
+ * take its base in until the file is dealt with.
  */
 export class MergeConflictsFileFormatError extends Error {
   constructor(readonly found: number) {
@@ -416,9 +417,10 @@ export function conflictFilesOf(entries: Readonly<Record<string, MergeConflictEn
 }
 
 /**
- * A submit or approval refused while the branch has conflicts open, `count` of them, or with a
- * record that can't be read (`count` null): one that doesn't parse, which the worker's next cycle
- * sets aside, or one of a later format, which waits for this code to be updated.
+ * A submit or approval refused while the branch has conflicts open, `count` of them, or with none
+ * it can count (`count` null): a record that doesn't parse, which the worker's next cycle sets aside
+ * and holds; one held after that (`held`); or one of another format, left until a developer deals
+ * with it.
  */
 export class OpenMergeConflictsError extends Error {
   constructor(

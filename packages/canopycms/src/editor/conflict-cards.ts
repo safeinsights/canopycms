@@ -92,7 +92,8 @@ export interface FieldConflict {
    * The latest version was read and holds every list item on the place's path, other than the item
    * a removal on its side took out, so its value there can be found and placed. It is keyed as the
    * merge named the place along the base's own path ({@link alignedTo}), so this fails only where
-   * the record gives no such path, or one that runs another way.
+   * the record gives no such path, one that runs another way, or one whose merged key another of
+   * its items holds.
    */
   latestPlaceable: boolean
   /**
