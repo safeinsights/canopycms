@@ -677,16 +677,20 @@ generate a private key from the App's "Private keys" section.
 
 #### The permissions, and why each one
 
-| Permission                  | Why                                                                                         |
-| --------------------------- | ------------------------------------------------------------------------------------------- |
-| Contents: read & write      | cloning, fetching and pushing content branches over HTTPS, and deleting a remote branch ref |
-| Pull requests: read & write | opening and updating the pull request that carries an edit, and the draft/ready transitions |
-| Metadata: read              | granted automatically alongside any repository permission                                   |
+| Permission                    | Why                                                                                         |
+| ----------------------------- | ------------------------------------------------------------------------------------------- |
+| Contents: read & write        | cloning, fetching and pushing content branches over HTTPS, and deleting a remote branch ref |
+| Pull requests: read & write   | opening and updating the pull request that carries an edit, and the draft/ready transitions |
+| Commit statuses: read & write | the `CanopyCMS conflicts` status on each pull request's head                                |
+| Metadata: read                | granted automatically alongside any repository permission                                   |
+
+An existing App gains a permission only once an owner of its account accepts the
+request on the installation; `init-github-app verify` reports it missing until then.
 
 **Nothing else.** Not Issues, not Workflows, not Administration, and no
 organisation permissions. That set is not advice — it is derived from every
 GitHub call the worker makes, declared as `CANOPY_APP_PERMISSIONS` in
-`packages/canopycms/src/cli/init-github-app.ts` with the call site that forces
+`packages/canopycms/src/cli/github-app-manifest.ts` with the call site that forces
 each entry, and held there by a test that drives the worker's dispatch table and
 fails if a call is added that the set does not cover.
 

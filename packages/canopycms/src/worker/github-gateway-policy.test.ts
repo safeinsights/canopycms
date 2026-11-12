@@ -61,7 +61,10 @@ const tip = async (ref: string) =>
 /** The Octokit calls the policy's operations make, each a spy. */
 function octokitStub() {
   return {
-    repos: { get: vi.fn().mockResolvedValue({ data: { default_branch: 'main' } }) },
+    repos: {
+      get: vi.fn().mockResolvedValue({ data: { default_branch: 'main' } }),
+      createCommitStatus: vi.fn().mockResolvedValue({ data: {} }),
+    },
     git: { deleteRef: vi.fn().mockResolvedValue({ data: {} }) },
     pulls: {
       create: vi.fn().mockResolvedValue({ data: { number: 1, html_url: 'https://x.test/1' } }),
@@ -591,6 +594,79 @@ describe('pull requests by number', () => {
       expect(caught).toMatchObject({ status: 502 })
     }
     expect(octokit.pulls.update).not.toHaveBeenCalled()
+  })
+})
+
+describe('the conflicts status on a pull request head', () => {
+  const HEAD = 'c'.repeat(40)
+  const withHead = (answer: ReturnType<typeof pullRequestHead>, sha = HEAD) => ({
+    ...answer,
+    head: { ...answer.head, sha },
+  })
+  const status = {
+    pullRequest: 2,
+    sha: HEAD,
+    state: 'failure',
+    description: '2 conflicting changes to resolve in the editor',
+    targetUrl: 'https://cms.example.org/edit?branch=x',
+  } as const
+
+  it('sets it under the one context the gateway names, on the head GitHub holds', async () => {
+    const octokit = octokitStub()
+    octokit.pulls.get.mockResolvedValue({
+      data: withHead(pullRequestHead('canopycms/prod/feature')),
+    })
+    await gateway({ octokit: octokit as unknown as Octokit }).setConflictsStatus(status)
+
+    expect(octokit.repos.createCommitStatus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        owner: 'test-owner',
+        repo: 'test-repo',
+        sha: HEAD,
+        state: 'failure',
+        context: 'CanopyCMS conflicts',
+        description: status.description,
+        target_url: status.targetUrl,
+      }),
+    )
+  })
+
+  it('refuses a commit that is not the head, and a pull request it would not update', async () => {
+    for (const [answer, reason] of [
+      [withHead(pullRequestHead('canopycms/prod/feature'), 'd'.repeat(40)), 'not-head'],
+      [withHead(pullRequestHead('developer-branch')), 'outside-namespace'],
+      [withHead(pullRequestHead('main')), 'protected'],
+      [withHead(pullRequestHead('canopycms/prod/feature', 2002)), 'outside-namespace'],
+    ] as const) {
+      const octokit = octokitStub()
+      octokit.pulls.get.mockResolvedValue({ data: answer })
+      const caught = await gateway({ octokit: octokit as unknown as Octokit })
+        .setConflictsStatus(status)
+        .catch((err: unknown) => err)
+      expect(caught).toBeInstanceOf(GatewayRefusalError)
+      expect(caught).toMatchObject({ reason })
+      expect(octokit.repos.createCommitStatus).not.toHaveBeenCalled()
+    }
+  })
+
+  it("refuses a description over GitHub's limit or with a control character, and a link that is not plain http(s)", async () => {
+    for (const [change, reason] of [
+      [{ description: 'x'.repeat(141) }, 'too-long'],
+      [{ description: 'two\nlines' }, 'invalid'],
+      [{ targetUrl: 'javascript:alert(1)' }, 'invalid'],
+      [{ targetUrl: 'https://user:pw@cms.example.org/' }, 'invalid'],
+      [{ targetUrl: `https://cms.example.org/${'x'.repeat(2048)}` }, 'invalid'],
+    ] as const) {
+      const octokit = octokitStub()
+      octokit.pulls.get.mockResolvedValue({
+        data: withHead(pullRequestHead('canopycms/prod/feature')),
+      })
+      const caught = await gateway({ octokit: octokit as unknown as Octokit })
+        .setConflictsStatus({ ...status, ...change })
+        .catch((err: unknown) => err)
+      expect(caught).toMatchObject({ operation: 'commit-status', reason })
+      expect(octokit.repos.createCommitStatus).not.toHaveBeenCalled()
+    }
   })
 })
 

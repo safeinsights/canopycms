@@ -118,6 +118,11 @@ export interface WorkerContext {
    */
   warnedDivergences(): Map<string, string>
   /**
+   * The conflicts status this worker last set on each branch's pull request head, by branch name
+   * (worker/conflicts-status.ts). Held per instance, so a restarted worker sets each once again.
+   */
+  conflictsStatusesSet(): Map<string, string>
+  /**
    * Run the git sync early, coalesced: once it has rested `EARLY_RUN_MIN_REST_MS` (cms-worker.ts),
    * or its own interval if shorter, counting from when the last cycle ended, so a request during a
    * cycle waits that long after it. `branchRef`, when given, is synced ahead of the rest. In memory only: a restart loses

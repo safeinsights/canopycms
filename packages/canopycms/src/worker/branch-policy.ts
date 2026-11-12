@@ -32,7 +32,7 @@ export const MAX_PULL_REQUEST_TITLE_LENGTH = 1024
  */
 export const MAX_PULL_REQUEST_BODY_LENGTH = 65_536
 
-export type GatewayOperation = 'push' | 'delete' | 'pull-request'
+export type GatewayOperation = 'push' | 'delete' | 'pull-request' | 'commit-status'
 
 export type RefusalReason =
   | 'invalid'
@@ -42,6 +42,7 @@ export type RefusalReason =
   | 'outside-namespace'
   | 'not-a-commit'
   | 'too-long'
+  | 'not-head'
 
 /** The refusals {@link BranchPolicy.assertPushAllowed} makes. */
 export type PushPolicyRefusal = 'protected' | 'settings' | 'other-settings' | 'outside-namespace'
@@ -611,6 +612,62 @@ export function assertPullRequestText(
   if (over !== null) {
     throw new GatewayRefusalError('pull-request', branch, 'too-long', `${refusing}: ${over}`)
   }
+}
+
+/**
+ * The longest commit status description the gateway sends: GitHub's own limit.
+ * @internal Exported for tests.
+ */
+export const MAX_COMMIT_STATUS_DESCRIPTION_LENGTH = 140
+
+/** The longest commit status target URL the gateway sends, as the editor URL is capped. */
+const MAX_COMMIT_STATUS_URL_LENGTH = 2048
+
+/**
+ * Refuse a commit status description over GitHub's cap or holding a control character, and a target
+ * URL that is not plain http(s) or carries credentials. `branch` names the pull request's head.
+ */
+export function assertCommitStatusText(
+  refusing: string,
+  branch: string,
+  text: { description: string; targetUrl?: string },
+): void {
+  if (text.description.length > MAX_COMMIT_STATUS_DESCRIPTION_LENGTH) {
+    throw new GatewayRefusalError(
+      'commit-status',
+      branch,
+      'too-long',
+      `${refusing}: its description is longer than ${MAX_COMMIT_STATUS_DESCRIPTION_LENGTH} characters`,
+    )
+  }
+  // eslint-disable-next-line no-control-regex -- the control characters are what it refuses
+  if (/[\u0000-\u001f\u007f]/.test(text.description)) {
+    throw new GatewayRefusalError(
+      'commit-status',
+      branch,
+      'invalid',
+      `${refusing}: its description holds a control character`,
+    )
+  }
+  if (text.targetUrl !== undefined && !isPlainWebUrl(text.targetUrl)) {
+    throw new GatewayRefusalError(
+      'commit-status',
+      branch,
+      'invalid',
+      `${refusing}: its target URL is not a plain http(s) URL of at most ${MAX_COMMIT_STATUS_URL_LENGTH} characters`,
+    )
+  }
+}
+
+function isPlainWebUrl(raw: string): boolean {
+  if (raw.length > MAX_COMMIT_STATUS_URL_LENGTH) return false
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    return false
+  }
+  return (url.protocol === 'https:' || url.protocol === 'http:') && !url.username && !url.password
 }
 
 /** Equal, or naming the same workspace directory. */

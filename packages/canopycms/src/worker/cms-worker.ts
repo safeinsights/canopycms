@@ -531,6 +531,7 @@ export class CmsWorker {
   // the lazy-init fallback.
   private statusReport?: WorkerStatusReport
   private warnedDivergences = new Map<string, string>()
+  private conflictsStatusesSet = new Map<string, string>()
   // Branches asked for since the git sync last took them (requestBranchSync), by directory name.
   private branchSyncRequests = new Set<string>()
   // Set by any request; cleared by the next cycle, which takes it.
@@ -667,6 +668,7 @@ export class CmsWorker {
       ensureStatusReport: () => this.ensureStatusReport(),
       ensureSettingsBranch: () => this.ensureSettingsBranch(),
       warnedDivergences: () => this.warnedDivergences,
+      conflictsStatusesSet: () => this.conflictsStatusesSet,
       requestBranchSync: (branchRef) => this.requestBranchSync(branchRef),
       takeBranchSyncRequests: () => this.takeBranchSyncRequests(),
       afterConflictDetectedForTesting: () => this.afterConflictDetectedForTesting(),

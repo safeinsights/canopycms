@@ -66,6 +66,7 @@ import type {
 import { escapeForLog } from '../../utils/escape-text'
 import { TooltipDetail } from '../components/TooltipDetail'
 import { DISMISS_UNPUBLISHED_ATTRIBUTE, UnpublishedAtMergeAlert } from './UnpublishedAtMergeAlert'
+import { ConflictsStatusAlert } from './ConflictsStatusAlert'
 import {
   HOLD_BADGE,
   branchHoldMessage,
@@ -730,6 +731,10 @@ function OverviewTab({
           report={status.workerStatus.unpublishableBranches}
           namespace={status.workerStatus.gatewayBranchNamespace}
         />
+      )}
+
+      {status.workerStatus?.conflictsStatusFailure && (
+        <ConflictsStatusAlert failure={status.workerStatus.conflictsStatusFailure} />
       )}
 
       {status.workerStatus?.lastGitSyncError && (

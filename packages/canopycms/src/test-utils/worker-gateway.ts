@@ -239,6 +239,9 @@ class ServedGateway implements GitHubGateway {
   async convertPullRequestToDraft(...args: Parameters<GitHubGateway['convertPullRequestToDraft']>) {
     return (await this.client).convertPullRequestToDraft(...args)
   }
+  async setConflictsStatus(...args: Parameters<GitHubGateway['setConflictsStatus']>) {
+    return (await this.client).setConflictsStatus(...args)
+  }
   async deleteBranch(...args: Parameters<GitHubGateway['deleteBranch']>) {
     return (await this.client).deleteBranch(...args)
   }

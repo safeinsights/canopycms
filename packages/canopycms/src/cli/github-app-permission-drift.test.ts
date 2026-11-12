@@ -47,7 +47,15 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest'
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import type { Octokit } from '@octokit/rest'
@@ -56,6 +64,8 @@ import { executeTask } from '../worker/task-runner'
 import type { TaskRunnerContext } from '../worker/task-runner'
 import { createOrUpdatePullRequest, GitHubService } from '../github-service'
 import { pollMergeState } from '../worker/rebase'
+import { setConflictsStatuses, type ConflictsStatusContext } from '../worker/conflicts-status'
+import { sanitizeBranchName } from '../paths/branch-name'
 import type { RebaseContext } from '../worker/rebase'
 import { resolveWorkerGitHubAuth } from '../worker/github-auth'
 import { createLocalGitHubGateway, type GitHubGateway } from '../worker/github-gateway'
@@ -81,6 +91,8 @@ const OPERATION_PERMISSIONS: Readonly<Record<string, keyof typeof CANOPY_APP_PER
   // GET /repos/{o}/{r} is Metadata/read: the gateway's branch policy reads the default branch
   // before a deletion or a pull request.
   'repos.get': 'metadata',
+  // POST /repos/{o}/{r}/statuses/{sha} is Commit statuses/write.
+  'repos.createCommitStatus': 'statuses',
   // The GraphQL mutations, keyed BY MUTATION rather than collapsed to
   // `graphql`. Collapsing them was a hole: every `octokit.graphql(...)` recorded
   // the same key, so a new mutation needing a different permission entirely —
@@ -235,7 +247,7 @@ function task(action: TaskAction): Task {
  * make each contribution provable on its own.
  */
 type Coverage = Record<
-  'tasks' | 'createOrUpdate' | 'service' | 'mergePoll' | 'drivenServiceMethods',
+  'tasks' | 'createOrUpdate' | 'service' | 'mergePoll' | 'conflictsStatus' | 'drivenServiceMethods',
   string[]
 >
 
@@ -356,11 +368,50 @@ async function observeEverything(): Promise<Coverage> {
     branch: { pullRequestNumber: 7 },
   } as unknown as Parameters<typeof pollMergeState>[3])
 
+  // 5. The git sync's conflicts status on a pull request's head, for one branch with a PR.
+  const conflictsStatus = new Set<string>()
+  const branches = join(stateRoot, 'content-branches')
+  const branchRoot = join(branches, 'canopycms-prod-content-a')
+  mkdirSync(join(branchRoot, '.canopy-meta'), { recursive: true })
+  writeFileSync(
+    join(branchRoot, '.canopy-meta', 'branch.json'),
+    JSON.stringify({
+      branch: {
+        name: 'canopycms/prod/content/a',
+        status: 'submitted',
+        access: {},
+        pullRequestNumber: 7,
+      },
+    }),
+  )
+  const statusGitHub = gatewayWith(
+    recordingOctokit(conflictsStatus, {
+      'pulls.get': {
+        data: {
+          head: { ref: 'canopycms/prod/content/a', sha: 'c'.repeat(40), repo: { id: 1 } },
+          base: { ref: 'main', repo: { id: 1 } },
+        },
+      },
+      'repos.get': { data: { default_branch: 'main' } },
+    }),
+  )
+  await setConflictsStatuses(
+    {
+      contentBranchesPath: branches,
+      sanitizedBaseBranch: sanitizeBranchName('main'),
+      github: () => statusGitHub,
+      conflictsStatusesSet: () => new Map(),
+      shutdownSignal: () => signal,
+    } satisfies ConflictsStatusContext,
+    new Map([['canopycms/prod/content/a', 'c'.repeat(40)]]),
+  )
+
   return {
     tasks: [...tasks].sort(),
     createOrUpdate: [...createOrUpdate].sort(),
     service: [...service].sort(),
     mergePoll: [...mergePoll].sort(),
+    conflictsStatus: [...conflictsStatus].sort(),
     drivenServiceMethods: drivenServiceMethods.sort(),
   }
 }
@@ -419,6 +470,7 @@ describe('the declared App permissions cover every GitHub call this package make
       'pulls.update',
     ])
     expect(coverage.mergePoll).toEqual(['pulls.get'])
+    expect(coverage.conflictsStatus).toEqual(['pulls.get', 'repos.createCommitStatus', 'repos.get'])
   })
 
   it('drives every method GitHubService has, not a list someone maintains', async () => {

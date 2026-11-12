@@ -265,6 +265,65 @@ describe('CmsWorker.syncGit() non-destructive GitHub reconcile', () => {
   }
   let gateway: GitHubGateway
 
+  describe('the conflicts status on pull request heads', () => {
+    /** A submitted branch with pull request 7, on GitHub at a fresh commit. */
+    const givePullRequest = async () => {
+      const head = await commitOnto(tmpDir, githubPath, 'canopycms/prod/spring', {
+        'spring.md': 'spring\n',
+      })
+      const branchPath = path.join(workspacePath, 'content-branches', 'canopycms-prod-spring')
+      await fs.mkdir(path.join(branchPath, '.git'), { recursive: true })
+      await getBranchMetadataFileManager(branchPath, path.dirname(branchPath)).save({
+        branch: { name: 'canopycms/prod/spring', status: 'submitted', pullRequestNumber: 7 },
+      })
+      return head
+    }
+    const openPullRequest = () =>
+      vi.spyOn(gateway, 'getPullRequest').mockResolvedValue({
+        merged: false,
+        merged_at: null,
+        state: 'open',
+        node_id: 'PR_7',
+        body: '',
+      })
+
+    it("sets it on GitHub's head, and a refused write neither fails the sync nor goes unreported", async () => {
+      const head = await givePullRequest()
+      const worker = makeWorker()
+      openPullRequest()
+      const setStatus = vi
+        .spyOn(gateway, 'setConflictsStatus')
+        .mockRejectedValue(
+          Object.assign(new Error('Resource not accessible by integration'), { status: 403 }),
+        )
+
+      await worker.syncGit()
+
+      expect(setStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ pullRequest: 7, sha: head, state: 'success' }),
+        expect.any(AbortSignal),
+      )
+      const status = await readStatus()
+      expect(status.lastGitSyncError).toBeUndefined()
+      expect(status.lastGitSyncAt).toBeDefined()
+      expect(status.conflictsStatusFailure).toMatchObject({
+        reason: 'permission',
+        branches: ['canopycms/prod/spring'],
+        count: 1,
+      })
+
+      // Accepted on the App: the next sync sets it and the report clears.
+      setStatus.mockResolvedValue(undefined)
+      await worker.syncGit()
+      expect(setStatus).toHaveBeenCalledTimes(2)
+      expect((await readStatus()).conflictsStatusFailure).toBeUndefined()
+
+      // Set once: an unchanged head is left alone.
+      await worker.syncGit()
+      expect(setStatus).toHaveBeenCalledTimes(2)
+    })
+  })
+
   describe('the gateway branch namespace in the status report', () => {
     beforeEach(() => {
       // The worker resolves its namespace from these first.

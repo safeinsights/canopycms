@@ -13,7 +13,7 @@ export type PermissionSet = Readonly<Record<string, PermissionLevel>>
  * The App's entire security surface. Every entry names the call site that
  * forces it — a permission justified only in a commit message can't be
  * re-checked. Enumerated from `github-service.ts`,
- * `worker/{task-runner,rebase}.ts`, and every git call reaching github.com;
+ * `worker/{task-runner,rebase,conflicts-status}.ts`, and every git call reaching github.com;
  * `canopycms-cdk` makes no REST calls at all.
  * - `contents: write` — git over HTTPS (first-boot clone, per-cycle branch
  *   fetch, pushes) and `octokit.git.deleteRef`. GitHub's reference puts ref
@@ -23,6 +23,9 @@ export type PermissionSet = Readonly<Record<string, PermissionLevel>>
  * - `pull_requests: write` — `pulls.create`/`pulls.update`, and the GraphQL
  *   mutations `markPullRequestReadyForReview`/`convertPullRequestToDraft`,
  *   derived by analogy since GitHub's reference has no line for them.
+ * - `statuses: write` — `repos.createCommitStatus`: the "CanopyCMS conflicts"
+ *   status the git sync sets on each pull request's head
+ *   (worker/conflicts-status.ts).
  * - `metadata: read` — implied by any repository permission; declared so
  *   this object states the whole surface, not just the non-automatic part.
  * Nothing else: no `issues`, `administration`, `actions`, or organisation
@@ -34,6 +37,7 @@ export type PermissionSet = Readonly<Record<string, PermissionLevel>>
 export const CANOPY_APP_PERMISSIONS: PermissionSet = {
   contents: 'write',
   pull_requests: 'write',
+  statuses: 'write',
   metadata: 'read',
 }
 

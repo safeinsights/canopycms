@@ -1,0 +1,212 @@
+/**
+ * The "CanopyCMS conflicts" commit status (`CONFLICTS_STATUS_CONTEXT`) on each pull request's head:
+ * failure while the branch has conflicts open, success once none are, by the rule Submit and
+ * Approve refuse on (`assertNoOpenConflicts`), so an adopter who makes it a required check has
+ * GitHub refuse what the CMS refuses.
+ *
+ * Set once per git sync, after the rebase cycle, on the head that cycle's fetch read from GitHub:
+ * only what reached GitHub gets a status. A status is set again only when its head, state,
+ * description or link changes from what this worker last set. A failure is never cached, so the
+ * next cycle retries it; none fails the sync.
+ */
+import type { Dirent } from 'node:fs'
+import fs from 'node:fs/promises'
+import path from 'node:path'
+
+import { BranchMetadataFileManager } from '../branch-metadata'
+import { BranchMetadataCorruptError } from '../branch-metadata-file'
+import { editorDeepLink, resolveEditorUrl } from '../editor-url'
+import {
+  MergeConflictStore,
+  MergeConflictsFileFormatError,
+  MergeConflictsFileMalformedError,
+  openConflictCount,
+} from '../merge-conflicts'
+import type { ConflictsStatusFailure } from '../types'
+import { getErrorMessage, isNodeError, sanitizeErrorMessage } from '../utils/error'
+import { escapeForLog } from '../utils/escape-text'
+import { GatewayRefusalError } from './branch-policy'
+import { getHttpStatus, isPermissionDenial } from './github-errors'
+import type { GitHubConflictsStatus } from './github-gateway'
+import { workerLog, workerLogWarn } from './log'
+import type { WorkerContext } from './worker-context'
+
+export type ConflictsStatusContext = Pick<
+  WorkerContext,
+  | 'contentBranchesPath'
+  | 'sanitizedBaseBranch'
+  | 'github'
+  | 'conflictsStatusesSet'
+  | 'shutdownSignal'
+>
+
+/** The most branch names a failure report lists. */
+const MAX_REPORTED_BRANCHES = 50
+
+/** The state and description a branch's conflict record calls for. */
+type ConflictsStatusText = Pick<GitHubConflictsStatus, 'state' | 'description'>
+
+/**
+ * What `branchRoot`'s conflict record calls for: failure with the number of choices open, or while
+ * the record is held after a damaged one was set aside, or does not parse; success otherwise.
+ * @internal Exported for tests.
+ */
+export async function conflictsStatusOf(branchRoot: string): Promise<ConflictsStatusText> {
+  try {
+    const record = await new MergeConflictStore(branchRoot).read()
+    if (record?.held) {
+      return {
+        state: 'failure',
+        description: 'Conflict record set aside: an admin must release the branch in the editor',
+      }
+    }
+    const open = record ? openConflictCount(record.entries) : 0
+    if (open === 0) return { state: 'success', description: 'No conflicting changes to resolve' }
+    return {
+      state: 'failure',
+      description:
+        open === 1
+          ? '1 conflicting change to resolve in the editor'
+          : `${open} conflicting changes to resolve in the editor`,
+    }
+  } catch (err) {
+    if (
+      err instanceof MergeConflictsFileMalformedError ||
+      err instanceof MergeConflictsFileFormatError
+    ) {
+      return { state: 'failure', description: "Couldn't read this branch's conflicts" }
+    }
+    throw err
+  }
+}
+
+/** One branch's status: what to set, and the key it is remembered by. */
+interface DueStatus {
+  branch: string
+  status: GitHubConflictsStatus
+  key: string
+}
+
+/**
+ * Set the conflicts status on every pull request whose head, as `githubTips` (this cycle's GitHub
+ * fetch) holds it, lacks the one its branch calls for. Returns the failure to report, or undefined
+ * when every status was set. Never throws.
+ */
+export async function setConflictsStatuses(
+  ctx: ConflictsStatusContext,
+  githubTips: ReadonlyMap<string, string>,
+): Promise<ConflictsStatusFailure | undefined> {
+  let due: DueStatus[]
+  try {
+    due = await dueStatuses(ctx, githubTips)
+  } catch (err) {
+    workerLogWarn(
+      `Could not read the branches' conflicts for their status: ${getErrorMessage(err)}`,
+    )
+    return undefined
+  }
+  const set = ctx.conflictsStatusesSet()
+  const failed: string[] = []
+  let failure: Omit<ConflictsStatusFailure, 'branches' | 'count' | 'at'> | undefined
+  for (const [index, { branch, status, key }] of due.entries()) {
+    if (ctx.shutdownSignal().aborted) break
+    try {
+      await ctx.github().setConflictsStatus(status, ctx.shutdownSignal())
+      set.set(branch, key)
+      workerLog(
+        `Set the conflicts status of PR #${status.pullRequest} (${escapeForLog(branch)}) at ` +
+          `${status.sha.slice(0, 7)}: ${status.state}`,
+      )
+    } catch (err) {
+      const message = sanitizeErrorMessage(getErrorMessage(err))
+      if (err instanceof GatewayRefusalError) {
+        if (err.reason !== 'not-head') {
+          // Refused for the pull request itself, which no retry changes until the head does.
+          set.set(branch, key)
+          workerLogWarn(`Not setting the conflicts status of ${escapeForLog(branch)}: ${message}`)
+        }
+        // A head GitHub moved since this cycle's fetch gets its status next cycle.
+        continue
+      }
+      failed.push(branch)
+      workerLogWarn(`Could not set the conflicts status of ${escapeForLog(branch)}: ${message}`)
+      if (isPermissionDenial(err)) {
+        // The remedy the report names; GitHub answers every later write in the cycle the same way.
+        failure = { reason: 'permission', message }
+        failed.push(...due.slice(index + 1).map((d) => d.branch))
+        break
+      }
+      failure ??= { reason: isUnreachable(err) ? 'unreachable' : 'other', message }
+    }
+  }
+  if (!failure) return undefined
+  return {
+    ...failure,
+    branches: failed.slice(0, MAX_REPORTED_BRANCHES),
+    count: failed.length,
+    at: new Date().toISOString(),
+  }
+}
+
+/**
+ * A failure to reach GitHub or the gateway, or GitHub busy: no status at all, a timeout, a rate
+ * limit (a 403 that is not a permission denial), or a server error.
+ */
+function isUnreachable(err: unknown): boolean {
+  const status = getHttpStatus(err)
+  return status === null || status === 403 || status === 408 || status === 429 || status >= 500
+}
+
+/** Each branch with a pull request whose head lacks the status it calls for. */
+async function dueStatuses(
+  ctx: ConflictsStatusContext,
+  githubTips: ReadonlyMap<string, string>,
+): Promise<DueStatus[]> {
+  let entries: Dirent[]
+  try {
+    entries = await fs.readdir(ctx.contentBranchesPath, { withFileTypes: true })
+  } catch (err) {
+    if (isNodeError(err) && err.code === 'ENOENT') return []
+    throw err
+  }
+  const set = ctx.conflictsStatusesSet()
+  const due: DueStatus[] = []
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    const dir = entry.name
+    // The base branch has no pull request; `.trash-*` directories hold purged branches.
+    if (!entry.isDirectory() || dir.startsWith('.') || dir === ctx.sanitizedBaseBranch) continue
+    const branchRoot = path.join(ctx.contentBranchesPath, dir)
+    let meta: Awaited<ReturnType<typeof BranchMetadataFileManager.loadOnly>>
+    try {
+      meta = await BranchMetadataFileManager.loadOnly(branchRoot)
+    } catch (err) {
+      if (err instanceof BranchMetadataCorruptError || (isNodeError(err) && err.code === 'ENOENT'))
+        continue
+      throw err
+    }
+    const branch = meta?.branch
+    if (!branch || branch.status === 'archived' || branch.pullRequestNumber === undefined) continue
+    if (branch.pullRequestState === 'merged' || branch.pullRequestState === 'closed') continue
+    const sha = githubTips.get(branch.name)
+    if (sha === undefined) continue
+    let text: ConflictsStatusText
+    try {
+      text = await conflictsStatusOf(branchRoot)
+    } catch (err) {
+      workerLogWarn(
+        `Could not read the conflicts of ${escapeForLog(branch.name)}: ${getErrorMessage(err)}`,
+      )
+      continue
+    }
+    const editorUrl = branch.editorUrl && resolveEditorUrl({ configured: branch.editorUrl })
+    const status: GitHubConflictsStatus = {
+      pullRequest: branch.pullRequestNumber,
+      sha,
+      ...text,
+      ...(editorUrl && { targetUrl: editorDeepLink(editorUrl, branch.name) }),
+    }
+    const key = JSON.stringify(status)
+    if (set.get(branch.name) !== key) due.push({ branch: branch.name, status, key })
+  }
+  return due
+}

@@ -1035,6 +1035,77 @@ describe('SystemHealthPanel', () => {
     })
   })
 
+  describe('Overview tab: conflicts status not set', () => {
+    const statusWithFailure = (
+      failure: NonNullable<NonNullable<AdminStatusData['workerStatus']>['conflictsStatusFailure']>,
+    ): AdminStatusData => {
+      const status = makeStatusWithSync()
+      if (!status.workerStatus) throw new Error('expected a worker status')
+      status.workerStatus.conflictsStatusFailure = failure
+      return status
+    }
+    const at = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+
+    it('names the missing permission, who grants it, and the branches waiting', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(
+          statusWithFailure({
+            reason: 'permission',
+            message: 'Resource not accessible by integration',
+            branches: ['canopycms/prod/spring', 'canopycms<b>'],
+            count: 5,
+            at,
+          }),
+        ),
+      )
+
+      renderPanel()
+
+      const alert = await screen.findByTestId('conflicts-status-alert')
+      expect(alert.textContent).toContain('Conflicts status not set on GitHub')
+      expect(alert.textContent).toContain('"CanopyCMS conflicts" check')
+      expect(alert.textContent).toContain('lacks the "Commit statuses" permission')
+      expect(alert.textContent).toContain('canopycms init-github-app verify')
+      expect(alert.textContent).toContain('Resource not accessible by integration')
+      expect(alert.textContent).toContain('canopycms/prod/spring')
+      expect(alert.querySelector('b')).toBeNull()
+      expect(alert.textContent).toContain('And 3 more.')
+      expect(alert.textContent).toContain('Last tried 2h ago')
+    })
+
+    it('says the next sync retries when GitHub could not be reached', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(
+        mockSuccess(
+          statusWithFailure({
+            reason: 'unreachable',
+            message: 'connect ETIMEDOUT',
+            branches: ['canopycms/prod/spring'],
+            count: 1,
+            at,
+          }),
+        ),
+      )
+
+      renderPanel()
+
+      const alert = await screen.findByTestId('conflicts-status-alert')
+      expect(alert.textContent).toContain(
+        "GitHub couldn't be reached. The next git sync tries again.",
+      )
+      expect(alert.textContent).not.toContain('Commit statuses')
+      expect(alert.textContent).not.toContain('more.')
+    })
+
+    it('shows nothing while every status is set', async () => {
+      mockClient.admin.status.mockResolvedValueOnce(mockSuccess(makeStatusWithSync()))
+
+      renderPanel()
+
+      await screen.findByText('Build')
+      expect(screen.queryByTestId('conflicts-status-alert')).toBeNull()
+    })
+  })
+
   describe('Overview tab: base branch refresh', () => {
     it('shows a skipped base refresh, its dirty files, and the tracked-state fix', async () => {
       mockClient.admin.status.mockResolvedValueOnce(

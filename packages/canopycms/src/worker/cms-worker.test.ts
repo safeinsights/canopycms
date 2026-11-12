@@ -2039,6 +2039,23 @@ describe('CmsWorker.pushBranchToGitHub() [push-rejection classification]', () =>
     })
   })
 
+  it("wakes the branch's sync after a push that moved its GitHub head, for its conflicts status", async () => {
+    const branch = 'canopycms/prod/feature-status'
+    await seedBranchInRemoteGit(branch, 'hello')
+    const worker = makePushWorker()
+    const internals = worker as unknown as PushBranchInternals & {
+      requestBranchSync(branchRef?: string): void
+    }
+    const wake = vi.spyOn(internals, 'requestBranchSync')
+
+    await internals.pushBranchToGitHub(branch)
+    expect(wake).toHaveBeenCalledExactlyOnceWith(branch)
+
+    // GitHub already held it: no new head, nothing to set.
+    await internals.pushBranchToGitHub(branch)
+    expect(wake).toHaveBeenCalledTimes(1)
+  })
+
   it('pushes nothing for a branch rewritten on GitHub, which would restore what was removed', async () => {
     const branch = 'canopycms/prod/feature-rewritten'
     const dir = path.join(contentBranchesPath, 'canopycms-prod-feature-rewritten')

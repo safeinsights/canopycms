@@ -26,6 +26,7 @@ import {
 import {
   BranchPolicy,
   GatewayRefusalError,
+  assertCommitStatusText,
   assertPullRequestText,
   type BranchPolicyDescription,
 } from './branch-policy'
@@ -182,6 +183,23 @@ export type GitHubPullRequest = Pick<
   headSha?: string
 }
 
+/**
+ * The context of the commit status the worker sets on a pull request's head. Fixed by the gateway,
+ * so a worker can set no other; adopters name it when they make it a required check.
+ */
+const CONFLICTS_STATUS_CONTEXT = 'CanopyCMS conflicts'
+
+/** A "CanopyCMS conflicts" status for the head of pull request `pullRequest`. */
+export interface GitHubConflictsStatus {
+  pullRequest: number
+  /** The pull request's head commit; the gateway refuses any other. */
+  sha: string
+  state: 'success' | 'failure'
+  description: string
+  /** The editor, opened on the branch. */
+  targetUrl?: string
+}
+
 export type GitHubCreateOrUpdatePullRequest = Omit<
   CreateOrUpdatePullRequestParams,
   'octokit' | 'owner' | 'repo' | 'signal'
@@ -262,6 +280,12 @@ export interface GitHubGateway {
     signal?: AbortSignal,
   ): Promise<{ number: number; url: string; created: boolean }>
   convertPullRequestToDraft(number: number, signal?: AbortSignal): Promise<void>
+  /**
+   * Set the {@link CONFLICTS_STATUS_CONTEXT} status on a pull request's head. Refused
+   * (`GatewayRefusalError`, reason `not-head`) unless `sha` is the head GitHub holds now, and as
+   * `updatePullRequest` refuses a pull request it would not update.
+   */
+  setConflictsStatus(status: GitHubConflictsStatus, signal?: AbortSignal): Promise<void>
   deleteBranch(branch: string, signal?: AbortSignal): Promise<void>
   /**
    * The auth provider's users, groups and memberships, which the worker writes to the auth cache:
@@ -1161,7 +1185,7 @@ class LocalGitHubGateway implements GitHubGateway {
     number: number,
     refusing: string,
     signal?: AbortSignal,
-  ): Promise<GitHubPullRequest> {
+  ): Promise<RestEndpointMethodTypes['pulls']['get']['response']['data']> {
     const { data } = await this.api(reach, () =>
       this.octokit.pulls.get({ ...this.repo, pull_number: number, request: { signal } }),
     )
@@ -1216,6 +1240,34 @@ class LocalGitHubGateway implements GitHubGateway {
           `mutation($id: ID!) { convertPullRequestToDraft(input: { pullRequestId: $id }) { pullRequest { isDraft } } }`,
           { id: pr.node_id, request: { signal } },
         ),
+      )
+    })
+  }
+
+  setConflictsStatus(status: GitHubConflictsStatus, signal?: AbortSignal): Promise<void> {
+    return this.credentialed(signal, async (reach) => {
+      const { pullRequest, sha, state, description, targetUrl } = status
+      const refusing = `Refusing to set a status on pull request #${pullRequest}`
+      const pr = await this.assertOwnPullRequest(reach, pullRequest, refusing, signal)
+      assertCommitStatusText(refusing, pr.head.ref, { description, targetUrl })
+      if (pr.head.sha !== sha) {
+        throw new GatewayRefusalError(
+          'commit-status',
+          pr.head.ref,
+          'not-head',
+          `${refusing}: ${sha.slice(0, 7)} is not its head, ${pr.head.sha.slice(0, 7)}`,
+        )
+      }
+      await this.api(reach, () =>
+        this.octokit.repos.createCommitStatus({
+          ...this.repo,
+          sha,
+          state,
+          context: CONFLICTS_STATUS_CONTEXT,
+          description,
+          ...(targetUrl !== undefined && { target_url: targetUrl }),
+          request: { signal },
+        }),
       )
     })
   }

@@ -894,7 +894,7 @@ describe('branch status api', () => {
       }
     })
 
-    it('records a request-derived editor URL on the branch for later comment summaries', async () => {
+    it('records the editor URL the submit resolved, for comment summaries and the worker', async () => {
       const saved = () => mockMetadataUpdate.mock.calls.at(-1)?.[0].branch
       mockMetadataUpdate.mockClear()
       await submitWith({
@@ -903,18 +903,24 @@ describe('branch status api', () => {
       })
       expect(saved()).toHaveProperty('editorUrl', 'https://cms.example.org/edit')
 
-      // config.editorUrl is read live, and a refused URL keeps whatever was recorded before.
-      const refused: Parameters<typeof submitWith>[0][] = [
-        { configured: 'https://editor.example.org/cms', headers: {} },
-        { claimed: 'https://evil.example/edit', headers: { host: 'cms.example.org' } },
-      ]
-      for (const options of refused) {
-        mockMetadataUpdate.mockClear()
-        const consoleSpy = mockConsole()
-        await submitWith(options)
-        consoleSpy.restore()
-        expect(saved()).not.toHaveProperty('editorUrl')
-      }
+      // The worker has no config, so the configured URL is recorded too.
+      mockMetadataUpdate.mockClear()
+      await submitWith({
+        configured: 'https://editor.example.org/cms',
+        claimed: 'https://evil.example/edit',
+        headers: { host: 'evil.example' },
+      })
+      expect(saved()).toHaveProperty('editorUrl', 'https://editor.example.org/cms')
+
+      // A refused URL keeps whatever was recorded before.
+      mockMetadataUpdate.mockClear()
+      const consoleSpy = mockConsole()
+      await submitWith({
+        claimed: 'https://evil.example/edit',
+        headers: { host: 'cms.example.org' },
+      })
+      consoleSpy.restore()
+      expect(saved()).not.toHaveProperty('editorUrl')
     })
 
     it('uses the configured editor URL whatever the request reports', async () => {
