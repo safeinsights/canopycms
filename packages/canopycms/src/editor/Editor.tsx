@@ -468,7 +468,7 @@ const EditorContent: React.FC<EditorProps> = ({
   const modifiedCountRef = useRef(0)
   const namesBranchRef = useRef<(branch: string) => boolean>(() => false)
   // Set once the entries and the changes read exist.
-  const rereadPinnedBranchRef = useRef<(branch: string) => void>(() => {})
+  const rereadPinnedBranchRef = useRef<(branch: string) => Promise<void>>(async () => {})
   const {
     branchName: branchNameState,
     setBranchName,
@@ -578,7 +578,7 @@ const EditorContent: React.FC<EditorProps> = ({
     async () => {},
   )
   // Set once the changes read exists; it waits on the panel state, declared after the entries.
-  const reloadChangesRef = useRef<(branch: string) => void>(() => {})
+  const reloadChangesRef = useRef<(branch: string) => Promise<void>>(async () => {})
 
   // 2. Entry manager (depends on branchNameState, owns selectedPath)
   const {
@@ -632,7 +632,7 @@ const EditorContent: React.FC<EditorProps> = ({
     // A short name in the URL is no switch to another branch.
     sameBranch: namesBranch,
     urlBranchName,
-    onContentRefresh: (branch) => reloadChangesRef.current(branch),
+    onContentRefresh: (branch) => void reloadChangesRef.current(branch),
     conflictResolutions: {
       pending: conflictChoices.pending,
       onSaved: (branch, contentId, sent) => {
@@ -742,6 +742,8 @@ const EditorContent: React.FC<EditorProps> = ({
     setDrafts,
     loadedValues,
     setLoadedValues,
+    forgetLoadedValues,
+    readGeneration,
     loadedValue,
     effectiveValue,
     modifiedCount,
@@ -814,21 +816,12 @@ const EditorContent: React.FC<EditorProps> = ({
     onShowConflicts: () => showConflictsRef.current(),
   })
   requestLatestRef.current = baseUpdate.request
-  // The open branch was pinned for its reviews: its entries and changes are read again, every one
-  // while it is locked, which shows the saved copy over a draft.
-  rereadPinnedBranchRef.current = (branch) => {
+  // The open branch was pinned for its reviews: its entries, their changes and every clean entry
+  // are read again, every one while it is locked, which shows the saved copy over a draft.
+  rereadPinnedBranchRef.current = async (branch) => {
     if (!namesBranch(branch, branchNameState)) return
-    setLoadedValues((prev) =>
-      branchContentLocked
-        ? {}
-        : Object.fromEntries(
-            Object.entries(prev).filter(
-              ([contentId]) => draftsRef.current[contentId] !== undefined,
-            ),
-          ),
-    )
-    reloadChangesRef.current(branchNameState)
-    void refreshEntries(branchNameState).catch(console.error)
+    forgetLoadedValues((id) => !branchContentLocked && draftsRef.current[id] !== undefined)
+    await Promise.all([refreshEntries(branchNameState), reloadChangesRef.current(branchNameState)])
   }
   modifiedCountRef.current = modifiedCount
   namesBranchRef.current = (branch) => namesBranch(branch, branchNameState)
@@ -1267,6 +1260,8 @@ const EditorContent: React.FC<EditorProps> = ({
     // write still the state of the branch on screen?".
     const requestBranch = branchNameState
     const inFlightKey = `${requestBranch}:${contentId ?? ''}`
+    const generation = readGeneration.current
+    const loadingKey = `${inFlightKey}#${generation}`
     const load = async () => {
       if (!currentEntry || !contentId || loadedValues[contentId] !== undefined) return
       // An unavailable type has no schema to read it against; the server would refuse the read.
@@ -1274,8 +1269,8 @@ const EditorContent: React.FC<EditorProps> = ({
       // Guard against overlapping renders re-firing the same in-flight load
       // (e.g. `currentEntry` getting a new object reference from an entries
       // refresh while the fetch below is still pending).
-      if (loadingEntryIdsRef.current.has(inFlightKey)) return
-      loadingEntryIdsRef.current.add(inFlightKey)
+      if (loadingEntryIdsRef.current.has(loadingKey)) return
+      loadingEntryIdsRef.current.add(loadingKey)
       setEntriesLoading(true)
       setLoadFailedKey((failed) => (failed === inFlightKey ? null : failed))
       try {
@@ -1287,6 +1282,7 @@ const EditorContent: React.FC<EditorProps> = ({
         // token unset, so saveEntry refuses every save of the entry. Drop it
         // instead; the new branch has its own load running under its own key.
         if (currentBranchRef.current !== requestBranch) return
+        if (readGeneration.current !== generation) return
         setLoadedValues((prev) => ({ ...prev, [contentId]: loaded }))
         // No draft is seeded here. `effectiveValue` is
         // `drafts[id] ?? loadedValues[id]`, so the form renders from the line
@@ -1295,7 +1291,7 @@ const EditorContent: React.FC<EditorProps> = ({
         // useDraftManager then persisted to localStorage -- restored next
         // session as a dirty, stale full-content snapshot.
       } finally {
-        loadingEntryIdsRef.current.delete(inFlightKey)
+        loadingEntryIdsRef.current.delete(loadingKey)
         // Clear the shared flag if this load's entry is still selected on the
         // branch it was loaded for, OR if no other load remains in flight. The
         // second arm matters when the user navigates from a slow-loading entry
@@ -1857,8 +1853,8 @@ const EditorContent: React.FC<EditorProps> = ({
   const changesAvailable = !!currentBranch && currentBranch.isProtected === false
   const changesRead = (contentPanelShown || !!currentEntry) && changesAvailable
   const branchChanges = useBranchChangesData(apiClient, branchNameState, changesRead)
-  reloadChangesRef.current = (branch) => {
-    if (branch === branchNameState) void branchChanges.reload()
+  reloadChangesRef.current = async (branch) => {
+    if (branch === branchNameState) await branchChanges.reload()
   }
   // Submit, withdraw and a review move the branch's status, which no entries refresh follows.
   const changesStatusRef = useRef({ branch: branchNameState, status: currentBranch?.status })

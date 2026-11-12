@@ -20,6 +20,7 @@ import type { BranchMetadata } from '../../types'
 import type { CommentThread } from '../../comment-store'
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import { unsafeAsContentId } from '../../paths/test-utils'
+import { mockConsole } from '../../test-utils/console-spy'
 import {
   setupMockApiClient,
   setupMockLocation,
@@ -2791,8 +2792,18 @@ describe('useBranchManager', () => {
           await hook.result.current.handleApprove('feature').catch(() => {})
         })
       }
+      const relist = async (
+        hook: { result: { current: UseBranchManagerReturn } },
+        branches: BranchMetadata[],
+      ) => {
+        listing(branches)
+        await act(async () => {
+          await hook.result.current.loadBranches()
+        })
+      }
+      const lastApproval = () => mockClient.workflow.approve.mock.calls.at(-1)?.[1]
 
-      it('sends the head the first listing showed', async () => {
+      it('follows each listing for a branch the page has not shown', async () => {
         mockClient.workflow.approve.mockResolvedValue({ ok: true, status: 200 })
         const hook = await loaded(headed(SEEN))
         await approve(hook)
@@ -2800,39 +2811,92 @@ describe('useBranchManager', () => {
           { branch: 'feature' },
           { headSha: SEEN },
         )
-      })
-
-      it('keeps it when a later listing shows a newer head, as the page may not show it yet', async () => {
-        mockClient.workflow.approve.mockResolvedValue({ ok: true, status: 200 })
-        const hook = await loaded(headed(SEEN))
-        listing(headed(NEWER))
-        await act(async () => {
-          await hook.result.current.loadBranches()
-        })
+        await relist(hook, headed(NEWER))
         await approve(hook)
-        expect(mockClient.workflow.approve).toHaveBeenLastCalledWith(
-          { branch: 'feature' },
-          { headSha: SEEN },
-        )
+        expect(lastApproval()).toEqual({ headSha: NEWER })
       })
 
-      it('sends none for a branch first listed out of review, though a later listing has one', async () => {
+      it('pins the open branch from the listing that names it, once its content is read again', async () => {
+        // Its content loads from the URL, before any listing arrives.
+        const onReviewPinned = vi.fn()
+        mockClient.workflow.approve.mockResolvedValue({ ok: true, status: 200 })
+        const hook = await loaded(headed(SEEN), { initialBranch: 'feature', onReviewPinned })
+        await waitFor(() => expect(onReviewPinned).toHaveBeenCalledWith('feature'))
+        expect(onReviewPinned).toHaveBeenCalledTimes(1)
+        await approve(hook)
+        expect(lastApproval()).toEqual({ headSha: SEEN })
+      })
+
+      it('keeps the pin of a branch shown when a later listing shows a newer head', async () => {
+        const onReviewPinned = vi.fn()
+        mockClient.workflow.approve.mockResolvedValue({ ok: true, status: 200 })
+        const hook = await loaded(headed(SEEN), { initialBranch: 'feature', onReviewPinned })
+        await waitFor(() => expect(onReviewPinned).toHaveBeenCalled())
+        await relist(hook, headed(NEWER))
+        await approve(hook)
+        expect(lastApproval()).toEqual({ headSha: SEEN })
+        expect(onReviewPinned).toHaveBeenCalledTimes(1)
+      })
+
+      it('sends none while the content is being read again, then the head', async () => {
+        let finishRead = () => {}
+        const onReviewPinned = vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              finishRead = resolve
+            }),
+        )
         mockClient.workflow.approve.mockResolvedValue(moved)
-        const hook = await loaded(headed(undefined, 'editing'))
-        listing(headed(NEWER))
-        await act(async () => {
-          await hook.result.current.loadBranches()
-        })
+        const hook = await loaded(headed(SEEN), { initialBranch: 'feature', onReviewPinned })
+        await waitFor(() => expect(onReviewPinned).toHaveBeenCalled())
         await approve(hook)
         expect(mockClient.workflow.approve).toHaveBeenCalledWith({ branch: 'feature' }, {})
+
+        mockClient.workflow.approve.mockResolvedValue({ ok: true, status: 200 })
+        await act(async () => finishRead())
+        await approve(hook)
+        expect(lastApproval()).toEqual({ headSha: SEEN })
       })
 
-      it('on a refusal, pins the head a fresh listing shows, then has the content read again', async () => {
+      it('pins an open branch first listed out of review once a listing shows its head, after a read', async () => {
+        const onReviewPinned = vi.fn()
+        mockClient.workflow.approve.mockResolvedValue({ ok: true, status: 200 })
+        const hook = await loaded(headed(undefined, 'editing'), {
+          initialBranch: 'feature',
+          onReviewPinned,
+        })
+        await waitFor(() => expect(hook.result.current.currentBranch?.name).toBe('feature'))
+        expect(onReviewPinned).not.toHaveBeenCalled()
+
+        await relist(hook, headed(NEWER))
+        await waitFor(() => expect(onReviewPinned).toHaveBeenCalledWith('feature'))
+        await approve(hook)
+        expect(lastApproval()).toEqual({ headSha: NEWER })
+      })
+
+      it('re-pins a branch from the latest listing as it is opened, then has it read again', async () => {
+        const onReviewPinned = vi.fn()
+        mockClient.workflow.approve.mockResolvedValue({ ok: true, status: 200 })
+        const hook = await loaded(headed(SEEN), { onReviewPinned })
+        await relist(hook, headed(NEWER))
+        expect(onReviewPinned).not.toHaveBeenCalled()
+
+        act(() => hook.result.current.setBranchName('feature'))
+        await waitFor(() => expect(onReviewPinned).toHaveBeenCalledWith('feature'))
+        await approve(hook)
+        expect(lastApproval()).toEqual({ headSha: NEWER })
+      })
+
+      it('on a refusal, pins the head a fresh listing shows, after the content is read again', async () => {
         const { notifications } = await import('@mantine/notifications')
         const order: string[] = []
-        const onReviewPinned = vi.fn(() => order.push('content'))
+        const onReviewPinned = vi.fn((branch: string) => {
+          order.push(`content:${branch}`)
+        })
         mockClient.workflow.approve.mockResolvedValueOnce(moved)
-        const hook = await loaded(headed(SEEN), { onReviewPinned })
+        const hook = await loaded(headed(SEEN), { initialBranch: 'feature', onReviewPinned })
+        await waitFor(() => expect(onReviewPinned).toHaveBeenCalled())
+        order.length = 0
         mockClient.branches.list.mockImplementation(async () => {
           order.push('listing')
           return { ok: true, status: 200, data: { branches: headed(NEWER), users: [] } }
@@ -2840,8 +2904,7 @@ describe('useBranchManager', () => {
 
         await approve(hook)
 
-        expect(order).toEqual(['listing', 'content'])
-        expect(onReviewPinned).toHaveBeenCalledWith('feature')
+        expect(order).toEqual(['listing', 'content:feature'])
         expect(notifications.show).toHaveBeenLastCalledWith({
           id: 'canopy-approve-failed-feature',
           message: moved.error,
@@ -2852,61 +2915,30 @@ describe('useBranchManager', () => {
 
         mockClient.workflow.approve.mockResolvedValueOnce({ ok: true, status: 200 })
         await approve(hook)
-        expect(mockClient.workflow.approve).toHaveBeenLastCalledWith(
-          { branch: 'feature' },
-          { headSha: NEWER },
-        )
+        expect(lastApproval()).toEqual({ headSha: NEWER })
       })
 
-      it('pins the open branch from the listing that names it, then has its content read again', async () => {
-        // Its content loads from the URL, before any listing arrives.
-        const onReviewPinned = vi.fn()
-        mockClient.workflow.approve.mockResolvedValue({ ok: true, status: 200 })
-        const hook = await loaded(headed(SEEN), { initialBranch: 'feature', onReviewPinned })
-        await waitFor(() => expect(onReviewPinned).toHaveBeenCalledWith('feature'))
-        expect(onReviewPinned).toHaveBeenCalledTimes(1)
-        await approve(hook)
-        expect(mockClient.workflow.approve).toHaveBeenCalledWith(
-          { branch: 'feature' },
-          { headSha: SEEN },
-        )
-      })
-
-      it('re-pins a branch from the latest listing as it is opened, then has it read again', async () => {
-        const onReviewPinned = vi.fn()
-        mockClient.workflow.approve.mockResolvedValue({ ok: true, status: 200 })
-        const hook = await loaded(headed(SEEN), { onReviewPinned })
-        listing(headed(NEWER))
-        await act(async () => {
-          await hook.result.current.loadBranches()
-        })
-        expect(onReviewPinned).not.toHaveBeenCalled()
-
-        act(() => hook.result.current.setBranchName('feature'))
-        await waitFor(() => expect(onReviewPinned).toHaveBeenCalledWith('feature'))
-        await approve(hook)
-        expect(mockClient.workflow.approve).toHaveBeenLastCalledWith(
-          { branch: 'feature' },
-          { headSha: NEWER },
-        )
-      })
-
-      it('pins none when the recovery cannot list the branch, so nothing newer slips in', async () => {
+      it('pins none when the recovery cannot list the branch, until a listing and a read', async () => {
+        const consoleSpy = mockConsole()
         const onReviewPinned = vi.fn()
         mockClient.workflow.approve.mockResolvedValue(moved)
-        const hook = await loaded(headed(SEEN), { onReviewPinned })
-        mockClient.branches.list.mockResolvedValueOnce({ ok: false, status: 503, error: 'down' })
+        const hook = await loaded(headed(SEEN), { initialBranch: 'feature', onReviewPinned })
+        await waitFor(() => expect(onReviewPinned).toHaveBeenCalledTimes(1))
+        const down = { ok: false, status: 503, error: 'down' } as const
+        mockClient.branches.list.mockResolvedValueOnce(down).mockResolvedValueOnce(down)
 
         await approve(hook)
-        expect(onReviewPinned).not.toHaveBeenCalled()
-
-        // A later listing with a newer head moves nothing.
-        listing(headed(NEWER))
-        await act(async () => {
-          await hook.result.current.loadBranches()
-        })
+        expect(consoleSpy).toHaveErrored('down')
+        expect(onReviewPinned).toHaveBeenCalledTimes(1)
         await approve(hook)
         expect(mockClient.workflow.approve).toHaveBeenLastCalledWith({ branch: 'feature' }, {})
+
+        // The next listing pins its head only after the content is read again.
+        await relist(hook, headed(NEWER))
+        await waitFor(() => expect(onReviewPinned).toHaveBeenCalledTimes(2))
+        mockClient.workflow.approve.mockResolvedValue({ ok: true, status: 200 })
+        await approve(hook)
+        expect(lastApproval()).toEqual({ headSha: NEWER })
       })
 
       it('clears a refusal of either kind once a verdict goes through', async () => {

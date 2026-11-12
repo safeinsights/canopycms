@@ -2046,6 +2046,30 @@ describe('useDraftManager', () => {
       })
     })
 
+    it('writes nothing from a reload in flight when the saved copies are forgotten', async () => {
+      let finish: (value: Record<string, unknown>) => void = () => {}
+      mockLoadEntry.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve
+          }),
+      )
+      const { result } = renderHook(() => useDraftManager(defaultOptions))
+      let reload: Promise<void> = Promise.resolve()
+      act(() => {
+        reload = result.current.handleReload()
+      })
+      const before = result.current.readGeneration.current
+      act(() => result.current.forgetLoadedValues(() => false))
+      expect(result.current.readGeneration.current).toBe(before + 1)
+
+      await act(async () => {
+        finish({ title: 'Older read', body: '' })
+        await reload
+      })
+      expect(result.current.loadedValues.abc123def456).toBeUndefined()
+    })
+
     it('reloads without a confirm modal when the selected draft is clean', async () => {
       const { result } = renderHook(() => useDraftManager(defaultOptions))
 

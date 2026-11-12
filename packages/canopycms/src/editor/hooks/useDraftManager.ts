@@ -213,6 +213,13 @@ export interface UseDraftManagerReturn {
   setDrafts: React.Dispatch<React.SetStateAction<Record<string, FormValue>>>
   loadedValues: Record<string, FormValue>
   setLoadedValues: React.Dispatch<React.SetStateAction<Record<string, FormValue>>>
+  /**
+   * Drops the saved copies `keep` doesn't name, so each is read again; a read already in flight
+   * then lands nothing, as it can predate the head the branch is pinned to.
+   */
+  forgetLoadedValues: (keep: (contentId: string) => boolean) => void
+  /** Bumped by {@link forgetLoadedValues}: a read whose generation is gone writes nothing. */
+  readGeneration: React.MutableRefObject<number>
   selectedValue: FormValue | undefined
   loadedValue: FormValue | undefined
   effectiveValue: FormValue | undefined
@@ -266,6 +273,11 @@ export interface UseDraftManagerReturn {
 export function useDraftManager(options: UseDraftManagerOptions): UseDraftManagerReturn {
   const [drafts, setDrafts] = useState<Record<string, FormValue>>(() => options.initialValues ?? {})
   const [loadedValues, setLoadedValues] = useState<Record<string, FormValue>>({})
+  const readGeneration = useRef(0)
+  const forgetLoadedValues = (keep: (contentId: string) => boolean) => {
+    readGeneration.current += 1
+    setLoadedValues((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => keep(id))))
+  }
   // Per-field validation errors from a blocked/rejected save (ED-H1), keyed by
   // the entry they belong to. Keying by entry id — and deriving the exposed
   // `fieldErrors` map below instead of clearing it in a separate effect after
@@ -1453,11 +1465,13 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   const performReload = async () => {
     if (!options.currentEntry || !currentId) return
     const branch = options.branchName
+    const generation = readGeneration.current
     options.setBusy(true)
     try {
       const loaded = await options.loadEntry(options.currentEntry)
       // Content ids repeat across branches; the next branch's state is not this read's.
       if (latestOptionsRef.current.branchName !== branch) return
+      if (readGeneration.current !== generation) return
       options.onDraftsReset?.(currentId)
       delete reloadRequiredRef.current[currentId]
       notifications.hide(saveMayHaveLandedToastId(currentId))
@@ -1627,6 +1641,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     setDrafts,
     loadedValues,
     setLoadedValues,
+    forgetLoadedValues,
+    readGeneration,
     selectedValue,
     loadedValue,
     effectiveValue,

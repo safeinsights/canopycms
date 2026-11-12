@@ -17,11 +17,10 @@ import type { CanopyUser } from '../user'
 import type { BranchReview } from '../types'
 import { sanitizeDisplayName } from '../submission-attribution'
 
+const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/
+
 /** Optional on the wire, so a request without one gets {@link BRANCH_MOVED_ERROR}, not a 400. */
-const headShaSchema = z
-  .string()
-  .regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/)
-  .optional()
+const headShaSchema = z.string().regex(FULL_SHA).optional()
 
 const requestChangesBodySchema = z
   .object({
@@ -86,6 +85,8 @@ const assertReviewedHead = async (
   try {
     const git = ctx.services.createGitManagerFor(branchRoot, { baseBranch: branch.baseBranch })
     head = await git.headSha()
+    // A git that exits quietly answers nothing, which is no head at all.
+    if (!FULL_SHA.test(head)) throw new Error(`no commit in its answer (${head.length} chars)`)
   } catch (err) {
     console.error(`CanopyCMS: Could not read the head of ${branch.name}:`, getErrorMessage(err))
     throw new HeadUnreadableError()

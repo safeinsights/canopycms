@@ -380,6 +380,51 @@ describe('Editor on a branch in review, pinned for its reviews', () => {
   })
 })
 
+describe('Editor pinning a branch while an entry read is in flight', () => {
+  it('lets the older read land nothing, and reads the entry again', async () => {
+    const inReview = {
+      ...protectedMain,
+      status: 'submitted',
+      isProtected: false,
+      readOnly: false,
+      headSha: 'a'.repeat(40),
+    }
+    stubApi([inReview])
+    const base = vi.mocked(fetch).getMockImplementation()!
+    let releaseListing = () => {}
+    let releaseFirstRead = () => {}
+    let entryReads = 0
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.endsWith('/api/canopycms/branches')) {
+        return new Promise((resolve) => {
+          releaseListing = () => resolve(base(input, init))
+        })
+      }
+      if (plainBranchPath(url) === entryApiPath && (!init?.method || init.method === 'GET')) {
+        entryReads += 1
+        if (entryReads === 1) {
+          // The read from before the pin: its content is older than the pinned head.
+          return new Promise((resolve) => {
+            releaseFirstRead = () =>
+              resolve(okJson({ title: 'Older title', body: '* one\n* two\n', version: 99 }))
+          })
+        }
+      }
+      return base(input, init)
+    })
+    renderEditor()
+
+    await waitFor(() => expect(entryReads).toBe(1))
+    await act(async () => releaseListing())
+    await waitFor(() => expect(entryReads).toBe(2))
+    await act(async () => releaseFirstRead())
+
+    await titleInput()
+    expect(screen.queryByDisplayValue('Older title')).toBeNull()
+  })
+})
+
 describe('Editor while the branch gets the latest changes', () => {
   const editingMain = {
     ...protectedMain,

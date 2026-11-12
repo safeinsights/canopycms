@@ -495,8 +495,8 @@ export interface UseBranchManagerOptions {
   /** A request for changes went through; the branch may now carry the reviewer's note as a comment. */
   onChangesRequested?: (branchName: string) => void
 
-  /** A branch was pinned to a head for its reviews: read its content again, if it is open. */
-  onReviewPinned?: (branchName: string) => void
+  /** A branch is being pinned for its reviews: read its content again if it is open, settling once read. */
+  onReviewPinned?: (branchName: string) => Promise<void> | void
 
   /**
    * How to ask for the latest changes on `branchName` once it is withdrawn, or undefined where
@@ -769,30 +769,39 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const latest = useRef({ branchName, resolved, branches, branchesData })
   latest.current = { branchName, resolved, branches, branchesData }
 
-  // The head a review sends for each branch, never newer than what the page shows of it: the first
-  // one a listing showed, or null for a branch first listed out of review. Opening a branch, and a
-  // refusal's recovery, pin it from a listing already fetched and then read its content again; no
-  // other listing moves a pin, as the form can still show what loaded before.
+  // The head a review sends for each branch, never newer than what the page shows of it. A branch
+  // whose content the page hasn't shown follows each listing. Opening one, its first head while
+  // open, and a refusal's recovery pin it from a listing already fetched, but only once its content
+  // has been read again; null until then. No other listing moves the pin of a branch shown.
   const reviewPins = useRef(new Map<string, string | null>())
-  const pinnedOpen = useRef<string>()
-  const pinThenReread = (branch: string, data: BranchesData | undefined) => {
+  const shown = useRef(new Set<string>())
+  const pinning = useRef(new Map<string, symbol>())
+  const pinThenReread = async (branch: string, data: BranchesData | undefined) => {
     const headSha = data?.branches.find((b) => b.name === branch)?.headSha
-    reviewPins.current.set(branch, headSha ?? null)
-    if (headSha) options.onReviewPinned?.(branch)
+    const token = Symbol(branch)
+    pinning.current.set(branch, token)
+    reviewPins.current.set(branch, null)
+    try {
+      if (headSha) await options.onReviewPinned?.(branch)
+    } finally {
+      if (pinning.current.get(branch) === token) {
+        pinning.current.delete(branch)
+        reviewPins.current.set(branch, headSha ?? null)
+      }
+    }
   }
   useEffect(() => {
     const listed = branchesData?.branches ?? []
     for (const b of listed) {
-      if (!reviewPins.current.has(b.name)) reviewPins.current.set(b.name, b.headSha ?? null)
+      if (!shown.current.has(b.name)) reviewPins.current.set(b.name, b.headSha ?? null)
     }
-    // The open branch's content can have loaded before this listing, from its URL.
-    if (
-      currentBranchName &&
-      pinnedOpen.current !== currentBranchName &&
-      listed.some((b) => b.name === currentBranchName)
-    ) {
-      pinnedOpen.current = currentBranchName
-      pinThenReread(currentBranchName, branchesData)
+    const open = currentBranchName && listed.find((b) => b.name === currentBranchName)
+    if (!open) return
+    const firstHead =
+      open.headSha && reviewPins.current.get(open.name) === null && !pinning.current.has(open.name)
+    if (!shown.current.has(open.name) || firstHead) {
+      shown.current.add(open.name)
+      pinThenReread(open.name, branchesData).catch(console.error)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `pinThenReread` reads only refs and options
   }, [branchesData, currentBranchName])
@@ -970,7 +979,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   ) => {
     if (err instanceof BranchMovedError) {
       // A listing that fails, or leaves the branch out, pins none until the next refusal.
-      pinThenReread(branch, await reloadBranches())
+      void pinThenReread(branch, await reloadBranches()).catch(console.error)
       const id = reviewFailureId(kind, branch)
       notifications.hide(id)
       notifications.show({

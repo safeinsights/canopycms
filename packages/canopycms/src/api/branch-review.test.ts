@@ -849,7 +849,7 @@ describe('the commit the reviewer saw', () => {
       requestChanges.handler(makeCtx({ convertToDraft }), reviewer, params, body)
 
     it('requests changes on the head it names, and records it', async () => {
-      const res = await run({ headSha: HEAD, note: 'Fix the intro.' })
+      const res = await run({ headSha: HEAD })
       expect(res.status).toBe(200)
       expect(mockMetadataSave.mock.calls[0]![0].branch.review.commit).toBe(HEAD)
       expect(convertToDraft).toHaveBeenCalledWith(123)
@@ -880,6 +880,13 @@ describe('the commit the reviewer saw', () => {
   })
 
   describe('a head the server cannot read', () => {
+    it('reads a quiet answer from git as no head, not as a move', async () => {
+      const consoleSpy = mockConsole()
+      mockHeadSha.mockResolvedValueOnce('')
+      const res = await approveBranch.handler(makeCtx(), reviewer, params, { headSha: HEAD })
+      expect(res.status).toBe(503)
+      expect(consoleSpy).toHaveErrored('no commit in its answer')
+    })
     it.each([
       ['approve', () => approveBranch.handler(makeCtx(), reviewer, params, { headSha: HEAD })],
       [
