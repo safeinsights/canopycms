@@ -2173,6 +2173,57 @@ describe('an item edited to read exactly like one deleted, with no git-level mer
     ])
   })
 
+  describe('two items rewritten to read like a deleted A, one beside a copy of its own item', () => {
+    const fields: FieldConfig[] = [
+      { name: 'items', type: 'object', list: true, fields: text('title', 'detail') },
+    ]
+    const [a, b, c] = ['a', 'b', 'c'].map((t) => ({ title: t, detail: `d${t}` }))
+    const [, Kb, Kc] = itemKeysAsRead([a, b, c]) as string[]
+    const M = '1mmmmmmmmmmm'
+    const run = (base: Data[], branch: Data[]) => {
+      const result = mergeEntry({
+        format: 'json',
+        ancestor: { data: { items: [a, b, c] } },
+        base: { data: { items: base } },
+        branch: { data: { items: branch } },
+        fields,
+      })
+      if (result.kind !== 'merged') throw new Error('expected a merge')
+      return result
+    }
+
+    it("still counts as a claimant: the other side's edit of A conflicts with its deletion", () => {
+      const edited = { ...a, detail: 'da-edit' }
+      const result = run(
+        [
+          { ...a, _key: Kb },
+          { ...a, _key: Kc },
+          { ...b, _key: M },
+        ],
+        [edited, b, c],
+      )
+      expect(result.conflicts.map((x) => [x.key, x.kind])).toEqual([
+        [`items.${itemKeysAsRead([edited])[0]}`, 'removed-on-base'],
+      ])
+      expect(result.data.items).toEqual([
+        edited,
+        { ...a, _key: Kb },
+        { ...a, _key: Kc },
+        { ...b, _key: M },
+      ])
+    })
+
+    it('reads the same way on both sides, where only one made the copy', () => {
+      const rewrote = [
+        { ...a, _key: Kb },
+        { ...c, _key: Kc },
+      ]
+      const result = run([...rewrote, { ...b, _key: M }], rewrote)
+      expect(result.conflicts).toEqual([])
+      expect(result.data.items).toEqual([...rewrote, { ...b, _key: M }])
+    })
+  })
+
   it('a claimant named through an alias, beside a copy of its item: the copy stays', () => {
     const day = new Date('2024-01-01T00:00:00.000Z')
     const [P, Q, R] = [

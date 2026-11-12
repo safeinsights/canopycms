@@ -108,7 +108,7 @@ export interface Alignment {
  *
  * The rest align as diff3 aligns lines: equal content in order, then equal content out of order
  * (a move), then, in each gap between two matches, by shared values and last by place
- * ({@link pairInGap}).
+ * ({@link pairInGap}). `otherSide` is the other version's list, whose copies count as this side's.
  * Undefined when the diff ran out of time.
  */
 export function alignToAncestor(
@@ -118,6 +118,7 @@ export function alignToAncestor(
   side: string,
   inEntry: ReadonlySet<string>,
   movedIn: ReadonlySet<string>,
+  otherSide: readonly unknown[] = [],
 ): Alignment | undefined {
   const known = new Set(ancestorKeys)
   const aliases = ancestorAliases(ancestorItems, ancestorKeys)
@@ -144,9 +145,10 @@ export function alignToAncestor(
     if (!isMinted(item)) unheldFresh.add(token)
   })
   const at = new Map(ancestorKeys.map((key, i) => [key, i]))
-  // Content a copy this side made holds, under a key minted for it that the ancestor doesn't know.
+  // Content a copy holds, under a key minted for it that the ancestor doesn't know. Either side's
+  // copy counts, so both read an item they rewrote alike the same way.
   const copied = new Set(
-    items.flatMap((item) => {
+    [...items, ...otherSide].flatMap((item) => {
       const own = ownKey(item)
       return own !== undefined && !hasContentKeyShape(own) && !known.has(own)
         ? [valueToken(item)]
@@ -154,7 +156,7 @@ export function alignToAncestor(
     }),
   )
   // Whether the item may be the unheld item holding its content, and whether its key names another.
-  const claim = (j: number, own: string): 'named' | 'unnamed' | undefined => {
+  const claim = (j: number, own: string): 'named' | 'keyed' | 'unnamed' | undefined => {
     if (!hasContentKeyShape(own)) return undefined
     const content = valueToken(items[j])
     const holders = unheld.get(content) ?? 0
@@ -169,7 +171,7 @@ export function alignToAncestor(
       if (!unheldFresh.has(content)) return undefined
       // With a copy of the item its key names beside it, the side rewrote that item: read by key.
       const was = valueToken(ancestorItems[i])
-      return was !== content && !copied.has(was) ? 'named' : undefined
+      return was === content ? undefined : copied.has(was) ? 'keyed' : 'named'
     }
     // A key naming no item here pairs by content only where one item holds it, twins by place.
     return holders === 1 ? 'unnamed' : undefined
