@@ -538,7 +538,7 @@ async function rekeyTakenIn(
     await moveClone(git, branchPath, sha)
   } catch (err) {
     if (!overwritesSaves(err)) throw err
-    // Published: the next cycle catches up with it once the saves are committed.
+    // Unreached: `savesMeet` looked under the content-write lock this cycle still holds.
     workerLog(`  ${branchDir}: local changes overlap commits from GitHub, which wait for a submit`)
     return { kind: 'wait' }
   }
