@@ -66,6 +66,7 @@ import type {
 import { escapeForLog } from '../../utils/escape-text'
 import { TooltipDetail } from '../components/TooltipDetail'
 import { DISMISS_UNPUBLISHED_ATTRIBUTE, UnpublishedAtMergeAlert } from './UnpublishedAtMergeAlert'
+import { ConflictsStatusAlert } from './ConflictsStatusAlert'
 import {
   HOLD_BADGE,
   branchHoldMessage,
@@ -266,7 +267,9 @@ function DivergedBranchesAlert({ names }: { names: readonly string[] }) {
         </Text>
         <Group gap={4}>
           {names.map((name) => (
-            <Code key={name}>{escapeForLog(name)}</Code>
+            <Code key={name} style={{ overflowWrap: 'anywhere' }}>
+              {escapeForLog(name)}
+            </Code>
           ))}
         </Group>
       </Stack>
@@ -320,7 +323,9 @@ function BranchRefs({ branches }: { branches: UnpublishableBranch[] }) {
   return (
     <Group gap={4}>
       {branches.map((branch, i) => (
-        <Code key={i}>{escapeForLog(branch.name)}</Code>
+        <Code key={i} style={{ overflowWrap: 'anywhere' }}>
+          {escapeForLog(branch.name)}
+        </Code>
       ))}
     </Group>
   )
@@ -730,6 +735,10 @@ function OverviewTab({
           report={status.workerStatus.unpublishableBranches}
           namespace={status.workerStatus.gatewayBranchNamespace}
         />
+      )}
+
+      {status.workerStatus?.conflictsStatusFailure && (
+        <ConflictsStatusAlert failure={status.workerStatus.conflictsStatusFailure} />
       )}
 
       {status.workerStatus?.lastGitSyncError && (

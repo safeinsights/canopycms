@@ -11,6 +11,7 @@ import { getErrorMessage, isNodeError } from '../utils/error'
 import type { AuthCacheSnapshot } from '../auth/cache'
 import type {
   GatewayTerminationNotice,
+  GitHubConflictsStatus,
   GitHubCreateOrUpdatePullRequest,
   GitHubFetchResult,
   GitHubGateway,
@@ -365,6 +366,10 @@ class GatewayRequestHandler {
       },
       convertPullRequestToDraft: async ({ number }, signal) => {
         await gateway.convertPullRequestToDraft(number, signal)
+        return {}
+      },
+      setConflictsStatus: async (status, signal) => {
+        await gateway.setConflictsStatus(status, signal)
         return {}
       },
       deleteBranch: async ({ branch }, signal) => {
@@ -1029,6 +1034,10 @@ class GitHubGatewayClient implements GitHubGateway {
 
   async convertPullRequestToDraft(number: number, signal?: AbortSignal): Promise<void> {
     await this.call('convertPullRequestToDraft', { number }, signal)
+  }
+
+  async setConflictsStatus(status: GitHubConflictsStatus, signal?: AbortSignal): Promise<void> {
+    await this.call('setConflictsStatus', status, signal)
   }
 
   async deleteBranch(branch: string, signal?: AbortSignal): Promise<void> {
