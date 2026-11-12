@@ -271,6 +271,11 @@ async function recordRebaseFailure(
 /** Safety limit against a rebase that never converges. */
 const MAX_REBASE_ROUNDS = 50
 
+/** Why a branch whose rewrite was recorded without its rebased tip takes nothing in. */
+const REWRITE_TIP_UNKNOWN =
+  `this branch's rebased history was recorded without the commit to publish, so neither it nor the ` +
+  `base is taken in. A developer publishes the rewrite by hand before the branch is submitted again.`
+
 /**
  * Abort a rebase. It moves the tree back under any snapshot a read resolved mid-replay, which the
  * caches' markers must invalidate like any other working-tree move, however the abort ended.
@@ -411,17 +416,13 @@ async function carryForwardRewrittenHistory(
     publishedSha: string | null
     preRebaseHead: string
     rebasedHead: string
-    /** `historyRewrittenFrom` as the cycle read it: an earlier rewrite whose publish never landed. */
-    pendingMarker: string | undefined
     gatewayPolicy: BranchPolicyDescription | undefined
   },
 ): Promise<void> {
   const { branchPath, branchDir, branchRef, publishedSha, preRebaseHead, gatewayPolicy } = args
-  const { rebasedHead, pendingMarker } = args
+  const { rebasedHead } = args
   if (publishedSha !== null) {
-    // Or remote.git still holds the commit an earlier rewrite of ours replaced, whose publish never
-    // landed: this rewrite supersedes it, and its tip is what the self-heal must publish.
-    if (publishedSha === preRebaseHead || publishedSha === pendingMarker) {
+    if (publishedSha === preRebaseHead) {
       // ARMING GUARD: remote.git holds EXACTLY what this clone just rebased
       // away and nothing more, so a lease keyed to it can only undo our own
       // rewrite.
@@ -1545,7 +1546,7 @@ async function rebaseOneBranch(
       // the base happens to advance again. Gated on the loop-top snapshot, so
       // unmarked branches (nearly all of them, every cycle) cost nothing.
       if (canPublish && metaFile?.branch.historyRewrittenFrom) {
-        await reconcilePendingRewrite(ctx, {
+        const unpublished = await reconcilePendingRewrite(ctx, {
           branchPath,
           branchDir,
           branchRef,
@@ -1554,6 +1555,16 @@ async function rebaseOneBranch(
           target: metaFile.branch.historyRewrittenTo,
           gatewayPolicy,
         })
+        // A rebase now would replace the rewrite remote.git still waits for, along with any commit
+        // made on top of it since, which only a submit may publish.
+        if (unpublished) {
+          if (metaFile.branch.historyRewrittenTo === undefined) {
+            await recordRebaseFailure(ctx, branchPath, branchDir, REWRITE_TIP_UNKNOWN, branchRef)
+            return { kind: 'failed', error: REWRITE_TIP_UNKNOWN }
+          }
+          workerLog(`  Skipping ${branchDir}: its rewritten history is not published yet`)
+          return { kind: 'none' }
+        }
       }
 
       await fetchFromRemoteGit(branchGit, ctx.remoteGitPath, ctx.baseBranch)
@@ -1802,7 +1813,6 @@ async function rebaseOneBranch(
         publishedSha,
         preRebaseHead,
         rebasedHead: (await branchGit.revparse(['HEAD'])).trim(),
-        pendingMarker: metaFile?.branch.historyRewrittenFrom,
         gatewayPolicy,
       })
 

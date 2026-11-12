@@ -1086,17 +1086,15 @@ describe('bringing commits made on GitHub into a branch clone', () => {
       expect(await s.remoteSha(`refs/heads/${BRANCH}`)).toBe(await s.head())
     })
 
-    it('heals a clone in review an earlier release rebased away from GitHub', async () => {
+    it('holds commits remote.git lacks in review too', async () => {
       await writeMeta(s, { status: 'submitted', submittedAt: '2026-10-01T00:00:00.000Z' })
-      await rebaseAwayFromGitHub()
+      const fix = await rebaseAwayFromGitHub()
 
       await cycle(s)
 
-      const head = await s.head()
-      expect(await s.remoteSha(`refs/heads/${BRANCH}`)).toBe(head)
-      expect(await queued(s, 'push-branch')).toEqual([BRANCH])
+      expect(await s.remoteSha(`refs/heads/${BRANCH}`)).toBe(fix)
+      expect(await queued(s, 'push-branch')).toEqual([])
       expect(await s.file('fix.txt')).toBe('fix\n')
-      expect(await s.file('editor.txt')).toBe('v1\n')
     })
 
     it('merges a tip remote.git has not got, keeping both, for a push that can only fast-forward', async () => {

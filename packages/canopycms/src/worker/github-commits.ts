@@ -566,7 +566,7 @@ export async function mergeIntoBranch(
   // Before `remote.git` holds it, as reconcile does: a crash past this point leaves GitHub's commit
   // in `remote.git`, and a removal then has to read as one (`rewrittenFrom`).
   if (fromGitHub) await recordSeenOnGitHub(ctx, branchRef, other)
-  const publish = await decidePublish(git, { branchPath, head, published })
+  const publish = await decidePublish(git, { head, published })
   if (publish.kind === 'publish') {
     if (!(await publishPlainToLocalRemote(ctx, branchPath, branchRef, sha))) {
       return { kind: 'blocked', reason: unpublishable }
