@@ -1855,6 +1855,41 @@ describe('keys as a read gives them', () => {
     expect(content(mirror.data.items)).toEqual(content(base))
   })
 
+  it('never matches alike items a side reordered by place, against the keys it holds', () => {
+    const page: FieldConfig[] = [
+      { name: 'items', type: 'object', list: true, fields: text('h', 't', 'k') },
+    ]
+    const st = (s: string) => itemKeysAsRead([{ h: s, t: '0', k: '0' }])[0] as string
+    const [M1, M2] = ['1aaaaaaaaaaa', '2aaaaaaaaaaa']
+    const x = { h: 'x', t: '1', k: '1' }
+    const [y, z] = [
+      { h: 'y', t: '2', k: '2' },
+      { h: 'z', t: '3', k: '3' },
+    ]
+    const o = [
+      { ...x, _key: M1 },
+      { ...x, _key: M2 },
+      { ...y, _key: itemKeysAsRead([y])[0] },
+      { ...z, _key: itemKeysAsRead([z])[0] },
+    ]
+    // The base edits M1, rewrites y under a stale key and deletes z; the branch swaps M1 and M2.
+    const base = [
+      { ...x, t: 'EDIT', _key: M1 },
+      { ...x, _key: M2 },
+      { h: 'y', t: '9', k: '9', _key: st('s') },
+    ]
+    const branch = [o[1], o[0], o[2], o[3]]
+    const result = run(
+      { data: { items: o } },
+      { data: { items: base } },
+      { data: { items: branch } },
+      'json',
+      page,
+    )
+    expect(result.keyRemaps).toEqual([])
+    expect((result.data.items as Data[]).find((i) => i.t === 'EDIT')?._key).toBe(M1)
+  })
+
   it('deletes an item the base deleted that both versions held under other stale keys', () => {
     const page: FieldConfig[] = [
       { name: 'items', type: 'object', list: true, fields: text('h', 't', 'k') },
@@ -2296,7 +2331,7 @@ describe('conflict names agree with the "Show changes" drawer', () => {
     expect(conflict.sidePaths.base).toEqual(conflict.dataPath)
     expect(conflict.sidePaths.branch).toEqual([
       { field: 'items' },
-      { item: b.items[0]._key },
+      { item: (b.items as Data[])[0]._key as string },
       { field: 'title' },
     ])
     const branchRead = entryAsRead(fields, b)

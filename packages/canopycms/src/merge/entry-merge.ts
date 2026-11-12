@@ -444,13 +444,20 @@ function mergeList(
       : identifyByName(O, a, b, namedBy)
   // A list too far apart to align in time, or whose items can't all be told apart, is one value.
   // So is one with an item not clearly new or old, unless the other side holds the ancestor's
-  // items as they were: that side is the ancestor item for item, whatever its keys, and the
-  // changed side's list is the merge whichever the item is.
+  // items as they were: that side is the ancestor item for item, and the changed side's list is
+  // the merge whichever the item is.
   if (!identities) return undefined
   let { aIds, bIds, aByPlace, bByPlace } = identities
   const { oKeys } = identities
   if (identities.unsure) {
-    const asAncestor = (side: readonly unknown[]) => side.length === O.length && sameValue(O, side)
+    // By place, unless a key the side holds names another ancestor item: alike items reordered.
+    const asAncestor = (side: readonly unknown[]) =>
+      side.length === O.length &&
+      sameValue(O, side) &&
+      side.every((item, n) => {
+        const key = usableKey(item)
+        return key === undefined || key === oKeys[n] || !oKeys.includes(key)
+      })
     if (asAncestor(a)) [aIds, aByPlace] = [oKeys, new Set()]
     else if (asAncestor(b)) [bIds, bByPlace] = [oKeys, new Set()]
     else return undefined
