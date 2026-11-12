@@ -2979,7 +2979,7 @@ describe('an entry deleted or renamed in the clone, not yet submitted', () => {
     await fs.rm(path.join(s.branchPath, ENTRY))
   }
 
-  it('stays deleted while GitHub changes it, and the delete reaches the merge once submitted', async () => {
+  it('stays deleted while GitHub changes it, and merges once Get latest changes commits it', async () => {
     const head = await s.head()
     await s.commitOnGitHub({ [ENTRY]: '{"title":"github"}\n' })
     await fs.rm(path.join(s.branchPath, ENTRY))
@@ -2989,7 +2989,7 @@ describe('an entry deleted or renamed in the clone, not yet submitted', () => {
     expect(await s.file(ENTRY)).toBeNull()
     expect(await s.head()).toBe(head)
 
-    // Submitted: committed, the merge with GitHub's commits follows.
+    // "Get latest changes" commits the saves; the merge with GitHub's commits follows.
     await s.clone.raw(['rm', '-q', '--cached', ENTRY])
     await s.clone.commit('submit the delete')
     await cycle(s)

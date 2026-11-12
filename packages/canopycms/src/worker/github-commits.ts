@@ -538,7 +538,7 @@ async function rekeyTakenIn(
     await moveClone(git, branchPath, sha)
   } catch (err) {
     if (!overwritesSaves(err)) throw err
-    // Saves made since `savesMeet` looked: published, so the next cycle catches up with it.
+    // Published: the next cycle catches up with it once the saves are committed.
     workerLog(`  ${branchDir}: local changes overlap commits from GitHub, which wait for a submit`)
     return { kind: 'wait' }
   }
@@ -725,7 +725,8 @@ export async function mergeIntoBranch(
     await moveClone(git, branchPath, sha)
   } catch (err) {
     if (!overwritesSaves(err)) throw err
-    // Published or held: the next cycle catches up with it once the saves are submitted.
+    // Callers move a clean tree. Published, the next cycle catches up with it once the saves are
+    // committed; held, reconcile turns it back.
     workerLog(`  ${branchDir}: local changes overlap the merge, which waits for a submit`)
     return { kind: 'wait' }
   }
