@@ -2267,6 +2267,69 @@ describe('twins in a nested list, after a git-level merge that also edited their
   branch.sections[0].name = 's1!'
   branch.sections[1].cards[0].t = 'reworded'
 
+  it('a twin moved to a sibling section keeps its identity there', () => {
+    const sections: FieldConfig[] = [
+      {
+        name: 'sections',
+        type: 'object',
+        list: true,
+        fields: [
+          ...text('name'),
+          { name: 'cards', type: 'object', list: true, fields: text('h', 't') },
+        ],
+      },
+    ]
+    const [T, U, Q] = [
+      { h: 'T', t: 't' },
+      { h: 'U', t: 'u' },
+      { h: 'Q', t: 'q' },
+    ]
+    const o = entryAsRead(sections, {
+      sections: [
+        { name: 's1', cards: [T, T, U] },
+        { name: 's2', cards: [Q] },
+      ],
+    }) as { sections: Array<{ _key: string; name: string; cards: Data[] }> }
+    const [K, K2, KU] = o.sections[0].cards.map((c) => c._key as string)
+    const section = (n: number, cards: Data[]) => ({ ...o.sections[n], cards })
+    // The editor moves the second twin to s2 and makes U read like the twins; the base edits
+    // the first twin.
+    const branch = {
+      sections: [
+        section(0, [
+          { ...T, _key: K },
+          { ...T, _key: KU },
+        ]),
+        section(1, [...o.sections[1].cards, { ...T, _key: K2 }]),
+      ],
+    }
+    const base = {
+      sections: [
+        section(0, [
+          { ...T, t: 'base', _key: K },
+          { ...T, _key: K2 },
+          { ...U, _key: KU },
+        ]),
+        section(1, o.sections[1].cards),
+      ],
+    }
+    const result = mergeEntry({
+      format: 'json',
+      ancestor: { data: o },
+      base: { data: base },
+      branch: { data: branch },
+      fields: sections,
+    })
+    if (result.kind !== 'merged') throw new Error('expected a merge')
+    expect(result.conflicts).toEqual([])
+    expect(result.keyRemaps).toEqual([])
+    const merged = result.data.sections as Array<{ cards: Data[] }>
+    expect(merged.map((s) => s.cards.map((c) => c.t))).toEqual([
+      ['base', 't'],
+      ['q', 't'],
+    ])
+  })
+
   it('the base deletes the reworded twin: it stays deleted', () => {
     const base = structuredClone(ancestor)
     base.sections[1].cards.splice(0, 1)

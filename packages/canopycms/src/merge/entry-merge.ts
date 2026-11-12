@@ -720,18 +720,28 @@ export function mergeEntry({
     }
   }
   const ancestorKeys = new Set<string>()
-  // A list by its field path: an edited parent reads under another key, the same list still.
+  visitItems(ancestor.data, (_item, key) => ancestorKeys.add(key))
+  // Each list by the own keys of the items enclosing it, as a parent's read key changes with its
+  // content and its own key does not; by its field path alone where the ancestor has no such
+  // parent, as a side may key a keyless parent.
+  const exact = new Map<string, Set<string>>()
+  const byField = new Map<string, Set<string>>()
+  const parents = new Set<string>()
   const field = (list: string) => list.replace(/\[[^\]]*\]/g, '[]')
-  const listKeys = new Map<string, Set<string>>()
-  visitItems(ancestor.data, (_item, key, list) => {
-    ancestorKeys.add(key)
-    listKeys.set(field(list), (listKeys.get(field(list)) ?? new Set()).add(key))
+  visitByOwnKey(ancestor.data, (_item, read, list, at) => {
+    exact.set(list, (exact.get(list) ?? new Set()).add(read))
+    byField.set(field(list), (byField.get(field(list)) ?? new Set()).add(read))
+    parents.add(at)
   })
   const movedIn = (data: unknown) => {
     const keys = new Set<string>()
-    visitItems(data, (item, _key, list) => {
+    visitByOwnKey(data, (item, _read, list) => {
       const own = usableKey(item)
-      if (own !== undefined && !listKeys.get(field(list))?.has(own)) keys.add(own)
+      if (own === undefined) return
+      const parent = list.slice(0, list.lastIndexOf(']') + 1)
+      const there =
+        parent === '' || parents.has(parent) ? exact.get(list) : byField.get(field(list))
+      if (!there?.has(own)) keys.add(own)
     })
     return keys
   }
@@ -830,6 +840,29 @@ function keyedItems(data: unknown): Map<string, KeyedItem | null> {
 
 /** An item's content as a name, so an item a side moved without its key is still found. */
 const contentName = (item: unknown): string => `${ITEM_KEY}:${valueToken(item)}`
+
+/**
+ * Each list item of `node` with the key a read gives it, the path of its list, and its own path,
+ * which names every enclosing item by its own key, or its place where it has none.
+ */
+function visitByOwnKey(
+  node: unknown,
+  onItem: (item: unknown, read: string, list: string, at: string) => void,
+  list = '',
+): void {
+  if (Array.isArray(node)) {
+    const reads = itemKeysAsRead(node)
+    node.forEach((item, index) => {
+      const at = `${list}[${usableKey(item) ?? `#${index}`}]`
+      const read = reads[index]
+      if (read !== undefined) onItem(item, read, list, at)
+      visitByOwnKey(item, onItem, at)
+    })
+  } else if (isPlainRecord(node)) {
+    for (const [name, value] of Object.entries(node))
+      visitByOwnKey(value, onItem, `${list}.${name}`)
+  }
+}
 
 /** Calls `onItem` for every record in a list in `node`, with its read key, list and path. */
 function visitItems(

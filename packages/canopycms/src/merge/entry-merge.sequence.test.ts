@@ -417,10 +417,16 @@ function life(seed: number, syncs: number): string {
     // Twins a side dropped read either way too, where the data allows, but in editor-only lives
     // their keys tell them apart: only an item made to read like another excuses those checks.
     const readings = read(false)
-    const edited = read(true).map(([x, y]) => intended(mo, x, y))
     const [want, ...others] = readings.map(([x, y]) => intended(mo, x, y))
     if (want === 'ambiguous') break
-    const answers = [want, ...others.filter((w) => w !== 'ambiguous')]
+    const edited = [
+      want,
+      ...read(true)
+        .slice(1)
+        .map(([x, y]) => intended(mo, x, y)),
+    ]
+    const broad = [want, ...others.filter((w) => w !== 'ambiguous')]
+    const answers = byEditor ? edited.filter((w) => w !== 'ambiguous') : broad
     if (readings.length === 1 && !both && want !== 'conflict' && g.next() < 0.4) {
       byEditor = false
       branch = gitMerged(want, base, mine)
