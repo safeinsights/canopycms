@@ -235,6 +235,37 @@ export async function isRebaseInProgress(repoPath: string): Promise<boolean> {
   return results.some(Boolean)
 }
 
+const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/
+
+/**
+ * The commit HEAD names, read from the files: a detached HEAD's sha, or the branch's loose ref,
+ * else its line in `packed-refs`. Null for any other layout, a reftable store among them, which
+ * the caller reads with git instead. Files only, as {@link resolveGitDir} is, for the branch
+ * listing that reads every clone in review (api/branch.ts).
+ */
+export async function readHeadCommitFromFiles(repoPath: string): Promise<string | null> {
+  const gitDir = await resolveGitDir(repoPath)
+  if (!gitDir) return null
+  try {
+    const head = (await fs.readFile(path.join(gitDir, 'HEAD'), 'utf-8')).trim()
+    if (FULL_SHA.test(head)) return head
+    const ref = /^ref: (refs\/heads\/\S+)$/.exec(head)?.[1]
+    if (!ref || ref.split('/').includes('..')) return null
+    const commonFile = await fs.readFile(path.join(gitDir, 'commondir'), 'utf-8').catch(() => null)
+    const refsDir = commonFile ? path.resolve(gitDir, commonFile.trim()) : gitDir
+    const loose = await fs.readFile(path.join(refsDir, ref), 'utf-8').catch(() => null)
+    if (loose !== null) return FULL_SHA.test(loose.trim()) ? loose.trim() : null
+    const packed = await fs.readFile(path.join(refsDir, 'packed-refs'), 'utf-8').catch(() => '')
+    for (const line of packed.split('\n')) {
+      const [sha, name] = line.split(' ')
+      if (name === ref && FULL_SHA.test(sha)) return sha
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 /**
  * The repository's current HEAD branch name, or `fallback` when detection fails or HEAD is
  * detached.

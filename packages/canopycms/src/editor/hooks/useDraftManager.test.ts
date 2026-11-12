@@ -1396,7 +1396,7 @@ describe('useDraftManager', () => {
           await result.current.handleReload()
         })
 
-        expect(mockLoadEntry).toHaveBeenCalledWith(mockEntry)
+        expect(mockLoadEntry).toHaveBeenCalledWith(mockEntry, expect.any(Function))
         expect(notifications.hide).toHaveBeenCalledWith(goneToastId)
       })
 
@@ -1990,7 +1990,7 @@ describe('useDraftManager', () => {
       await result.current.handleReload()
     })
 
-    expect(mockLoadEntry).toHaveBeenCalledWith(mockEntry)
+    expect(mockLoadEntry).toHaveBeenCalledWith(mockEntry, expect.any(Function))
     expect(mockSetBusy).toHaveBeenCalledWith(true)
     expect(mockSetBusy).toHaveBeenCalledWith(false)
     expect(result.current.loadedValues.abc123def456).toEqual({
@@ -2046,6 +2046,33 @@ describe('useDraftManager', () => {
       })
     })
 
+    it('reads again when the saved copies are forgotten during a reload, landing only the later read', async () => {
+      let finish: (value: Record<string, unknown>) => void = () => {}
+      mockLoadEntry
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              finish = resolve
+            }),
+        )
+        .mockResolvedValueOnce({ title: 'Later read', body: '' })
+      const { result } = renderHook(() => useDraftManager(defaultOptions))
+      let reload: Promise<void> = Promise.resolve()
+      act(() => {
+        reload = result.current.handleReload()
+      })
+      const before = result.current.readGeneration.current
+      act(() => result.current.forgetLoadedValues(() => false))
+      expect(result.current.readGeneration.current).toBe(before + 1)
+
+      await act(async () => {
+        finish({ title: 'Older read', body: '' })
+        await reload
+      })
+      expect(mockLoadEntry).toHaveBeenCalledTimes(2)
+      expect(result.current.loadedValues.abc123def456).toEqual({ title: 'Later read', body: '' })
+    })
+
     it('reloads without a confirm modal when the selected draft is clean', async () => {
       const { result } = renderHook(() => useDraftManager(defaultOptions))
 
@@ -2055,7 +2082,7 @@ describe('useDraftManager', () => {
 
       const { modals } = await import('@mantine/modals')
       expect(modals.openConfirmModal).not.toHaveBeenCalled()
-      expect(mockLoadEntry).toHaveBeenCalledWith(mockEntry)
+      expect(mockLoadEntry).toHaveBeenCalledWith(mockEntry, expect.any(Function))
     })
 
     it('keeps the unsaved draft when the user cancels the reload confirmation', async () => {
