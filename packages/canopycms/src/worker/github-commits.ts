@@ -43,7 +43,11 @@ import {
 import { enqueueGitHubPush, readPublishedSha, recordSeenOnGitHub } from './history-rewrite'
 import { workerLog, workerLogWarn } from './log'
 import { decidePublish } from './publish-decision'
-import { assertNoIncomingSubmodules, fetchFromRemoteGit } from './shared-repo-git'
+import {
+  SHARED_REPO_STATUS_ARGS,
+  assertNoIncomingSubmodules,
+  fetchFromRemoteGit,
+} from './shared-repo-git'
 import type { WorkerContext } from './worker-context'
 
 /**
@@ -515,6 +519,8 @@ async function rekeyTakenIn(
   const built = await rekeyOf(ctx, args, head, tip)
   if (built === null) return null
   const { sha } = built
+  // A re-key the clone can't move to stays unpublished; the commits come in once the saves do.
+  if (args.dirty && (await savesMeet(git, head, sha))) return null
   if (published !== null && !(await contains(git, sha, published))) return null
   const refused = await refuseIncoming(args, head, sha)
   if (refused) return refused
@@ -548,17 +554,13 @@ async function rekeyTakenIn(
 }
 
 /** {@link buildRekey} on GitHub's commits from `head` to `tip`, or null when none needs a new key. */
-async function rekeyOf(
+function rekeyOf(
   ctx: GitHubCommitsContext,
-  { git, branchPath, branchRef, dirty }: GitHubCommitsArgs,
+  { git, branchPath, branchRef }: GitHubCommitsArgs,
   head: string,
   tip: string,
   unchangedIn?: { head: string; since: string },
 ): Promise<BuiltMerge | null> {
-  // A file the clone's saves changed keeps git's keys: their commit merges against `head`'s.
-  const skip = dirty
-    ? new Set((await git.status()).files.flatMap((f) => (f.from ? [f.path, f.from] : [f.path])))
-    : undefined
   return buildRekey(git, branchPath, {
     from: head,
     tip,
@@ -566,8 +568,25 @@ async function rekeyOf(
     timeoutMs: ctx.taskTimeoutMs,
     message: `Key the items that merges on GitHub brought into ${branchRef}`,
     ...(unchangedIn && { unchangedIn }),
-    ...(skip && { skip }),
   })
+}
+
+/**
+ * Whether the clone's saves (changes, deletions, new files) touch a path `from..to` changes: the
+ * clone can't move to `to` until they are committed, and that commit merges against `from`'s keys.
+ */
+async function savesMeet(git: SimpleGit, from: string, to: string): Promise<boolean> {
+  const saved = new Set(
+    (await git.status([...SHARED_REPO_STATUS_ARGS])).files.flatMap((f) =>
+      f.from ? [f.path, f.from] : [f.path],
+    ),
+  )
+  const changed = (
+    await git.raw(['diff-tree', '-r', '-z', '--name-only', '--end-of-options', from, to])
+  )
+    .split('\0')
+    .filter(Boolean)
+  return changed.some((file) => saved.has(file))
 }
 
 /**

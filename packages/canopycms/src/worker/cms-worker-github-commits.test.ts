@@ -2512,6 +2512,7 @@ describe('a merge on GitHub that leaves an item under a key naming another', () 
     [first, second]: [string, string],
     keys: [string, string],
     meta: Partial<BranchMetadata> = {},
+    baseAlso: Record<string, string> = {},
   ): Promise<string> {
     await s.advanceBase({ [LIST]: list('L', [item(first), item(second)]) })
     await s.clone.fetch('origin', BASE)
@@ -2536,7 +2537,7 @@ describe('a merge on GitHub that leaves an item under a key naming another', () 
         : {}
     await writeMeta(s, { status: 'submitted', pullRequestNumber: 7, ...review, ...meta })
     await cycle(s)
-    await s.advanceBase({ [LIST]: list('L', [item(`${first}2`), item(second)]) })
+    await s.advanceBase({ [LIST]: list('L', [item(`${first}2`), item(second)]), ...baseAlso })
     return s.updateBranchOnGitHub()
   }
   const distinct = (meta?: Partial<BranchMetadata>) => stale(['p', 'q'], [KP, KQ], meta)
@@ -2783,6 +2784,34 @@ describe('a merge on GitHub that leaves an item under a key naming another', () 
       await cycle(s)
       await s.resetOnGitHub((await s.remoteSha(`refs/heads/${BRANCH}`)) as string)
       await s.commit({ [LIST]: mine }, 'submit of the saves')
+
+      await cycle(s)
+
+      expect(await itemsIn(await s.file(LIST))).toEqual(
+        variant === 'edit' ? ['B/x2', 'pad/x'] : ['pad/x2'],
+      )
+    })
+  }
+
+  for (const variant of ['edit', 'delete'] as const) {
+    it(`keeps a ${variant} of a twin saved while saves to another file held the take-in`, async () => {
+      const mine =
+        variant === 'edit'
+          ? list('L-branch', [
+              { _key: KX, ...item('x'), a: 'B' },
+              { _key: KX2, ...item('x') },
+            ])
+          : list('L-branch', [{ _key: KX, ...item('x') }])
+      await stale(['x', 'x'], [KX, KX2], {}, { [ENTRY]: '{"title":"base"}\n' })
+      await s.save({ [ENTRY]: '{"title":"saved"}\n' })
+      await cycle(s)
+      // Nothing the clone can't move to is published.
+      expect(
+        await simpleGit().raw(['--git-dir', s.remoteGit, 'log', '--format=%s', BRANCH]),
+      ).not.toContain(REKEY)
+      await s.save({ [LIST]: mine })
+      await cycle(s)
+      await s.commit({ [ENTRY]: '{"title":"saved"}\n', [LIST]: mine }, 'submit of the saves')
 
       await cycle(s)
 
