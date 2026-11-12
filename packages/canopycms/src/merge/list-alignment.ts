@@ -108,7 +108,8 @@ export interface Alignment {
  *
  * The rest align as diff3 aligns lines: equal content in order, then equal content out of order
  * (a move), then, in each gap between two matches, by shared values and last by place
- * ({@link pairInGap}). `otherSide` is the other version's list, whose copies count as this side's.
+ * ({@link pairInGap}). `otherSide` is the other version's list: its copy of an item counts here
+ * where it holds the same rewrite.
  * Undefined when the diff ran out of time.
  */
 export function alignToAncestor(
@@ -165,7 +166,8 @@ export function alignToAncestor(
   )
   const sameRewrite = (j: number, own: string) =>
     otherHolds.has(`${names(own)}\u0000${valueToken(items[j])}`)
-  // Whether the item may be the unheld item holding its content, and whether its key names another.
+  // Whether the item may be the unheld item holding its content: `named` when its key names
+  // another, `keyed` when a copy also shows that one was rewritten, `unnamed` when it names none.
   const claim = (j: number, own: string): 'named' | 'keyed' | 'unnamed' | undefined => {
     if (!hasContentKeyShape(own)) return undefined
     const content = valueToken(items[j])

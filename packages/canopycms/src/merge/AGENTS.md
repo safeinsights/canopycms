@@ -21,12 +21,11 @@ The **code comment at the point of the rule is authoritative**; this file is the
 ## The one heuristic
 
 Aligning list items no key names (`list-alignment.ts`) is the engine's one heuristic.
-It covers items no ancestor key names, or under a stale first-save key, which yields to
-content only from an item under its read key, never to more claimants than holders. It
+A stale first-save key yields to content only from an item under its read key, and keeps
+its item where more items claim the content than hold it, or a copy shows a rewrite. It
 can misread an item keeping none of its values, changed under a stale key, or made to
-read like a deleted one (KNOWN LIMIT tests). `entry-merge.ground-truth.test.ts` and
-`entry-merge.sequence.test.ts` pin that edits never merge wrongly; the latter names, by
-seed, the stale-twin-key lives it exempts.
+read like a deleted one (KNOWN LIMIT tests). `entry-merge.sequence.test.ts` pins that
+edits never merge wrongly, naming by seed the stale-twin-key lives it exempts.
 
 `entry-merge.test.ts`' header maps the plan's conflict-case rows to tests; the golden
 fixtures are in `entry-merge.golden.test.ts`.
