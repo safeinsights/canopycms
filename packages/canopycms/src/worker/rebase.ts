@@ -1598,8 +1598,8 @@ async function rebaseOneBranch(
         return { kind: 'skippedDirty' }
       }
 
-      // A merge of GitHub's commits that holds the base `remote.git` holds took the base in, so it
-      // answers a request for the latest changes as a merge of the base does, conflicts included.
+      // A merge of GitHub's commits whose result holds the base `remote.git` holds answers a request
+      // for the latest changes as a merge of the base does, conflicts included.
       const tookInByGitHubMerge = async (keptEntries: number): Promise<BranchRebaseOutcome> => {
         if (editorDirt.length > 0) return await skipIfDirty()
         const baseTip = await readPublishedSha(ctx, ctx.baseBranch).catch(() => null)
