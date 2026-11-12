@@ -133,18 +133,23 @@ export function alignToAncestor(
   // that item, and one holding exactly another ancestor item no key on this side names is that
   // one, even an item the branch edited to read like one it deleted.
   const held = new Set(items.flatMap((item) => ownKey(item) ?? []))
-  const unheld = new Set(
-    ancestorItems.flatMap((item, i) => (held.has(ancestorKeys[i]) ? [] : [valueToken(item)])),
-  )
+  const unheld = new Map<string, number>()
+  ancestorItems.forEach((item, i) => {
+    if (held.has(ancestorKeys[i])) return
+    const token = valueToken(item)
+    unheld.set(token, (unheld.get(token) ?? 0) + 1)
+  })
   const at = new Map(ancestorKeys.map((key, i) => [key, i]))
   const usurped = (j: number, own: string): boolean => {
     if (!hasContentKeyShape(own)) return false
     const content = valueToken(items[j])
-    if (!unheld.has(content)) return false
+    const holders = unheld.get(content) ?? 0
+    if (holders === 0) return false
     const read = readKeys[j]
-    const named = read !== undefined && known.has(read) ? read : aliases.get(own)
-    const i = named === undefined ? undefined : at.get(named)
-    return i === undefined || valueToken(ancestorItems[i]) !== content
+    const i = read === undefined ? undefined : at.get(read)
+    if (i !== undefined) return valueToken(ancestorItems[i]) !== content
+    // A key naming no item here pairs by content only where one item holds it, twins by place.
+    return holders === 1
   }
   items.forEach((item, j) => {
     const own = ownKey(item)

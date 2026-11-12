@@ -887,7 +887,8 @@ export async function reconcileMergeConflicts(
       if (aside !== null) {
         workerLogWarn(`  ${branchDir}: its conflict record does not parse; copied it to ${aside}`)
       }
-      current = null
+      // The held record, or one another writer left in its place.
+      current = await store.read()
     }
     if (current === null) {
       await followRecord(ctx, branchPath, branchDir, branchRef, {})

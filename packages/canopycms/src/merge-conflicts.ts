@@ -553,24 +553,21 @@ export class MergeConflictStore {
   /**
    * Copy a file that does not parse as a record aside, and replace it with a new one that is
    * `held`, as which conflicts were open is lost with it. Resolves the copy's path, or null when
-   * the file parses by the time the locks are held: another caller's copy, if it set one aside.
+   * the file parses by the time the locks are held, as another call may have set it aside.
    * The new record is written beside the file and renamed over it, so a worker killed at any step
    * leaves a record that still refuses the gate: the damaged one, or the held one.
    */
   async quarantine(): Promise<string | null> {
     return withLock(this.filePath, () =>
       withOccFileLock(this.filePath, async () => {
-        const now = await this.read().then(
-          (record) => ({ record }),
+        const parses = await this.read().then(
+          () => true,
           (err: unknown) => {
-            if (err instanceof MergeConflictsFileMalformedError) return null
+            if (err instanceof MergeConflictsFileMalformedError) return false
             throw err
           },
         )
-        if (now !== null) {
-          const aside = now.record?.held?.aside
-          return aside === undefined ? null : path.join(path.dirname(this.filePath), aside)
-        }
+        if (parses) return null
         const stamp = `${Date.now()}-${randomUUID().slice(0, 8)}`
         const aside = `${this.filePath}.malformed-${stamp}`
         await fs.copyFile(this.filePath, aside)

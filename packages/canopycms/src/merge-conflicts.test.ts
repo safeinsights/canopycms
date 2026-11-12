@@ -323,8 +323,8 @@ describe('MergeConflictStore', () => {
     const clock = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000)
     await fs.writeFile(file, '{"first"')
     const first = (await store.quarantine())!
-    // Asked again once it is held: the copy it already made, not a copy of the held record.
-    await expect(store.quarantine()).resolves.toBe(first)
+    // Asked again once it is held: no copy of the held record.
+    await expect(store.quarantine()).resolves.toBeNull()
     await fs.writeFile(file, '{"second"')
     const second = (await store.quarantine())!
     clock.mockRestore()

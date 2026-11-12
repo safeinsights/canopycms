@@ -1796,6 +1796,91 @@ describe("twins a git-level merge left under each other's first-save keys", () =
     })
   })
 
+  describe('a twin under its own read key, which repeats a key the ancestor no longer reads', () => {
+    const list: FieldConfig[] = [
+      { name: 'items', type: 'object', list: true, fields: text('h', 't') },
+      { name: 'l2', type: 'object', list: true, fields: text('h', 't') },
+    ]
+    const [T, Y] = [
+      { h: 'T', t: 't' },
+      { h: 'Y', t: 'y' },
+    ]
+    const [K, K2, K3] = itemKeysAsRead([T, T, T]) as string[]
+    const KY = itemKeysAsRead([Y])[0] as string
+    const twice = (o: Data, a: Data, b: Data) => {
+      const result = mergeEntry({
+        format: 'json',
+        ancestor: { data: o },
+        base: { data: a },
+        branch: { data: b },
+        fields: list,
+      })
+      if (result.kind !== 'merged') throw new Error('expected a merge')
+      return {
+        items: (result.data.items as Data[]).map((i) => i.t),
+        conflicts: result.conflicts.map((c) => c.kind),
+      }
+    }
+    // The branch deleted the first T and holds the last under K-3, its own read key once.
+    const branch = {
+      items: [
+        { ...Y, _key: KY },
+        { ...T, _key: K3 },
+      ],
+    }
+
+    it('the base deletes the last: both deletions stand', () => {
+      expect(twice({ items: [T, Y, T] }, { items: [T, Y] }, branch)).toEqual({
+        items: ['y'],
+        conflicts: [],
+      })
+    })
+
+    it('the base edits the first: a conflict on it, which the branch deleted', () => {
+      const result = twice({ items: [T, Y, T] }, { items: [{ ...T, t: 'base' }, Y, T] }, branch)
+      expect(result.conflicts).toEqual(['removed-by-you'])
+    })
+
+    it('another list reads the key: still a conflict on the first', () => {
+      const l2 = [T, T, T]
+      const result = twice(
+        { items: [T, Y, T], l2 },
+        { items: [{ ...T, t: 'base' }, Y, T], l2 },
+        { ...branch, l2: [K, K2, K3].map((_key) => ({ ...T, _key })) },
+      )
+      expect(result.conflicts).toEqual(['removed-by-you'])
+    })
+
+    it('on the base side, against a branch edit of the first: a conflict on it', () => {
+      const result = twice({ items: [T, Y, T] }, branch, {
+        items: [
+          { ...T, t: 'mine', _key: K },
+          { ...Y, _key: KY },
+          { ...T, _key: K2 },
+        ],
+      })
+      expect(result.conflicts).toEqual(['removed-on-base'])
+    })
+  })
+
+  it('names a dated twin by the key a read of its day gives, with no schema', () => {
+    const day = new Date('2024-01-01T00:00:00.000Z')
+    const A = { h: 'A', t: 'a', d: day }
+    const [, T2] = itemKeysAsRead([
+      { ...A, d: '2024-01-01' },
+      { ...A, d: '2024-01-01' },
+    ]) as string[]
+    const result = mergeEntry({
+      format: 'md',
+      ancestor: { data: { items: [A, A] }, body: '' },
+      base: { data: { items: [A, { ...A, t: 'base' }] }, body: '' },
+      branch: { data: { items: [{ ...A, _key: T2 }] }, body: '' },
+    })
+    if (result.kind !== 'merged') throw new Error('expected a merge')
+    expect(result.conflicts).toEqual([])
+    expect((result.data.items as Data[]).map((i) => i.t)).toEqual(['base'])
+  })
+
   it('D: the base edits the other twin and the branch edits a third item: both stand', () => {
     const edited = {
       ...branch,
