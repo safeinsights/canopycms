@@ -102,8 +102,10 @@ interface At {
   segments: RawSegment[]
   /** The versions of the value at each step of `segments`. */
   trail: Versions[]
-  /** The branch's keys of the list items enclosing this place, outermost first. */
+  /** The branch's keys of the list items enclosing this place, as a read gives them. */
   branchKeys: string[]
+  /** The base's and the branch's values here as a read gives them, which name list items. */
+  asRead: { a: unknown; b: unknown }
   /** This place is a list item. */
   item: boolean
 }
@@ -118,19 +120,32 @@ interface TextMerge {
 interface Walk {
   conflicts: RawConflict[]
   keyRemaps: KeyRemap[]
+  /** Remaps to an item the merged entry holds without a key, named once it reads. */
+  pendingRemaps: Array<{ at: RawSegment[]; within: string[]; from: string }>
   texts: TextMerge[]
   /** Every key the ancestor's read gives its list items, across the entry. */
   ancestorKeys: ReadonlySet<string>
 }
 
-const ROOT: At = { segments: [], trail: [], branchKeys: [], item: false }
-
-const child = (at: At, segment: RawSegment, versions: Versions): At => ({
-  segments: [...at.segments, segment],
-  trail: [...at.trail, versions],
-  branchKeys: at.branchKeys,
+const ROOT: At = {
+  segments: [],
+  trail: [],
+  branchKeys: [],
   item: false,
-})
+  asRead: { a: undefined, b: undefined },
+}
+
+const child = (at: At, segment: RawSegment, versions: Versions): At => {
+  const inside = (v: unknown) =>
+    'field' in segment && isPlainRecord(v) ? member(v, segment.field) : undefined
+  return {
+    segments: [...at.segments, segment],
+    trail: [...at.trail, versions],
+    branchKeys: at.branchKeys,
+    item: false,
+    asRead: { a: inside(at.asRead.a), b: inside(at.asRead.b) },
+  }
+}
 
 /** `record`'s own member `name`: never one it inherits, and `__proto__` as a member. */
 const member = (record: Record<string, unknown>, name: string): unknown =>
@@ -372,12 +387,15 @@ function mergeList(
   // A list too far apart to align in time is one value.
   if (!identities) return undefined
   const { oKeys, aIds, bIds, aByPlace, bByPlace } = identities
-  const bReadKeys = itemKeysAsRead(b)
+  const readList = (v: unknown, raw: readonly unknown[]) =>
+    Array.isArray(v) && v.length === raw.length ? v : raw
+  const [aRead, bRead] = [readList(at.asRead.a, a), readList(at.asRead.b, b)]
+  const [aReadKeys, bReadKeys] = [itemKeysAsRead(aRead), itemKeysAsRead(bRead)]
   const index = (ids: readonly string[]) => new Map(ids.map((id, n) => [id, n]))
   const [oAt, aAt, bAt] = [index(oKeys), index(aIds), index(bIds)]
   const used = new Set<string>()
   const out: unknown[] = []
-  const replacedKeys: Array<{ index: number; from: string }> = []
+
   for (const id of mergeOrder(oKeys, aIds, bIds)) {
     const i = isNewIdentity(id) ? undefined : oAt.get(id)
     const ja = aAt.get(id)
@@ -393,6 +411,10 @@ function mergeList(
       trail: [...at.trail, itemVersions],
       branchKeys: [...at.branchKeys, (jb !== undefined && bReadKeys[jb]) || id],
       item: true,
+      asRead: {
+        a: ja === undefined ? undefined : aRead[ja],
+        b: jb === undefined ? undefined : bRead[jb],
+      },
     }
     if (i !== undefined && ja === undefined && jb === undefined) continue
     if (i !== undefined && ja === undefined) {
@@ -400,8 +422,10 @@ function mergeList(
       conflict(oi, ai, bi, itemAt, walk)
     } else if (i !== undefined && jb === undefined) {
       if (sameValue(oi, ai)) continue
-      // Named as the drawer names an item the branch removed: by the ancestor's key.
-      conflict(oi, ai, bi, { ...itemAt, segments: [...at.segments, { item: id }] }, walk)
+      // Named as the drawer names it once the merge lands, comparing the base with the branch:
+      // by the key the base's version reads under.
+      const named = (ja !== undefined && aReadKeys[ja]) || id
+      conflict(oi, ai, bi, { ...itemAt, segments: [...at.segments, { item: named }] }, walk)
       continue
     }
     if (ja === undefined || jb === undefined) {
@@ -414,21 +438,19 @@ function mergeList(
       const [aChanged, bChanged] = [!sameValue(oi, ai), !sameValue(oi, bi)]
       if (aChanged && bChanged) conflict(oi, ai, bi, itemAt, walk)
       // The base's item stands in the branch's place: the branch's threads follow it there.
-      if (aChanged && !bChanged && bReadKeys[jb] !== undefined) {
-        replacedKeys.push({ index: out.length, from: bReadKeys[jb] })
+      const from = bReadKeys[jb]
+      if (aChanged && !bChanged && from !== undefined) {
+        walk.pendingRemaps.push({ at: itemAt.segments, within: at.branchKeys, from })
       }
       out.push(aChanged && !bChanged ? ai : bi)
       continue
     }
     const merged = mergeValue(oi, ai, bi, itemAt, walk)
-    out.push(
-      withListKey(merged, ai, bi, (jb !== undefined && bReadKeys[jb]) || undefined, used, at, walk),
-    )
-  }
-  const outKeys = itemKeysAsRead(out)
-  for (const { index, from } of replacedKeys) {
-    const to = outKeys[index]
-    if (to !== undefined && to !== from) walk.keyRemaps.push({ within: at.branchKeys, from, to })
+    // A keyless item the base changed takes the key the base's version reads under, which the
+    // next sync's ancestor names it by, never the branch's read key for content it no longer has.
+    const rekey = oi !== undefined && usableKey(bi) !== undefined && !sameValue(oi, ai)
+    const keys = { base: rekey ? aReadKeys[ja] : undefined, branchRead: bReadKeys[jb] }
+    out.push(withListKey(merged, ai, bi, keys, used, at, walk))
   }
   return out
 }
@@ -479,13 +501,16 @@ function withListKey(
   merged: unknown,
   ai: unknown,
   bi: unknown,
-  branchReadKey: string | undefined,
+  keys: { base: string | undefined; branchRead: string | undefined },
   used: Set<string>,
   at: At,
   walk: Walk,
 ): unknown {
   if (!isPlainRecord(merged)) return merged
-  const key = [usableKey(ai), usableKey(bi)].find((k) => k !== undefined && !used.has(k))
+  const branchReadKey = keys.branchRead
+  const key = [usableKey(ai) ?? keys.base, usableKey(bi)].find(
+    (k) => k !== undefined && !used.has(k),
+  )
   if (key === undefined) {
     const carried = isPlainRecord(bi) ? bi[ITEM_KEY] : undefined
     return carried === undefined ? merged : { ...merged, [ITEM_KEY]: carried }
@@ -558,8 +583,10 @@ export function mergeEntry({
   }
   const ancestorKeys = new Set<string>()
   visitItems(ancestor.data, (_item, key) => ancestorKeys.add(key))
-  const walk: Walk = { conflicts: [], keyRemaps: [], texts: [], ancestorKeys }
-  const data = mergeRecord(ancestor.data, base.data, branch.data, ROOT, walk)
+  const walk: Walk = { conflicts: [], keyRemaps: [], pendingRemaps: [], texts: [], ancestorKeys }
+  const asRead = (side: MergeSide) => (fields ? entryAsRead(fields, side.data) : side.data)
+  const root = { ...ROOT, asRead: { a: asRead(base), b: asRead(branch) } }
+  const data = mergeRecord(ancestor.data, base.data, branch.data, root, walk)
   if (fields) undoUnparseableMdx(fields, data, walk)
   flagItemsMovedAway(ancestor.data, base.data, branch.data, data, walk)
   const hasBody = [ancestor, base, branch].some((side) => side.body !== undefined)
@@ -575,6 +602,13 @@ export function mergeEntry({
       )
     : undefined
   const read = fields ? entryAsRead(fields, data) : data
+  for (const { at, within, from } of walk.pendingRemaps) {
+    const last = at.at(-1)
+    const list = valueAt(read, at.slice(0, -1))
+    const to =
+      last && 'index' in last && Array.isArray(list) ? itemKeysAsRead(list)[last.index] : undefined
+    if (to !== undefined && to !== from) walk.keyRemaps.push({ within, from, to })
+  }
   return {
     kind: 'merged',
     data,
@@ -795,7 +829,13 @@ export function mergeCollectionMeta(
   base: Record<string, unknown>,
   branch: Record<string, unknown>,
 ): { data: Record<string, unknown>; conflicts: FieldConflict[] } {
-  const walk: Walk = { conflicts: [], keyRemaps: [], texts: [], ancestorKeys: new Set() }
+  const walk: Walk = {
+    conflicts: [],
+    keyRemaps: [],
+    pendingRemaps: [],
+    texts: [],
+    ancestorKeys: new Set(),
+  }
   const data: Record<string, unknown> = {}
   for (const name of new Set([
     ...Object.keys(branch),

@@ -7,7 +7,13 @@
  * see `merge/AGENTS.md`.
  */
 
-import { ITEM_KEY, hasContentKeyShape, isItemKey, itemKeysAsRead } from '../item-keys'
+import {
+  ITEM_KEY,
+  hasContentKeyShape,
+  hasMachineKeyShape,
+  isItemKey,
+  itemKeysAsRead,
+} from '../item-keys'
 import { isBlockStructuralKey } from '../validation/block-structural-keys'
 import { isPlainRecord } from '../validation/field-traversal'
 import { commonPairs } from './diff3'
@@ -131,7 +137,13 @@ export function alignToAncestor(
     if (id !== undefined && !taken.has(id)) {
       ids[j] = id
       taken.add(id)
-    } else if (own !== undefined && read !== undefined && !known.has(own) && inEntry.has(read)) {
+    } else if (
+      own !== undefined &&
+      read !== undefined &&
+      !known.has(own) &&
+      hasMachineKeyShape(own) &&
+      inEntry.has(read)
+    ) {
       // An ancestor item of another list, moved here with its key: new to this list.
       minted.add(j)
     } else if (own !== undefined && !known.has(own) && isMinted(item)) {
@@ -184,10 +196,17 @@ export function alignToAncestor(
     )
     if (i !== undefined) match(j, i)
   }
+  // By values only with one clear match holding most of what it held, and never for content an
+  // item of another list holds exactly: that item moved here.
   const byValues = valueIndex(candidates, ancestorItems)
   for (const j of stale) {
     if (ids[j] !== undefined) continue
-    const i = byValues.best(items[j], open)
+    const content = itemKeysAsRead([withoutOwnKey(items[j] as Record<string, unknown>)])[0]
+    if (content !== undefined && !known.has(content) && inEntry.has(content)) {
+      stale.delete(j)
+      continue
+    }
+    const i = byValues.clear(items[j], open)
     if (i !== undefined) match(j, i)
   }
   const bounds: Array<[number, number]> = [
@@ -203,7 +222,7 @@ export function alignToAncestor(
       if (!taken.has(ancestorKeys[i])) ancestorGap.push(i)
     }
     for (let j = bounds[n][1] + 1; j < bounds[n + 1][1]; j++) {
-      if (ids[j] === undefined && !minted.has(j)) sideGap.push(j)
+      if (ids[j] === undefined && (!minted.has(j) || stale.has(j))) sideGap.push(j)
     }
     // A keyless item holding an ancestor item of another list exactly may have moved here: it
     // pairs only by its values, never by place.
@@ -211,7 +230,10 @@ export function alignToAncestor(
       const read = readKeys[j]
       return read !== undefined && !known.has(read) && inEntry.has(read)
     }
-    for (const [j, i, place] of pairInGap(sideGap, items, ancestorGap, ancestorItems, movedHere)) {
+    // An item under a stale key existed before, so it may still pair by place, never by values.
+    const placeOnly = (j: number) => stale.has(j)
+    const paired = pairInGap(sideGap, items, ancestorGap, ancestorItems, movedHere, placeOnly)
+    for (const [j, i, place] of paired) {
       match(j, i)
       if (place) byPlace.add(j)
     }
@@ -244,12 +266,17 @@ function pairInGap(
   ancestorGap: readonly number[],
   ancestorItems: readonly unknown[],
   movedHere: (j: number) => boolean,
+  placeOnly: (j: number) => boolean,
 ): Array<[number, number, boolean]> {
   const index = valueIndex(ancestorGap, ancestorItems)
   const free = new Set(ancestorGap)
   const pairs: Array<[number, number, boolean]> = []
   const unpaired: number[] = []
   for (const j of sideGap) {
+    if (placeOnly(j)) {
+      unpaired.push(j)
+      continue
+    }
     const best = index.best(items[j], (i) => free.has(i))
     if (index.overBudget()) return byPlace(sideGap, ancestorGap, items, ancestorItems)
     if (best === undefined) {
@@ -297,6 +324,19 @@ function valueIndex(indices: readonly number[], ancestorItems: readonly unknown[
         }
       }
       return best
+    },
+    /** `best`, when no other open item holds as many, and it holds over half its own values. */
+    clear(item: unknown, open: (i: number) => boolean): number | undefined {
+      const scores = new Map<number, number>()
+      for (const [name, value] of contentMembers(item)) {
+        for (const i of holders.get(`${name}\u0000${valueToken(value)}`) ?? []) {
+          if (open(i)) scores.set(i, (scores.get(i) ?? 0) + 1)
+        }
+      }
+      const ranked = [...scores].sort(([, x], [, y]) => y - x)
+      const [first, second] = ranked
+      if (!first || (second && second[1] === first[1])) return undefined
+      return first[1] * 2 > contentMembers(ancestorItems[first[0]]).length ? first[0] : undefined
     },
     overBudget: () => steps > MAX_SCORE_STEPS,
   }

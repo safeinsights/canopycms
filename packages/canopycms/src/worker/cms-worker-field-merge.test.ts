@@ -534,7 +534,8 @@ describe('the field merge in the rebase loop', () => {
     expect(parse(await repo.file(GUIDE_FILE), 'md').data).toEqual({
       title: 'Getting started',
       summary: 'Short.',
-      steps: reworded.map((s, i) => ({ ...s, _key: readKey(steps[i]) })),
+      // Each reworded step takes the key the base's version reads under; threads follow it.
+      steps: reworded.map((s) => ({ ...s, _key: readKey(s) })),
     })
     expect(await openConflicts(repo)).toEqual({})
   })
@@ -677,13 +678,13 @@ describe('the field merge in the rebase loop', () => {
     expect(aboutMerged.data).toEqual({
       title: 'About the team',
       description: 'Who we are and what we make.',
-      team: teamBase.map((m, i) => ({ ...m, _key: readKey(team[i]) })),
+      team: teamBase.map((m) => ({ ...m, _key: readKey(m) })),
     })
     expect(aboutMerged.body).toBe('We build tools.\n\nStarted small.\n\nWe are fourteen.\n')
     expect(JSON.parse((await repo.file(files.pricing)) ?? '')).toEqual({
       hero: { heading: 'Plans for every team', sub: 'Pick a plan.' },
       cta: 'Try it free',
-      plans: basePlans.map((p, i) => ({ ...p, _key: readKey(plans[i]) })),
+      plans: basePlans.map((p) => ({ ...p, _key: readKey(p) })),
     })
     const notesMerged = parse(await repo.file(files.notes), 'md')
     expect(notesMerged.data).toEqual({
@@ -695,7 +696,7 @@ describe('the field merge in the rebase loop', () => {
     expect(notesMerged.body).toBe('Three changes.\n\nSaving is faster and safer.\n\nThanks.\n')
     expect(parse(await repo.file(files.footer), 'yaml').data).toEqual({
       copyright: '2026 Example Co',
-      links: linksBase.map((l, i) => ({ ...l, _key: readKey(links[i]) })),
+      links: linksBase.map((l) => ({ ...l, _key: readKey(l) })),
     })
     await expectNoMarkers(repo)
   })

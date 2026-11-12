@@ -258,29 +258,43 @@ export interface EntryKeyRemaps {
   remaps: readonly KeyRemap[]
 }
 
-/** `field` with the item keys `remaps` changed renamed in its key and data path, in order. */
+/**
+ * `field` with the item keys `remaps` changed renamed in its key and data path. Each remap names
+ * an item by the keys it had before this merge, as the comment store's do, so all match against
+ * the original path and apply at once. The key holds one token per data path step but `blockData`.
+ */
 function withRemappedKeys(
   field: MergeConflictField,
   remaps: readonly KeyRemap[],
 ): MergeConflictField {
-  let { key, dataPath } = field
+  const renamed = new Map<number, string>()
   for (const { within, from, to } of remaps) {
     const enclosing: string[] = []
-    const at = dataPath.findIndex((segment) => {
-      if (!('item' in segment)) return false
-      const found =
+    field.dataPath.forEach((segment, n) => {
+      if (!('item' in segment)) return
+      const hit =
         segment.item === from &&
         enclosing.length === within.length &&
-        enclosing.every((k, n) => k === within[n])
+        enclosing.every((k, m) => k === within[m])
+      if (hit && !renamed.has(n)) renamed.set(n, to)
       enclosing.push(segment.item)
-      return found
     })
-    if (at === -1) continue
-    dataPath = dataPath.map((segment, n) => (n === at ? { item: to } : segment))
-    const escaped = from.replace(/[-]/g, '\\-')
-    key = key.replace(new RegExp(`(^|[.?])${escaped}(?=$|[.?])`), `$1${to}`)
   }
-  return key === field.key ? field : { ...field, key, dataPath }
+  if (renamed.size === 0) return field
+  const dataPath = field.dataPath.map((segment, n) => {
+    const to = renamed.get(n)
+    return to === undefined ? segment : { item: to }
+  })
+  const tokens = [...field.key.matchAll(/([.?]?)([^.?]+)/g)].map(([, sep, name]) => [sep, name])
+  let token = 0
+  field.dataPath.forEach((segment, n) => {
+    if ('blockData' in segment) return
+    const to = renamed.get(n)
+    if (to !== undefined && tokens[token]) tokens[token] = [tokens[token][0], to]
+    token++
+  })
+  const key = tokens.map(([sep, name]) => `${sep}${name}`).join('')
+  return { ...field, key, dataPath }
 }
 
 /**

@@ -63,6 +63,10 @@ function contentKey(item: Record<string, unknown>): string {
 export const hasContentKeyShape = (key: string): boolean =>
   /^h[1-9A-HJ-NP-Za-km-z]{1,10}(-\d+)?$/.test(key)
 
+/** True for a key a read or {@link mintItemKey} wrote, never one a person typed, such as `faq`. */
+export const hasMachineKeyShape = (key: string): boolean =>
+  hasContentKeyShape(key) || /^[1-9A-HJ-NP-Za-km-z]{12}$/.test(key)
+
 /**
  * How `withItemKeys` keys an item that lacks a usable key, or repeats one an earlier item of its
  * list holds:

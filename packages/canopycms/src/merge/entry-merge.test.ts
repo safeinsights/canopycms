@@ -322,11 +322,14 @@ describe('lists of records', () => {
           ],
         },
       )
+      // The item takes the key the base's version reads under; the branch's threads follow it.
+      const kBase = itemKeysAsRead([t1, { ...t2, detail: 'two (base)' }])[1]!
       expect(result.data.items).toEqual([
         { ...t1, _key: k1 },
-        { title: 'Two (mine)', detail: 'two (base)', _key: k2 },
+        { title: 'Two (mine)', detail: 'two (base)', _key: kBase },
       ])
       expect(result.conflicts).toEqual([])
+      expect(result.keyRemaps).toEqual([{ within: [], from: k2, to: kBase }])
     })
 
     it('row 13: the base editing the same field too is exactly one field conflict', () => {
@@ -340,11 +343,12 @@ describe('lists of records', () => {
           ],
         },
       )
+      const kBase = itemKeysAsRead([t1, { ...t2, title: 'Two (base)' }])[1]!
       expect(result.data.items).toEqual([
         { ...t1, _key: k1 },
-        { ...t2, title: 'Two (mine)', _key: k2 },
+        { ...t2, title: 'Two (mine)', _key: kBase },
       ])
-      expect(kinds(result)).toEqual([{ key: `items.${k2}.title`, kind: 'changed' }])
+      expect(kinds(result)).toEqual([{ key: `items.${kBase}.title`, kind: 'changed' }])
     })
 
     it('row 12: with a bare date and no schema, a key names an item the branch rewrote whole', () => {
@@ -359,7 +363,8 @@ describe('lists of records', () => {
         'md',
         undefined,
       )
-      expect(result.data.items).toEqual([{ ...rewritten, note: 'base' }])
+      const kBase = itemKeysAsRead([{ ...day, note: 'base' }])[0]
+      expect(result.data.items).toEqual([{ ...rewritten, note: 'base', _key: kBase }])
       expect(result.conflicts).toEqual([])
     })
 
@@ -374,8 +379,9 @@ describe('lists of records', () => {
         'md',
         undefined,
       )
+      const kBase = itemKeysAsRead([{ ...day, note: 'base' }])[0]
       expect(result.data.items).toEqual([
-        { ...day, title: 'Launch day', note: 'base', _key: asRead },
+        { ...day, title: 'Launch day', note: 'base', _key: kBase },
       ])
       expect(result.conflicts).toEqual([])
     })
@@ -482,7 +488,7 @@ describe('lists of records', () => {
     expect(result.data.items).toEqual([
       { ...p, _key: kp },
       { ...p, detail: 'second (mine)', _key: kp2 },
-      { ...q, detail: 'q (base)', _key: kq },
+      { ...q, detail: 'q (base)', _key: itemKeysAsRead([p, p, { ...q, detail: 'q (base)' }])[2] },
     ])
     expect(result.conflicts).toEqual([])
   })
@@ -847,7 +853,11 @@ describe('shapes the review found', () => {
     )
     expect(result.data.items).toEqual([{ ...x, _key: hx }, added, { ...z, _key: hz }])
     expect(kinds(result)).toEqual([
-      { key: `items.${itemKeysAsRead([y])[0]}`, kind: 'removed-by-you', item: true },
+      {
+        key: `items.${itemKeysAsRead([x, { t: 'y (base)' }, z])[1]}`,
+        kind: 'removed-by-you',
+        item: true,
+      },
     ])
   })
 
@@ -862,7 +872,11 @@ describe('shapes the review found', () => {
     )
     expect(result.data.items).toEqual([{ ...x, _key: hx }, copy])
     expect(kinds(result)).toEqual([
-      { key: `items.${itemKeysAsRead([y])[0]}`, kind: 'removed-by-you', item: true },
+      {
+        key: `items.${itemKeysAsRead([x, { t: 'y (base)' }])[1]}`,
+        kind: 'removed-by-you',
+        item: true,
+      },
     ])
   })
 
@@ -1156,7 +1170,11 @@ describe('shapes the second review found', () => {
       { ...x, _key: hx },
     ])
     expect(kinds(result)).toEqual([
-      { key: `items.${itemKeysAsRead([y])[0]}`, kind: 'removed-by-you', item: true },
+      {
+        key: `items.${itemKeysAsRead([x, { ...y, title: 'y (base)' }])[1]}`,
+        kind: 'removed-by-you',
+        item: true,
+      },
     ])
   })
 
@@ -1192,8 +1210,12 @@ describe('shapes the second review found', () => {
       { items: [{ title: 'replacement', detail: '2' }] },
       { items: [{ ...q, detail: 'mine', _key: hq }] },
     )
-    expect(result.data.items).toEqual([{ title: 'replacement', detail: 'mine', _key: hq }])
+    const replacement = { title: 'replacement', detail: '2' }
+    expect(result.data.items).toEqual([
+      { title: 'replacement', detail: 'mine', _key: itemKeysAsRead([replacement])[0] },
+    ])
     expect(result.conflicts).toEqual([])
+    expect(hq).not.toBe(itemKeysAsRead([replacement])[0])
   })
 
   it('row 22: a tag both sides added at different places is one tag', () => {
@@ -1451,7 +1473,8 @@ describe('a branch over several syncs', () => {
     const result = sync(withItems(reworded), withItems(again), branch)
     expect(headings(result)).toEqual(again.map((item) => [item.heading, item.text]))
     expect(result.conflicts).toEqual([])
-    expect((result.data.items as It[])[1]._key).toBe((branch.items as It[])[1]._key)
+    // The key the base's latest version reads under, which the next sync's ancestor knows.
+    expect((result.data.items as It[])[1]._key).toBe(itemKeysAsRead(again)[1])
   })
 
   it('row 16: a reorder by the base after a sync takes the base order', () => {
@@ -1516,6 +1539,149 @@ describe('a branch over several syncs', () => {
   })
 })
 
+describe('stale keys a git rebase leaves', () => {
+  // A rebase takes the base's edit into the branch's item under the key its old content read
+  // under: three-field items, so a match can hold most of an item's values.
+  const schema3: FieldConfig[] = [
+    { name: 'items', type: 'object', list: true, fields: text('h', 't', 'k') },
+    { name: 'l2', type: 'object', list: true, fields: text('h', 't', 'k') },
+  ]
+  const stale = (item: Data, from: Data) => ({ ...item, _key: itemKeysAsRead([from])[0] })
+  const sync = (o: Data, a: Data, b: Data) =>
+    run({ data: o }, { data: a }, { data: b }, 'json', schema3)
+
+  it('row 18: a stale item matches the one item holding most of its values', () => {
+    const [x, y] = [
+      { h: 'x', t: '1', k: 'k' },
+      { h: 'y', t: '2', k: 'k' },
+    ]
+    const mine = stale({ ...y, h: 'y (mine)' }, { h: 'y0', t: '0', k: 'k' })
+    const result = sync({ items: [x, y] }, { items: [x, { ...y, t: '2b' }] }, { items: [mine] })
+    expect(result.data.items).toEqual([
+      { ...mine, t: '2b', _key: itemKeysAsRead([x, { ...y, t: '2b' }])[1] },
+    ])
+    expect(result.conflicts).toEqual([])
+  })
+
+  it('row 18: a stale item two items match alike pairs with neither by its values', () => {
+    const [x, y] = [
+      { h: 'x', t: '1', k: 'k' },
+      { h: 'y', t: '1', k: 'k' },
+    ]
+    const mine = stale({ h: 'z', t: '1', k: 'k' }, { h: 'z0', t: '0', k: 'k' })
+    const result = sync({ items: [x, y] }, { items: [{ ...x, h: 'x2' }, y] }, { items: [mine] })
+    expect(kinds(result)).toEqual([
+      {
+        key: `items.${itemKeysAsRead([{ ...x, h: 'x2' }, y])[0]}`,
+        kind: 'removed-by-you',
+        item: true,
+      },
+    ])
+  })
+
+  it('row 18: a stale item keeping under half of the values pairs only by place', () => {
+    const x = { h: 'x', t: '1', k: 'k' }
+    const mine = stale({ h: 'z', t: '2', k: 'k' }, { h: 'z0', t: '0', k: 'k' })
+    const result = sync({ items: [x] }, { items: [{ ...x, h: 'x2' }] }, { items: [mine] })
+    expect(result.conflicts.map((c) => [c.kind, c.item])).toEqual([['changed', true]])
+  })
+
+  it('row 14: a stale item holding exactly an item of another list moved here: new to this list', () => {
+    const [x, y] = [
+      { h: 'x', t: '1', k: 'k' },
+      { h: 'y', t: '1', k: 'k' },
+    ]
+    const moved = stale(y, { h: 'y0', t: '0', k: 'k' })
+    const result = sync(
+      { items: [x], l2: [y] },
+      { items: [{ ...x, h: 'x2' }], l2: [y] },
+      { items: [moved], l2: [] },
+    )
+    expect(result.conflicts.map((c) => c.kind)).toContain('removed-by-you')
+    expect((result.data.items as Data[]).map((i) => i.h)).toEqual(['y'])
+  })
+})
+
+describe('keys as a read gives them', () => {
+  const dated: FieldConfig[] = [
+    {
+      name: 'items',
+      type: 'object',
+      list: true,
+      fields: [...text('heading'), { name: 'on', type: 'date' }],
+    },
+  ]
+  const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`)
+  const keyAsRead = (items: Data[]) =>
+    (entryAsRead(dated, { items }) as { items: Data[] }).items.map((item) => item._key)
+
+  it('names a remap to an item the base replaced in place by its key as read, dates as days', () => {
+    const o = [
+      { heading: '/a', on: day('2026-03-01') },
+      { heading: '/b', on: day('2026-03-01') },
+    ]
+    const branch = keyAsRead(o).map((key, i) => ({ ...o[i], _key: key }))
+    const base = [o[0], { heading: '/b2', on: day('2026-04-02') }]
+    const result = run(
+      { data: { items: o } },
+      { data: { items: base } },
+      { data: { items: branch } },
+      'md',
+      dated,
+    )
+    expect(result.keyRemaps).toEqual([{ within: [], from: branch[1]._key, to: keyAsRead(base)[1] }])
+  })
+
+  it('keys an item the base changed by its version as read, dates as days, which the next sync knows', () => {
+    const o = [{ heading: 'One', on: day('2026-03-01') }]
+    const branch = keyAsRead(o).map((key, i) => ({ ...o[i], _key: key }))
+    const base = [{ heading: 'One (base)', on: day('2026-03-01') }]
+    const result = run(
+      { data: { items: o } },
+      { data: { items: base } },
+      { data: { items: branch } },
+      'md',
+      dated,
+    )
+    expect((result.data.items as Data[])[0]._key).toBe(keyAsRead(base)[0])
+    expect(result.keyRemaps).toEqual([{ within: [], from: branch[0]._key, to: keyAsRead(base)[0] }])
+  })
+
+  it('reads a key a person typed, matching one in another list, as no move', () => {
+    const nested: FieldConfig[] = [
+      {
+        name: 'items',
+        type: 'object',
+        list: true,
+        fields: [
+          ...text('title'),
+          { name: 'links', type: 'object', list: true, fields: text('href') },
+        ],
+      },
+    ]
+    const o = { items: [{ title: 'T', _key: '1', links: [{ href: '/0' }, { href: '/a' }] }] }
+    const base = { items: [{ title: 'T', _key: '1', links: [{ href: '/0' }, { href: '/z' }] }] }
+    const branch = {
+      items: [
+        {
+          title: 'T2',
+          _key: '1',
+          links: [
+            { href: '/0', _key: '0' },
+            { href: '/a', _key: '1' },
+          ],
+        },
+      ],
+    }
+    const result = run({ data: o }, { data: base }, { data: branch }, 'json', nested)
+    expect(result.conflicts).toEqual([])
+    expect(((result.data.items as Data[])[0].links as Data[]).map((l) => l.href)).toEqual([
+      '/0',
+      '/z',
+    ])
+  })
+})
+
 describe('shapes the fix review found', () => {
   const lists: FieldConfig[] = [
     { name: 'items', type: 'object', list: true, fields: text('title', 'detail') },
@@ -1537,11 +1703,13 @@ describe('shapes the fix review found', () => {
   })
 
   it('row 14: a list too alike to score pairs by place, so a delete still conflicts', () => {
-    const o = Array.from({ length: 1500 }, (_, i) => ({ title: `t${i}`, detail: 'd' }))
+    // 200 items sharing 30 values each: scoring them would match over a million values.
+    const alike = Object.fromEntries(Array.from({ length: 30 }, (_, k) => [`f${k}`, 'same']))
+    const o = Array.from({ length: 200 }, (_, i) => ({ title: `t${i}`, detail: 'd', ...alike }))
     const result = run(
       { data: { items: o } },
       { data: { items: o.map((item) => ({ ...item, title: item.title.toUpperCase() })) } },
-      { data: { items: o.filter((_, i) => i !== 700) } },
+      { data: { items: o.filter((_, i) => i !== 100) } },
       'md',
       lists,
     )
@@ -1713,20 +1881,20 @@ describe('conflicts inside a value the drawer shows whole are named at that valu
     ])
   })
 
-  it('an item the branch removed is named by the ancestor key, as the drawer names it', () => {
+  it('an item the branch removed is named by the base key, as the drawer names it once landed', () => {
     const t = { title: 'T', detail: 'd' }
-    const result = merge({ items: [t] }, { items: [{ ...t, title: 'B' }] }, { items: [] })
-    const ancestorKey = itemKeysAsRead([t])[0]
-    expect(kinds(result)).toEqual([
-      { key: `items.${ancestorKey}`, kind: 'removed-by-you', item: true },
-    ])
+    const base = { items: [{ ...t, title: 'B' }] }
+    const result = merge({ items: [t] }, base, { items: [] })
+    const baseKey = itemKeysAsRead(base.items)[0]
+    expect(kinds(result)).toEqual([{ key: `items.${baseKey}`, kind: 'removed-by-you', item: true }])
+    // Once the merge lands the drawer compares the base, the branch's new merge base, with it.
     const drawer = computeEntryDiff({
       fields,
-      before: { format: 'json', entryType: 'page', data: entryAsRead(fields, { items: [t] }) },
-      after: { format: 'json', entryType: 'page', data: entryAsRead(fields, { items: [] }) },
+      before: { format: 'json', entryType: 'page', data: entryAsRead(fields, base) },
+      after: { format: 'json', entryType: 'page', data: entryAsRead(fields, result.data) },
       marks: false,
     })
-    expect(drawer.changes.map((c) => c.key)).toContain(`items.${ancestorKey}`)
+    expect(drawer.changes.map((c) => c.key)).toContain(`items.${baseKey}`)
   })
 })
 
@@ -1789,12 +1957,15 @@ describe('row 36: every format round-trips through the merge and its serializer'
 })
 
 describe('conflict names agree with the "Show changes" drawer', () => {
-  /** The drawer's change for the branch's side of `conflict`. */
-  const drawerChange = (o: Data, b: Data, conflict: FieldConflict) =>
+  /**
+   * The drawer's change for `conflict` once the merge lands: the drawer then compares the base,
+   * the branch's new merge base, with the merged entry.
+   */
+  const drawerChange = (a: Data, merged: Data, conflict: FieldConflict) =>
     computeEntryDiff({
       fields,
-      before: { format: 'json', entryType: 'page', data: entryAsRead(fields, o) },
-      after: { format: 'json', entryType: 'page', data: entryAsRead(fields, b) },
+      before: { format: 'json', entryType: 'page', data: entryAsRead(fields, a) },
+      after: { format: 'json', entryType: 'page', data: entryAsRead(fields, merged) },
       marks: false,
     }).changes.find((change) => change.key === conflict.key)
 
@@ -1833,7 +2004,7 @@ describe('conflict names agree with the "Show changes" drawer', () => {
     it(name, () => {
       const result = run({ data: o }, { data: a }, { data: b })
       expect(result.conflicts).toHaveLength(1)
-      const change = drawerChange(o, b, result.conflicts[0])
+      const change = drawerChange(a, result.data, result.conflicts[0])
       expect(change?.key).toBe(result.conflicts[0].key)
       expect(change?.dataPath).toEqual(result.conflicts[0].dataPath)
     })

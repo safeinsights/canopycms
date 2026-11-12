@@ -1,6 +1,7 @@
 /**
  * The merge over a branch's life: several syncs in a row, each merge's result becoming the
- * branch the next one merges, against the base it last took in. An item carries the key a read
+ * branch the next one merges, against the base it last took in. Some syncs are a clean git
+ * rebase instead, which takes the base's changes in under the branch's own keys. An item carries the key a read
  * gave it before the base changed it, so a later merge meets keys no content of its ancestor
  * hashes to. Each sync applies known operations on both sides, the branch as the editor and the
  * base as the editor or a developer editing the file by hand, and checks that the merge either
@@ -140,7 +141,31 @@ const contents = (model: Model, list: List) =>
     .map(({ title, detail }) => JSON.stringify({ title, detail }))
     .sort()
 
-/** One branch's life of `syncs` merges: `merged` when every one merged as meant. */
+/**
+ * What a clean git rebase makes of the branch: `want`'s values in the base's order, each item
+ * keeping the key the branch's copy holds, which a merge would have replaced: the stale keys a
+ * later merge meets.
+ */
+function rebased(want: Model, base: File, mine: File): File {
+  const keyOf = new Map<string, string | undefined>()
+  for (const list of LISTS) for (const item of base[list]) keyOf.set(idOf(item), item._key)
+  for (const list of LISTS) for (const item of mine[list]) keyOf.set(idOf(item), item._key)
+  const out: File = { title: mine.title, items: [], l2: [] }
+  const order = [...LISTS.flatMap((l) => base[l]), ...LISTS.flatMap((l) => mine[l])].map(idOf)
+  for (const id of new Set(order)) {
+    const item = want.get(id)
+    if (!item) continue
+    const key = keyOf.get(id)
+    out[item.list].push({
+      title: item.title,
+      detail: item.detail,
+      ...(key !== undefined && { _key: key }),
+    })
+  }
+  return out
+}
+
+/** One branch's life of `syncs` syncs, each a merge or a clean rebase: `merged` when all merged as meant. */
 function life(seed: number, syncs: number): string {
   const g = generator(seed)
   let n = 0
@@ -177,6 +202,12 @@ function life(seed: number, syncs: number): string {
     if (both && baseMode !== 'editor') break
     const want = intended(mo, ma, mb)
     if (want === 'ambiguous') break
+    if (!both && want !== 'conflict' && g.next() < 0.4) {
+      // Git rebased the branch onto the base without a conflict: no merge to check this sync.
+      branch = rebased(want, base, mine)
+      o = base
+      continue
+    }
     const result = mergeEntry({
       format: 'json',
       ancestor: { data: structuredClone(o) },
