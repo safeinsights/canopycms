@@ -774,8 +774,8 @@ function named(
     // Each version's own path to where its value below was taken: its place, or its place at the
     // step the name stops at when the merge's trail gave the whole value, or the merged path when
     // the whole value was found by member names alone. A version without the item a conflict names
-    // is named through the list it holds, so the item's absence is found there. A side naming the
-    // place at another depth offers none.
+    // is named by the list it holds, one step short of `dataPath`, which says it lacks the item. A
+    // side naming the place at another depth offers none.
     const prefix = at.slice(0, depth)
     const byName = prefix.every((segment) => 'field' in segment)
     const placeOf = (side: keyof Places): RawSegment[] | undefined =>
@@ -797,7 +797,7 @@ function named(
         depth === at.length && rest.item ? placeTrail?.[at.length - 2]?.[side] : undefined
       const holder = list && describe(side, list)
       const missing = dataPath.at(-1)
-      return holder && missing && 'item' in missing ? [...holder, missing] : undefined
+      return holder && missing && 'item' in missing ? holder : undefined
     }
     const [ancestor, base, branch] = [sidePath('o'), sidePath('a'), sidePath('b')]
     const sidePaths: SidePaths = {

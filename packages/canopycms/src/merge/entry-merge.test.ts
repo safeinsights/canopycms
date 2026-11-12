@@ -1765,12 +1765,11 @@ describe('side paths', () => {
       fields: schema,
     })
     if (result.kind !== 'merged') throw new Error('expected a merge')
-    // The base took the item out of `items`: it is named through the list the base holds, where
-    // it finds no such item.
+    // The base took the item out of `items`: it is named by the list it holds, which lacks it.
     const moved = result.conflicts.find((c) => c.item)
     expect(moved?.kind).toBe('removed-on-base')
     expect(moved?.base).toBeUndefined()
-    expect(moved?.sidePaths.base).toEqual([{ field: 'items' }, { item: 'k1' }])
+    expect(moved?.sidePaths.base).toEqual([{ field: 'items' }])
     expect(moved?.sidePaths.ancestor).toEqual([{ field: 'items' }, { item: 'k1' }])
     expect(moved?.sidePaths.branch).toEqual([{ field: 'items' }, { item: 'k1' }])
     checkSidePaths(
@@ -1856,7 +1855,6 @@ describe('side paths', () => {
       { field: 'items' },
       { item: itemKeysAsRead(a.data.items)[0] },
       { field: 'rows' },
-      { item: k1 },
     ])
     checkSidePaths(result.conflicts, { ancestor: o, base: a, branch: b }, schema)
   })

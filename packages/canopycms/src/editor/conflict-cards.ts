@@ -134,7 +134,11 @@ const alignedTo = (
   to: readonly DataPathSegment[],
 ): ConflictVersion | undefined => {
   if (!version || !from || equal(from, to)) return version
-  if (from.length !== to.length) return undefined
+  // A path one step short of an item names the list of a version without that item.
+  const last = to.at(-1)
+  const missing =
+    from.length === to.length - 1 && last !== undefined && 'item' in last ? last.item : undefined
+  if (missing === undefined && from.length !== to.length) return undefined
   const data = structuredClone(version.data)
   let node: unknown = data
   for (const [i, segment] of from.entries()) {
@@ -150,8 +154,6 @@ const alignedTo = (
       const keyed = (key: string) =>
         (node as unknown[]).find((x) => isPlainRecord(x) && x[ITEM_KEY] === key)
       const item = keyed(segment.item)
-      // An item the version lacks ends its path: the record names it there to say it is gone.
-      if (item === undefined && i === from.length - 1 && target.item === segment.item) break
       if (!isPlainRecord(item)) return undefined
       if (target.item !== segment.item) {
         if (keyed(target.item) !== undefined) return undefined
@@ -159,6 +161,12 @@ const alignedTo = (
       }
       node = item
     }
+  }
+  if (missing !== undefined) {
+    // Another item there holding the key `to` names would be found as it: it takes another key.
+    if (!Array.isArray(node)) return undefined
+    const other = node.find((x) => isPlainRecord(x) && x[ITEM_KEY] === missing)
+    if (isPlainRecord(other)) other[ITEM_KEY] = `${missing}~other`
   }
   return { ...version, data }
 }

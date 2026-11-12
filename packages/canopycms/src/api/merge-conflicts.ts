@@ -32,7 +32,7 @@ import { keyOfDataPath } from '../merge/conflict-path'
 import {
   MergeConflictStore,
   MergeConflictsFileMalformedError,
-  MergeConflictsFileNewerError,
+  MergeConflictsFileFormatError,
   conflictFilesOf,
   openConflictCount,
   withoutEntryConflict,
@@ -134,6 +134,11 @@ export type ResolveEntryConflictResponse = ApiResponse<{ contentId: string; open
 
 /** The most of a version read, as "Show changes" caps a side. */
 const MAX_SIDE_BYTES = 1024 * 1024
+/**
+ * The most of all the versions one answer reads, since a field found again by several merges names
+ * versions of its own: well under the gateway's 6 MB response cap, as the JSON it parses to is larger.
+ */
+const MAX_VERSIONS_BYTES = 3 * 1024 * 1024
 const FORMATS: readonly ContentFormat[] = ['mdx', 'md', 'json', 'yaml']
 
 const RECORD_UNREADABLE_ERROR =
@@ -158,7 +163,7 @@ const readEntries = async (
   } catch (err) {
     if (
       err instanceof MergeConflictsFileMalformedError ||
-      err instanceof MergeConflictsFileNewerError
+      err instanceof MergeConflictsFileFormatError
     ) {
       return 'unreadable'
     }
@@ -443,8 +448,10 @@ const readVersions = async (
   const fields = entryType?.schema
   const format =
     entryType?.format ?? FORMATS.find((f) => ref.physicalPath.endsWith(getFormatExtension(f)))
+  let budget = MAX_VERSIONS_BYTES
   for (const sha of shas) {
-    const raw = await git.readBlob(sha, MAX_SIDE_BYTES)
+    const raw = await git.readBlob(sha, Math.min(MAX_SIDE_BYTES, budget))
+    if (typeof raw === 'string') budget -= Buffer.byteLength(raw)
     if (raw === undefined) versions[sha] = { unavailable: 'missing' }
     else if (raw === 'too-large') versions[sha] = { unavailable: 'too-large' }
     else if (!format) versions[sha] = { unavailable: 'unreadable' }
@@ -514,10 +521,10 @@ const entryHandler = async (
     return { ok: false, status: 503, error: RECORD_UNREADABLE_ERROR }
   }
   const { versions, fields: schemaFields } = read
-  // A key the merge named under the schema is the drawer's already; one named without it, which
-  // stops at the first field (`?name`), is named again here, where no list item is on the way.
+  // A key the merge named under the schema is the drawer's already; one named without it starts
+  // at an unknown top field (`?name`) and is named again here, where no list item is on the way.
   const drawerKeyOf = (field: NonNullable<MergeConflictEntry['fields']>[number]): string => {
-    if (!schemaFields || !field.key.includes('?')) return field.key
+    if (!schemaFields || !field.key.startsWith('?')) return field.key
     const side = [field.sides.branch, field.sides.base, field.sides.ancestor]
       .map((sha) => (sha ? versions[sha] : undefined))
       .find((v): v is EntryChangeSide => v !== undefined && !('unavailable' in v))

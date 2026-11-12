@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
   MergeConflictStore,
+  MergeConflictsFileFormatError,
   OpenMergeConflictsError,
   assertNoOpenConflicts,
   conflictFilesOf,
@@ -121,7 +122,7 @@ describe('withFoundConflicts', () => {
     expect(next[ID]?.fields?.[0].sidePaths.ancestor).toBeUndefined()
   })
 
-  it('replaces an entry with an entry-level conflict, and that with fields found later', () => {
+  it('replaces an entry with an entry-level conflict, which stands against fields found later', () => {
     const deleted = withFoundConflicts(
       first,
       [{ contentId: ID, path: 'p', kind: 'deleted-on-base', sides: { branch: 'b2' } }],
@@ -134,10 +135,34 @@ describe('withFoundConflicts', () => {
       sides: { branch: 'b2' },
       previous: first[ID],
     })
-    const again = withFoundConflicts(deleted, [fieldsFound({ ancestor: 'o3' }, 'title')], M1)
-    expect(again[ID]?.fields?.map(({ key, sides }) => ({ key, sides }))).toEqual([
-      { key: 'title', sides: { ancestor: 'o3' } },
-    ])
+    const again = withFoundConflicts(
+      deleted,
+      [fieldsFound({ ancestor: 'o3', base: 'a3', branch: 'b3' }, 'title')],
+      M1,
+    )
+    expect(again[ID]).toEqual({
+      path: 'content/page.home.aboutAbc1234.json',
+      mergeSha: M1,
+      kind: 'deleted-on-base',
+      sides: { base: 'a3', branch: 'b3' },
+      previous: deleted[ID],
+    })
+    const unreadable = withFoundConflicts(
+      {},
+      [{ contentId: ID, path: 'p', kind: 'unreadable', sides: { ancestor: 'o1', base: 'a1' } }],
+      M1,
+    )
+    const later = withFoundConflicts(
+      unreadable,
+      [fieldsFound({ ancestor: 'o2', base: 'a2', branch: 'b2' }, 'title')],
+      M2,
+    )
+    expect(later[ID]).toMatchObject({
+      kind: 'unreadable',
+      mergeSha: M2,
+      sides: { ancestor: 'o1', base: 'a2', branch: 'b2' },
+    })
+    expect(later[ID]?.fields).toBeUndefined()
   })
 
   it('moves the records of entries the merge moved, and leaves the rest', () => {
@@ -229,7 +254,7 @@ describe('MergeConflictStore', () => {
     await fs.mkdir(path.join(root, '.canopy-meta'))
     const field = { key: 'title', dataPath: [], kind: 'changed', mergeSha: M1, sides: {} }
     const record = {
-      schema: 1,
+      schema: 2,
       version: 1,
       entries: { [ID]: { path: 'p', mergeSha: M1, kind: 'fields', sides: {}, fields: [field] } },
     }
@@ -239,6 +264,20 @@ describe('MergeConflictStore', () => {
     record.entries[ID].fields[0] = { ...field, sidePaths: {} } as typeof field
     await fs.writeFile(file, JSON.stringify(record))
     await expect(new MergeConflictStore(root).read()).resolves.toMatchObject({ version: 1 })
+  })
+
+  it('refuses a record of another format, and one holding a member this code does not write', async () => {
+    await fs.mkdir(path.join(root, '.canopy-meta'))
+    const file = path.join(root, '.canopy-meta', 'merge-conflicts.json')
+    await fs.writeFile(file, JSON.stringify({ schema: 1, version: 1, entries: {} }))
+    await expect(new MergeConflictStore(root).read()).rejects.toBeInstanceOf(
+      MergeConflictsFileFormatError,
+    )
+    await expect(assertNoOpenConflicts(root)).rejects.toMatchObject({ count: null })
+    await fs.writeFile(file, JSON.stringify({ schema: 2, version: 1, entries: {}, extra: 1 }))
+    await expect(new MergeConflictStore(root).read()).rejects.toThrow(/malformed/)
+    await fs.writeFile(file, JSON.stringify({ schema: 2, version: 1, entries: {} }))
+    await expect(new MergeConflictStore(root).read()).resolves.toMatchObject({ entries: {} })
   })
 
   it('refuses a file that is not a record, rather than reading it as none', async () => {

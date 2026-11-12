@@ -500,13 +500,18 @@ describe('GET /:branch/conflicts/...entryPath', () => {
       json({ ...keyless, sections: keyless.sections.map(({ _key: _k, ...item }) => item) }),
     )
     const entry = helloRecord()
-    entry.fields = [entry.fields![1]].map((f) => ({ ...f, sides: { ...f.sides, branch } }))
+    const named = (key: string) => ({
+      ...entry.fields![1],
+      key,
+      sides: { ...entry.fields![1].sides, branch },
+    })
+    entry.fields = [named('sections.hero1.heading'), named('sections.hero1?legacy')]
     await recordAs({ [ID.hello]: entry })
     const data = (await entryConflict(createCtx(), 'blog/hello')).data!
-    expect(data.fields[0]).toMatchObject({
-      key: 'sections.hero1.heading',
-      drawerKey: 'sections.hero1.heading',
-    })
+    expect(data.fields.map((f) => [f.key, f.drawerKey])).toEqual([
+      ['sections.hero1.heading', 'sections.hero1.heading'],
+      ['sections.hero1?legacy', 'sections.hero1?legacy'],
+    ])
   })
 
   it('keeps an item conflict’s key and kind, and the location pseudo-key (rows 13, 14)', async () => {
@@ -576,6 +581,22 @@ describe('GET /:branch/conflicts/...entryPath', () => {
       [big]: { unavailable: 'too-large' },
       ['c'.repeat(40)]: { unavailable: 'missing' },
     })
+  })
+
+  it('stops reading versions once their total would be too large to answer', async () => {
+    // Fields found by several merges each name their own versions, of about 0.9 MiB here.
+    const big = (n: number) => blob(json({ title: `${n}`.repeat(900 * 1024) }))
+    const shas = await Promise.all([1, 2, 3, 4, 5].map(big))
+    const entry = helloRecord()
+    entry.fields = shas.map((branch, n) =>
+      field(`f${n}`, [{ field: `f${n}` }], { ...helloSides, branch }),
+    )
+    await recordAs({ [ID.hello]: entry })
+    const { versions } = (await entryConflict(createCtx(), 'blog/hello')).data!
+    const tooLarge = shas.filter((sha) => 'unavailable' in versions[sha])
+    expect(tooLarge.length).toBeGreaterThan(0)
+    expect(tooLarge.length).toBeLessThan(shas.length)
+    expect(versions[helloSides.base]).not.toHaveProperty('unavailable')
   })
 
   it('answers an entry the user may not read as one with no conflict (row 46)', async () => {

@@ -113,8 +113,8 @@ interface Landing {
   keptOverGitHub?: string[]
 }
 
-/** The record's format; a file of a later one is left as it is. */
-const RECORD_SCHEMA = 1
+/** The record's format; a file of another is left as it is ({@link MergeConflictsFileFormatError}). */
+const RECORD_SCHEMA = 2
 
 export interface MergeConflictsFile extends MergeConflictState {
   version: number
@@ -130,76 +130,97 @@ export interface FoundEntryConflict {
   fields?: Array<Omit<MergeConflictField, 'mergeSha' | 'sides'>>
 }
 
-const sidesSchema = z.object({
-  ancestor: z.string().optional(),
-  base: z.string().optional(),
-  branch: z.string().optional(),
-})
+// Strict throughout: within one `RECORD_SCHEMA` the format is fixed, so a member this code doesn't
+// know is a file it didn't write, refused rather than dropped on the next write.
+const sidesSchema = z
+  .object({
+    ancestor: z.string().optional(),
+    base: z.string().optional(),
+    branch: z.string().optional(),
+  })
+  .strict()
 
 const dataPathSchema = z.array(
   z.union([
-    z.object({ field: z.string() }),
-    z.object({ item: z.string() }),
-    z.object({ blockData: z.literal(true) }),
+    z.object({ field: z.string() }).strict(),
+    z.object({ item: z.string() }).strict(),
+    z.object({ blockData: z.literal(true) }).strict(),
   ]),
 )
 
-const sidePathsSchema = z.object({
-  ancestor: dataPathSchema.optional(),
-  base: dataPathSchema.optional(),
-  branch: dataPathSchema.optional(),
-})
+const sidePathsSchema = z
+  .object({
+    ancestor: dataPathSchema.optional(),
+    base: dataPathSchema.optional(),
+    branch: dataPathSchema.optional(),
+  })
+  .strict()
 
 const entrySchema: z.ZodType<MergeConflictEntry> = z.lazy(() =>
-  z.object({
-    path: z.string(),
-    mergeSha: z.string(),
-    kind: z.enum(['fields', 'deleted-on-base', 'deleted-on-branch', 'unreadable']),
-    sides: sidesSchema,
-    fields: z
-      .array(
-        z.object({
-          key: z.string(),
-          dataPath: dataPathSchema,
-          sidePaths: sidePathsSchema,
-          kind: z.enum(['changed', 'removed-on-base', 'removed-by-you']),
-          item: z.literal(true).optional(),
-          text: z.literal(true).optional(),
-          mergeSha: z.string(),
-          sides: sidesSchema,
-        }),
-      )
-      .optional(),
-    previous: entrySchema.optional(),
-  }),
+  z
+    .object({
+      path: z.string(),
+      mergeSha: z.string(),
+      kind: z.enum(['fields', 'deleted-on-base', 'deleted-on-branch', 'unreadable']),
+      sides: sidesSchema,
+      fields: z
+        .array(
+          z
+            .object({
+              key: z.string(),
+              dataPath: dataPathSchema,
+              sidePaths: sidePathsSchema,
+              kind: z.enum(['changed', 'removed-on-base', 'removed-by-you']),
+              item: z.literal(true).optional(),
+              text: z.literal(true).optional(),
+              mergeSha: z.string(),
+              sides: sidesSchema,
+            })
+            .strict(),
+        )
+        .optional(),
+      previous: entrySchema.optional(),
+    })
+    .strict(),
 )
 
-const fileSchema = z.object({
-  schema: z.literal(RECORD_SCHEMA).optional(),
-  version: z.number(),
-  writeId: z.string().optional(),
-  landing: z
-    .object({ mergeSha: z.string(), keptOverGitHub: z.array(z.string()).optional() })
-    .optional(),
-  entries: z.record(z.string(), entrySchema),
-  remaps: z
-    .array(
-      z.object({
-        mergeSha: z.string(),
-        entryPath: z.string(),
-        remaps: z.array(
-          z.object({ within: z.array(z.string()), from: z.string(), to: z.string() }),
-        ),
-      }),
-    )
-    .optional(),
-})
+const fileSchema = z
+  .object({
+    schema: z.literal(RECORD_SCHEMA),
+    version: z.number(),
+    writeId: z.string().optional(),
+    landing: z
+      .object({ mergeSha: z.string(), keptOverGitHub: z.array(z.string()).optional() })
+      .strict()
+      .optional(),
+    entries: z.record(z.string(), entrySchema),
+    remaps: z
+      .array(
+        z
+          .object({
+            mergeSha: z.string(),
+            entryPath: z.string(),
+            remaps: z.array(
+              z.object({ within: z.array(z.string()), from: z.string(), to: z.string() }).strict(),
+            ),
+          })
+          .strict(),
+      )
+      .optional(),
+  })
+  .strict()
 
-/** merge-conflicts.json was written in a later format than this module reads. */
-export class MergeConflictsFileNewerError extends Error {
-  constructor() {
-    super('merge-conflicts.json is in a later format than this worker reads; left as it is')
-    this.name = 'MergeConflictsFileNewerError'
+/**
+ * merge-conflicts.json names another format than this module reads, `found`. It is left as it is, unlike a file that doesn't parse: moving it aside would open
+ * the gate on conflicts nobody chose. The worker's next merge refuses it too, so the branch shows
+ * as failing to take its base in until the file is dealt with.
+ */
+export class MergeConflictsFileFormatError extends Error {
+  constructor(readonly found: number) {
+    super(
+      `merge-conflicts.json is in format ${found}, and this code reads format ${RECORD_SCHEMA}; left as it is`,
+    )
+    this.name = 'MergeConflictsFileFormatError'
   }
 }
 
@@ -215,10 +236,10 @@ export class MergeConflictsFileMalformedError extends Error {
  * `existing` with what one merge, `mergeSha`, found. An entry this merge found no conflict in keeps
  * its record: its value is still the author's, which this merge took as the branch's own change.
  * A field found again keeps the ancestor it was first found against, and that ancestor's path, so
- * the person still sees what they started from, and takes this merge's base and branch. An entry-level conflict replaces the
- * entry's record, and so does a field conflict an entry-level one held. `paths` moves the kept
- * records of entries this merge moved. Every record this merge changes keeps the one it replaced
- * as `previous`. Pure.
+ * the person still sees what they started from, and takes this merge's base and branch. An
+ * entry-level conflict replaces the entry's record; an entry-level record stands against fields
+ * found later, taking this merge's base and branch. `paths` moves the kept records of entries this
+ * merge moved. Every record this merge changes keeps the one it replaced as `previous`. Pure.
  */
 export function withFoundConflicts(
   existing: Readonly<Record<string, MergeConflictEntry>>,
@@ -244,6 +265,18 @@ export function withFoundConflicts(
     const prior = existing[contentId] as MergeConflictEntry | undefined
     if (kind !== 'fields' || !fields || fields.length === 0) {
       entries[contentId] = changed(prior, { path: at, kind, sides })
+      continue
+    }
+    if (prior && prior.kind !== 'fields') {
+      // An entry-level choice nobody has made stands: it decides the whole entry, the fields this
+      // merge found in it included. It compares this merge's versions with the first ancestor.
+      const { ancestor: _later, ...latest } = sides
+      const ancestor = prior.sides.ancestor
+      entries[contentId] = changed(prior, {
+        path: at,
+        kind: prior.kind,
+        sides: { ...latest, ...(ancestor !== undefined && { ancestor }) },
+      })
       continue
     }
     const priorFields = prior?.kind === 'fields' ? (prior.fields ?? []) : []
@@ -395,7 +428,7 @@ export async function assertNoOpenConflicts(branchRoot: string): Promise<void> {
   } catch (err) {
     if (
       err instanceof MergeConflictsFileMalformedError ||
-      err instanceof MergeConflictsFileNewerError
+      err instanceof MergeConflictsFileFormatError
     )
       throw new OpenMergeConflictsError(null)
     throw err
@@ -450,8 +483,9 @@ export class MergeConflictStore {
       throw new MergeConflictsFileMalformedError('it is not JSON')
     }
     const schema = isPlainRecord(json) ? json.schema : undefined
-    if (typeof schema === 'number' && schema > RECORD_SCHEMA)
-      throw new MergeConflictsFileNewerError()
+    if (typeof schema === 'number' && schema !== RECORD_SCHEMA) {
+      throw new MergeConflictsFileFormatError(schema)
+    }
     const parsed = fileSchema.safeParse(json)
     if (!parsed.success) throw new MergeConflictsFileMalformedError(parsed.error.message)
     return parsed.data

@@ -52,6 +52,13 @@ export function checkSidePaths(
       if (value !== undefined) expect(path, `${conflict.key}: ${side}'s path`).toBeDefined()
       if (path === undefined) continue
       const found = valueAtSidePath(reads[side], path)
+      const last = conflict.dataPath.at(-1)
+      if (path.length === conflict.dataPath.length - 1 && last && 'item' in last) {
+        // One step short of an item: the version's list, which lacks it.
+        expect(value, `${conflict.key}: ${side} lacks the item`).toBeUndefined()
+        expect(Array.isArray(found), `${conflict.key}: ${side}'s path is a list`).toBe(true)
+        continue
+      }
       expect(sameValue(found, value), `${conflict.key}: ${side}'s value at its path`).toBe(true)
     }
     return conflict

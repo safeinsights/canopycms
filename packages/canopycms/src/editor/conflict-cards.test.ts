@@ -338,4 +338,106 @@ describe('buildEntryConflicts', () => {
     const rows = (placed?.items as Array<{ rows: Array<{ _key: string }> }>)[0].rows
     expect(rows.map((r) => r._key)).toEqual([k2])
   })
+
+  /** The cards for a real merge of three versions, as the API would serve them, on the merged form. */
+  const throughCards = (
+    schema: FieldConfig[],
+    ...[ancestor, base, branch]: Array<Record<string, unknown>>
+  ) => {
+    const merged = mergeEntry({
+      format: 'json',
+      ancestor: { data: ancestor },
+      base: { data: base },
+      branch: { data: branch },
+      fields: schema,
+    })
+    if (merged.kind !== 'merged') throw new Error('expected a merge')
+    const shas = { ancestor: 'a'.repeat(40), base: 'b'.repeat(40), branch: 'c'.repeat(40) }
+    const asServed = (data: Record<string, unknown>) => ({
+      format: 'json' as const,
+      entryType: 'page',
+      data: entryAsRead(schema, structuredClone(data)),
+    })
+    const data: EntryConflictData = {
+      contentId: 'pg0000000001',
+      kind: 'fields',
+      path: 'content/pages/page.home.pg0000000001.json',
+      logicalPath: 'content/pages/home',
+      mergeSha: 'd'.repeat(40),
+      sides: shas,
+      fields: merged.conflicts.map((c) => ({
+        key: c.key,
+        drawerKey: c.key,
+        dataPath: c.dataPath,
+        sidePaths: c.sidePaths,
+        kind: c.kind,
+        ...(c.item && { item: true as const }),
+        mergeSha: 'd'.repeat(40),
+        sides: shas,
+      })),
+      versions: {
+        [shas.ancestor]: asServed(ancestor),
+        [shas.base]: asServed(base),
+        [shas.branch]: asServed(branch),
+      },
+    }
+    const saved = entryAsRead(schema, structuredClone(merged.data))
+    return { built: buildEntryConflicts(data, schema, undefined, undefined, saved), saved }
+  }
+  const titled: FieldConfig[] = [
+    {
+      name: 'items',
+      type: 'object',
+      list: true,
+      fields: [
+        { name: 'title', type: 'string' },
+        { name: 'note', type: 'string' },
+      ],
+    },
+  ]
+  const titles = (value: Record<string, unknown> | undefined) =>
+    (value?.items as Array<{ title: string }>).map((item) => item.title)
+
+  it('takes out the item the latest version removed, not another holding its key there', () => {
+    // The base removed the first of two alike items; its read keys the one it kept as the merge
+    // named the removed one.
+    const ancestor = { items: [{ title: 'C' }, { title: 'D' }, { title: 'C' }] }
+    const read = entryAsRead(titled, structuredClone(ancestor)) as {
+      items: Record<string, unknown>[]
+    }
+    const branch = { items: [{ ...read.items[0], title: 'DB' }, read.items[1], read.items[2]] }
+    const { built, saved } = throughCards(
+      titled,
+      ancestor,
+      { items: [{ title: 'D' }, { title: 'C' }] },
+      branch,
+    )
+    const removed = built.fields.find((f) => f.item)!
+    expect(removed.cards[0]).not.toMatchObject({ latest: { kind: 'text', text: 'C' } })
+    expect(titles(withLatest(saved, removed, undefined))).toEqual(['D', 'C'])
+  })
+
+  it('puts back an item you removed where the latest version has it, among items keyed otherwise', () => {
+    const ancestor = {
+      items: [
+        { title: 'A', note: 'n' },
+        { title: 'X', note: 'n' },
+        { title: 'C', note: 'n' },
+      ],
+    }
+    const read = entryAsRead(titled, structuredClone(ancestor)) as {
+      items: Record<string, unknown>[]
+    }
+    const base = {
+      items: [
+        { title: 'A', note: 'n2' },
+        { title: 'X2', note: 'n' },
+        { title: 'C', note: 'n' },
+      ],
+    }
+    const branch = { items: [{ ...read.items[0], title: 'A3' }, read.items[2]] }
+    const { built, saved } = throughCards(titled, ancestor, base, branch)
+    const removed = built.fields.find((f) => f.item && f.cards[0]?.type === 'value')!
+    expect(titles(withLatest(saved, removed, undefined))).toEqual(['A3', 'X2', 'C'])
+  })
 })
