@@ -3440,6 +3440,56 @@ describe('shapes the fix review found', () => {
     expect(result.data).toEqual({ items: [], l2: [x] })
     expect(result.conflicts).toEqual([])
   })
+
+  describe('an item moved in above the copy it once read like', () => {
+    // `x` keeps the key a read gave its first content, which its copy `y` still holds.
+    const first = { title: 'x', detail: 'd' }
+    const x = { title: 'x-reworded', detail: 'd', _key: itemKeysAsRead([first])[0]! }
+    const y = { ...first, _key: 'Kyaaaaaaaaaa' }
+    const o = { data: { items: [x], l2: [y] } }
+    const moved = { data: { items: [], l2: [x, y] } }
+
+    it("takes the base's edit of the copy onto the copy, with either side moving", () => {
+      const edited = { data: { items: [x], l2: [{ ...y, detail: 'd-base' }] } }
+      const want = { items: [], l2: [x, { ...y, detail: 'd-base' }] }
+      for (const [base, branch] of [
+        [edited, moved],
+        [moved, edited],
+      ]) {
+        const result = run(o, base, branch, 'md', lists)
+        expect(result.data).toEqual(want)
+        expect(result.conflicts).toEqual([])
+        expect(result.keyRemaps).toEqual([])
+      }
+    })
+
+    it("takes the base's delete of the copy, naming no other item", () => {
+      const result = run(o, { data: { items: [x], l2: [] } }, moved, 'md', lists)
+      expect(result.data).toEqual({ items: [], l2: [x] })
+      expect(result.conflicts).toEqual([])
+    })
+
+    it('conflicts where the branch deleted the copy the base edited, beside the item moved in', () => {
+      const edited = { data: { items: [x], l2: [{ ...y, detail: 'd-base' }] } }
+      const result = run(o, edited, { data: { items: [], l2: [x] } }, 'md', lists)
+      expect(result.conflicts.map((c) => c.kind)).toEqual(['removed-by-you'])
+    })
+  })
+
+  it('keeps a copy the branch added above the item it copies, under the key a read gives it', () => {
+    const z = { title: 'z', detail: 'd' }
+    const kept = { ...z, _key: 'Kzaaaaaaaaaa' }
+    const added = { ...z, _key: itemKeysAsRead([z])[0]! }
+    const result = run(
+      { data: { items: [], l2: [kept] } },
+      { data: { items: [], l2: [{ ...kept, detail: 'd-base' }] } },
+      { data: { items: [], l2: [added, kept] } },
+      'md',
+      lists,
+    )
+    expect(result.data).toEqual({ items: [], l2: [added, { ...kept, detail: 'd-base' }] })
+    expect(result.conflicts).toEqual([])
+  })
 })
 
 describe('conflicts inside a value the drawer shows whole are named at that value', () => {

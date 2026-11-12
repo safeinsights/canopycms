@@ -101,7 +101,8 @@ export interface Alignment {
  * side an identity of its own. `ancestorKeys` are the ancestor's items' keys as a read gives them.
  * An item with a key of its own is named by the key a read gives it: that key the first time the
  * list holds it, else a hash of its content. A name the ancestor's read gave, or another key a
- * read could have given an ancestor item ({@link ancestorAliases}), is that ancestor item; any
+ * read could have given an ancestor item ({@link ancestorAliases}) unless an item here holds that
+ * item's own key or the ancestor's read gave it to an item of another list, is that ancestor item; any
  * other key marks the item new when it was minted for it, the ancestor knows it (a copy), or the
  * ancestor's read gave it to an item of another list (`inEntry`, every key the ancestor's read
  * gives across the entry): that item moved here.
@@ -204,6 +205,11 @@ export function alignToAncestor(
     if (claims[j] !== 'named') return claims[j] === 'unnamed'
     return (claimants.get(content) ?? 0) <= (unheld.get(content) ?? 0)
   }
+  const literal = new Set(items.flatMap((item) => ownKey(item) ?? []).filter((k) => known.has(k)))
+  const aliasOf = (own: string): string | undefined => {
+    const id = inEntry.has(own) ? undefined : aliases.get(own)
+    return id !== undefined && !literal.has(id) ? id : undefined
+  }
   items.forEach((item, j) => {
     const own = ownKey(item)
     const read = readKeys[j]
@@ -221,7 +227,7 @@ export function alignToAncestor(
         : read !== undefined && known.has(read)
           ? read
           : !known.has(own)
-            ? aliases.get(own)
+            ? aliasOf(own)
             : undefined
     if (id !== undefined && !taken.has(id)) {
       ids[j] = id
