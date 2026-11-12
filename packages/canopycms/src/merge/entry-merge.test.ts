@@ -2253,6 +2253,42 @@ describe('an item edited to read exactly like one deleted, with no git-level mer
     expect((result.data.items as Data[]).map((i) => i.title)).toEqual(['t2', 't3~A1'])
   })
 
+  it("a rewrite both sides hold, one under an alias of the other's key, reads alike", () => {
+    const day = new Date('2024-01-01T00:00:00.000Z')
+    const [P, Q, R] = [
+      { h: 'a', t: 'ta' },
+      { h: 'b', t: 'tb', d: day },
+      { h: 'c', t: 'tc' },
+    ]
+    const [KQ, KR] = (itemKeysAsRead([P, Q, R]) as string[]).slice(1)
+    const KQalias = itemKeysAsRead([{ ...Q, d: '2024-01-01' }])[0] as string
+    const M = '1mmmmmmmmmmm'
+    const result = mergeEntry({
+      format: 'json',
+      ancestor: { data: { items: [P, Q, R] } },
+      base: {
+        data: {
+          items: [
+            { ...P, _key: KQ },
+            { ...R, _key: KR },
+            { ...Q, _key: M },
+          ],
+        },
+      },
+      branch: {
+        data: {
+          items: [
+            { ...P, _key: KQalias },
+            { ...R, _key: KR },
+          ],
+        },
+      },
+    })
+    if (result.kind !== 'merged') throw new Error('expected a merge')
+    expect(result.conflicts).toEqual([])
+    expect((result.data.items as Data[]).map((i) => i.t)).toEqual(['ta', 'tc', 'tb'])
+  })
+
   it('a claimant named through an alias, beside a copy of its item: the copy stays', () => {
     const day = new Date('2024-01-01T00:00:00.000Z')
     const [P, Q, R] = [

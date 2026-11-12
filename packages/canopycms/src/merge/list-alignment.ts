@@ -157,9 +157,14 @@ export function alignToAncestor(
     )
   const [copied, otherCopied] = [copies(items), copies(otherSide)]
   // The other side's copy counts where it holds the same rewrite, so both read that item alike.
-  const otherHolds = new Set(otherSide.map((item) => `${ownKey(item)}\u0000${valueToken(item)}`))
+  // A key is compared by the ancestor item it names, so an alias matches its read key.
+  const names = (key: string | undefined) =>
+    key === undefined || known.has(key) ? key : (aliases.get(key) ?? key)
+  const otherHolds = new Set(
+    otherSide.map((item) => `${names(ownKey(item))}\u0000${valueToken(item)}`),
+  )
   const sameRewrite = (j: number, own: string) =>
-    otherHolds.has(`${own}\u0000${valueToken(items[j])}`)
+    otherHolds.has(`${names(own)}\u0000${valueToken(items[j])}`)
   // Whether the item may be the unheld item holding its content, and whether its key names another.
   const claim = (j: number, own: string): 'named' | 'keyed' | 'unnamed' | undefined => {
     if (!hasContentKeyShape(own)) return undefined
