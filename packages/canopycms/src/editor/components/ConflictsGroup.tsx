@@ -130,9 +130,15 @@ export function conflictHeading(card: ConflictCard): string {
   return `${where}${part} was changed by you and by someone else`
 }
 
+/**
+ * An entry-level card's kind: a record's own, or `fields-on-deleted`, field conflicts on an entry
+ * the branch deleted since, which no form can choose on.
+ */
+type EntryCardKind = Exclude<EntryConflictData['kind'], 'fields'> | 'fields-on-deleted'
+
 /** What an entry-level conflict is, and the choices that settle it, in order. */
 const ENTRY_KINDS: Record<
-  Exclude<EntryConflictData['kind'], 'fields'>,
+  EntryCardKind,
   { heading: string; choices: Array<{ choice: EntryConflictChoice; label: string; danger?: true }> }
 > = {
   'deleted-on-base': {
@@ -148,6 +154,11 @@ const ENTRY_KINDS: Record<
       { choice: 'restore', label: EDITOR_ACTIONS.restoreEntry },
       { choice: 'keep', label: EDITOR_ACTIONS.keepItDeleted },
     ],
+  },
+  // Keeping it deleted clears the record: `keep` resolves a `fields` record whole (api/merge-conflicts.ts).
+  'fields-on-deleted': {
+    heading: 'You deleted this entry, but fields in it were changed by you and by someone else',
+    choices: [{ choice: 'keep', label: EDITOR_ACTIONS.keepItDeleted }],
   },
   unreadable: {
     heading:
@@ -588,7 +599,7 @@ export interface EntryChoiceRefusal {
 }
 
 const EntryCard: React.FC<{
-  kind: Exclude<EntryConflictData['kind'], 'fields'>
+  kind: EntryCardKind
   reason?: string
   unsavedEdits?: boolean
   onResolve?: (choice: EntryConflictChoice) => Promise<EntryChoiceRefusal | undefined>
@@ -704,6 +715,8 @@ export interface ConflictsGroupProps {
   lockedReason?: string
   /** The entry has unsaved edits, which an entry-level choice would replace. */
   unsavedEdits?: boolean
+  /** The branch deleted the entry, so its field conflicts have no form to be chosen in. */
+  entryDeleted?: boolean
 }
 
 /** The "Conflicts" group: a heading, a count heard as it changes, and the cards. */
@@ -719,10 +732,13 @@ export const ConflictsGroup: React.FC<ConflictsGroupProps> = ({
   noEditReason,
   lockedReason,
   unsavedEdits,
+  entryDeleted,
 }) => {
   const headingId = useId()
   const editable = !noEditReason
   const entryKind = data.kind === 'fields' ? undefined : data.kind
+  // Field conflicts on an entry the branch deleted: one card settles them, the fields shown below it.
+  const deletedFields = !entryKind && !!entryDeleted
 
   // A stored choice stands while the form still holds what it chose. One the form was edited away
   // from since stands for the edit: a decided choice becomes "Mark resolved", which the save
@@ -751,11 +767,12 @@ export const ConflictsGroup: React.FC<ConflictsGroupProps> = ({
     }
   }
   const staleKeys = stale.map(({ field, next }) => `${field.key}:${next?.how ?? ''}`).join(',')
-  const open = entryKind
-    ? 1
-    : conflicts.fields.filter(
-        (f) => !isDecided(f, form ? standing.get(f.key) : choices[f.key]?.choice),
-      ).length
+  const open =
+    entryKind || deletedFields
+      ? 1
+      : conflicts.fields.filter(
+          (f) => !isDecided(f, form ? standing.get(f.key) : choices[f.key]?.choice),
+        ).length
   useEffect(() => {
     for (const { field, next } of stale) onChoose?.(field, next, !!next)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `stale` is this render's, keyed by `staleKeys`
@@ -815,7 +832,7 @@ export const ConflictsGroup: React.FC<ConflictsGroupProps> = ({
         Conflicts
       </Text>
       <Text size="sm" data-testid="conflicts-summary">
-        {entryKind
+        {entryKind || deletedFields
           ? 'Changed by you and by someone else. Choose what to keep.'
           : `${plural(conflicts.fields.length, 'field', 'fields')} changed by you and by someone else. Choose what to keep, then save.`}
       </Text>
@@ -834,7 +851,7 @@ export const ConflictsGroup: React.FC<ConflictsGroupProps> = ({
           {noEditReason}
         </Text>
       )}
-      {editable && !form && !entryKind && (
+      {editable && !form && !entryKind && !deletedFields && (
         <Text size="sm" data-testid="conflicts-open-to-choose">
           {OPEN_TO_CHOOSE}
         </Text>
@@ -853,17 +870,26 @@ export const ConflictsGroup: React.FC<ConflictsGroupProps> = ({
             onResolve={editable ? onResolveEntry : undefined}
           />
         ) : (
-          conflicts.fields.flatMap((field) => {
-            const actions = actionsFor(field)
-            return field.cards.map((card) => (
-              <FieldCard
-                key={card.id}
-                card={card}
-                adminBaseBranch={adminBaseBranch}
-                actions={actions}
+          <>
+            {deletedFields && (
+              <EntryCard
+                kind="fields-on-deleted"
+                reason={lockedReason}
+                onResolve={editable ? onResolveEntry : undefined}
               />
-            ))
-          })
+            )}
+            {conflicts.fields.flatMap((field) => {
+              const actions = actionsFor(field)
+              return field.cards.map((card) => (
+                <FieldCard
+                  key={card.id}
+                  card={card}
+                  adminBaseBranch={adminBaseBranch}
+                  actions={actions}
+                />
+              ))
+            })}
+          </>
         )}
       </Stack>
     </Stack>

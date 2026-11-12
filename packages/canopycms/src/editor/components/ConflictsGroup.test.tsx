@@ -799,3 +799,48 @@ describe('round 2 review', () => {
     expect(within(card).getByRole('button', { name: /^Keep your version:/ })).toBeTruthy()
   })
 })
+
+describe('an entry deleted with field conflicts open', () => {
+  const setup = () => {
+    const onResolveEntry = vi.fn(
+      async (_choice: EntryConflictChoice): Promise<EntryChoiceRefusal | undefined> => undefined,
+    )
+    const view = renderGroup({
+      only: ['summary', 'readTime'],
+      noForm: true,
+      props: { entryDeleted: true, onResolveEntry },
+    })
+    return { ...view, onResolveEntry }
+  }
+
+  it('offers "Keep it deleted" in place of opening an entry that is gone', () => {
+    setup()
+    const card = screen
+      .getAllByTestId('conflict-card')
+      .find((c) => c.getAttribute('data-conflict-kind') === 'fields-on-deleted')
+    if (!card) throw new Error('no card for the deleted entry')
+    expect(headingOf(card)).toBe(
+      'You deleted this entry, but fields in it were changed by you and by someone else',
+    )
+    expect(actionsOf(card)).toEqual(['Keep it deleted'])
+    expect(screen.queryByTestId('conflicts-open-to-choose')).toBeNull()
+    expect(screen.getByTestId('conflicts-summary').textContent).toBe(
+      'Changed by you and by someone else. Choose what to keep.',
+    )
+  })
+
+  it('still shows each field, with nothing to choose on it', () => {
+    setup()
+    const fieldCards = screen
+      .getAllByTestId('conflict-card')
+      .filter((c) => c.getAttribute('data-conflict-kind') !== 'fields-on-deleted')
+    expect(fieldCards).toHaveLength(2)
+    for (const card of fieldCards) expect(actionsOf(card)).toEqual([])
+  })
+
+  it('keeps it deleted through resolve-entry, which clears its field conflicts', async () => {
+    const { onResolveEntry } = setup()
+    await userEvent.click(screen.getByRole('button', { name: 'Keep it deleted' }))
+    expect(onResolveEntry).toHaveBeenCalledWith('keep')
+  })
+})
