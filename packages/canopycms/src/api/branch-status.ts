@@ -25,7 +25,7 @@ import { resolveEditorUrl } from '../editor-url'
 
 // Re-export for client generation
 export type { BranchMergeResponse } from './branch-merge'
-export type { RequestChangesBody } from './branch-review'
+export type { ApproveBody, RequestChangesBody } from './branch-review'
 export type { UpdateFromBaseResponse } from './branch-update-from-base'
 
 /**

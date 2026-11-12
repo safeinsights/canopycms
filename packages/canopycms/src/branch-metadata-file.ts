@@ -125,12 +125,14 @@ const branchMetadataShape = {
     ])
     .optional()
     .catch(undefined),
-  // Dropped when malformed: it only decorates the PR body, so it never fails a read.
+  // Dropped when malformed, never failing a read: it decorates the PR body, and without `commit`
+  // the worker judges a move against the clone's head before it (worker/github-commits.ts).
   review: z
     .object({
       state: z.enum(['approved', 'changes-requested']),
       by: z.object({ userId: z.string(), name: z.string().optional() }),
       at: z.string(),
+      commit: z.string().optional(),
     })
     .optional()
     .catch(undefined),

@@ -412,6 +412,61 @@ describe('an open pull request GitHub reports behind', () => {
     expect(await queued(s, 'sync-pr-comments')).toEqual([])
   })
 
+  describe('judged against the commit the approval recorded', () => {
+    const approvedAt = (commit: string) =>
+      writeMeta(s, {
+        ...submitted,
+        status: 'approved',
+        review: { state: 'approved', by: { userId: 'r' }, at: '2026-10-01T00:00:00.000Z', commit },
+      })
+
+    it('keeps an approval recorded at the head the merge builds on', async () => {
+      await approvedAt(await s.head())
+
+      await cycle(s, workerWithPullRequest(s, 'behind'))
+
+      expect(await s.file('base2.txt')).toBe('moved\n')
+      expect((await readMeta(s))?.status).toBe('approved')
+    })
+
+    it('keeps it through a second clean merge, judged against the commit approved', async () => {
+      await approvedAt(await s.head())
+      await cycle(s, workerWithPullRequest(s, 'behind'))
+      const afterFirst = await s.head()
+      // The first merge reaches GitHub, as the push the worker queued would take it.
+      await s.push()
+      await s.advanceBase({ 'base3.txt': 'moved again\n' })
+
+      await cycle(s, workerWithPullRequest(s, 'behind'))
+
+      expect(await s.head()).not.toBe(afterFirst)
+      expect(await s.file('base3.txt')).toBe('moved again\n')
+      expect((await readMeta(s))?.status).toBe('approved')
+    })
+
+    it('sends it back to review when the head holds work after the approved commit', async () => {
+      const approved = await s.head()
+      await s.commit({ 'editor.txt': 'v2\n' })
+      await s.push()
+      await approvedAt(approved)
+
+      await cycle(s, workerWithPullRequest(s, 'behind'))
+
+      expect(await s.file('base2.txt')).toBe('moved\n')
+      const meta = await readMeta(s)
+      expect(meta?.status).toBe('submitted')
+      expect(meta?.review).toBeUndefined()
+    })
+
+    it('sends it back to review when this clone does not hold the approved commit', async () => {
+      await approvedAt('e'.repeat(40))
+
+      await cycle(s, workerWithPullRequest(s, 'behind'))
+
+      expect((await readMeta(s))?.status).toBe('submitted')
+    })
+  })
+
   it('leaves a branch whose merge keeps an entry for a person, though git merges it cleanly', async () => {
     // The base retypes an entry the branch edited: git follows the rename and merges cleanly, and
     // the field merge keeps the branch's file as an entry-level conflict.

@@ -144,7 +144,13 @@ interface ChangesState<T, E> {
   reload: () => Promise<void>
 }
 
-export type BranchChangesState = ChangesState<BranchChangesData, BranchChangesError>
+export type BranchChangesState = ChangesState<BranchChangesData, BranchChangesError> & {
+  /**
+   * Reads the list afresh, shown or not, rejecting when the read fails, and empties every entry
+   * change of the branch, so none shows a comparison read before this.
+   */
+  reread: () => Promise<void>
+}
 
 /**
  * The branch's changes. `reload` also revalidates every entry change of the branch that is
@@ -170,6 +176,17 @@ export function useBranchChangesData(
       mutateKeys((k) => typeof k === 'string' && k.startsWith(entryPrefix)),
     ])
   }, [mutate, mutateKeys, branch])
+  const reread = useCallback(async () => {
+    if (!branch) return
+    const entryPrefix = `${branchChangesKey(branch)}:`
+    const [fresh] = await Promise.all([
+      fetchBranchChanges(apiClient, branch),
+      mutateKeys((k) => typeof k === 'string' && k.startsWith(entryPrefix), undefined, {
+        revalidate: true,
+      }),
+    ])
+    await mutateKeys(branchChangesKey(branch), fresh, { revalidate: false })
+  }, [apiClient, mutateKeys, branch])
 
   return {
     data: swr.data,
@@ -177,6 +194,7 @@ export function useBranchChangesData(
     isLoading: swr.isLoading,
     isValidating: swr.isValidating,
     reload,
+    reread,
   }
 }
 
