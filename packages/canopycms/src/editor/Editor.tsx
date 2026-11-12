@@ -579,6 +579,7 @@ const EditorContent: React.FC<EditorProps> = ({
   )
   // Set once the changes read exists; it waits on the panel state, declared after the entries.
   const reloadChangesRef = useRef<(branch: string) => Promise<void>>(async () => {})
+  const rereadChangesRef = useRef<() => Promise<void>>(async () => {})
 
   // 2. Entry manager (depends on branchNameState, owns selectedPath)
   const {
@@ -821,7 +822,10 @@ const EditorContent: React.FC<EditorProps> = ({
   rereadPinnedBranchRef.current = async (branch) => {
     if (!namesBranch(branch, branchNameState)) return
     forgetLoadedValues((id) => !branchContentLocked && draftsRef.current[id] !== undefined)
-    await Promise.all([refreshEntries(branchNameState), reloadChangesRef.current(branchNameState)])
+    await Promise.all([
+      refreshEntries(branchNameState, { withChanges: false }),
+      rereadChangesRef.current(),
+    ])
   }
   modifiedCountRef.current = modifiedCount
   namesBranchRef.current = (branch) => namesBranch(branch, branchNameState)
@@ -1274,7 +1278,7 @@ const EditorContent: React.FC<EditorProps> = ({
       setEntriesLoading(true)
       setLoadFailedKey((failed) => (failed === inFlightKey ? null : failed))
       try {
-        const loaded = await loadEntry(currentEntry)
+        const loaded = await loadEntry(currentEntry, () => readGeneration.current === generation)
         // A branch switch during the await makes this response another
         // branch's content. Writing it would (a) show it as the new branch's
         // content and (b) satisfy the skip gate above, permanently suppressing
@@ -1301,7 +1305,8 @@ const EditorContent: React.FC<EditorProps> = ({
         // `busy`) stuck true with nothing left to clear it.
         if (
           (currentBranchRef.current === requestBranch &&
-            currentContentIdRef.current === contentId) ||
+            currentContentIdRef.current === contentId &&
+            readGeneration.current === generation) ||
           loadingEntryIdsRef.current.size === 0
         ) {
           setEntriesLoading(false)
@@ -1318,7 +1323,11 @@ const EditorContent: React.FC<EditorProps> = ({
       // Same staleness guard as above: don't tell the user an entry failed
       // to load when they've already navigated to a different one (or to a
       // different branch).
-      if (currentBranchRef.current === requestBranch && currentContentIdRef.current === contentId) {
+      if (
+        currentBranchRef.current === requestBranch &&
+        currentContentIdRef.current === contentId &&
+        readGeneration.current === generation
+      ) {
         notifications.show({ message: 'Failed to load entry', color: 'red' })
         setLoadFailedKey(inFlightKey)
       }
@@ -1856,6 +1865,7 @@ const EditorContent: React.FC<EditorProps> = ({
   reloadChangesRef.current = async (branch) => {
     if (branch === branchNameState) await branchChanges.reload()
   }
+  rereadChangesRef.current = branchChanges.reread
   // Submit, withdraw and a review move the branch's status, which no entries refresh follows.
   const changesStatusRef = useRef({ branch: branchNameState, status: currentBranch?.status })
   useEffect(() => {

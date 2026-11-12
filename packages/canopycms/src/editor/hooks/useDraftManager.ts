@@ -153,7 +153,7 @@ export interface UseDraftManagerOptions {
   currentEntry: EditorEntry | undefined
   entries: EditorEntry[]
   initialValues?: Record<string, FormValue>
-  loadEntry: (entry: EditorEntry) => Promise<FormValue>
+  loadEntry: (entry: EditorEntry, isCurrent?: () => boolean) => Promise<FormValue>
   /**
    * Server read that records no OCC token (useEntryManager's `readEntryValue`),
    * for checking restored drafts of unopened entries. Without it they stay
@@ -1465,13 +1465,19 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   const performReload = async () => {
     if (!options.currentEntry || !currentId) return
     const branch = options.branchName
-    const generation = readGeneration.current
+    const entry = options.currentEntry
     options.setBusy(true)
     try {
-      const loaded = await options.loadEntry(options.currentEntry)
+      // A read the branch's re-read overtakes is read again, as the reload was asked for.
+      let loaded: FormValue
+      let generation: number
+      do {
+        generation = readGeneration.current
+        const read = generation
+        loaded = await options.loadEntry(entry, () => readGeneration.current === read)
+      } while (readGeneration.current !== generation)
       // Content ids repeat across branches; the next branch's state is not this read's.
       if (latestOptionsRef.current.branchName !== branch) return
-      if (readGeneration.current !== generation) return
       options.onDraftsReset?.(currentId)
       delete reloadRequiredRef.current[currentId]
       notifications.hide(saveMayHaveLandedToastId(currentId))

@@ -783,11 +783,10 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     reviewPins.current.set(branch, null)
     try {
       if (headSha) await options.onReviewPinned?.(branch)
+      // A failed read leaves it null, for the next listing to try again.
+      if (pinning.current.get(branch) === token) reviewPins.current.set(branch, headSha ?? null)
     } finally {
-      if (pinning.current.get(branch) === token) {
-        pinning.current.delete(branch)
-        reviewPins.current.set(branch, headSha ?? null)
-      }
+      if (pinning.current.get(branch) === token) pinning.current.delete(branch)
     }
   }
   useEffect(() => {
@@ -978,7 +977,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     },
   ) => {
     if (err instanceof BranchMovedError) {
-      // A listing that fails, or leaves the branch out, pins none until the next refusal.
+      // A listing that fails, or leaves the branch out, pins none until a listing and a read do.
       void pinThenReread(branch, await reloadBranches()).catch(console.error)
       const id = reviewFailureId(kind, branch)
       notifications.hide(id)

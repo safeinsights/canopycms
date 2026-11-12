@@ -2858,6 +2858,24 @@ describe('useBranchManager', () => {
         expect(lastApproval()).toEqual({ headSha: SEEN })
       })
 
+      it('pins none when the read fails, until a later listing and a read succeed', async () => {
+        const consoleSpy = mockConsole()
+        const onReviewPinned = vi
+          .fn<(branch: string) => Promise<void>>()
+          .mockRejectedValueOnce(new Error('read failed'))
+          .mockResolvedValue(undefined)
+        mockClient.workflow.approve.mockResolvedValue(moved)
+        const hook = await loaded(headed(SEEN), { initialBranch: 'feature', onReviewPinned })
+        await waitFor(() => expect(consoleSpy).toHaveErrored('read failed'))
+        await approve(hook)
+        expect(mockClient.workflow.approve).toHaveBeenCalledWith({ branch: 'feature' }, {})
+
+        // The refusal's recovery reads again, and this read lands.
+        mockClient.workflow.approve.mockResolvedValue({ ok: true, status: 200 })
+        await approve(hook)
+        expect(lastApproval()).toEqual({ headSha: SEEN })
+      })
+
       it('pins an open branch first listed out of review once a listing shows its head, after a read', async () => {
         const onReviewPinned = vi.fn()
         mockClient.workflow.approve.mockResolvedValue({ ok: true, status: 200 })
