@@ -2627,8 +2627,135 @@ describe('a merge on GitHub that leaves an item under a key naming another', () 
 
     await cycle(s)
 
+    // Re-keyed into the merge the clone holds, which waits for the author's submit.
+    expect(await s.log(BRANCH)).toContain(REKEY)
     expect(await s.remoteSha(`refs/heads/${BRANCH}`)).toBe(merge)
+    expect(await queued(s, 'push-branch')).toEqual([])
+  })
+
+  const writeOutside = async (files: Record<string, string>) => {
+    for (const [name, content] of Object.entries(files)) {
+      const full = path.join(s.workspace, 'outside', name)
+      await fs.mkdir(path.dirname(full), { recursive: true })
+      await fs.writeFile(full, content)
+    }
+  }
+  /** GitHub's copy keyed by an editor there, then a base edit of `p` merged in by Update branch. */
+  async function staleOnGitHubOnly(extra: Record<string, string> = {}): Promise<string> {
+    const o = s.outside
+    await s.advanceBase({ [LIST]: list('L', [item('p'), item('q')]) })
+    await o.fetch(['--force', 'origin', `refs/remotes/github/${BRANCH}:refs/x/gh`])
+    await o.raw(['checkout', '-q', '-B', 'work', 'refs/x/gh'])
+    await o.fetch(['origin', BASE])
+    await o.raw(['merge', '--no-edit', 'FETCH_HEAD'])
+    await writeOutside({
+      [LIST]: list('L-branch', [
+        { _key: KP, ...item('p') },
+        { _key: KQ, ...item('q') },
+      ]),
+    })
+    await o.add(['.'])
+    await o.commit('keyed on github')
+    await s.advanceBase({ [LIST]: list('L', [item('p2'), item('q')]) })
+    await o.fetch(['origin', BASE])
+    await o.raw(['merge', '--no-edit', 'FETCH_HEAD'])
+    if (Object.keys(extra).length > 0) {
+      await writeOutside(extra)
+      await o.add(['.'])
+      await o.commit('github edit')
+    }
+    await o.raw(['push', 'origin', `HEAD:refs/remotes/github/${BRANCH}`])
+    return (await o.revparse(['HEAD'])).trim()
+  }
+
+  it("leaves what a merge in the base's own history brought in as git keyed it", async () => {
+    await s.commit({ 'editor.txt': 'v1\n' })
+    await s.push()
+    await writeMeta(s, { status: 'submitted', pullRequestNumber: 7 })
+    await cycle(s)
+    const o = s.outside
+    await s.advanceBase({ [LIST]: list('L', [item('p'), item('q')]) })
+    await o.fetch(['origin', BASE])
+    await o.raw(['checkout', '-q', '-B', 'side', 'FETCH_HEAD'])
+    await writeOutside({ [LIST]: list('L', [item('p2'), item('q')]) })
+    await o.add(['.'])
+    await o.commit('side edits p')
+    await s.advanceBase({
+      [LIST]: list('L-main', [
+        { _key: KP, ...item('p') },
+        { _key: KQ, ...item('q') },
+      ]),
+    })
+    await o.fetch(['origin', BASE])
+    await o.raw(['checkout', '-q', '-B', 'main-work', 'FETCH_HEAD'])
+    await o.raw(['merge', '--no-ff', '--no-edit', 'side'])
+    await o.raw(['push', 'origin', `HEAD:refs/heads/${BASE}`])
+    const merge = await s.updateBranchOnGitHub()
+
+    await cycle(s)
+
+    expect(await s.head()).toBe(merge)
     expect(await s.log(BRANCH)).not.toContain(REKEY)
+  })
+
+  it('takes a stale merge in re-keyed when the clone has commits of its own', async () => {
+    await s.commit({ 'editor.txt': 'v1\n' })
+    await s.push()
+    await writeMeta(s)
+    await staleOnGitHubOnly()
+    await s.commit({ 'editor.txt': 'v2\n' }, 'editor resubmits')
+    await s.clone.raw(['push', 'origin', `${BRANCH}:${BRANCH}`])
+
+    await cycle(s)
+
+    expect(await s.log(BRANCH)).toContain(REKEY)
+    expect(await keysIn(s, await s.head())).toEqual([KP2, KQ])
+  })
+
+  it('keeps the record of a merge still landing when GitHub merges the base on top of it', async () => {
+    await s.commit({ 'editor.txt': 'v1\n' })
+    await s.push()
+    await writeMeta(s)
+    await staleOnGitHubOnly({ [ENTRY]: '{"title":"github"}\n' })
+    await s.commit({ [ENTRY]: '{"title":"editor"}\n' }, 'editor entry')
+    await s.clone.raw(['push', 'origin', `${BRANCH}:${BRANCH}`])
+    // The merge is published, then the clone cannot move to it.
+    const lock = path.join(s.branchPath, '.git', 'index.lock')
+    await fs.writeFile(lock, '')
+    await cycle(s)
+    await fs.rm(lock)
+    expect((await readMeta(s))?.conflictFiles).toEqual([CONFLICTED_ID])
+    // Its push lands, and Update branch merges a base edit of the same item on top.
+    await s.resetOnGitHub((await s.remoteSha(`refs/heads/${BRANCH}`)) as string)
+    await s.advanceBase({ [LIST]: list('L', [item('p3'), item('q')]) })
+    await s.updateBranchOnGitHub()
+
+    await cycle(s)
+
+    expect(await s.file(ENTRY)).toBe('{"title":"editor"}\n')
+    expect((await readMeta(s))?.conflictFiles).toEqual([CONFLICTED_ID])
+    expect((await readMeta(s))?.keptOverGitHub).toEqual([ENTRY])
+  })
+
+  it('lands a published re-key once the branch is no longer published', async () => {
+    await distinct()
+    const lock = path.join(s.branchPath, '.git', 'index.lock')
+    await fs.writeFile(lock, '')
+    await cycle(s)
+    await fs.rm(lock)
+    const published = await s.remoteSha(`refs/heads/${BRANCH}`)
+    expect(published).not.toBe(await s.head())
+    await writeMeta(s, {
+      status: 'editing',
+      pushedToGitHubAt: undefined,
+      pullRequestNumber: undefined,
+    })
+    expect(await readMeta(s)).toMatchObject({ status: 'editing' })
+    expect((await readMeta(s))?.pullRequestNumber).toBeUndefined()
+
+    await cycle(s)
+
+    expect(await s.head()).toBe(published)
   })
 
   it('lands the re-key on the next cycle when the clone could not move to it', async () => {

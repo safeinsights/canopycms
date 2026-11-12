@@ -177,7 +177,10 @@ export async function catchUpWithPublished(
   )
     .trim()
     .split(' ')
-  if (parents.length !== 3 || parents[1] !== head) return null
+  // A merge built on the clone's head, or a re-key built on GitHub's commits past it.
+  const builtOnHead = parents.length === 3 && parents[1] === head
+  const rekeyPastHead = parents.length === 2 && (await contains(git, published, head))
+  if (!builtOnHead && !rekeyPastHead) return null
   return fastForward(ctx, args, head, published)
 }
 
@@ -260,8 +263,6 @@ export async function bringInGitHubCommits(
       if (gitHubTip !== undefined && published !== null && published !== tip) {
         return { kind: 'wait' }
       }
-      const rekeyed = await rekeyTakenIn(ctx, args, head, tip)
-      if (rekeyed) return rekeyed
       const stopped = await fastForward(ctx, args, head, tip)
       if (stopped) return stopped
       head = tip
@@ -511,13 +512,7 @@ async function rekeyTakenIn(
   if (gatewayPolicy && !publishesBranch(gatewayPolicy, branchRef)) return null
   const published = await readPublishedSha(ctx, branchRef)
   if ((await decidePublish(git, { head, published })).kind !== 'publish') return null
-  const built = await buildRekey(git, branchPath, {
-    from: head,
-    tip,
-    contentRoot: ctx.contentRoot,
-    timeoutMs: ctx.taskTimeoutMs,
-    message: `Key the items that merges on GitHub brought into ${branchRef}`,
-  })
+  const built = await rekeyOf(ctx, args, head, tip)
   if (built === null) return null
   const { sha } = built
   if (published !== null && !(await contains(git, sha, published))) return null
@@ -526,7 +521,8 @@ async function rekeyTakenIn(
   if (lockLost()) return { kind: 'wait' }
   // Judged on content: the commit changes item keys only, which `isCleanMergeOf` sets aside.
   if (await changesWhatWasReviewed(ctx, args, head, sha)) await returnToReview(ctx, args)
-  await recordMerge(ctx, args, built, { head, fromGitHub: true })
+  // Settled against `tip`: a merge of this worker's that `tip` holds is landing, not gone.
+  await recordMerge(ctx, args, built, { head: tip, fromGitHub: true })
   if (lockLost()) return { kind: 'wait' }
   await recordSeenOnGitHub(ctx, branchRef, tip)
   if (!(await publishPlainToLocalRemote(ctx, branchPath, branchRef, sha))) return { kind: 'wait' }
@@ -550,6 +546,32 @@ async function rekeyTakenIn(
     `  ${branchDir}: brought in commits from GitHub, with the items its merges brought in keyed anew (now at ${sha.slice(0, 7)})`,
   )
   return { kind: 'merged', keptEntries: 0 }
+}
+
+/**
+ * {@link buildRekey} on GitHub's commits from `head` to `tip`, or null when none needs a new key. A
+ * failure is logged, and the commits come in as git keyed them, as before the re-key existed.
+ */
+async function rekeyOf(
+  ctx: GitHubCommitsContext,
+  { git, branchPath, branchDir, branchRef }: GitHubCommitsArgs,
+  head: string,
+  tip: string,
+): Promise<BuiltMerge | null> {
+  try {
+    return await buildRekey(git, branchPath, {
+      from: head,
+      tip,
+      contentRoot: ctx.contentRoot,
+      timeoutMs: ctx.taskTimeoutMs,
+      message: `Key the items that merges on GitHub brought into ${branchRef}`,
+    })
+  } catch (err) {
+    workerLogWarn(
+      `  ${branchDir}: GitHub's merges come in as git keyed them: ${getErrorMessage(err)}`,
+    )
+    return null
+  }
 }
 
 /**
@@ -583,9 +605,12 @@ export async function mergeIntoBranch(
 ): Promise<GitHubCommitsOutcome> {
   const { git, branchPath, branchDir, branchRef, gatewayPolicy, lockLost } = args
   const { head, other, message, fromGitHub, inReview } = merge
+  // GitHub's merges come in under the field merge's keys, as a fast-forward takes them in.
+  const rekey = fromGitHub ? await rekeyOf(ctx, args, head, other) : null
+  const into = rekey?.sha ?? other
   const plan = await planMerge(git, branchPath, {
     head,
-    other,
+    other: into,
     contentRoot: ctx.contentRoot,
     timeoutMs: ctx.taskTimeoutMs,
   })
@@ -608,7 +633,9 @@ export async function mergeIntoBranch(
         `To continue, a developer merges them by hand.`,
     }
   }
-  const built = await commitMerge(git, plan, { head, other, message })
+  const merged = await commitMerge(git, plan, { head, other: into, message })
+  // The re-key's remaps first: the merge keeps its keys for the items it matches.
+  const built = rekey ? { ...merged, keyRemaps: [...rekey.keyRemaps, ...merged.keyRemaps] } : merged
   const { sha, conflicts } = built
   const refused = await refuseIncoming(args, head, sha)
   if (refused) return refused
@@ -711,7 +738,7 @@ async function changesWhatWasReviewed(
   await fetchFromRemoteGit(git, ctx.remoteGitPath, fresh.baseBranch ?? ctx.baseBranch)
   const base = (await git.revparse(['FETCH_HEAD'])).trim()
   const forkPoint = (await git.raw(['merge-base', '--end-of-options', to, base])).trim()
-  return forkPoint === '' || !(await isCleanMergeOf(git, to, approved, forkPoint))
+  return forkPoint === '' || !(await isCleanMergeOf(git, to, approved, forkPoint, ctx.contentRoot))
 }
 
 /**
@@ -764,15 +791,27 @@ async function recordMerge(
       ...(current?.remaps ?? []),
       ...keyRemaps.map(({ entryPath, remaps }) => ({ mergeSha: sha, entryPath, remaps })),
     ],
-    landing: {
-      mergeSha: sha,
-      ...(merge.fromGitHub && keptPaths.length > 0 && { keptOverGitHub: keptPaths }),
-    },
+    landing: landingOf(current?.landing, inHead, sha, merge.fromGitHub ? keptPaths : []),
   }))
   if (state === null) return
   await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update((existing) =>
     existing?.branch.name === branchRef ? { branch: conflictFilesOf(state.entries) } : null,
   )
+}
+
+/**
+ * The landing of `sha`, keeping what an earlier landing the merge builds on kept over GitHub's
+ * commits: that one lands with it, and its note goes in the pull request body then.
+ */
+function landingOf(
+  earlier: MergeConflictState['landing'],
+  holds: (mergeSha: string) => boolean,
+  sha: string,
+  keptPaths: readonly string[],
+): NonNullable<MergeConflictState['landing']> {
+  const carried = earlier && holds(earlier.mergeSha) ? (earlier.keptOverGitHub ?? []) : []
+  const kept = [...new Set([...carried, ...keptPaths])]
+  return { mergeSha: sha, ...(kept.length > 0 && { keptOverGitHub: kept }) }
 }
 
 /**

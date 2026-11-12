@@ -6,6 +6,7 @@ import { parse as yamlParse } from 'yaml'
 import type { ContentFormat, FieldConfig } from '../config'
 import type { FlatSchemaItem } from '../config/types'
 import { entryLogicalPathOfFile, extractIdFromFilename } from '../content-id-index'
+import { ITEM_KEY } from '../item-keys'
 import { parseEntryParts } from '../content-listing'
 import {
   mergeCollectionMeta,
@@ -16,7 +17,7 @@ import {
   type MergeSide,
 } from '../merge/entry-merge'
 import { rekeyAsMerged } from '../merge/rekey'
-import { exactToken, sameValue } from '../merge/value-equality'
+import { exactToken } from '../merge/value-equality'
 import {
   LOCATION_CONFLICT_KEY,
   type FoundEntryConflict,
@@ -499,19 +500,37 @@ function readsAs(
   }
 }
 
+/** `value` with every item key dropped, and nothing else changed. */
+const withoutItemKeys = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(withoutItemKeys)
+  if (!isPlainRecord(value)) return value
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([name]) => name !== ITEM_KEY)
+      .map(([name, v]) => [name, withoutItemKeys(v)]),
+  )
+}
+
 /**
- * Whether two versions of an entry file hold the same content, item keys aside: what a re-key
- * changes. False for anything that isn't an entry this merge reads.
+ * Whether two versions of one entry file under `contentRoot` differ in item keys alone: what a
+ * re-key changes. False for anything else, a file's mode or path included.
  */
-export async function sameEntryApartFromKeys(
+export async function differsInItemKeysOnly(
   git: SimpleGit,
   x: TreeFile,
   y: TreeFile,
+  contentRoot: string,
 ): Promise<boolean> {
   const format = formatOf(y.path)
-  if (!format || formatOf(x.path) !== format) return false
+  if (!format || x.path !== y.path || x.mode !== y.mode) return false
+  if (entryLogicalPathOfFile(y.path, normalizeFilesystemPath(contentRoot)) === null) return false
   const [a, b] = await Promise.all([readEntry(git, x, format), readEntry(git, y, format)])
-  return !!a && !!b && a.side.body === b.side.body && sameValue(a.side.data, b.side.data)
+  return (
+    !!a &&
+    !!b &&
+    a.side.body === b.side.body &&
+    exactToken(withoutItemKeys(a.side.data)) === exactToken(withoutItemKeys(b.side.data))
+  )
 }
 
 class Resolver {

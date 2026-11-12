@@ -558,12 +558,11 @@ function life(seed: number, syncs: number, mix: Mix = EVERY): string {
     const edited = read(true).map(([x, y]) => intended(mo, x.model, y.model))
     if (readings.length === 1 && !both && want !== 'conflict' && g.next() < 0.4) {
       const taken = takenIn(o, base, mine, gitMerged(want, base, mine), want)
-      // Re-keyed, the merge's keys name items as a field merge's do; as git wrote them, they don't.
-      if (taken.remaps === undefined) byEditor = false
-      else if (byEditor) {
+      if (byEditor && taken.remaps !== undefined) {
         const wrong = keyedWrongly(mine, taken.side, taken.remaps)
         if (wrong) return `seed ${seed}, sync ${sync} [editor, taken in]: ${wrong}`
       }
+      byEditor = false
       branch = taken.side
       o = base
       continue

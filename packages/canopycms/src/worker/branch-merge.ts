@@ -16,7 +16,7 @@ import { parseTypedFilename } from '../utils/typed-filename'
 import {
   changedFiles,
   resolveFieldMerge,
-  sameEntryApartFromKeys,
+  differsInItemKeysOnly,
   type FieldMergeResult,
 } from './field-merge'
 import { runGit } from './git-process'
@@ -284,14 +284,15 @@ export const mergesAsGitDoes = (plan: MergePlan): boolean =>
 
 /**
  * Whether `merged` holds exactly what `from` and `other` merge to cleanly, and so nothing else, the
- * item keys of entries aside: a re-key ({@link buildRekey}) changes no content. A conflict counts as
- * no: whoever settled it chose what `merged` holds.
+ * item keys of entries under `contentRoot` aside: a re-key ({@link buildRekey}) changes no content.
+ * A conflict counts as no: whoever settled it chose what `merged` holds.
  */
 export async function isCleanMergeOf(
   git: SimpleGit,
   merged: string,
   from: string,
   other: string,
+  contentRoot: string,
 ): Promise<boolean> {
   const output = await git.raw([
     'merge-tree',
@@ -308,14 +309,17 @@ export async function isCleanMergeOf(
   ).trim()
   if (mergedTree === tree) return true
   for (const { before, after } of await changedFiles(git, tree, mergedTree)) {
-    if (!before || !after || !(await sameEntryApartFromKeys(git, before, after))) return false
+    if (!before || !after || !(await differsInItemKeysOnly(git, before, after, contentRoot))) {
+      return false
+    }
   }
   return true
 }
 
 /**
- * A commit on `tip` that gives the items of every entry a merge in `from..tip` brought in the keys
- * the field merge of that merge's two parents gives them, where it holds what git merged
+ * A commit on `tip` that gives the items of every entry a merge on the branch's own line in
+ * `from..tip` (first parents: never the base's history) brought in the keys the field merge of
+ * that merge's two parents gives them, where it holds what git merged
  * (field-merge.ts `rekeyOnly`) and `tip` still holds the merge's version. Git keeps each item under
  * the key its side's copy held, which can name another item once the other side changed it; the
  * field merge's are the keys a later merge reads correctly. Null when no item needs a new key.
@@ -327,7 +331,14 @@ export async function buildRekey(
 ): Promise<BuiltMerge | null> {
   const { from, tip, contentRoot, timeoutMs, message } = args
   const merges = (
-    await git.raw(['rev-list', '--merges', '--reverse', '--end-of-options', `${from}..${tip}`])
+    await git.raw([
+      'rev-list',
+      '--first-parent',
+      '--merges',
+      '--reverse',
+      '--end-of-options',
+      `${from}..${tip}`,
+    ])
   )
     .split('\n')
     .filter((line) => OBJECT_ID.test(line))
