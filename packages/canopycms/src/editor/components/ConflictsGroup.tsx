@@ -103,12 +103,13 @@ const EDITED_IN_FORM = 'Edited in the form.'
 export const SAVE_FIRST_REASON = "Save or discard this entry's unsaved changes first."
 const OPEN_TO_CHOOSE = 'Open this entry to choose.'
 /**
- * Why a choice that takes the latest version can't: it couldn't be read, or its list items on the
- * way to the place can't be matched to the ones the merge named.
+ * Why a choice that takes the latest version can't: the latest version couldn't be read, its list
+ * items on the way to the place can't be matched to the ones the merge named, or the form no longer
+ * has the place. "Mark resolved" shows once the form is edited at the place.
  * @internal Exported for tests.
  */
 export const LATEST_UNPLACEABLE_REASON =
-  'The latest version of this can\'t be found here. Use "Edit" to change it by hand, then "Mark resolved".'
+  'The latest version of this can\'t be placed here. Change it in the form by hand, then choose "Mark resolved".'
 const LATEST_UNAVAILABLE = "Can't be shown here"
 
 /**

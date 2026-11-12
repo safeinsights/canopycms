@@ -1,7 +1,8 @@
 /**
  * What the editor says about a branch's open conflicts outside "Show changes": the open entry's
  * notice, Submit's reason, the bar's badge and the "Get latest changes" toast. A count is of the
- * choices left (`MergeConflictsData.openCount`), which the API counts per field. No copy names a
+ * choices left (`MergeConflictsData.openCount`): one per field, and one per entry-level conflict
+ * (`openConflictCount`, merge-conflicts.ts). No copy names a
  * branch: an author may not know the branch theirs was cut from.
  */
 

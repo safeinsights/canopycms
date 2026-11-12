@@ -66,7 +66,7 @@ const latest = {
 }
 
 /**
- * Field-level merge, end to end (plan rows 1, 4, 27, 43, 45): the worker's real merge brings the
+ * Field-level merge, end to end (plan rows 1, 4, 43, 45): the worker's real merge brings the
  * latest version into a branch, the entry and Submit say what waits, "Show changes" offers a card
  * per conflict (a field, a list item and a body region), and once each is chosen and saved,
  * Submit for review is allowed. "Get latest changes" itself is hidden in dev mode, so the merge is
@@ -167,7 +167,7 @@ test.describe('Field-level conflicts', () => {
     const drawer = page.getByRole('dialog', { name: /^Changes to / })
     const cards = drawer.getByTestId('conflict-card')
 
-    await test.step('"Show changes" shows one card per conflict (row 27)', async () => {
+    await test.step('"Show changes" shows one card per conflict', async () => {
       await page.getByTestId('conflict-alert-show-changes').click()
       await expect(drawer).toBeVisible({ timeout: STANDARD_TIMEOUT })
       await expect(cards).toHaveCount(3, { timeout: STANDARD_TIMEOUT })

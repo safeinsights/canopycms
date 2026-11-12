@@ -1895,7 +1895,7 @@ const EditorContent: React.FC<EditorProps> = ({
   // "Edit" on a card closes the drawer, and its exit focuses the field in the form.
   const focusAfterChangesRef = useRef<FieldConflict>()
   // An entry-level choice that replaces stored work, "Delete entry" or "Use latest version",
-  // confirms once the drawer has closed; Cancel opens the drawer again.
+  // confirms once the drawer has closed; any way out of the confirm but Confirm opens it again.
   const confirmAfterChangesRef = useRef<EntryChoiceTarget>()
   const focusConflictField = (field: FieldConflict) => {
     revealForm()
