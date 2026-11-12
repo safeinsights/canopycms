@@ -13,6 +13,7 @@ import {
   type EntryChangesDrawerProps,
   type EntryChangesSubject,
 } from './EntryChangesDrawer'
+import { conflictFields, fieldsConflictData } from './__test__/conflict-fixtures'
 
 afterEach(() => cleanup())
 
@@ -524,5 +525,46 @@ describe('EntryChangesDrawer blank lines and line breaks', () => {
     show('a\nb', 'a\nb\n')
     const card = within(await waitFor(drawer)).getByTestId('entry-change-card')
     expect(textOf(card)).toContain('Line break added at the end')
+  })
+})
+
+describe('the conflicts of an entry the branch deleted', () => {
+  it('offers "Keep it deleted" when the drawer shows a deleted entry with field conflicts', async () => {
+    const onResolveEntry = vi.fn(async () => undefined)
+    renderDrawer({
+      subject: { ...subject, status: 'deleted', fields: conflictFields },
+      state: loaded(sides({ title: 'Hello' }, null)),
+      conflicts: {
+        state: {
+          data: fieldsConflictData(['summary']),
+          error: undefined,
+          isValidating: false,
+          reload: vi.fn().mockResolvedValue(undefined),
+        },
+        choices: {},
+        onChoose: vi.fn(),
+        onResolveEntry,
+      },
+    })
+    await userEvent.click(within(drawer()).getByRole('button', { name: 'Keep it deleted' }))
+    expect(onResolveEntry).toHaveBeenCalledWith('keep')
+  })
+
+  it('offers no "Keep it deleted" for an entry the branch still has', () => {
+    renderDrawer({
+      subject: { ...subject, fields: conflictFields },
+      conflicts: {
+        state: {
+          data: fieldsConflictData(['summary']),
+          error: undefined,
+          isValidating: false,
+          reload: vi.fn().mockResolvedValue(undefined),
+        },
+        choices: {},
+        onChoose: vi.fn(),
+        onResolveEntry: vi.fn(async () => undefined),
+      },
+    })
+    expect(within(drawer()).queryByRole('button', { name: 'Keep it deleted' })).toBeNull()
   })
 })
