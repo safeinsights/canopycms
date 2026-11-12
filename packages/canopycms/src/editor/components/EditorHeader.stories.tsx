@@ -489,3 +489,11 @@ export const NarrowGetLatestChangesSaveFirst: Story = {
   parameters: phone,
   args: { baseUpdate: { ...getLatest, blockedReason: 'Save your changes first.' } },
 }
+
+/** To an admin, a branch held as its conflict record was damaged and set aside, with its way out. */
+export const ConflictRecordHeld: Story = {
+  args: {
+    userContext: { userId: 'admin-1', groups: ['Admins'] },
+    conflictRecordHeld: { onRelease: async () => true },
+  },
+}

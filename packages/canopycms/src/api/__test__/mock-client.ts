@@ -11,7 +11,7 @@ import type { ContentId } from '../../paths'
 import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, CreateBranchBody, UpdateBranchAccessBody } from '../branch'
 import type { BranchChangesResponse } from '../branch-changes'
 import type { BranchEntryChangeResponse, RestoreEntryBody, RestoreEntryResponse } from '../branch-entry-changes'
-import type { EntryConflictResponse, MergeConflictsResponse, ResolveEntryConflictBody, ResolveEntryConflictResponse } from '../merge-conflicts'
+import type { EntryConflictResponse, MergeConflictsResponse, ReleaseConflictsHoldResponse, ResolveEntryConflictBody, ResolveEntryConflictResponse } from '../merge-conflicts'
 import type { BranchMergeResponse, RequestChangesBody, SubmitBranchBody, SubmitBranchResponse, UpdateFromBaseResponse } from '../branch-status'
 import type { AdminDeleteTaskResponse, AdminRetryTaskResponse, AdminStatusResponse, AdminTasksResponse, BranchHealthResponse, DeleteArchivedBranchesBody, DeleteArchivedBranchesResponse, DismissUnpublishedResponse, PurgeBranchDirResponse, RepairBranchDirResponse, RepairContentDuplicatesResponse } from '../admin'
 import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from '../comments'
@@ -61,6 +61,7 @@ export function createMockApiClient(): MockApiClient {
     list: vi.fn().mockResolvedValue(mockSuccess({"conflicts":[],"hiddenCount":0,"openCount":0})),
     entry: vi.fn().mockResolvedValue(mockSuccess({"contentId":"","kind":"fields","path":"","logicalPath":"","mergeSha":"","sides":{},"fields":[],"versions":{}})),
     resolveEntry: vi.fn().mockResolvedValue(mockSuccess({"contentId":"","openCount":0})),
+    releaseHold: vi.fn().mockResolvedValue(mockSuccess({"released":true})),
   },
 
   workflow: {
@@ -200,6 +201,10 @@ export function mockEntryConflictResponse(): EntryConflictResponse {
 
 export function mockResolveEntryConflictResponse(): ResolveEntryConflictResponse {
   return mockSuccess({"contentId":"","openCount":0})
+}
+
+export function mockReleaseConflictsHoldResponse(): ReleaseConflictsHoldResponse {
+  return mockSuccess({"released":true})
 }
 
 export function mockUpdateFromBaseResponse(): UpdateFromBaseResponse {

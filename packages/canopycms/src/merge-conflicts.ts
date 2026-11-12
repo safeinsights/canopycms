@@ -105,6 +105,18 @@ export interface MergeConflictState {
    * behind its own published merge may catch up with.
    */
   landing?: Landing
+  /**
+   * A record that didn't parse was set aside: which conflicts it held is lost, so Submit and Approve
+   * wait ({@link assertNoOpenConflicts}) until an admin releases the branch or a merge records
+   * anew, as a merge writes no `held`.
+   */
+  held?: Held
+}
+
+interface Held {
+  /** The name the unparseable file was moved aside to, in `.canopy-meta`. */
+  aside: string
+  at: string
 }
 
 interface Landing {
@@ -193,6 +205,7 @@ const fileSchema = z
       .object({ mergeSha: z.string(), keptOverGitHub: z.array(z.string()).optional() })
       .strict()
       .optional(),
+    held: z.object({ aside: z.string(), at: z.string() }).strict().optional(),
     entries: z.record(z.string(), entrySchema),
     remaps: z
       .array(
@@ -237,7 +250,7 @@ export class MergeConflictsFileMalformedError extends Error {
  * its record: its value is still the author's, which this merge took as the branch's own change.
  * A field found again keeps the ancestor it was first found against, and that ancestor's path, so
  * the person still sees what they started from, and takes this merge's base and branch. An
- * entry-level conflict replaces the entry's record; an entry-level record stands against fields
+ * entry-level conflict replaces the entry's record; an `unreadable` record stands against fields
  * found later, taking this merge's base and branch. `paths` moves the kept records of entries this
  * merge moved. Every record this merge changes keeps the one it replaced as `previous`. Pure.
  */
@@ -267,9 +280,11 @@ export function withFoundConflicts(
       entries[contentId] = changed(prior, { path: at, kind, sides })
       continue
     }
-    if (prior && prior.kind !== 'fields') {
-      // An entry-level choice nobody has made stands: it decides the whole entry, the fields this
-      // merge found in it included. It compares this merge's versions with the first ancestor.
+    if (prior?.kind === 'unreadable') {
+      // A version merged as one value nobody has chosen on stands: this merge compared against it
+      // as merged, so its changes would be lost unasked. The choice decides the whole entry, the
+      // fields this merge found included, and compares this merge's versions with the first
+      // ancestor. A deleted entry's record goes once both sides hold the entry again.
       const { ancestor: _later, ...latest } = sides
       const ancestor = prior.sides.ancestor
       entries[contentId] = changed(prior, {
@@ -405,21 +420,27 @@ export function conflictFilesOf(entries: Readonly<Record<string, MergeConflictEn
  * sets aside, or one of a later format, which waits for this code to be updated.
  */
 export class OpenMergeConflictsError extends Error {
-  constructor(readonly count: number | null) {
+  constructor(
+    readonly count: number | null,
+    /** The record was set aside as unparseable, so which conflicts are open is lost. */
+    readonly held = false,
+  ) {
     super(
-      count === null
-        ? "Couldn't check this branch for changes that conflict with newer ones. Try again in a moment."
-        : count === 1
-          ? 'A change on this branch conflicts with a newer change on the site.'
-          : `${count} changes on this branch conflict with newer changes on the site.`,
+      held
+        ? "This branch's record of conflicting changes was damaged and set aside, so it waits for an admin to check it."
+        : count === null
+          ? "Couldn't check this branch for changes that conflict with newer ones. Try again in a moment."
+          : count === 1
+            ? 'A change on this branch conflicts with a newer change on the site.'
+            : `${count} changes on this branch conflict with newer changes on the site.`,
     )
     this.name = 'OpenMergeConflictsError'
   }
 }
 
 /**
- * Throws {@link OpenMergeConflictsError} while `branchRoot`'s record holds a conflict, or does not
- * parse. A clone with no record has none open.
+ * Throws {@link OpenMergeConflictsError} while `branchRoot`'s record holds a conflict, is held after
+ * one was set aside, or does not parse. A clone with no record has none open.
  */
 export async function assertNoOpenConflicts(branchRoot: string): Promise<void> {
   let record: MergeConflictsFile | null
@@ -433,6 +454,7 @@ export async function assertNoOpenConflicts(branchRoot: string): Promise<void> {
       throw new OpenMergeConflictsError(null)
     throw err
   }
+  if (record?.held) throw new OpenMergeConflictsError(null, true)
   const count = record ? openConflictCount(record.entries) : 0
   if (count > 0) throw new OpenMergeConflictsError(count)
 }
@@ -458,13 +480,23 @@ export class MergeConflictStore {
   }
 
   /**
-   * Move a file that does not parse as a record aside, so the next write starts a new one. Resolves
-   * the name it was moved to.
+   * Move a file that does not parse as a record aside, and start a new one that is `held`, as which
+   * conflicts were open is lost with it. Resolves the name it was moved to.
    */
   async quarantine(): Promise<string> {
-    const aside = `${this.filePath}.malformed-${Date.now()}`
-    await fs.rename(this.filePath, aside)
-    return aside
+    return withLock(this.filePath, () =>
+      withOccFileLock(this.filePath, async () => {
+        const aside = `${this.filePath}.malformed-${Date.now()}`
+        await fs.rename(this.filePath, aside)
+        const held: Held = { aside: path.basename(aside), at: new Date().toISOString() }
+        await writeOccJsonFile(
+          this.filePath,
+          { schema: RECORD_SCHEMA, entries: {}, held },
+          { expectedVersion: null, settleMs: this.settleMs },
+        )
+        return aside
+      }),
+    )
   }
 
   /** The record, or null when the clone has none. Throws on a file that does not parse as one. */
@@ -508,6 +540,7 @@ export class MergeConflictStore {
               entries: current.entries,
               ...(current.remaps && { remaps: current.remaps }),
               ...(current.landing && { landing: current.landing }),
+              ...(current.held && { held: current.held }),
             },
           )
           if (next === null) return null
@@ -516,6 +549,7 @@ export class MergeConflictStore {
             entries: next.entries,
             ...(next.remaps && { remaps: next.remaps }),
             ...(next.landing && { landing: next.landing }),
+            ...(next.held && { held: next.held }),
           }
           await writeOccJsonFile(this.filePath, payload, {
             expectedVersion: current ? current.version : null,

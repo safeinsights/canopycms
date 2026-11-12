@@ -20,7 +20,12 @@ import type { SaveAllProgress } from '../hooks/save-all'
 import { isAdmin, isLockedOutOfBranch, isReviewer } from '../../authorization/helpers'
 import { branchBarStatus, describeBranchLock, type BranchBarStatus } from '../branch-lock'
 import { HOLD_BADGE, branchHoldMessage } from '../branch-status'
-import { conflictsHoldMessage, conflictsSubmitReason } from '../conflict-notice'
+import {
+  conflictRecordHeldMessage,
+  conflictsHoldMessage,
+  conflictsSubmitReason,
+} from '../conflict-notice'
+import { ReleaseHoldButton } from './ReleaseHoldButton'
 import { EDITOR_ACTIONS, UNFINISHED_SUBMIT_APPROVE_REASON, rewrittenSubmitReason } from '../copy'
 import { reviewRoleOf, type ReviewRole } from '../../authorization/review-role'
 import { SYSTEM_USER_ID } from '../../system-users'
@@ -112,6 +117,11 @@ export interface EditorHeaderProps {
   baseUpdate?: BaseUpdateControl
   /** Choices a merge's conflicts leave open on the branch, which hold Submit for review. */
   openConflicts?: number
+  /**
+   * To an admin, the branch is held as its conflict record was set aside; `onRelease` releases it,
+   * resolving whether it did.
+   */
+  conflictRecordHeld?: { onRelease: () => Promise<boolean> }
   /** The open branch's wait for the latest changes, whoever asked: every viewer who sees it waits. */
   latestWait?: BaseUpdateWait
 }
@@ -158,6 +168,7 @@ export function EditorHeader({
   baseUpdate,
   latestWait = 'none',
   openConflicts = 0,
+  conflictRecordHeld,
 }: EditorHeaderProps) {
   const reviewRole = reviewRoleOf(
     {
@@ -205,10 +216,12 @@ export function EditorHeader({
           role: workflow?.kind === 'review' ? 'review' : workflow?.permitted ? 'withdraw' : 'none',
           isAdmin: isAdmin(userContext?.groups ?? []),
         })
-      : branchName && conflictsHeld && status.value !== 'loading'
-        ? conflictsHoldMessage(openConflicts)
-        : undefined
-  const holdCount = !branchHold && conflictsHeld ? openConflicts : undefined
+      : branchName && conflictRecordHeld && status.value !== 'loading'
+        ? conflictRecordHeldMessage
+        : branchName && conflictsHeld && status.value !== 'loading'
+          ? conflictsHoldMessage(openConflicts)
+          : undefined
+  const holdCount = !branchHold && !conflictRecordHeld && conflictsHeld ? openConflicts : undefined
 
   const theme = useMantineTheme()
   // Mantine's own below-`md` query, the one `visibleFrom="md"` hides under.
@@ -269,6 +282,9 @@ export function EditorHeader({
             // The bar's button carries the spinner where it shows.
             workingSpinner={narrow || !baseUpdate}
           />
+          {branchName && conflictRecordHeld && (
+            <ReleaseHoldButton onRelease={conflictRecordHeld.onRelease} />
+          )}
           {modifiedCount > 0 && (
             <Tooltip
               label={unsavedTooltip(

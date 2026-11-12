@@ -122,7 +122,7 @@ describe('withFoundConflicts', () => {
     expect(next[ID]?.fields?.[0].sidePaths.ancestor).toBeUndefined()
   })
 
-  it('replaces an entry with an entry-level conflict, which stands against fields found later', () => {
+  it('replaces an entry with an entry-level conflict, and a deleted entry’s with fields found later', () => {
     const deleted = withFoundConflicts(
       first,
       [{ contentId: ID, path: 'p', kind: 'deleted-on-base', sides: { branch: 'b2' } }],
@@ -140,13 +140,9 @@ describe('withFoundConflicts', () => {
       [fieldsFound({ ancestor: 'o3', base: 'a3', branch: 'b3' }, 'title')],
       M1,
     )
-    expect(again[ID]).toEqual({
-      path: 'content/page.home.aboutAbc1234.json',
-      mergeSha: M1,
-      kind: 'deleted-on-base',
-      sides: { base: 'a3', branch: 'b3' },
-      previous: deleted[ID],
-    })
+    // The base brought the entry back, so the deletion is no choice left to make.
+    expect(again[ID]).toMatchObject({ kind: 'fields', mergeSha: M1, previous: deleted[ID] })
+    expect(again[ID]?.fields?.map((f) => f.key)).toEqual(['title'])
     const unreadable = withFoundConflicts(
       {},
       [{ contentId: ID, path: 'p', kind: 'unreadable', sides: { ancestor: 'o1', base: 'a1' } }],
@@ -278,6 +274,26 @@ describe('MergeConflictStore', () => {
     await expect(new MergeConflictStore(root).read()).rejects.toThrow(/malformed/)
     await fs.writeFile(file, JSON.stringify({ schema: 2, version: 1, entries: {} }))
     await expect(new MergeConflictStore(root).read()).resolves.toMatchObject({ entries: {} })
+  })
+
+  it('holds the branch once a record that does not parse is set aside, until a write leaves held out', async () => {
+    await fs.mkdir(path.join(root, '.canopy-meta'))
+    await fs.writeFile(path.join(root, '.canopy-meta', 'merge-conflicts.json'), '{"oops"')
+    const store = new MergeConflictStore(root, 0)
+    const aside = await store.quarantine()
+    expect(await fs.readFile(aside, 'utf8')).toBe('{"oops"')
+    expect((await store.read())?.held).toMatchObject({ aside: path.basename(aside) })
+    await expect(assertNoOpenConflicts(root)).rejects.toMatchObject({
+      count: null,
+      held: true,
+      message: expect.stringContaining('waits for an admin'),
+    })
+    // Other writers keep the hold; a write that leaves it out, as a merge's, clears it.
+    await store.update((current) => current && { ...current, remaps: [] })
+    expect((await store.read())?.held).toBeDefined()
+    await store.update(() => ({ entries: {} }))
+    expect((await store.read())?.held).toBeUndefined()
+    await expect(assertNoOpenConflicts(root)).resolves.toBeUndefined()
   })
 
   it('refuses a file that is not a record, rather than reading it as none', async () => {

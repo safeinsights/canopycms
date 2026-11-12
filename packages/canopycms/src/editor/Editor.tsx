@@ -528,6 +528,7 @@ const EditorContent: React.FC<EditorProps> = ({
     apiClient,
     branchNameState,
     currentBranch?.conflictFiles,
+    userIsAdmin,
   )
   const openConflictCount = currentBranch?.conflictFiles?.length
     ? (branchConflicts.data?.openCount ?? currentBranch.conflictFiles.length)
@@ -1976,6 +1977,21 @@ const EditorContent: React.FC<EditorProps> = ({
     ]).catch(console.error)
     return undefined
   }
+  // An admin's release of a branch held as its conflict record was set aside.
+  const handleReleaseConflictsHold = async (): Promise<boolean> => {
+    const result = await apiClient.conflicts.releaseHold({ branch: branchNameState })
+    if (result.ok) {
+      await branchConflicts.reload()
+      notifications.show({ message: 'Hold released.', color: 'green' })
+      return true
+    }
+    notifications.show({
+      message: result.error ?? "Couldn't release the hold. Try again in a moment.",
+      color: 'red',
+      autoClose: false,
+    })
+    return false
+  }
   keepConflictsRef.current = (items) => {
     void Promise.all(
       items.map((c) =>
@@ -2858,6 +2874,11 @@ const EditorContent: React.FC<EditorProps> = ({
               branchReadOnly={currentBranch?.readOnly}
               branchHold={currentBranch?.hold}
               openConflicts={openConflictCount}
+              conflictRecordHeld={
+                userIsAdmin && branchConflicts.data?.held
+                  ? { onRelease: handleReleaseConflictsHold }
+                  : undefined
+              }
               branchApproveBlocked={currentBranch?.approveBlocked}
               branchWriteBlocked={branchContentLocked}
               branchLoading={branchLoading}

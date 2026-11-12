@@ -1170,7 +1170,22 @@ describe('the field merge in the rebase loop', () => {
 
     expect(summary.rebased).toEqual([BRANCH])
     expect((await fs.readdir(dir)).filter((f) => f.includes('.malformed-'))).toHaveLength(1)
+    // The merge records anew, which clears the hold the set-aside record left.
     expect(Object.keys((await repo.record())?.entries ?? {})).toEqual(['aboutAbc1234'])
+    expect((await repo.record())?.held).toBeUndefined()
+  })
+
+  it('holds the branch when it sets aside a record with nothing to merge', async () => {
+    const repo = await createRepo(tmpDir, {})
+    const dir = path.join(repo.clonePath, '.canopy-meta')
+    await fs.mkdir(dir, { recursive: true })
+    await fs.writeFile(path.join(dir, 'merge-conflicts.json'), '{"entries": 7}')
+
+    await repo.cycle()
+
+    const [aside] = (await fs.readdir(dir)).filter((f) => f.includes('.malformed-'))
+    expect((await repo.record())?.held).toMatchObject({ aside })
+    await expect(assertNoOpenConflicts(repo.clonePath)).rejects.toMatchObject({ held: true })
   })
 
   it('reconciles the record of a branch in review too', async () => {
