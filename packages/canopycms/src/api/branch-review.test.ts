@@ -4,11 +4,13 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BranchName } from '../paths/types'
 
+// What a save returns: the branch as stored, its pull request number kept.
 const mockMetadataSave = vi.fn().mockResolvedValue({
   schemaVersion: 1,
   branch: {
     name: 'feature/x',
     status: 'editing',
+    pullRequestNumber: 123,
     access: {},
     createdBy: 'u1',
     createdAt: 'now',
@@ -49,10 +51,18 @@ const { mockSyncPrComments } = vi.hoisted(() => ({
 vi.mock('./pr-comment-sync', () => ({ syncPrComments: mockSyncPrComments }))
 
 // The branch root here is not on disk; merge-conflict-gates.test.ts takes the real lock.
-vi.mock('../utils/content-write-lock', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../utils/content-write-lock')>()),
-  withContentWriteLock: <T>(_root: string, fn: () => Promise<T>) => fn(),
-}))
+const { lockBusy } = vi.hoisted(() => ({ lockBusy: { next: false } }))
+vi.mock('../utils/content-write-lock', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../utils/content-write-lock')>()
+  return {
+    ...original,
+    withContentWriteLock: <T>(_root: string, fn: () => Promise<T>) => {
+      if (!lockBusy.next) return fn()
+      lockBusy.next = false
+      return Promise.reject(new original.ContentWriteLockBusyError())
+    },
+  }
+})
 
 vi.mock('../branch-metadata', () => ({
   BranchMetadataFileManager: vi.fn().mockImplementation(() => ({
@@ -268,6 +278,10 @@ describe('branch review api - requestChanges', () => {
     ctx.getBranchContext = vi.fn().mockResolvedValue({
       ...baseContext,
       branch: { ...baseContext.branch, pullRequestNumber: undefined },
+    })
+    mockMetadataSave.mockResolvedValueOnce({
+      schemaVersion: 1,
+      branch: { ...baseContext.branch, status: 'editing', pullRequestNumber: undefined },
     })
     const res = await requestChangesHandler(
       ctx,
@@ -855,12 +869,33 @@ describe('the commit the reviewer saw', () => {
       addComment.mockRestore()
     })
 
-    it('checks again under the lock: a move after the first check is refused', async () => {
-      mockHeadSha.mockResolvedValueOnce(HEAD).mockResolvedValueOnce(OTHER_HEAD)
+    it('leaves the pull request alone when the lock is busy', async () => {
+      lockBusy.next = true
       const res = await run({ headSha: HEAD })
-      expect(res).toEqual(moved)
-      expect(mockHeadSha).toHaveBeenCalledTimes(2)
+      expect(res).toMatchObject({ ok: false, status: 409 })
+      expect(res.error).toContain("changes weren't requested")
+      expect(convertToDraft).not.toHaveBeenCalled()
       expect(mockMetadataSave).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('a head the server cannot read', () => {
+    it.each([
+      ['approve', () => approveBranch.handler(makeCtx(), reviewer, params, { headSha: HEAD })],
+      [
+        'request changes',
+        () => requestChanges.handler(makeCtx(), reviewer, params, { headSha: HEAD }),
+      ],
+    ])('answers a 503 to %s, saving nothing', async (_label, run) => {
+      const consoleSpy = mockConsole()
+      mockHeadSha.mockRejectedValueOnce(new Error('fatal: not a git repository'))
+      expect(await run()).toEqual({
+        ok: false,
+        status: 503,
+        error: "Couldn't read this branch right now. Try again in a moment.",
+      })
+      expect(mockMetadataSave).not.toHaveBeenCalled()
+      expect(consoleSpy).toHaveErrored('Could not read the head of feature/x')
     })
   })
 })

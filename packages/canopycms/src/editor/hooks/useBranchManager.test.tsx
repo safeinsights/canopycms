@@ -2830,9 +2830,9 @@ describe('useBranchManager', () => {
       it('on a refusal, pins the head a fresh listing shows, then has the content read again', async () => {
         const { notifications } = await import('@mantine/notifications')
         const order: string[] = []
-        const onBranchMoved = vi.fn(() => order.push('content'))
+        const onReviewPinned = vi.fn(() => order.push('content'))
         mockClient.workflow.approve.mockResolvedValueOnce(moved)
-        const hook = await loaded(headed(SEEN), { onBranchMoved })
+        const hook = await loaded(headed(SEEN), { onReviewPinned })
         mockClient.branches.list.mockImplementation(async () => {
           order.push('listing')
           return { ok: true, status: 200, data: { branches: headed(NEWER), users: [] } }
@@ -2841,7 +2841,7 @@ describe('useBranchManager', () => {
         await approve(hook)
 
         expect(order).toEqual(['listing', 'content'])
-        expect(onBranchMoved).toHaveBeenCalledWith('feature')
+        expect(onReviewPinned).toHaveBeenCalledWith('feature')
         expect(notifications.show).toHaveBeenLastCalledWith({
           id: 'canopy-approve-failed-feature',
           message: moved.error,
@@ -2856,6 +2856,66 @@ describe('useBranchManager', () => {
           { branch: 'feature' },
           { headSha: NEWER },
         )
+      })
+
+      it('pins the open branch from the listing that names it, then has its content read again', async () => {
+        // Its content loads from the URL, before any listing arrives.
+        const onReviewPinned = vi.fn()
+        mockClient.workflow.approve.mockResolvedValue({ ok: true, status: 200 })
+        const hook = await loaded(headed(SEEN), { initialBranch: 'feature', onReviewPinned })
+        await waitFor(() => expect(onReviewPinned).toHaveBeenCalledWith('feature'))
+        expect(onReviewPinned).toHaveBeenCalledTimes(1)
+        await approve(hook)
+        expect(mockClient.workflow.approve).toHaveBeenCalledWith(
+          { branch: 'feature' },
+          { headSha: SEEN },
+        )
+      })
+
+      it('re-pins a branch from the latest listing as it is opened, then has it read again', async () => {
+        const onReviewPinned = vi.fn()
+        mockClient.workflow.approve.mockResolvedValue({ ok: true, status: 200 })
+        const hook = await loaded(headed(SEEN), { onReviewPinned })
+        listing(headed(NEWER))
+        await act(async () => {
+          await hook.result.current.loadBranches()
+        })
+        expect(onReviewPinned).not.toHaveBeenCalled()
+
+        act(() => hook.result.current.setBranchName('feature'))
+        await waitFor(() => expect(onReviewPinned).toHaveBeenCalledWith('feature'))
+        await approve(hook)
+        expect(mockClient.workflow.approve).toHaveBeenLastCalledWith(
+          { branch: 'feature' },
+          { headSha: NEWER },
+        )
+      })
+
+      it('pins none when the recovery cannot list the branch, so nothing newer slips in', async () => {
+        const onReviewPinned = vi.fn()
+        mockClient.workflow.approve.mockResolvedValue(moved)
+        const hook = await loaded(headed(SEEN), { onReviewPinned })
+        mockClient.branches.list.mockResolvedValueOnce({ ok: false, status: 503, error: 'down' })
+
+        await approve(hook)
+        expect(onReviewPinned).not.toHaveBeenCalled()
+
+        // A later listing with a newer head moves nothing.
+        listing(headed(NEWER))
+        await act(async () => {
+          await hook.result.current.loadBranches()
+        })
+        await approve(hook)
+        expect(mockClient.workflow.approve).toHaveBeenLastCalledWith({ branch: 'feature' }, {})
+      })
+
+      it('clears a refusal of either kind once a verdict goes through', async () => {
+        const { notifications } = await import('@mantine/notifications')
+        mockClient.workflow.approve.mockResolvedValueOnce({ ok: true, status: 200 })
+        const hook = await loaded(headed(SEEN))
+        await approve(hook)
+        expect(notifications.hide).toHaveBeenCalledWith('canopy-approve-failed-feature')
+        expect(notifications.hide).toHaveBeenCalledWith('canopy-request-changes-failed-feature')
       })
 
       it('keeps the note of a refused request for changes for the next try, and says so', async () => {

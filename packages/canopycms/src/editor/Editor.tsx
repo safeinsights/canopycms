@@ -468,7 +468,7 @@ const EditorContent: React.FC<EditorProps> = ({
   const modifiedCountRef = useRef(0)
   const namesBranchRef = useRef<(branch: string) => boolean>(() => false)
   // Set once the entries and the changes read exist.
-  const reloadMovedBranchRef = useRef<(branch: string) => void>(() => {})
+  const rereadPinnedBranchRef = useRef<(branch: string) => void>(() => {})
   const {
     branchName: branchNameState,
     setBranchName,
@@ -499,7 +499,7 @@ const EditorContent: React.FC<EditorProps> = ({
     getUnsaved: () => resolveUnsavedRef.current(),
     onStamped: (stamped) => applySubmitStampsRef.current(stamped),
     onChangesRequested: (branch) => reloadCommentsRef.current(branch),
-    onBranchMoved: (branch) => reloadMovedBranchRef.current(branch),
+    onReviewPinned: (branch) => rereadPinnedBranchRef.current(branch),
     // Only the open branch, with nothing unsaved: its wait and answer show where the user is.
     latestChangesAfterWithdraw: (branch) =>
       namesBranchRef.current(branch) && modifiedCountRef.current === 0
@@ -814,13 +814,18 @@ const EditorContent: React.FC<EditorProps> = ({
     onShowConflicts: () => showConflictsRef.current(),
   })
   requestLatestRef.current = baseUpdate.request
-  // A review refused as the open branch moved: every clean entry and its changes are read again.
-  reloadMovedBranchRef.current = (branch) => {
+  // The open branch was pinned for its reviews: its entries and changes are read again, every one
+  // while it is locked, which shows the saved copy over a draft.
+  rereadPinnedBranchRef.current = (branch) => {
     if (!namesBranch(branch, branchNameState)) return
     setLoadedValues((prev) =>
-      Object.fromEntries(
-        Object.entries(prev).filter(([contentId]) => draftsRef.current[contentId] !== undefined),
-      ),
+      branchContentLocked
+        ? {}
+        : Object.fromEntries(
+            Object.entries(prev).filter(
+              ([contentId]) => draftsRef.current[contentId] !== undefined,
+            ),
+          ),
     )
     reloadChangesRef.current(branchNameState)
     void refreshEntries(branchNameState).catch(console.error)

@@ -353,6 +353,33 @@ describe('Editor on a read-only branch', () => {
   })
 })
 
+describe('Editor on a branch in review, pinned for its reviews', () => {
+  it('reads the saved copy again once pinned, though a draft is kept for it', async () => {
+    seedDraft()
+    const inReview = {
+      ...protectedMain,
+      status: 'submitted',
+      isProtected: false,
+      readOnly: false,
+      headSha: 'a'.repeat(40),
+    }
+    stubApi([inReview])
+    const reads = () =>
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(
+          ([input, init]) =>
+            plainBranchPath(String(input)) === entryApiPath &&
+            (!init?.method || init.method === 'GET'),
+        ).length
+    renderEditor()
+
+    await titleInput()
+    // The read the page opened with, and the one after its pin: a locked branch keeps no copy.
+    await waitFor(() => expect(reads()).toBe(2))
+  })
+})
+
 describe('Editor while the branch gets the latest changes', () => {
   const editingMain = {
     ...protectedMain,

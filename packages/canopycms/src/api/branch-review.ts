@@ -60,30 +60,37 @@ class BranchMovedError extends Error {
   override readonly name = 'BranchMovedError'
 }
 
-/**
- * Whether the clone's HEAD is the commit the reviewer saw. A request naming none, from a page
- * loaded before the editor sent one, counts as no: what that page showed is unknown.
- */
-const isReviewedHead = async (
-  ctx: ApiContext,
-  { branch, branchRoot }: BranchContext,
-  sent: string | undefined,
-): Promise<boolean> => {
-  if (!sent) return false
-  const git = ctx.services.createGitManagerFor(branchRoot, { baseBranch: branch.baseBranch })
-  return (await git.headSha()) === sent
+class HeadUnreadableError extends Error {
+  override readonly name = 'HeadUnreadableError'
+}
+
+const headUnreadable: BranchListItemResponse = {
+  ok: false,
+  status: 503,
+  error: "Couldn't read this branch right now. Try again in a moment.",
 }
 
 /**
- * {@link isReviewedHead}, under the content-write lock: a submit and the worker move HEAD only
- * while holding it, so the head checked is the one the verdict is written against. Returns it.
+ * Throws unless the clone's HEAD is `sent`, the commit the reviewer saw, and returns it. A request
+ * naming none, from a page loaded before the editor sent one, is refused: what it showed is
+ * unknown. Called under the content-write lock: a submit and the worker move HEAD only while
+ * holding it, so the head checked is the one the verdict is written against.
  */
 const assertReviewedHead = async (
   ctx: ApiContext,
-  branchContext: BranchContext,
+  { branch, branchRoot }: BranchContext,
   sent: string | undefined,
 ): Promise<string> => {
-  if (!sent || !(await isReviewedHead(ctx, branchContext, sent))) throw new BranchMovedError()
+  if (!sent) throw new BranchMovedError()
+  let head: string
+  try {
+    const git = ctx.services.createGitManagerFor(branchRoot, { baseBranch: branch.baseBranch })
+    head = await git.headSha()
+  } catch (err) {
+    console.error(`CanopyCMS: Could not read the head of ${branch.name}:`, getErrorMessage(err))
+    throw new HeadUnreadableError()
+  }
+  if (head !== sent) throw new BranchMovedError()
   return sent
 }
 
@@ -149,18 +156,12 @@ const requestChangesHandler = async (
     return requestChangesConflict(branchContext.branch.status)
   }
 
-  // Checked before the draft conversion too, which a refused request must not make.
   const headSha = body?.headSha
-  if (!(await isReviewedHead(ctx, branchContext, headSha))) return branchMoved
-
-  await syncConvertToDraft(ctx, branchContext)
-
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
 
   // The status the guard read can be stale by now, so the save checks the status on disk, in the
   // same step that writes, and the head under the lock with it. A branch that left review or moved
-  // meanwhile is refused, and the draft conversion above is left as it is: withdraw converts the
-  // pull request to a draft too, and a merged one cannot be converted.
+  // meanwhile is refused before the pull request is touched.
   let found: string | undefined
   let updated: Awaited<ReturnType<typeof meta.saveIf>>
   try {
@@ -182,6 +183,7 @@ const requestChangesHandler = async (
     })
   } catch (err) {
     if (err instanceof BranchMovedError) return branchMoved
+    if (err instanceof HeadUnreadableError) return headUnreadable
     if (err instanceof ContentWriteLockBusyError) {
       return {
         ok: false,
@@ -195,6 +197,9 @@ const requestChangesHandler = async (
     throw err
   }
   if (!updated) return requestChangesConflict(found)
+
+  // Best-effort: syncConvertToDraft only logs a failure.
+  await syncConvertToDraft(ctx, { ...branchContext, branch: updated.branch })
 
   // The note is written after the status change so a failed write never blocks the branch from
   // returning to editing; the caller is warned instead.
@@ -306,6 +311,7 @@ const approveBranchHandler = async (
     })
   } catch (err) {
     if (err instanceof BranchMovedError) return branchMoved
+    if (err instanceof HeadUnreadableError) return headUnreadable
     if (err instanceof OpenMergeConflictsError) {
       return {
         ok: false,
