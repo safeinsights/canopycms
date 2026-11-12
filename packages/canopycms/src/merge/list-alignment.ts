@@ -108,7 +108,7 @@ export interface Alignment {
  * The rest align as diff3 aligns lines: equal content in order, then equal content out of order
  * (a move), then, in each gap between two matches, by shared values and last by place
  * ({@link pairInGap}).
- * Undefined when the diff ran out of time, or a stale-keyed item finds no clear match.
+ * Undefined when the diff ran out of time.
  */
 export function alignToAncestor(
   items: readonly unknown[],
@@ -190,7 +190,7 @@ export function alignToAncestor(
     if (i !== undefined) match(j, i)
   })
   // Such an item is the ancestor item holding its content, or for a stale key the one holding
-  // most of its values; never one with a minted key, and never by place alone.
+  // most of its values; never one with a minted key. Only a stale key may still pair by place.
   const candidates = ancestorItems.flatMap((item, i) =>
     taken.has(ancestorKeys[i]) || isMinted(item) ? [] : [i],
   )
@@ -307,7 +307,8 @@ function pairInGap(
 /**
  * The ancestor items at `indices` indexed by their member values: `best(item, open)` is the open
  * one holding most of `item`'s values, the earliest on a tie, or undefined when none holds any.
- * Each value matched counts against {@link MAX_SCORE_STEPS}, past which `overBudget()` is true.
+ * Each value `best` matches counts against {@link MAX_SCORE_STEPS}, past which `overBudget()` is
+ * true.
  */
 function valueIndex(indices: readonly number[], ancestorItems: readonly unknown[]) {
   const holders = new Map<string, number[]>()
@@ -336,7 +337,7 @@ function valueIndex(indices: readonly number[], ancestorItems: readonly unknown[
       }
       return best
     },
-    /** `best`, when no other open item holds as many, and it holds over half its own values. */
+    /** `best`, when no other open item holds as many, and those are over half of its own values. */
     clear(item: unknown, open: (i: number) => boolean): number | undefined {
       const scores = new Map<number, number>()
       for (const [name, value] of contentMembers(item)) {

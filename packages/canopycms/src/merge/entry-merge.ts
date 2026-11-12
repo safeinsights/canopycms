@@ -425,8 +425,9 @@ function mergeRecord(
 
 /**
  * Items are matched across the three versions by identity (`list-alignment.ts`), merged item by
- * item, and ordered by `mergeOrder`. A matched item takes the base's key, else the branch's, so
- * the merged file converges on the base's keys; an item neither side keyed gets no key. An item
+ * item, and ordered by `mergeOrder`. A matched item takes the base's key, else, when the base
+ * changed it, the key the base's version reads under, else the branch's: the merged file converges
+ * on the base's keys. An item neither side keyed gets no key. An item
  * removed on one side and changed on the other is an item conflict, and the branch's state holds.
  */
 function mergeList(

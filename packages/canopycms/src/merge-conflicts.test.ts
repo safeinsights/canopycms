@@ -575,6 +575,24 @@ describe('withRemappedItemKeys', () => {
     )
   })
 
+  it('matches every remap against the path on record: the first wins, and none compounds', () => {
+    const key = (remaps: Array<{ within: string[]; from: string; to: string }>) =>
+      withRemappedItemKeys(recorded, [{ contentId: ID, remaps }], M2)[ID]?.fields?.[0].key
+    // As the comment store applies them (`remapItemKeys`): the first match for a thread's keys.
+    expect(
+      key([
+        { within: [], from: 'hOld1', to: 'hFirst' },
+        { within: [], from: 'hOld1', to: 'hSecond' },
+      ]),
+    ).toBe('items.hFirst.links.hIn1.href')
+    expect(
+      key([
+        { within: [], from: 'hOld1', to: 'hMid1' },
+        { within: [], from: 'hMid1', to: 'hNew1' },
+      ]),
+    ).toBe('items.hMid1.links.hIn1.href')
+  })
+
   it('leaves records it renames nothing in, and other entries, as they were', () => {
     const remaps = [{ contentId: OTHER, remaps: [{ within: [], from: 'hOld1', to: 'hNew1' }] }]
     expect(withRemappedItemKeys(recorded, remaps, M2)[ID]).toBe(recorded[ID])
