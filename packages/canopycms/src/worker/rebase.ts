@@ -445,8 +445,20 @@ async function carryForwardRewrittenHistory(
         )
         return
       }
-      if (await forcePublishToLocalRemote(ctx, branchPath, branchRef, publishedSha)) {
+      const publish = await forcePublishToLocalRemote(
+        ctx,
+        branchPath,
+        branchRef,
+        publishedSha,
+        rebasedHead,
+      )
+      if (publish.kind === 'published') {
         await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
+      } else if (publish.kind === 'failed') {
+        const reason = redactCredentials(
+          `this branch's rebased history could not be published into the deployment's repository: ${publish.message}`,
+        )
+        await recordRebaseFailure(ctx, branchPath, branchDir, reason, branchRef)
       }
     } else {
       const divergence =
@@ -912,17 +924,83 @@ async function holdAndRebaseOneBranch(
   }
 }
 
-/** Clear a recorded failure and any recorded rewrite: the caller knows neither stands. */
+/**
+ * Clear a recorded failure and any recorded rewrite, the caller knowing neither stands, with
+ * `alsoClear` in the same write.
+ */
 async function clearRebaseFailure(
   ctx: RebaseContext,
   branchPath: string,
   branchRef: string,
+  alsoClear: Partial<BranchMetadata> = {},
 ): Promise<void> {
   await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update((current) =>
     current?.branch.name === branchRef
-      ? { branch: { rebaseFailure: undefined, ...rewriteCleared(current.branch) } }
+      ? { branch: { rebaseFailure: undefined, ...rewriteCleared(current.branch), ...alsoClear } }
       : null,
   )
+}
+
+/**
+ * {@link recordLatestChangesWaiting} for a branch the sync skips for its saved work: marked while it
+ * lacks the base `remote.git` holds. Read from `remote.git` rather than fetched, so the skip moves no
+ * ref. Best-effort, so the skip stays a skip.
+ */
+async function noteLatestChangesWaiting(
+  ctx: RebaseContext,
+  git: SimpleGit,
+  branchPath: string,
+  metaFile: BranchMetadataFile,
+): Promise<void> {
+  if (metaFile.branch.status !== 'editing') return
+  let baseTip: string | null
+  let behind: boolean
+  try {
+    baseTip = await readPublishedSha(ctx, ctx.baseBranch)
+    behind = baseTip !== null && !(await contains(git, 'HEAD', baseTip))
+  } catch (err) {
+    workerLogWarn(
+      `  Could not compare ${escapeForLog(metaFile.branch.name)} with the base: ${getErrorMessage(err)}`,
+    )
+    return
+  }
+  await recordLatestChangesWaiting(
+    ctx,
+    branchPath,
+    metaFile,
+    behind ? (baseTip ?? undefined) : undefined,
+  )
+}
+
+/**
+ * Mark the branch `metaFile` names as lacking `baseSha`, the base commit the sync first left out, or
+ * clear the mark when undefined: the automatic sync never commits saved work, so a branch holding
+ * some waits for its author's "Get latest changes" (base-update.ts). Written only when the mark comes
+ * or goes, as every save regenerates the branch registry, and as bookkeeping, which leaves
+ * `updatedAt`. Best-effort: a failure leaves the hint as it was until the next cycle.
+ */
+async function recordLatestChangesWaiting(
+  ctx: RebaseContext,
+  branchPath: string,
+  metaFile: BranchMetadataFile,
+  baseSha?: string,
+): Promise<void> {
+  const { name } = metaFile.branch
+  const flips = (current: string | undefined) => (current === undefined) !== (baseSha === undefined)
+  if (!flips(metaFile.branch.latestChangesWaiting)) return
+  try {
+    await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update(
+      (current) =>
+        current?.branch.name === name && flips(current.branch.latestChangesWaiting)
+          ? { branch: { latestChangesWaiting: baseSha } }
+          : null,
+      { keepUpdatedAt: true },
+    )
+  } catch (err) {
+    workerLogWarn(
+      `  Could not record the latest changes waiting for ${escapeForLog(name)}: ${getErrorMessage(err)}`,
+    )
+  }
 }
 
 /** A branch github-commits.ts left for a person: logged, recorded, and in the cycle's summary. */
@@ -1314,6 +1392,8 @@ async function rebaseOneBranch(
     // - archived: finished, with no PR left to poll.
     if (metaFile !== null && (branchStatus === 'submitted' || branchStatus === 'approved')) {
       workerLog(`  Skipping ${branchDir} (${branchStatus})`)
+      // Submit committed the saved work; a withdraw lets the next skip mark it again.
+      await recordLatestChangesWaiting(ctx, branchPath, metaFile)
       await reconcileInReview(ctx, branchDir, branchPath, metaFile, isProvisioningLockCompromised)
       const outcome = await bringInCommitsForBranchInReview(
         ctx,
@@ -1512,6 +1592,12 @@ async function rebaseOneBranch(
             }
           : null
 
+      const skipIfDirty = async (): Promise<BranchRebaseOutcome> => {
+        if (editorDirt.length === 0) return { kind: 'none' }
+        if (metaFile !== null) await noteLatestChangesWaiting(ctx, branchGit, branchPath, metaFile)
+        return { kind: 'skippedDirty' }
+      }
+
       // Before the dirty return: a fast-forward passes saves that touch other files.
       let unpushed = false
       if (commitArgs !== null) {
@@ -1520,20 +1606,18 @@ async function rebaseOneBranch(
           return recordBlocked(ctx, branchDir, branchPath, branchRef, outcome.reason)
         }
         if (outcome.kind === 'unpushed') unpushed = true
-        else if (outcome.kind !== 'in-step') {
-          return editorDirt.length > 0 ? { kind: 'skippedDirty' } : { kind: 'none' }
-        }
+        else if (outcome.kind !== 'in-step') return await skipIfDirty()
         // A merge of the base this worker published and never moved the clone to comes first.
         const caughtUp = await catchUpWithPublished(ctx, commitArgs)
         if (caughtUp?.kind === 'blocked') {
           return recordBlocked(ctx, branchDir, branchPath, branchRef, caughtUp.reason)
         }
-        if (caughtUp) return editorDirt.length > 0 ? { kind: 'skippedDirty' } : { kind: 'none' }
+        if (caughtUp) return await skipIfDirty()
       }
 
       if (editorDirt.length > 0) {
         workerLog(`  Skipping ${branchDir}: has uncommitted changes`)
-        return { kind: 'skippedDirty' }
+        return await skipIfDirty()
       }
 
       // `git rebase` refuses to start over ANY modified tracked file, so
@@ -1558,21 +1642,31 @@ async function rebaseOneBranch(
         return { kind: 'failed', error: reason }
       }
 
-      // [SYNC-H1] Self-heal: finish an interrupted publish even when this
-      // branch is not behind base. Every crash window in the arming sequence
-      // below leaves the marker set with the work unfinished, and this is what
-      // completes it -- without it one lost lease race strands the branch until
-      // the base happens to advance again. Gated on the loop-top snapshot, so
-      // unmarked branches (nearly all of them, every cycle) cost nothing.
+      // [SYNC-H1] Self-heal: finish a publish that never left remote.git at
+      // the marker's commit, even when this branch is not behind base -- a
+      // crash in the arming sequence below, or a failed push. Gated on the
+      // loop-top snapshot, so unmarked branches (nearly all of them, every
+      // cycle) cost nothing.
       if (canPublish && metaFile?.branch.historyRewrittenFrom) {
-        await reconcilePendingRewrite(ctx, {
+        const pending = await reconcilePendingRewrite(ctx, {
           branchPath,
           branchDir,
           branchRef,
           headSha: (await branchGit.revparse(['HEAD'])).trim(),
           marker: metaFile.branch.historyRewrittenFrom,
+          target: metaFile.branch.historyRewrittenTo,
           gatewayPolicy,
         })
+        // A rebase now would replace the rewrite remote.git still waits for, along with any commit
+        // made on top of it since, which only a submit may publish.
+        if (pending.kind === 'failed') {
+          // [REDACT] failed[] is served to the browser via worker-status.json.
+          const reason = redactCredentials(pending.reason)
+          workerLogWarn(`  Skipping ${branchDir}: ${reason}`)
+          await recordRebaseFailure(ctx, branchPath, branchDir, reason, branchRef)
+          return { kind: 'failed', error: reason }
+        }
+        if (pending.kind === 'waiting') return { kind: 'none' }
       }
 
       await fetchFromRemoteGit(branchGit, ctx.remoteGitPath, ctx.baseBranch)
@@ -1609,6 +1703,7 @@ async function rebaseOneBranch(
         // whose cause stands stays: remote.git still holds a commit this clone
         // lacks, and the next submit is refused for it.
         const currentMeta = await BranchMetadataFileManager.loadOnly(branchPath)
+        if (currentMeta !== null) await recordLatestChangesWaiting(ctx, branchPath, currentMeta)
         if (currentMeta?.branch.rebaseFailure === undefined) {
           return { kind: 'none' }
         }
@@ -1637,14 +1732,18 @@ async function rebaseOneBranch(
       const head = (await branchGit.revparse(['HEAD'])).trim()
       // Commits on top of what this branch published, as "Get latest changes" makes from saved work
       // on a branch submitted once, or a submit whose push failed: a rebase would rewrite the
-      // published commit under them, which reads as a push this clone never saw. A merge publishes
-      // them as a fast-forward. A same-named ref at a commit the base holds is no work of this branch.
+      // published commit under them, which reads as a push this clone never saw. A merge keeps
+      // them, unpublished until the submit pushes it (publish-decision.ts). A same-named ref at a
+      // commit the base holds is no work of this branch.
       const published = canPublish ? await readPublishedSha(ctx, branchRef) : null
       // With no GitHub, a commit of the branch's in remote.git is published however it got there.
       const aheadOfPublished =
         published !== null &&
         metaFile?.branch.name === branchRef &&
-        (local || (published !== head && isPublished(metaFile))) &&
+        (local ||
+          (published !== head &&
+            // A rewrite's tip is this branch's own publish, on GitHub or not.
+            (isPublished(metaFile) || published === metaFile.branch.historyRewrittenTo))) &&
         (await contains(branchGit, head, published)) &&
         !(await contains(branchGit, fetchedBaseTip, published))
       /**
@@ -1679,7 +1778,7 @@ async function rebaseOneBranch(
           return { kind: 'skippedLocked' }
         }
         probe.keptEntries = outcome.keptEntries
-        await clearRebaseFailure(ctx, branchPath, branchRef)
+        await clearRebaseFailure(ctx, branchPath, branchRef, { latestChangesWaiting: undefined })
         return { kind: 'rebased' }
       }
       if (commitArgs !== null && (cannotReplay || unpushed || aheadOfPublished)) {
@@ -1805,6 +1904,7 @@ async function rebaseOneBranch(
                 conflictStatus:
                   (existing.branch.conflictFiles?.length ?? 0) > 0 ? 'conflicts-detected' : 'clean',
                 rebaseFailure: undefined,
+                latestChangesWaiting: undefined,
               },
             }
           : null,

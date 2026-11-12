@@ -2921,6 +2921,7 @@ const EditorContent: React.FC<EditorProps> = ({
               branchToggleRef={branchToggleRef}
               baseUpdate={baseUpdateControl}
               latestWait={latestWait}
+              latestChangesWaiting={baseUpdate.latestChangesWaiting}
               onBranchReloadData={() => {
                 void Promise.all([handleReloadBranchData(), refreshEntries(branchNameState)]).catch(
                   console.error,
