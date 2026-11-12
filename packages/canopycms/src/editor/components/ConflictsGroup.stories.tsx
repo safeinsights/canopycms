@@ -29,6 +29,8 @@ interface HarnessProps {
   lockedReason?: string
   noEditReason?: string
   unsavedEdits?: boolean
+  /** The branch deleted the entry since its conflicts were found. */
+  entryDeleted?: boolean
 }
 
 /** The group over a form value and choices it changes, so a choice shows as chosen. */
@@ -114,6 +116,11 @@ export const EntryDeletedByYou: Story = {
 
 export const EntryUnreadable: Story = {
   args: { data: entryConflictData('unreadable') },
+}
+
+/** Field conflicts on an entry the branch deleted since: no form to choose in, so one card keeps it deleted. */
+export const DeletedEntryWithFields: Story = {
+  args: { only: ['summary', 'readTime'], noForm: true, entryDeleted: true },
 }
 
 /** Every kind of field conflict at once. */
