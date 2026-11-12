@@ -38,7 +38,7 @@ describe('useBranchConflictsData', () => {
     const { list, client } = clientWith()
     const hook = renderHook(
       ({ open }: { open: string[] }) => useBranchConflictsData(client, 'feature', open, true),
-      { wrapper, initialProps: { open: [] } },
+      { wrapper, initialProps: { open: [] as string[] } },
     )
     await waitFor(() => expect(hook.result.current.data?.held).toBeDefined())
     let answer: (value: unknown) => void = () => {}
