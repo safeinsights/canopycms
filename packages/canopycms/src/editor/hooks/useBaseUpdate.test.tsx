@@ -337,6 +337,30 @@ describe('useBaseUpdate', () => {
     expect(onUpdated).toHaveBeenCalledTimes(1)
   })
 
+  it('says the latest changes wait, and not once an older listing arrives after the answer', async () => {
+    listed = editing({ latestChangesWaiting: 'a'.repeat(40) })
+    const { result } = render()
+    await waitFor(() => expect(result.current.latestChangesWaiting).toBe(true))
+
+    const requestedAt = new Date().toISOString()
+    const asked = { ...listed, baseUpdateRequestedAt: requestedAt }
+    listed = asked
+    await act(() => result.current.reload())
+    await waitFor(() => expect(result.current.wait).toBe('waiting'))
+    listed = editing({
+      baseUpdateRequestedAt: requestedAt,
+      lastBaseUpdate: { at: requestedAt, outcome: 'merged' },
+    })
+    await act(() => result.current.reload())
+    await waitFor(() => expect(result.current.wait).toBe('none'))
+    expect(result.current.latestChangesWaiting).toBe(false)
+
+    // Another host's snapshot from before the answer.
+    listed = asked
+    await act(() => result.current.reload())
+    expect(result.current.latestChangesWaiting).toBe(false)
+  })
+
   it('offers no Retry on a failure to a viewer who may not ask', async () => {
     const requestedAt = new Date().toISOString()
     listed = editing({ baseUpdateRequestedAt: requestedAt })

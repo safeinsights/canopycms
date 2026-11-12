@@ -18,6 +18,7 @@ Each of the four disjoint call trees under `start()` is its own module, reached 
 | `git-sync.ts`                                      | The git-sync cluster: `syncGit` and everything below it except the rebase loop                                                                                        |
 | `rebase.ts`                                        | The rebase loop, the deepest leaf of the git-sync cluster                                                                                                             |
 | `github-commits.ts`, `branch-merge.ts`             | Commits made on GitHub, into clones                                                                                                                                   |
+| `publish-decision.ts`                              | Publish decisions                                                                                                                                                     |
 | `field-merge.ts`                                   | A merge's entries paired by content ID, and field-merged blobs                                                                                                        |
 | `history-rewrite.ts`                               | The [SYNC-H1] kernel all three clusters touch                                                                                                                         |
 | `canopy-state.ts`                                  | Sync's handling of tracked `.canopy-meta/` state                                                                                                                      |
@@ -40,7 +41,7 @@ Each of the four disjoint call trees under `start()` is its own module, reached 
 | `gateway-egress.ts`                                | Scrubbing and escaping all the gateway emits                                                                                                                          |
 | `git-process.ts`                                   | Streamed git, bounded by inactivity, a deadline, abort and output caps                                                                                                |
 | `self-checks.ts`                                   | The split's boot self-checks                                                                                                                                          |
-| `gateway-instance.ts`                              | The gateway's operations on the instance itself: the termination watch and completing the lifecycle action                                                            |
+| `gateway-instance.ts`                              | The gateway's instance operations: the termination watch and completing the lifecycle action                                                                          |
 | `shared-repo-git.ts`                               | The worker's git in `remote.git` and the clones: the pins, pinned pack commands, the config allowlist check                                                           |
 
 Imports run one way only — `cms-worker` → {`task-runner`, `git-sync`} → `rebase` → `github-commits` →

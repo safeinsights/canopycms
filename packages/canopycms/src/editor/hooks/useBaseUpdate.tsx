@@ -54,6 +54,8 @@ export interface UseBaseUpdateReturn {
   blockedReason?: string
   /** Asks for the open branch, unless unsaved changes hold it. */
   request: () => Promise<void>
+  /** The base has changes the branch's saved work keeps the automatic sync from bringing in. */
+  latestChangesWaiting: boolean
 }
 
 /** Writes the branch a request answered into the listing, so its wait shows at once. */
@@ -103,6 +105,8 @@ function withSettled(
         ...branch,
         baseUpdateRequestedAt: settled.requestedAt,
         lastBaseUpdate: settled.lastBaseUpdate,
+        // Read before the answer, so what it says was waiting has come in.
+        ...(settled.lastBaseUpdate.outcome !== 'failed' && { latestChangesWaiting: undefined }),
       }
 }
 
@@ -351,5 +355,6 @@ export function useBaseUpdate(options: UseBaseUpdateOptions): UseBaseUpdateRetur
     requesting: !!name && requestingFor === name,
     blockedReason: unsavedCount > 0 ? SAVE_FIRST_REASON : undefined,
     request,
+    latestChangesWaiting: available && !!branch?.latestChangesWaiting,
   }
 }

@@ -41,6 +41,7 @@ import {
 } from './canopy-state'
 import { enqueueGitHubPush, readPublishedSha, recordSeenOnGitHub } from './history-rewrite'
 import { workerLog, workerLogWarn } from './log'
+import { decidePublish } from './publish-decision'
 import { assertNoIncomingSubmodules, fetchFromRemoteGit } from './shared-repo-git'
 import type { WorkerContext } from './worker-context'
 
@@ -496,9 +497,9 @@ async function moveClone(git: SimpleGit, branchPath: string, to: string): Promis
 }
 
 /**
- * `other` merged into the branch: built, recorded, published to `remote.git`, queued for GitHub,
- * and the clone moved to it, in that order, so each step leaves what the next cycle picks up and
- * only the last touches the working tree. `fromGitHub` says `other` is GitHub's tip rather than the
+ * `other` merged into the branch: built, recorded, published to `remote.git` and queued for GitHub
+ * unless it holds unsubmitted work (publish-decision.ts), and the clone moved to it, in that order,
+ * so each step leaves what the next cycle picks up and only the last touches the working tree. `fromGitHub` says `other` is GitHub's tip rather than the
  * base. `inReview` takes only a merge with nothing for a person to choose; any other leaves the
  * branch as it is and records nothing, and GitHub's own conflict notice stands on the pull request. A lock lost before the clone moves leaves it where it was: `wait`.
  */
@@ -565,11 +566,14 @@ export async function mergeIntoBranch(
   // Before `remote.git` holds it, as reconcile does: a crash past this point leaves GitHub's commit
   // in `remote.git`, and a removal then has to read as one (`rewrittenFrom`).
   if (fromGitHub) await recordSeenOnGitHub(ctx, branchRef, other)
-  if (published !== null) {
+  const publish = await decidePublish(git, { branchPath, head, published })
+  if (publish.kind === 'publish') {
     if (!(await publishPlainToLocalRemote(ctx, branchPath, branchRef, sha))) {
       return { kind: 'blocked', reason: unpublishable }
     }
     await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
+  } else if (publish.kind === 'hold') {
+    workerLog(`  ${branchDir}: holds work not yet submitted, so the merge stays unpublished`)
   }
   // Published and not yet in the clone: the next cycle brings it in, by `bringInGitHubCommits` or
   // `catchUpWithPublished`.

@@ -443,6 +443,35 @@ export const GetLatestChanges: Story = {
   args: { hasUnsavedChanges: false, modifiedCount: 0, baseUpdate: getLatest },
 }
 
+/** The automatic sync leaves the base out for saved work: the bar says changes are waiting. */
+export const LatestChangesWaiting: Story = {
+  args: {
+    hasUnsavedChanges: false,
+    modifiedCount: 0,
+    baseUpdate: getLatest,
+    latestChangesWaiting: true,
+  },
+}
+
+/** Below `md`, the badge stays in the bar while the action is in the branch's menu. */
+export const NarrowLatestChangesWaiting: Story = {
+  parameters: phone,
+  args: {
+    hasUnsavedChanges: false,
+    modifiedCount: 0,
+    baseUpdate: getLatest,
+    latestChangesWaiting: true,
+  },
+}
+
+/** Unsaved changes hold the action, so the badge's Tooltip says to save first. */
+export const LatestChangesWaitingSaveFirst: Story = {
+  args: {
+    baseUpdate: { ...getLatest, blockedReason: 'Save your changes first.' },
+    latestChangesWaiting: true,
+  },
+}
+
 /** Unsaved changes hold it, with the reason in its Tooltip. */
 export const GetLatestChangesSaveFirst: Story = {
   args: { baseUpdate: { ...getLatest, blockedReason: 'Save your changes first.' } },
@@ -530,5 +559,15 @@ export const ConflictRecordHeldReviewer: Story = {
     branchCreatedBy: 'author-1',
     userContext: { userId: 'reviewer-1', groups: ['Reviewers'] },
     conflictRecordHeld: {},
+  },
+}
+
+/** A hold's way forward comes first: the waiting badge stays out of the bar. */
+export const NarrowLatestChangesWaitingHeld: Story = {
+  parameters: phone,
+  args: {
+    ...ConflictRecordHeld.args,
+    baseUpdate: getLatest,
+    latestChangesWaiting: true,
   },
 }

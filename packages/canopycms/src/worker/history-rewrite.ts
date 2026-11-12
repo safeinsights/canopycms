@@ -79,7 +79,8 @@ export async function readPublishedSha(
  *
  * `rewrittenTip` goes in the same write as `lastGitHubTip`, so a push that lands
  * and dies before its stamp is never read as someone rewriting the branch on
- * GitHub (github-commits.ts).
+ * GitHub (github-commits.ts), and as `historyRewrittenTo`, which unlike the
+ * marker each rewrite advances: it is what the publish sends.
  *
  * Resolves whether `branchRef`'s branch.json now holds a marker, set here or kept by set-once.
  * When it does not, the caller publishes nothing: a rewrite pushed without its marker leaves
@@ -101,6 +102,7 @@ export async function markHistoryRewritten(
     return {
       branch: {
         historyRewrittenFrom: typeof marker === 'string' ? marker : expectedSha,
+        historyRewrittenTo: rewrittenTip,
         lastGitHubTip: rewrittenTip,
       },
     }
@@ -133,7 +135,7 @@ export async function clearHistoryRewrittenMarker(
     // keys present in the update (same pattern as rebaseFailure). Only a
     // marker on `branchRef`'s own branch.json is cleared, so none is ever created here.
     await meta.saveIf(
-      { branch: { historyRewrittenFrom: undefined } },
+      { branch: { historyRewrittenFrom: undefined, historyRewrittenTo: undefined } },
       (current) =>
         current?.branch.name === branchRef &&
         typeof current.branch.historyRewrittenFrom === 'string',
@@ -146,8 +148,10 @@ export async function clearHistoryRewrittenMarker(
 }
 
 /**
- * Publish a branch clone's rebased history into `remote.git`, replacing
- * EXACTLY `expectedSha` and nothing else.
+ * Publish `rewrittenTip`, a branch clone's rebased history, into `remote.git`,
+ * replacing EXACTLY `expectedSha` and nothing else. The tip, never the clone's
+ * branch ref, which can hold a commit made since that no one has submitted
+ * (publish-decision.ts).
  *
  * The lease is the entire safety argument: `--force-with-lease=<ref>:<sha>`
  * refuses unless `remote.git` still stands at `<sha>`, so this can only ever
@@ -164,6 +168,7 @@ export async function forcePublishToLocalRemote(
   branchPath: string,
   branchRef: string,
   expectedSha: string,
+  rewrittenTip: string,
 ): Promise<boolean> {
   // sharedRepoGit's env is gitChildEnv's, whose C-locale pin is what keeps
   // isStaleLeaseRejection below from silently becoming a no-op on a
@@ -172,14 +177,14 @@ export async function forcePublishToLocalRemote(
   try {
     await pushGit.raw([
       'push',
-      `--force-with-lease=${branchRef}:${expectedSha}`,
+      `--force-with-lease=refs/heads/${branchRef}:${expectedSha}`,
       // Otherwise remote.git's own hooks run, as the worker.
       `--receive-pack=${pinnedReceivePack()}`,
       // Real flags must precede --end-of-options; everything after it is
       // positional (see GitManager.push() for the same guard).
       '--end-of-options',
       ctx.remoteGitPath,
-      `${branchRef}:${branchRef}`,
+      `${rewrittenTip}:refs/heads/${branchRef}`,
     ])
     workerLog(`  Published rebased ${branchRef} into remote.git`)
     return true
@@ -246,7 +251,9 @@ export async function enqueueGitHubPush(
  * waiting for the next base-branch advance.
  *
  * Always leases on the MARKER, never on remote.git's current tip -- the marker
- * is the one commit we know our own rebase replaced.
+ * is the one commit we know our own rebase replaced -- and sends the recorded
+ * rebased tip, `target`, never `headSha`: a commit made in the clone since the
+ * rewrite is no one's submitted work.
  */
 export async function reconcilePendingRewrite(
   ctx: HistoryRewriteContext,
@@ -256,10 +263,12 @@ export async function reconcilePendingRewrite(
     branchRef: string
     headSha: string
     marker: string
+    /** `historyRewrittenTo`, the rebased tip the rewrite recorded. */
+    target: string | undefined
     gatewayPolicy: BranchPolicyDescription | undefined
   },
 ): Promise<void> {
-  const { branchPath, branchDir, branchRef, headSha, marker, gatewayPolicy } = options
+  const { branchPath, branchDir, branchRef, headSha, marker, target, gatewayPolicy } = options
   const publishedSha = await readPublishedSha(ctx, branchRef)
 
   if (publishedSha === null) {
@@ -268,16 +277,24 @@ export async function reconcilePendingRewrite(
     )
     return
   }
-  if (publishedSha === headSha) {
-    // remote.git already carries the rewrite; only the GitHub hop is left
-    // (a crash between the push and the queue, or a task that was lost).
+  if (publishedSha === target || publishedSha === headSha) {
+    // remote.git already carries the rewrite, or a submit since; only the
+    // GitHub hop is left (a crash between the push and the queue, or a task
+    // that was lost).
     await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
     return
   }
   if (publishedSha === marker) {
     // The publish into remote.git never landed -- a crash right after the
     // marker was written, or a lease refused by a concurrent submit.
-    if (await forcePublishToLocalRemote(ctx, branchPath, branchRef, marker)) {
+    if (target === undefined) {
+      workerLogWarn(
+        `  ${branchDir}: a rewritten history is recorded without its rebased tip, so nothing is ` +
+          `published until the next submit`,
+      )
+      return
+    }
+    if (await forcePublishToLocalRemote(ctx, branchPath, branchRef, marker, target)) {
       await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
     }
     return

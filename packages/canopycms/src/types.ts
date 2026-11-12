@@ -150,6 +150,12 @@ export interface BranchMetadata {
    */
   historyRewrittenFrom?: string
   /**
+   * The rebased tip of the latest rewrite while `historyRewrittenFrom` is set: the one commit a
+   * rewrite's publish moves `remote.git` to, since the clone can hold a commit made after it that
+   * no one has submitted. Advanced by each rewrite, cleared with the marker.
+   */
+  historyRewrittenTo?: string
+  /**
    * The newest commit this deployment has seen on GitHub's branch, or knows it will hold once a
    * queued push of a rewrite lands: the last one it pushed, took in or published, and any
    * `remote.git` took from GitHub, whether or not the clone followed. A tip that no longer contains
@@ -212,6 +218,12 @@ export interface BranchMetadata {
   baseUpdateRequestedAt?: string
   /** The worker's answer to the latest request for the latest changes (worker/rebase.ts). */
   lastBaseUpdate?: LastBaseUpdate
+  /**
+   * The base commit the worker's automatic sync left out because the branch holds saved but
+   * uncommitted work, which it never commits (worker/rebase.ts). The editor shows that the latest
+   * changes are waiting; cleared once the branch holds the base.
+   */
+  latestChangesWaiting?: string
 }
 
 /** How a requested update from the base went. */
