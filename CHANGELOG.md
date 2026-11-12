@@ -54,6 +54,122 @@ entries under **Released**.
 
 ## Released
 
+### 0.12.1
+
+<!-- changeset: field-merge-engine -->
+<!-- changeset: fm-catch-up-main -->
+<!-- changeset: fm-deleted-entry-conflict-card -->
+<!-- changeset: fm-latest-changes-after-publish -->
+<!-- changeset: fm-r1-stale-key-guard -->
+<!-- changeset: fm-stale-first-save-keys -->
+<!-- changeset: fm-trade-off-regression -->
+<!-- changeset: fm-twin-stale-keys -->
+
+#### `canopycms backfill-item-keys` writes every list item's key
+
+<!-- changeset: backfill-item-keys -->
+
+_First in 0.12.1._
+
+**What changed.** A new command writes the `_key` of every object-list item and block into your content, exactly as an editor save of the unedited entry would. Until a file holds its keys, an editor's first save adds `_key` lines beside the real edit, and those lines can conflict with changes the base branch makes to the same entry meanwhile. `--check` writes nothing and exits 1 when any file needs keys. See [Keying list items](README.md#keying-list-items).
+
+**To adopt.** Once, on a clean checkout of your base branch: run `npx canopycms backfill-item-keys`, review the files it lists as also normalised, and commit the result on its own, with nothing else in the commit. Optionally gate CI on `npx canopycms backfill-item-keys --check`.
+
+#### A damaged conflict record holds its branch until an admin releases it
+
+<!-- changeset: field-merge-conflict-record-hold -->
+
+_First in 0.12.1._
+
+**What changed.** When a branch's record of conflicting changes can't be read, the worker sets it
+aside and the branch waits: Submit for review and Approve refuse, rather than going ahead as if
+nothing needed a choice. Everyone sees "Needs action" in the branch bar, with Submit for review held
+and the reason; an admin also gets "Release hold", whose confirm says which choices are lost. A
+later merge from the base leaves the hold in place, as it can't find the lost choices again. A
+record written in another format is left as it is: Submit and Approve refuse until a developer deals
+with it.
+
+#### A conflict in a list without item keys shows the latest version
+
+<!-- changeset: field-merge-conflict-value-paths -->
+
+_First in 0.12.1._
+
+**What changed.** When the base edited an item in a list whose items carry no keys, the conflict
+card couldn't find the latest version's value: it read as empty, and only editing by hand was
+offered. The merge now records where each version holds the value, so the card shows all three
+versions and "Use latest version" works there too.
+
+#### Submit and approve wait until conflicting changes are resolved
+
+<!-- changeset: field-merge-conflicts-api -->
+
+_First in 0.12.1._
+
+**What changed.** A field that a merge from the base found changed differently on both sides stays
+open until someone chooses a value. Saving the entry with that choice resolves it, and an entry
+that one side deleted or that can't be merged field by field is resolved by keeping, deleting,
+restoring or taking the latest version. While any conflict is open, Submit for review and Approve
+answer 409 and say why. The catch-all route serves the conflicts to the editor, so adopters add
+nothing.
+
+#### "Get latest changes" brings the base branch into an editing branch on request
+
+<!-- changeset: get-latest-changes -->
+
+_First in 0.12.1._
+
+**What changed.** An editing branch's bar and card offer "Get latest changes" (prod). It commits
+the branch's saved work locally, then asks the worker to bring the base branch in at once instead
+of at its next sync. The form is read-only while the worker works, for up to two minutes, and a
+toast reports the result. Withdrawing the open branch from review when it conflicts with its base gets
+the latest changes too. A worker that archives a merged pull request also syncs the other branches
+soon after. Dev mode runs no worker, so it doesn't offer the button.
+
+**Deploy order.** Deploy the worker before the CMS image. An older worker fails the new
+`sync-branch` task, and the request is then answered only by its next regular sync.
+
+#### Choose what to keep when you and someone else changed the same field
+
+<!-- changeset: field-merge-conflict-ui -->
+
+_First in 0.12.1._
+
+**What changed.** When the latest changes come into a branch and a value was changed both there
+and on the branch, "Show changes" opens with a "Conflicts" group above the entry's changes. Each card
+shows how the value read before, in the latest version and in yours, and offers "Use latest version",
+"Keep your version" or "Edit". A value one side removed offers "Remove it" or "Keep it", and long text
+gets one card per changed passage, with "Use both". A choice is saved with the entry. The entry
+says how many fields need a choice, "Submit for review" waits until none do, and the "Get latest
+changes" message counts them. Authors never see a branch name in this copy.
+
+#### A branch in review takes in its base when no field clashes
+
+<!-- changeset: field-merge-review-branches -->
+
+_First in 0.12.1._
+
+**What changed.** When GitHub reports that a submitted or approved branch's pull request conflicts
+with its base, the worker now merges the base in field by field instead of holding the branch. A
+submitted branch stays submitted. An approved branch returns to review, since the merge settled
+what git could not and no reviewer has seen that. A field changed differently on both sides, or
+anything else a person must decide, still holds the branch with "Needs action", and its author
+withdraws it to choose, as before.
+
+#### Base changes are no longer reverted when a branch takes in its base
+
+<!-- changeset: field-merge-worker -->
+
+_First in 0.12.1._
+
+**What changed.** When the base branch moves and an editing branch has changed the same entry,
+the worker merges the two field by field instead of keeping the branch's whole file. Edits to
+different fields, list items or body paragraphs all come in, schema changes made on the base stay,
+and a field changed differently on both sides keeps the author's value and is flagged on the entry,
+as before. An entry renamed on one side and edited on the other merges at the new name. A branch with no
+merge commit still rebases where git takes the base in cleanly and the field merge agrees; any
+other takes the base in with a merge commit.
+
 ### 0.12.0
 
 #### Undo a branch's saved changes from "Show changes"
