@@ -243,6 +243,13 @@ export interface CanopyServices {
     lookupEditor?: EditorLookup
     message?: string
   }) => Promise<SubmitBranchResult>
+  /**
+   * Bring the base into the branch now and answer its request for the latest changes, where the
+   * mode's strategy runs that in the request (operating-mode `baseUpdateRunsInRequest`); rejects
+   * in any other mode, where only the worker may. Resolves `busy` when a lock held the merge back,
+   * the request then answered `failed`.
+   */
+  runBaseUpdateNow: (context: BranchContext) => Promise<'answered' | 'busy'>
   /** Commit to the settings branch (for permissions/groups) and push it; never opens a PR */
   commitToSettingsBranch: (options: {
     branchRoot: string
@@ -778,6 +785,26 @@ async function _createCanopyServicesInternal(
     }
   }
 
+  const runBaseUpdateNow = async (context: BranchContext): Promise<'answered' | 'busy'> => {
+    const mode = services.config.mode
+    const strategy = operatingStrategy(mode)
+    if (!strategy.baseUpdateRunsInRequest()) {
+      throw new Error(
+        `CanopyCMS: in ${mode} mode the worker answers requests for the latest changes, never a request.`,
+      )
+    }
+    // Loaded here alone, so no other request loads the worker's code.
+    const { createLocalWorker } = await import('./worker/cms-worker')
+    const worker = createLocalWorker({
+      // baseRoot is the workspace's content-branches directory, where the worker looks.
+      workspacePath: path.dirname(context.baseRoot),
+      baseBranch: context.branch.baseBranch ?? baseBranchOf(services.config),
+      contentRoot: services.config.contentRoot || 'content',
+      settingsBranch: strategy.getSettingsBranchName(services.config),
+    })
+    return worker.syncBranchNow(context.branch.name)
+  }
+
   const operatingMode = config.mode
   const modeStrategy = operatingStrategy(operatingMode)
 
@@ -799,6 +826,7 @@ async function _createCanopyServicesInternal(
     commitFiles,
     commitSavedWork,
     submitBranch,
+    runBaseUpdateNow,
     commitToSettingsBranch,
     getSettingsBranchRoot,
     recordBranchEditor,

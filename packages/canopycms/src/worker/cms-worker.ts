@@ -55,7 +55,7 @@ import {
 } from './task-runner'
 import type { BranchPolicyDescription } from './branch-policy'
 import type { GitHubSnapshot } from './github-commits'
-import { pollMergeState, runRebaseCycle, type RebaseSummary } from './rebase'
+import { pollMergeState, runRebaseCycle, syncBranchNow, type RebaseSummary } from './rebase'
 import {
   cleanupTrashedBranchDirs,
   pushSettingsBranches,
@@ -1719,16 +1719,27 @@ export class CmsWorker {
   // directly and that calls `pollMergeState` directly. Neither is on
   // WorkerContext, so a stub installed on either is a no-op for production.
   //
-  // `rebaseActiveBranches` also has a consumer outside the test files:
-  // apps/test-app/app/api/e2e-test/rebase/route.ts drives it from an e2e
-  // fixture route. Do not delete it as unused.
-
   private async rebaseActiveBranches(
     gatewayPolicy?: BranchPolicyDescription,
     gitHub?: GitHubSnapshot,
     requested?: ReadonlySet<string>,
   ): Promise<RebaseSummary> {
     return runRebaseCycle(this.ctx(), gatewayPolicy, gitHub, requested)
+  }
+
+  // --- Runs with no loop ({@link createLocalWorker}) -----------------------
+
+  /**
+   * Bring the base into one branch now and answer its request for the latest changes
+   * (rebase.ts `syncBranchNow`).
+   */
+  async syncBranchNow(branchName: string): Promise<'answered' | 'busy'> {
+    return syncBranchNow(this.ctx(), branchName)
+  }
+
+  /** Bring the base into every branch now, answering their requests from this run's start. */
+  async syncBranchesNow(): Promise<RebaseSummary> {
+    return runRebaseCycle(this.ctx(), undefined, undefined, new Set(), { fetchedAt: Date.now() })
   }
 
   // --- Git-sync cluster (worker/git-sync.ts) -----------------------------
@@ -1780,4 +1791,24 @@ export class CmsWorker {
       workerLogError('Failed to refresh auth cache:', message)
     }
   }
+}
+
+/**
+ * A worker over a workspace with no GitHub, for git steps run where no worker loop runs: dev's
+ * "Get latest changes" (services.ts `runBaseUpdateNow`) and the test app's e2e sync route. It is
+ * never started, so it takes no worker lock. Its GitHub settings are placeholders: a sync asks
+ * GitHub only about a branch's pull request, which dev never opens.
+ */
+export function createLocalWorker(options: {
+  workspacePath: string
+  baseBranch: string
+  contentRoot: string
+  settingsBranch?: string
+}): CmsWorker {
+  return new CmsWorker({
+    ...options,
+    githubOwner: 'local',
+    githubRepo: 'local',
+    githubToken: 'local',
+  })
 }

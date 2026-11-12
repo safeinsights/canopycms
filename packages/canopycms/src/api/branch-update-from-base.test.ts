@@ -75,19 +75,33 @@ describe('POST /:branch/update-from-base', () => {
       req?: ApiRequest
       mode?: 'prod' | 'dev'
       commitSavedWork?: CanopyServices['commitSavedWork']
+      runBaseUpdateNow?: CanopyServices['runBaseUpdateNow']
     } = {},
   ) => {
     const commitSavedWork = vi.fn(options.commitSavedWork ?? (async () => true))
+    const runBaseUpdateNow = vi.fn(options.runBaseUpdateNow ?? answerNow('merged'))
     const ctx = createMockApiContext({ branchContext })
     ctx.services = createMockServices({
       config: { mode: options.mode ?? 'prod', defaultBaseBranch: 'main' },
       commitSavedWork,
+      runBaseUpdateNow,
     })
     const res = await updateFromBase.handler(ctx, options.req ?? owner, {
       branch: BRANCH as BranchName,
     })
-    return { res, commitSavedWork }
+    return { res, commitSavedWork, runBaseUpdateNow }
   }
+
+  /** A run in the request that answers the branch's request with `outcome`, as the worker's does. */
+  const answerNow =
+    (outcome: 'merged' | 'conflicts' | 'up-to-date') =>
+    async (context: BranchContext): Promise<'answered'> => {
+      const meta = await BranchMetadataFileManager.loadOnly(context.branchRoot)
+      await BranchMetadataFileManager.get(branchRoot, baseRoot).save({
+        branch: { lastBaseUpdate: { at: meta!.branch.baseUpdateRequestedAt!, outcome } },
+      })
+      return 'answered'
+    }
 
   const syncTasks = async () =>
     (await listTasks(taskDir, 'pending')).filter((t) => t.action === SYNC_BRANCH_ACTION)
@@ -108,6 +122,15 @@ describe('POST /:branch/update-from-base', () => {
     expect(res.data?.branch.baseUpdateRequestedAt).toBe(requestedAt)
     const tasks = await syncTasks()
     expect(tasks.map((t) => t.payload)).toEqual([{ branch: BRANCH }])
+  })
+
+  it('never runs the merge in a prod request: the worker answers it', async () => {
+    const { res, runBaseUpdateNow } = await request(await branchWith())
+
+    expect(res.status).toBe(202)
+    expect(runBaseUpdateNow).not.toHaveBeenCalled()
+    expect(res.data?.branch.lastBaseUpdate).toBeUndefined()
+    expect(await syncTasks()).toHaveLength(1)
   })
 
   it('joins a request made within the interval, queueing nothing more', async () => {
@@ -203,12 +226,66 @@ describe('POST /:branch/update-from-base', () => {
     expect(await recorded()).toBeUndefined()
   })
 
-  it('refuses in dev mode, where no worker answers', async () => {
-    const { res, commitSavedWork } = await request(await branchWith(), { mode: 'dev' })
+  describe('in dev mode, which runs the merge in the request', () => {
+    it('commits the saved work, then answers the request before responding', async () => {
+      const { res, commitSavedWork, runBaseUpdateNow } = await request(await branchWith(), {
+        mode: 'dev',
+        runBaseUpdateNow: answerNow('conflicts'),
+      })
 
-    expect(res.status).toBe(409)
-    expect(commitSavedWork).not.toHaveBeenCalled()
-    expect(await syncTasks()).toHaveLength(0)
+      expect(res.status).toBe(202)
+      expect(commitSavedWork).toHaveBeenCalledTimes(1)
+      expect(runBaseUpdateNow).toHaveBeenCalledTimes(1)
+      expect(commitSavedWork.mock.invocationCallOrder[0]).toBeLessThan(
+        runBaseUpdateNow.mock.invocationCallOrder[0],
+      )
+      const requestedAt = res.data?.requestedAt
+      expect(res.data?.branch.baseUpdateRequestedAt).toBe(requestedAt)
+      expect(res.data?.branch.lastBaseUpdate).toEqual({ at: requestedAt, outcome: 'conflicts' })
+      expect(await syncTasks()).toHaveLength(0)
+    })
+
+    it('runs nothing for a request it joins: the run that made it answers', async () => {
+      const pending = new Date(Date.now() - 1_000).toISOString()
+      const { res, runBaseUpdateNow } = await request(
+        await branchWith({ baseUpdateRequestedAt: pending }),
+        { mode: 'dev' },
+      )
+
+      expect(res.status).toBe(202)
+      expect(res.data?.requestedAt).toBe(pending)
+      expect(runBaseUpdateNow).not.toHaveBeenCalled()
+      expect(await syncTasks()).toHaveLength(0)
+    })
+
+    it('says to try again in a moment when a lock held the merge back', async () => {
+      const { res } = await request(await branchWith(), {
+        mode: 'dev',
+        runBaseUpdateNow: async () => 'busy',
+      })
+
+      expect(res.status).toBe(409)
+      expect(res.error).toBe(
+        'This branch is busy with a save or another update. Nothing changed; try again in a moment.',
+      )
+    })
+
+    it('answers the request failed when the run throws, so the form is not held', async () => {
+      const { res } = await request(await branchWith(), {
+        mode: 'dev',
+        runBaseUpdateNow: async () => {
+          throw new Error('git broke')
+        },
+      })
+
+      expect(res.status).toBe(500)
+      const branch = await loadBranch()
+      expect(branch?.lastBaseUpdate).toEqual({
+        at: branch?.baseUpdateRequestedAt,
+        outcome: 'failed',
+      })
+      expect(consoleSpy).toHaveErrored('Could not bring the latest changes into')
+    })
   })
 
   it('refuses someone who may not take workflow actions on the branch', async () => {

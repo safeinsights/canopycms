@@ -58,7 +58,7 @@ export class DevClientSafeStrategy implements ClientSafeStrategy {
   }
 
   syncsBranchesWithBase(): boolean {
-    return false
+    return true
   }
 
   getPermissionsFileName(): string {

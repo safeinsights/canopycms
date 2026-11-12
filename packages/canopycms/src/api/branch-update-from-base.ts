@@ -6,7 +6,7 @@ import { toBranchListItem, type BranchListItem } from './branch'
 import { defineEndpoint } from './route-builder'
 import { canPerformWorkflowAction, getBranchProtection } from '../authorization'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
-import { clientOperatingStrategy } from '../operating-mode'
+import { clientOperatingStrategy, operatingStrategy } from '../operating-mode'
 import { enqueueTask, listTasks } from '../task-queue/cms-task-queue'
 import { getTaskQueueDir } from '../task-queue/task-queue-config'
 import {
@@ -32,6 +32,8 @@ export type UpdateFromBaseResponse = ApiResponse<{ requestedAt: string; branch: 
  *
  * The request is recorded on branch.json, which is what the worker answers, so a lost task or a
  * worker restart costs only the wait for its next regular cycle. The task only wakes it early.
+ * Where the mode runs no worker loop (operating-mode `baseUpdateRunsInRequest`), the request runs
+ * the worker's merge itself and is answered before the response.
  * A request joins the last one, answering with its time: while that is unanswered, under
  * BASE_UPDATE_GIVE_UP_MS old and either under BASE_UPDATE_REQUEST_INTERVAL_MS old or still queued;
  * or once it was answered under BASE_UPDATE_REQUEST_INTERVAL_MS ago without failing. Anything
@@ -47,6 +49,7 @@ const updateFromBaseHandler = async (
   const { config } = ctx.services
   const { branch } = branchContext
 
+  const runsInRequest = operatingStrategy(config.mode).baseUpdateRunsInRequest()
   if (!clientOperatingStrategy(config.mode).syncsBranchesWithBase()) {
     return {
       ok: false,
@@ -119,9 +122,11 @@ const updateFromBaseHandler = async (
   }
 
   const taskDir = getTaskQueueDir(config)
-  const queued = (await listTasks(taskDir, 'pending', Number.MAX_SAFE_INTEGER)).some(
-    (t) => t.action === SYNC_BRANCH_ACTION && t.payload.branch === branch.name,
-  )
+  const queued =
+    !runsInRequest &&
+    (await listTasks(taskDir, 'pending', Number.MAX_SAFE_INTEGER)).some(
+      (t) => t.action === SYNC_BRANCH_ACTION && t.payload.branch === branch.name,
+    )
   const now = Date.now()
   let requestedAt = new Date(now).toISOString()
   let joined = false
@@ -167,13 +172,55 @@ const updateFromBaseHandler = async (
           : "This branch can't be edited, so it can't get the latest changes.",
     }
   }
-  const current = saved ?? (await BranchMetadataFileManager.loadOnly(branchContext.branchRoot))
+  let current = saved ?? (await BranchMetadataFileManager.loadOnly(branchContext.branchRoot))
   if (current?.branch.name !== branch.name) {
     return { ok: false, status: 404, error: 'This branch no longer exists.' }
   }
 
+  // A joined request is answered by the run that made it.
+  if (runsInRequest && !joined) {
+    let run: 'answered' | 'busy'
+    try {
+      run = await ctx.services.runBaseUpdateNow(branchContext)
+    } catch (err) {
+      console.error(
+        `CanopyCMS: Could not bring the latest changes into ${branch.name}:`,
+        redactCredentials(getErrorMessage(err)),
+      )
+      // Answered here, as nothing else would: an open request holds the form read-only.
+      await meta
+        .update(
+          (existing) =>
+            existing?.branch.name === branch.name &&
+            existing.branch.baseUpdateRequestedAt === requestedAt &&
+            isBaseUpdatePending(existing.branch)
+              ? { branch: { lastBaseUpdate: { at: requestedAt, outcome: 'failed' } } }
+              : null,
+          { keepUpdatedAt: true },
+        )
+        .catch(() => undefined)
+      return {
+        ok: false,
+        status: 500,
+        error: "The latest changes couldn't be added. Your work is safe.",
+      }
+    }
+    if (run === 'busy') {
+      return {
+        ok: false,
+        status: 409,
+        error:
+          'This branch is busy with a save or another update. Nothing changed; try again in a moment.',
+      }
+    }
+    current = await BranchMetadataFileManager.loadOnly(branchContext.branchRoot)
+    if (current?.branch.name !== branch.name) {
+      return { ok: false, status: 404, error: 'This branch no longer exists.' }
+    }
+  }
+
   // A wake-up already queued serves the new request too.
-  if (!joined && !queued) {
+  if (!runsInRequest && !joined && !queued) {
     try {
       await enqueueTask(taskDir, { action: SYNC_BRANCH_ACTION, payload: { branch: branch.name } })
     } catch (err) {
