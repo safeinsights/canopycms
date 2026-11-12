@@ -117,6 +117,7 @@ export function alignToAncestor(
   ancestorKeys: readonly string[],
   side: string,
   inEntry: ReadonlySet<string>,
+  movedIn: ReadonlySet<string>,
 ): Alignment | undefined {
   const known = new Set(ancestorKeys)
   const aliases = ancestorAliases(ancestorItems, ancestorKeys)
@@ -131,8 +132,9 @@ export function alignToAncestor(
   // base's edit of one twin leaves its key on the edited copy, which the ancestor then reads, or a
   // backfill keys, as another item's. So an item under a read key holding the item it names is
   // that item, and one holding exactly another ancestor item no key on this side names is that
-  // one, even an item the branch edited to read like one it deleted.
-  const held = new Set(items.flatMap((item) => ownKey(item) ?? []))
+  // one: also, with no git-level merge at all, an item a side edited to read exactly like one it
+  // deleted. A key this side moved to another list still names its item there.
+  const held = new Set([...movedIn, ...items.flatMap((item) => ownKey(item) ?? [])])
   const unheld = new Map<string, number>()
   ancestorItems.forEach((item, i) => {
     if (held.has(ancestorKeys[i])) return
@@ -148,7 +150,11 @@ export function alignToAncestor(
     const read = readKeys[j]
     const named = read !== undefined && known.has(read) ? read : aliases.get(own)
     const i = named === undefined ? undefined : at.get(named)
-    if (i !== undefined) return valueToken(ancestorItems[i]) !== content
+    // A key that has gone stale on both sides is history, not content: it names its item.
+    if (i !== undefined) {
+      if (isMinted(ancestorItems[i]) && isMinted(items[j])) return false
+      return valueToken(ancestorItems[i]) !== content
+    }
     // A key naming no item here pairs by content only where one item holds it, twins by place.
     return holders === 1
   }
@@ -179,9 +185,11 @@ export function alignToAncestor(
       read !== undefined &&
       !known.has(own) &&
       hasMachineKeyShape(own) &&
-      inEntry.has(read)
+      inEntry.has(read) &&
+      !(hasContentKeyShape(own) && (unheld.get(valueToken(item)) ?? 0) > 0)
     ) {
-      // An ancestor item of another list, moved here with its key: new to this list.
+      // An ancestor item of another list, moved here with its key: new to this list. Not under a
+      // read key holding exactly an item of this list no key here names: a reworded twin.
       minted.add(j)
     } else if (own !== undefined && !known.has(own) && isMinted(item)) {
       // A key the ancestor doesn't know: minted for a new item, stripped there by hand, or a read
@@ -222,9 +230,12 @@ export function alignToAncestor(
     if (i !== undefined) match(j, i)
   })
   // Such an item is the ancestor item holding its content, or for a stale key the one holding
-  // most of its values; never one with a minted key. Only a stale key may still pair by place.
+  // most of its values; never one under a key minted for it, though one under a read key gone
+  // stale may. Only a stale key may still pair by place.
   const candidates = ancestorItems.flatMap((item, i) =>
-    taken.has(ancestorKeys[i]) || isMinted(item) ? [] : [i],
+    taken.has(ancestorKeys[i]) || (isMinted(item) && !hasContentKeyShape(ancestorKeys[i]))
+      ? []
+      : [i],
   )
   const open = (i: number) => !taken.has(ancestorKeys[i])
   for (const j of byContent) {
