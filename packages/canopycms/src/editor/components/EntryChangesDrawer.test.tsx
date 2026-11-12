@@ -630,6 +630,27 @@ describe('focus after an entry-level choice, its card gone (issue 1258)', () => 
     )
   })
 
+  it('moves no focus once the drawer shows another entry', async () => {
+    const view = render(show(keptDeleted(true)))
+    await userEvent.click(within(drawer()).getByRole('button', { name: 'Keep it deleted' }))
+    const other = {
+      ...keptDeleted(false),
+      subject: {
+        ...subject,
+        logicalPath: 'content/blog/other',
+        title: 'Other',
+        status: 'deleted' as const,
+        fields: conflictFields,
+      },
+    }
+    view.rerender(show(other))
+    expect(document.activeElement).not.toBe(
+      within(screen.getByRole('dialog', { name: 'Changes to Other' })).getByTestId(
+        'entry-changes-restore',
+      ),
+    )
+  })
+
   it('leaves focus where a person moved it before the card went', async () => {
     const view = render(show(keptDeleted(true)))
     await userEvent.click(within(drawer()).getByRole('button', { name: 'Keep it deleted' }))

@@ -138,6 +138,9 @@ type EntryCardKind = Exclude<EntryConflictData['kind'], 'fields'> | 'fields-on-d
 
 const KEPT_YOURS = 'Conflict cleared. Your version of the entry stays.'
 
+/** @internal Exported for tests: how long a settled entry card waits for the reload to take it. */
+export const SETTLED_HOLD_MS = 10_000
+
 /** What an entry-level conflict is, and the choices that settle it, in order. */
 const ENTRY_KINDS: Record<
   EntryCardKind,
@@ -653,22 +656,33 @@ const EntryCard: React.FC<{
   onDone?: (done: EntryChoiceDone) => void
 }> = ({ kind, reason, unsavedEdits, onResolve, onDone }) => {
   const [working, setWorking] = useState<EntryConflictChoice>()
+  const [settled, setSettled] = useState(false)
   const [refusal, setRefusal] = useState<EntryChoiceRefusal & { choice: EntryConflictChoice }>()
   const { heading, body, choices } = ENTRY_KINDS[kind]
+  // A choice settled in place keeps its button working until the reload takes the card away, or,
+  // should that reload fail, for SETTLED_HOLD_MS, after which the choices come back.
+  useEffect(() => {
+    if (!settled) return
+    const timer = setTimeout(() => {
+      setSettled(false)
+      setWorking(undefined)
+    }, SETTLED_HOLD_MS)
+    return () => clearTimeout(timer)
+  }, [settled])
   const resolve = async (choice: EntryConflictChoice) => {
     if (!onResolve || working) return
     const made = choices.find((c) => c.choice === choice)
     setWorking(choice)
     setRefusal(undefined)
-    // A choice settled in place keeps its button working until the reload takes the card away.
-    let settled = false
+    let done = false
     try {
       const refused = await onResolve(choice, made?.entryGone ? { entryGone: true } : {})
       setRefusal(refused && { ...refused, choice })
-      settled = !refused && !!made?.done
-      if (settled) onDone?.({ message: made!.done!, entryGone: !!made!.entryGone })
+      done = !refused && !!made?.done
+      if (done) onDone?.({ message: made!.done!, entryGone: !!made!.entryGone })
     } finally {
-      if (!settled) setWorking(undefined)
+      if (done) setSettled(true)
+      else setWorking(undefined)
     }
   }
   return (

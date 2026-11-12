@@ -96,6 +96,24 @@ describe('services runBaseUpdateNow', () => {
     )
   })
 
+  it('reads a relative origin from the clone, as git does', async () => {
+    await cloneWithOrigin(path.join('..', '..', 'remote.git'))
+    const services = await createTestServices({ schema, mode: 'dev', defaultBaseBranch: 'main' })
+
+    await expect(services.runBaseUpdateNow(context())).resolves.toBe('answered')
+  })
+
+  it.each(['https://example.com/site.git', 'file://host/remote.git'])(
+    'runs nothing for a clone of %s, which the local worker never fetches',
+    async (origin) => {
+      await cloneWithOrigin(origin)
+      const services = await createTestServices({ schema, mode: 'dev', defaultBaseBranch: 'main' })
+
+      await expect(services.runBaseUpdateNow(context())).resolves.toBe('other-remote')
+      expect(worker.createLocalWorker).not.toHaveBeenCalled()
+    },
+  )
+
   it('runs nothing for a clone of another remote, which the local worker never fetches', async () => {
     await cloneWithOrigin('https://example.com/site.git')
     const services = await createTestServices({ schema, mode: 'dev', defaultBaseBranch: 'main' })

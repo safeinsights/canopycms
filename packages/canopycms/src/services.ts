@@ -312,6 +312,17 @@ export const createTestCanopyServices = async (
   return _createCanopyServicesInternal(testConfig, options)
 }
 
+/** A remote URL's local path, a relative one from `cwd` as git reads it; undefined for another host. */
+const localPathOf = (url: string, cwd: string): string | undefined => {
+  if (!/^file:/i.test(url))
+    return /^[a-z][a-z0-9+.-]*:/i.test(url) ? undefined : path.resolve(cwd, url)
+  try {
+    return fileURLToPath(url)
+  } catch {
+    return undefined
+  }
+}
+
 /** Whether two paths name one directory, symlinks resolved where they exist. */
 const samePath = async (a: string, b: string): Promise<boolean> => {
   const real = (p: string) => fs.realpath(p).catch(() => path.resolve(p))
@@ -805,7 +816,7 @@ async function _createCanopyServicesInternal(
     // baseRoot is the workspace's content-branches directory, where the worker looks.
     const workspacePath = path.dirname(context.baseRoot)
     const origin = await createGitManagerFor(context.branchRoot).getRemoteUrl()
-    const originPath = origin && (/^file:\/\//i.test(origin) ? fileURLToPath(origin) : origin)
+    const originPath = origin && localPathOf(origin, context.branchRoot)
     if (!originPath || !(await samePath(originPath, path.join(workspacePath, 'remote.git')))) {
       return 'other-remote'
     }

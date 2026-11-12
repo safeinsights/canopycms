@@ -624,24 +624,26 @@ export const EntryChangesView: React.FC<EntryChangesViewProps> = (props) => {
   // What was said is about the entry it was said on.
   const entryDone = said?.path === props.subject.logicalPath ? said : undefined
   // Focus waits for the card to go: only then may "Restore entry" be offered in its place.
-  const focusAfter = useRef<{ entryGone: boolean }>()
+  const focusAfter = useRef<{ entryGone: boolean; path: string }>()
   const onEntryDone = (done: EntryChoiceDone) => {
     setSaid((last) => ({
       id: (last?.id ?? 0) + 1,
       message: done.message,
       path: props.subject.logicalPath,
     }))
-    focusAfter.current = { entryGone: done.entryGone }
+    focusAfter.current = { entryGone: done.entryGone, path: props.subject.logicalPath }
   }
   useEffect(() => {
     const root = rootRef.current
     const pending = focusAfter.current
-    if (!root || !pending || root.querySelector('[data-entry-card]')) return
+    if (!root || !pending) return
+    if (pending.path !== props.subject.logicalPath) focusAfter.current = undefined
+    if (!focusAfter.current || root.querySelector('[data-entry-card]')) return
     focusAfter.current = undefined
-    // A person who has moved on within the drawer keeps their place.
+    // Focus anywhere but the page or the drawer itself was put there since, and stays.
     const dialog = root.closest('[role="dialog"]')
     const active = document.activeElement
-    if (active && active !== document.body && active !== dialog && dialog?.contains(active)) return
+    if (active && active !== document.body && active !== dialog) return
     focusAfterEntryChoice(root, pending.entryGone)
   })
   return (

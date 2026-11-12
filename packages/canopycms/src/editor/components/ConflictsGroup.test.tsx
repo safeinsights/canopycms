@@ -9,6 +9,7 @@ import { textWithChoices, type EntryChoices, type FieldChoice } from '../conflic
 import { CanopyCMSProvider } from '../theme'
 import {
   ConflictsGroup,
+  SETTLED_HOLD_MS,
   EDITED_IN_FORM_REASON,
   LATEST_UNPLACEABLE_REASON,
   type EntryChoiceRefusal,
@@ -617,6 +618,22 @@ describe('ConflictsGroup entry-level conflicts', () => {
     onResolveEntry.mockResolvedValueOnce({ message: 'The save failed.', tone: 'error' })
     await userEvent.click(screen.getByRole('button', { name: 'Restore entry' }))
     expect(onEntryDone).not.toHaveBeenCalled()
+  })
+
+  it('gives the choices back when the reload that would take the card away never comes', async () => {
+    const { onResolveEntry } = setup('deleted-on-base', { onEntryDone: vi.fn() })
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      await userEvent.click(screen.getByRole('button', { name: 'Keep it' }))
+      const keep = screen.getByTestId('conflict-entry-keep')
+      expect(keep.getAttribute('data-loading')).toBe('true')
+      await act(() => vi.advanceTimersByTimeAsync(SETTLED_HOLD_MS))
+      expect(keep.getAttribute('data-loading')).toBeNull()
+      await userEvent.click(keep)
+      expect(onResolveEntry).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it.each([
