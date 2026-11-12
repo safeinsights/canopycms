@@ -493,6 +493,9 @@ async function _createCanopyServicesInternal(
     // stopped on a conflict is discarded by its abort.
     const committed = await withContentWriteLock(options.context.branchRoot, async () => {
       await refuseDuringRebase(options.context.branchRoot)
+      // A submit since the caller's read: what a branch in review holds is what was submitted.
+      const branchStatus = (await readBranchMetadataFile(options.context.branchRoot))?.branch.status
+      if (branchStatus !== undefined && branchStatus !== 'editing') return false
       await git.checkoutBranch(options.context.branch.name)
       const status = await git.status()
       const uncommitted = (await readRecordedEditors(options.context))?.uncommittedEditors ?? []

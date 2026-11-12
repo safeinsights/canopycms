@@ -1120,6 +1120,20 @@ describe('services submitBranch', () => {
       expect(onDisk.branch.uncommittedEditors).toBeUndefined()
     })
 
+    it('commits nothing on a branch submitted since the caller read it', async () => {
+      await fs.mkdir(path.join(localPath, '.canopy-meta'), { recursive: true })
+      await fs.writeFile(
+        path.join(localPath, '.canopy-meta', 'branch.json'),
+        JSON.stringify({ branch: { name: 'feature-1', status: 'submitted', access: {} } }),
+        'utf8',
+      )
+      await fs.writeFile(path.join(localPath, 'a.txt'), 'saved', 'utf8')
+      const before = await localSha()
+
+      expect(await services.commitSavedWork({ context, message: 'unused' })).toBe(false)
+      expect(await localSha()).toBe(before)
+    })
+
     it('commits nothing when nothing is saved', async () => {
       const before = await localSha()
       expect(await services.commitSavedWork({ context, message: 'unused' })).toBe(false)

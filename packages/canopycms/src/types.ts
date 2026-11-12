@@ -219,9 +219,9 @@ export interface BranchMetadata {
   /** The worker's answer to the latest request for the latest changes (worker/rebase.ts). */
   lastBaseUpdate?: LastBaseUpdate
   /**
-   * The base commit the worker's automatic sync left out because the branch holds saved but
+   * The first base commit the worker's automatic sync left out because the branch holds saved but
    * uncommitted work, which it never commits (worker/rebase.ts). The editor shows that the latest
-   * changes are waiting; cleared once the branch holds the base.
+   * changes are waiting; cleared once the sync finds the branch holding the base, or in review.
    */
   latestChangesWaiting?: string
 }

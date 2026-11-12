@@ -388,6 +388,18 @@ describe('CmsWorker.rebaseActiveBranches() publishes rewritten history', () => {
 
     expect(await setup.remoteSha('refs/heads/feature-no-target')).toBe(published)
     expect(await queuedPushBranches(setup.workspacePath)).toEqual([])
+
+    // The next rewrite supersedes the one whose publish never landed, and publishes its own tip.
+    await setup.advanceBase({ 'base2.txt': 'moved on\n' })
+    await runRebase(makeWorker(setup.workspacePath))
+
+    const head = (await setup.branchGit.revparse(['HEAD'])).trim()
+    const meta = await readMeta(setup.branchPath)
+    expect(await setup.remoteSha('refs/heads/feature-no-target')).toBe(head)
+    expect(meta?.historyRewrittenFrom).toBe(published)
+    expect(meta?.historyRewrittenTo).toBe(head)
+    expect(meta?.rebaseFailure).toBeUndefined()
+    expect(await queuedPushBranches(setup.workspacePath)).toEqual(['feature-no-target'])
   })
 
   it('self-heals a queued push that was lost, without re-pushing remote.git', async () => {

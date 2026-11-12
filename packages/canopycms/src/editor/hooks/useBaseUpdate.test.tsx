@@ -355,10 +355,24 @@ describe('useBaseUpdate', () => {
     await waitFor(() => expect(result.current.wait).toBe('none'))
     expect(result.current.latestChangesWaiting).toBe(false)
 
-    // Another host's snapshot from before the answer.
+    // Other hosts' snapshots from before the answer, and from before the request.
     listed = asked
     await act(() => result.current.reload())
+    expect(result.current.branch?.lastBaseUpdate).toBeUndefined()
     expect(result.current.latestChangesWaiting).toBe(false)
+    listed = editing({ latestChangesWaiting: 'a'.repeat(40) })
+    await act(() => result.current.reload())
+    expect(result.current.branch?.baseUpdateRequestedAt).toBeUndefined()
+    expect(result.current.latestChangesWaiting).toBe(false)
+
+    // A mark the worker writes after the answer stands.
+    listed = editing({
+      baseUpdateRequestedAt: requestedAt,
+      lastBaseUpdate: { at: requestedAt, outcome: 'merged' },
+      latestChangesWaiting: 'b'.repeat(40),
+    })
+    await act(() => result.current.reload())
+    expect(result.current.latestChangesWaiting).toBe(true)
   })
 
   it('offers no Retry on a failure to a viewer who may not ask', async () => {

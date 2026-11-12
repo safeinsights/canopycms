@@ -97,7 +97,15 @@ function withSettled(
   branch: BranchListItem | undefined,
   settled: (Recorded & { lastBaseUpdate: LastBaseUpdate }) | null,
 ): BranchListItem | undefined {
-  if (!branch || !sameBranch(branch, settled) || !isBaseUpdatePending(branch)) return branch
+  if (!branch || !sameBranch(branch, settled)) return branch
+  // Read before the answer, so what it says was waiting has come in.
+  const cameIn =
+    settled.lastBaseUpdate.outcome !== 'failed' ? { latestChangesWaiting: undefined } : {}
+  if (!isBaseUpdatePending(branch)) {
+    return laterThan(settled.requestedAt, branch.baseUpdateRequestedAt)
+      ? { ...branch, ...cameIn }
+      : branch
+  }
   return laterThan(branch.baseUpdateRequestedAt ?? '', settled.requestedAt) &&
     branch.baseUpdateRequestedAt !== undefined
     ? branch
@@ -105,8 +113,7 @@ function withSettled(
         ...branch,
         baseUpdateRequestedAt: settled.requestedAt,
         lastBaseUpdate: settled.lastBaseUpdate,
-        // Read before the answer, so what it says was waiting has come in.
-        ...(settled.lastBaseUpdate.outcome !== 'failed' && { latestChangesWaiting: undefined }),
+        ...cameIn,
       }
 }
 

@@ -475,71 +475,66 @@ function BranchStatusLabel({
       ? [status.label.replace(' · ', ', '), reason].filter(Boolean).join('. ')
       : '',
     working,
+    // The badge sits outside this region, so a detail that follows the unsaved count stays quiet.
+    latestChangesWaiting && LATEST_CHANGES_WAITING,
   ]
     .filter(Boolean)
     .join('. ')
   return (
-    // Always mounted, so a lock that arrives is announced.
-    <Box
-      role="status"
-      style={
-        status.label || holdMessage || working || latestChangesWaiting
-          ? { flexShrink: 0 }
-          : HIDDEN_STYLE
-      }
-    >
-      <Group gap="xs" wrap="nowrap">
-        {working && (
-          <Group gap={4} wrap="nowrap" aria-hidden="true" data-testid="branch-working-status">
-            {workingSpinner && <Loader size={12} />}
-            <Text span size="sm">
-              {working}
-            </Text>
-          </Group>
-        )}
-        {status.label && (
-          <Group
-            gap={4}
-            wrap="nowrap"
-            aria-hidden="true"
-            data-testid="branch-status"
-            data-status={status.value}
-          >
-            {status.readOnly && <IconLock size={14} />}
-            <Text span size="sm">
-              {status.label}
-            </Text>
-          </Group>
-        )}
-        {holdMessage && (
-          <TooltipDetail detail={holdMessage}>
-            <Badge color={HOLD_BADGE.color} variant="light" data-testid="branch-hold-status">
-              {holdCount === undefined ? HOLD_BADGE.label : `${HOLD_BADGE.label} (${holdCount})`}
-            </Badge>
-          </TooltipDetail>
-        )}
-        {latestChangesWaiting && (
-          <TooltipDetail
-            detail={latestChangesWaiting}
-            name={compact ? LATEST_CHANGES_WAITING : undefined}
-          >
-            <Badge
-              color="blue"
-              variant="light"
-              circle={compact}
-              data-testid="branch-latest-waiting"
+    <>
+      {/* Always mounted, so a lock that arrives is announced. */}
+      <Box
+        role="status"
+        style={status.label || holdMessage || working ? { flexShrink: 0 } : HIDDEN_STYLE}
+      >
+        <Group gap="xs" wrap="nowrap">
+          {working && (
+            <Group gap={4} wrap="nowrap" aria-hidden="true" data-testid="branch-working-status">
+              {workingSpinner && <Loader size={12} />}
+              <Text span size="sm">
+                {working}
+              </Text>
+            </Group>
+          )}
+          {status.label && (
+            <Group
+              gap={4}
+              wrap="nowrap"
+              aria-hidden="true"
+              data-testid="branch-status"
+              data-status={status.value}
             >
-              {compact ? (
-                <IconRefresh size={12} style={{ display: 'block' }} aria-hidden="true" />
-              ) : (
-                LATEST_CHANGES_WAITING
-              )}
-            </Badge>
-          </TooltipDetail>
-        )}
-      </Group>
-      <VisuallyHidden>{spoken}</VisuallyHidden>
-    </Box>
+              {status.readOnly && <IconLock size={14} />}
+              <Text span size="sm">
+                {status.label}
+              </Text>
+            </Group>
+          )}
+          {holdMessage && (
+            <TooltipDetail detail={holdMessage}>
+              <Badge color={HOLD_BADGE.color} variant="light" data-testid="branch-hold-status">
+                {holdCount === undefined ? HOLD_BADGE.label : `${HOLD_BADGE.label} (${holdCount})`}
+              </Badge>
+            </TooltipDetail>
+          )}
+        </Group>
+        <VisuallyHidden>{spoken}</VisuallyHidden>
+      </Box>
+      {latestChangesWaiting && (
+        <TooltipDetail
+          detail={latestChangesWaiting}
+          name={compact ? LATEST_CHANGES_WAITING : undefined}
+        >
+          <Badge color="blue" variant="light" circle={compact} data-testid="branch-latest-waiting">
+            {compact ? (
+              <IconRefresh size={12} style={{ display: 'block' }} aria-hidden="true" />
+            ) : (
+              LATEST_CHANGES_WAITING
+            )}
+          </Badge>
+        </TooltipDetail>
+      )}
+    </>
   )
 }
 

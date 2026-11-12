@@ -2456,9 +2456,34 @@ describe('EditorHeader - Get latest changes', () => {
     renderHeader({ ...owner, baseUpdate: control(), latestChangesWaiting: true })
     const badge = screen.getByTestId('branch-latest-waiting')
     expect(badge.textContent).toBe('Latest changes waiting')
-    expect(badge.closest('[role="status"]')).not.toBeNull()
     act(() => badge.closest<HTMLElement>('[tabindex="0"]')?.focus())
     expect((await screen.findByRole('tooltip')).textContent).toContain('"Get latest changes"')
+  })
+
+  it('announces the wait once, not again as unsaved changes change its detail', () => {
+    const { rerender } = renderHeader({
+      ...owner,
+      baseUpdate: control(),
+      latestChangesWaiting: true,
+    })
+    const announced = () =>
+      screen
+        .getAllByRole('status')
+        .map((s) => s.textContent ?? '')
+        .join('|')
+    const before = announced()
+    expect(before).toContain('Latest changes waiting')
+    expect(screen.getByTestId('branch-latest-waiting').closest('[role="status"]')).toBeNull()
+
+    rerender(
+      <Headers
+        {...defaultProps}
+        {...owner}
+        baseUpdate={control({ blockedReason: 'Save your changes first.' })}
+        latestChangesWaiting
+      />,
+    )
+    expect(announced()).toBe(before)
   })
 
   it('says to save first while unsaved changes hold "Get latest changes"', async () => {

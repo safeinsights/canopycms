@@ -2374,10 +2374,10 @@ describe('a branch the automatic sync skips for its saved work', () => {
     // Bookkeeping: the card's "edited" time stays.
     expect((await readMeta(s))?.updatedAt).toBe(updatedAt)
 
-    // The base moves again: the newer tip is what waits.
+    // The base moves again: the mark stands as it was, with no write.
     await s.advanceBase({ 'base3.txt': 'again\n' })
     await cycle(s)
-    expect((await readMeta(s))?.latestChangesWaiting).toBe(await s.remoteSha(`refs/heads/${BASE}`))
+    expect((await readMeta(s))?.latestChangesWaiting).toBe(base)
 
     // What "Get latest changes" does: the saved work is committed, then the sync takes the base in.
     await s.commit({}, 'Save changes before getting the latest')
@@ -2388,6 +2388,35 @@ describe('a branch the automatic sync skips for its saved work', () => {
 
   it('records nothing while the branch holds the base', async () => {
     expect((await cycle(s)).skippedDirty).toEqual([BRANCH])
+    expect((await readMeta(s))?.latestChangesWaiting).toBeUndefined()
+  })
+
+  it('marks it while commits from GitHub wait for the saved work too', async () => {
+    await s.push()
+    await writeMeta(s)
+    await s.commitOnGitHub({ 'editor.txt': 'maintainer\n' })
+    await s.advanceBase({ 'base2.txt': 'moved\n' })
+
+    expect((await cycle(s)).skippedDirty).toEqual([BRANCH])
+
+    expect(await s.file('editor.txt')).toBe('saved\n')
+    expect((await readMeta(s))?.latestChangesWaiting).toBe(await s.remoteSha(`refs/heads/${BASE}`))
+  })
+
+  it('clears it once the branch is in review', async () => {
+    await s.advanceBase({ 'base2.txt': 'moved\n' })
+    await cycle(s)
+    const marked = (await readMeta(s))?.latestChangesWaiting
+    expect(marked).toBeDefined()
+
+    await s.commit({}, 'submitted')
+    await writeMeta(s, {
+      pushedToGitHubAt: undefined,
+      status: 'submitted',
+      latestChangesWaiting: marked,
+    })
+    await cycle(s)
+
     expect((await readMeta(s))?.latestChangesWaiting).toBeUndefined()
   })
 
