@@ -603,10 +603,7 @@ const ConflictsSection: React.FC<{
   )
 }
 
-/**
- * Where focus goes once an entry-level choice's card is gone: "Restore entry" while the entry stays
- * deleted and the drawer offers it, else the drawer's title.
- */
+/** Focus once a choice's card is gone: "Restore entry" if it is offered, else the drawer's title. */
 const focusAfterEntryChoice = (root: HTMLElement | null, entryGone: boolean) => {
   const restore = entryGone
     ? root?.querySelector<HTMLElement>('[data-testid="entry-changes-restore"]')
@@ -619,14 +616,10 @@ const focusAfterEntryChoice = (root: HTMLElement | null, entryGone: boolean) => 
   title.focus()
 }
 
-/**
- * The drawer's body: the entry's conflicts, if any, then what an entry-level choice settled, above
- * the changes, which keep their place in the tree as the conflicts go.
- */
+/** Conflicts, what a choice settled, then the changes, which keep their place as conflicts go. */
 export const EntryChangesView: React.FC<EntryChangesViewProps> = (props) => {
   const rootRef = useRef<HTMLDivElement>(null)
   const [said, setSaid] = useState<{ id: number; message: string; path: string }>()
-  // What was said is about the entry it was said on.
   const entryDone = said?.path === props.subject.logicalPath ? said : undefined
   // Focus waits for the card to go: only then may "Restore entry" be offered in its place.
   const focusAfter = useRef<{ entryGone: boolean; path: string; at: number }>()
@@ -646,8 +639,7 @@ export const EntryChangesView: React.FC<EntryChangesViewProps> = (props) => {
     const root = rootRef.current
     const pending = focusAfter.current
     if (!root || !pending) return
-    // It waits as long as the card holds its choice, no longer: a card that goes later went for
-    // another reason.
+    // No longer than the card holds its choice: a card gone later went for another reason.
     if (pending.path !== props.subject.logicalPath || Date.now() - pending.at > SETTLED_HOLD_MS) {
       focusAfter.current = undefined
     }
