@@ -35,10 +35,10 @@ type Side = { file: File; ids: Record<List, string[]> }
 /** What the operations meant: each item by its identity, with its values and list. */
 type Model = Map<string, { title: string; detail: string; list: List }>
 type Op = 'editDetail' | 'editTitle' | 'editBoth' | 'delete' | 'reorder' | 'moveAcross'
-type Mode = 'editor' | 'dev' | 'devStrip' | 'devBackfill'
+type Mode = 'editor' | 'dev' | 'devStrip' | 'devBackfill' | 'devRekey'
 
 const OPS: Op[] = ['editDetail', 'editTitle', 'editBoth', 'delete', 'reorder', 'moveAcross']
-const MODES: Mode[] = ['editor', 'dev', 'devStrip', 'devBackfill']
+const MODES: Mode[] = ['editor', 'dev', 'devStrip', 'devBackfill', 'devRekey']
 
 const generator = (seed: number) => {
   let t = seed >>> 0
@@ -68,7 +68,7 @@ const contentOf = ({ title, detail }: { title: string; detail: string }) =>
 /**
  * `side` after `ops` (item identity to operation), made the way `mode` works, plus an item added
  * or a copy of one, sometimes. The editor keys every item as read first; a hand edit leaves keys
- * as found, strips them, or backfills them from content after.
+ * as found, strips them, backfills them from content after, or both: replaces them all.
  */
 function apply(
   side: Side,
@@ -128,11 +128,11 @@ function apply(
       `dup${name}${n}`,
     )
   }
-  if (mode === 'devStrip') {
+  if (mode === 'devStrip' || mode === 'devRekey') {
     for (const l of LISTS) out.file[l] = out.file[l].map(({ title, detail }) => ({ title, detail }))
   }
   // A save keys every list as a read does, which re-keys a key a list holds twice.
-  if (mode === 'devBackfill' || mode === 'editor') {
+  if (mode === 'devBackfill' || mode === 'devRekey' || mode === 'editor') {
     for (const l of LISTS) out.file[l] = keyAll(out.file[l])
   }
   return out

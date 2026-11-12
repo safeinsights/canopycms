@@ -146,7 +146,8 @@ export function alignToAncestor(
     const holders = unheld.get(content) ?? 0
     if (holders === 0) return false
     const read = readKeys[j]
-    const i = read === undefined ? undefined : at.get(read)
+    const named = read !== undefined && known.has(read) ? read : aliases.get(own)
+    const i = named === undefined ? undefined : at.get(named)
     if (i !== undefined) return valueToken(ancestorItems[i]) !== content
     // A key naming no item here pairs by content only where one item holds it, twins by place.
     return holders === 1

@@ -1863,6 +1863,62 @@ describe("twins a git-level merge left under each other's first-save keys", () =
     })
   })
 
+  describe('a list whose minted keys one side replaced with content keys', () => {
+    const list: FieldConfig[] = [
+      { name: 'items', type: 'object', list: true, fields: text('h', 't') },
+    ]
+    const [A, Y, B] = [
+      { h: 'A', t: 'a' },
+      { h: 'Y', t: 'y' },
+      { h: 'B', t: 'b' },
+    ]
+    const [MA, MY, MB] = ['1aaaaaaaaaaa', '1yyyyyyyyyyy', '1bbbbbbbbbbb']
+    const minted = (items: Data[], keys: string[]) => items.map((i, n) => ({ ...i, _key: keys[n] }))
+    const rekeyed = (items: Data[]) => items.map((i) => ({ ...i, _key: itemKeysAsRead([i])[0] }))
+    const o = { items: minted([A, Y, B], [MA, MY, MB]) }
+    const merge = (a: Data, b: Data) => {
+      const result = mergeEntry({
+        format: 'json',
+        ancestor: { data: o },
+        base: { data: a },
+        branch: { data: b },
+        fields: list,
+      })
+      if (result.kind !== 'merged') throw new Error('expected a merge')
+      return { items: (result.data.items as Data[]).map((i) => i.t), conflicts: result.conflicts }
+    }
+
+    it('re-keyed on the branch, the base deletes one: it stays deleted', () => {
+      expect(merge({ items: minted([A, B], [MA, MB]) }, { items: rekeyed([A, Y, B]) })).toEqual({
+        items: ['a', 'b'],
+        conflicts: [],
+      })
+    })
+
+    it('re-keyed on the branch, the base edits one: the edit stands', () => {
+      const base = { items: minted([A, { ...Y, t: 'base' }, B], [MA, MY, MB]) }
+      expect(merge(base, { items: rekeyed([A, Y, B]) })).toEqual({
+        items: ['a', 'base', 'b'],
+        conflicts: [],
+      })
+    })
+
+    it('re-keyed on the base, the branch deletes one: it stays deleted', () => {
+      expect(merge({ items: rekeyed([A, Y, B]) }, { items: minted([A, B], [MA, MB]) })).toEqual({
+        items: ['a', 'b'],
+        conflicts: [],
+      })
+    })
+
+    it('re-keyed on the base, the branch edits one: the edit stands, once', () => {
+      const branch = { items: minted([A, { ...Y, t: 'mine' }, B], [MA, MY, MB]) }
+      expect(merge({ items: rekeyed([A, Y, B]) }, branch)).toEqual({
+        items: ['a', 'mine', 'b'],
+        conflicts: [],
+      })
+    })
+  })
+
   it('names a dated twin by the key a read of its day gives, with no schema', () => {
     const day = new Date('2024-01-01T00:00:00.000Z')
     const A = { h: 'A', t: 'a', d: day }
