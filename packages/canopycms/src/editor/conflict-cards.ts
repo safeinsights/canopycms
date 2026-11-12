@@ -274,8 +274,8 @@ export function buildEntryConflicts(
     const branchHere =
       versions.yours &&
       valueAtChange(formValueOfSide(versions.yours), { dataPath: field.dataPath }, bodyField)
-    // A read of the merged file can key another item, one alike or a copy, as the merge named an
-    // item your version lacks: a choice would land on that other item.
+    // A save can give a look-alike the key of an item your version lacks once it is gone: a choice
+    // here would land on that other item.
     const otherItemHere =
       field.item && !!versions.yours && branchHere === undefined && savedHere !== undefined
     const latestFound =

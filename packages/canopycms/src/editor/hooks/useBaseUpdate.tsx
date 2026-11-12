@@ -313,7 +313,7 @@ export function useBaseUpdate(options: UseBaseUpdateOptions): UseBaseUpdateRetur
         if (!stillOpen()) return
         const now = fresh?.branches.find((b) => b.name === target)
         const canRetry = now === undefined || now.status === 'editing'
-        // A 409 is a conflict with the branch's state, which a moment or a withdraw settles.
+        // A 409 is a conflict with the branch's state, which the guidelines colour yellow.
         showResult(
           result.status === 409 ? 'yellow' : 'red',
           result.error ?? REQUEST_FAILED_MESSAGE,

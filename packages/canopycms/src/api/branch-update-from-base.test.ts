@@ -293,7 +293,7 @@ describe('POST /:branch/update-from-base', () => {
 
       expect(res.status).toBe(409)
       expect(res.error).toBe(
-        'This branch is busy with a save or another update. Nothing changed; try again in a moment.',
+        "This branch is busy with a save or another update, so the latest changes weren't added. Try again in a moment.",
       )
     })
 

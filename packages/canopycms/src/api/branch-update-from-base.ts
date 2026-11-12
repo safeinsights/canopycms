@@ -33,8 +33,9 @@ export type UpdateFromBaseResponse = ApiResponse<{ requestedAt: string; branch: 
  *
  * The request is recorded on branch.json, which is what the worker answers, so a lost task or a
  * worker restart costs only the wait for its next regular cycle. The task only wakes it early.
- * Where the mode runs no worker loop (operating-mode `baseUpdateRunsInRequest`), the request runs
- * the worker's merge itself and is answered before the response.
+ * Where the mode runs no worker loop (operating-mode `baseUpdateRunsInRequest`), a new request runs
+ * the worker's merge itself and is answered before the response; one it joins is answered by the
+ * run that made it.
  * A request joins the last one, answering with its time: while that is unanswered, under
  * BASE_UPDATE_GIVE_UP_MS old and either under BASE_UPDATE_REQUEST_INTERVAL_MS old or still queued;
  * or once it was answered under BASE_UPDATE_REQUEST_INTERVAL_MS ago without failing. Anything
@@ -217,7 +218,7 @@ const updateFromBaseHandler = async (
         ok: false,
         status: 409,
         error:
-          "This branch uses a git remote other than the local one, so its latest changes can't be brought in here. Nothing changed.",
+          "This branch uses a git remote other than the local one, so its latest changes can't be brought in here.",
       }
     }
     if (run === 'busy') {
@@ -225,7 +226,7 @@ const updateFromBaseHandler = async (
         ok: false,
         status: 409,
         error:
-          'This branch is busy with a save or another update. Nothing changed; try again in a moment.',
+          "This branch is busy with a save or another update, so the latest changes weren't added. Try again in a moment.",
       }
     }
     current = await BranchMetadataFileManager.loadOnly(branchContext.branchRoot)

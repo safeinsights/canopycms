@@ -829,7 +829,7 @@ async function _createCanopyServicesInternal(
     if (!originPath || !(await samePath(originPath, path.join(workspacePath, 'remote.git')))) {
       return 'other-remote'
     }
-    // Loaded here alone, so no other request loads the worker's code.
+    // Loaded only when a run is asked for: a server that never runs one never loads the worker.
     const { createLocalWorker } = await import('./worker/cms-worker')
     const worker = createLocalWorker({
       workspacePath,
