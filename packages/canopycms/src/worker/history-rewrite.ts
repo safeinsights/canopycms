@@ -147,6 +147,12 @@ export async function clearHistoryRewrittenMarker(
   }
 }
 
+/** How {@link forcePublishToLocalRemote} ended. */
+export type RewritePublish =
+  | { kind: 'published' }
+  | { kind: 'moved' }
+  | { kind: 'failed'; message: string }
+
 /**
  * Publish `rewrittenTip`, a branch clone's rebased history, into `remote.git`,
  * replacing EXACTLY `expectedSha` and nothing else. The tip, never the clone's
@@ -164,12 +170,6 @@ export async function clearHistoryRewrittenMarker(
  * moved the ref; the self-heal pass retries it), or `failed` with git's message.
  * Never throws.
  */
-/** How {@link forcePublishToLocalRemote} ended. */
-export type RewritePublish =
-  | { kind: 'published' }
-  | { kind: 'moved' }
-  | { kind: 'failed'; message: string }
-
 export async function forcePublishToLocalRemote(
   ctx: Pick<HistoryRewriteContext, 'remoteGitPath' | 'taskTimeoutMs'>,
   branchPath: string,

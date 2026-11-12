@@ -445,6 +445,32 @@ describe('CmsWorker.rebaseActiveBranches() publishes rewritten history', () => {
     expect((await readMeta(setup.branchPath))?.rebaseFailure).toBeUndefined()
   })
 
+  it('records a rewrite whose publish fails, and publishes it once it can', async () => {
+    const setup = await createPublishSetup(tmpDir, 'feature-publish-fails')
+    await setup.commitToBranch({ 'entry.md': 'v1\n' }, 'editor work')
+    await setup.submit()
+    const published = await setup.remoteSha('refs/heads/feature-publish-fails')
+    await setup.advanceBase({ 'base2.txt': 'moved on\n' })
+    await writeMeta(setup.branchPath, setup.contentBranchesPath)
+    const lock = path.join(setup.remoteGitPath, 'refs', 'heads', 'feature-publish-fails.lock')
+    await fs.writeFile(lock, '')
+
+    await runRebase(makeWorker(setup.workspacePath))
+
+    expect(await setup.remoteSha('refs/heads/feature-publish-fails')).toBe(published)
+    expect((await readMeta(setup.branchPath))?.rebaseFailure?.message).toContain(
+      'could not be published',
+    )
+
+    await fs.rm(lock)
+    await runRebase(makeWorker(setup.workspacePath))
+
+    expect(await setup.remoteSha('refs/heads/feature-publish-fails')).toBe(
+      (await setup.branchGit.revparse(['HEAD'])).trim(),
+    )
+    expect((await readMeta(setup.branchPath))?.rebaseFailure).toBeUndefined()
+  })
+
   it('publishes nothing to a recorded tip that is not a commit ID', async () => {
     const setup = await createPublishSetup(tmpDir, 'feature-bad-target')
     await setup.commitToBranch({ 'entry.md': 'v1\n' }, 'editor work')

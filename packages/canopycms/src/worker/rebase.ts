@@ -454,6 +454,11 @@ async function carryForwardRewrittenHistory(
       )
       if (publish.kind === 'published') {
         await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
+      } else if (publish.kind === 'failed') {
+        const reason = redactCredentials(
+          `this branch's rebased history could not be published into the deployment's repository: ${publish.message}`,
+        )
+        await recordRebaseFailure(ctx, branchPath, branchDir, reason, branchRef)
       }
     } else {
       const divergence =
