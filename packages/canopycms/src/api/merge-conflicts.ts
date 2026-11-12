@@ -623,6 +623,8 @@ const resolveBodySchema = z.object({
    * field by field with the latest version (`unreadable`).
    */
   choice: z.enum(['keep', 'delete', 'restore', 'use-latest']),
+  /** The card promised the entry stays deleted: a `keep` is refused if it is in the tree now. */
+  entryGone: z.literal(true).optional(),
 })
 
 export type ResolveEntryConflictBody = z.infer<typeof resolveBodySchema>
@@ -723,6 +725,11 @@ const resolveHandler = async (
     const current = now === 'unreadable' ? undefined : now[body.id]
     if (current?.kind !== entry.kind || current.mergeSha !== body.mergeSha) {
       throw new ConflictChangedError()
+    }
+    // Read afresh: a restore since the drawer opened would make "keep it deleted" untrue.
+    if (body.entryGone) {
+      store.invalidateIndex()
+      if ((await store.idIndex()).findById(body.id) !== null) throw new ConflictChangedError()
     }
   }
   // Clears the record as it stands under its lock, refusing when a merge changed it since.

@@ -43,8 +43,9 @@ export interface ClientSafeStrategy {
   supportsPullRequests(): boolean
 
   /**
-   * Whether a worker brings the base branch into editing branches, so a request for the latest
-   * changes (base-update.ts) gets an answer. Dev runs no git sync.
+   * Whether a request for the latest changes (base-update.ts) gets an answer, so the editor offers
+   * "Get latest changes": from the worker's sync, or from the request itself
+   * ({@link ClientUnsafeStrategy.baseUpdateRunsInRequest}).
    */
   syncsBranchesWithBase(): boolean
 
@@ -100,6 +101,14 @@ export interface ClientUnsafeStrategy extends ClientSafeStrategy {
   getGroupsFilePath(root: string): string
 
   getRemoteUrlConfig(): RemoteUrlConfig
+
+  /**
+   * Whether a request for the latest changes runs the worker's merge for its branch in the request
+   * (services.ts `runBaseUpdateNow`), for a mode with no worker loop to answer it. False where the
+   * worker answers: there the request is only queued, and a merge in a request would race the
+   * worker's own.
+   */
+  baseUpdateRunsInRequest(): boolean
 
   /** Whether this mode requires an existing git repository */
   requiresExistingRepo(): boolean

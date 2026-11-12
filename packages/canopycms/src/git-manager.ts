@@ -2157,10 +2157,14 @@ export class GitManager {
     return status.files.map((f) => f.path)
   }
 
+  /** The remote's URL as configured; `git remote -v`'s listing would split a path with a space. */
   async getRemoteUrl(): Promise<string | undefined> {
-    const remotes = await this.git.getRemotes(true)
-    const remote = remotes.find((r) => r.name === this.remote)
-    return remote?.refs.push || remote?.refs.fetch
+    try {
+      const url = (await this.git.raw(['remote', 'get-url', this.remote])).trim()
+      return url === '' ? undefined : url
+    } catch {
+      return undefined
+    }
   }
 
   /**

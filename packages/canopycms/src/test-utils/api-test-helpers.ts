@@ -212,6 +212,7 @@ export function createMockServices(options: MockServicesOptions = {}): CanopySer
     bootstrapAdminIds: options.bootstrapAdminIds ?? new Set<string>(),
     commitFiles: options.commitFiles ?? vi.fn().mockResolvedValue(undefined),
     commitSavedWork: options.commitSavedWork ?? vi.fn().mockResolvedValue(false),
+    runBaseUpdateNow: options.runBaseUpdateNow ?? vi.fn().mockResolvedValue('answered'),
     submitBranch:
       options.submitBranch ??
       vi.fn().mockResolvedValue({
