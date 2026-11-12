@@ -2126,7 +2126,7 @@ describe('an item edited to read exactly like one deleted, with no git-level mer
     expect((result.data.l2 as Data[]).map((i) => i.t)).toEqual(['t'])
   })
 
-  it('a key a hand edit re-hashed names its content, against ancestor keys gone stale', () => {
+  it('KNOWN LIMIT: a key a hand edit re-hashed onto a stale one is read by key: a false conflict', () => {
     const list: FieldConfig[] = [
       { name: 'items', type: 'object', list: true, fields: text('title', 'detail') },
     ]
@@ -2167,10 +2167,10 @@ describe('an item edited to read exactly like one deleted, with no git-level mer
       fields: list,
     })
     if (result.kind !== 'merged') throw new Error('expected a merge')
-    expect(result.conflicts).toEqual([])
-    expect((result.data.items as Data[]).map((i) => [i.title, i.detail])).toEqual([
-      ['w~A', 'd0'],
-      ['v~A', 'd1-A-B'],
+    // The same data as an editor putting an item back to its first-save content, where the key
+    // is right: read by key, the hand re-key's deletion of V meets the edit of X as a conflict.
+    expect(result.conflicts.map((c) => [c.key, c.kind])).toEqual([
+      [`items.${hash('v', 'd1')}.detail`, 'changed'],
     ])
   })
 
@@ -2208,6 +2208,32 @@ describe('an item edited to read exactly like one deleted, with no git-level mer
     it('the other side edited B: a conflict on B, which this side deleted', () => {
       expect(merge(change(1, { text: 'base edits B' }), mine, lived).conflicts).toEqual([
         [`items.${LB}`, 'removed-by-you'],
+      ])
+    })
+
+    it("a side put A back to its first-save content and deleted B: B's edit is a conflict", () => {
+      const X = { heading: 'X', text: 'x', link: '/x' }
+      const Z = { heading: 'Z', text: 'z', link: '/z' }
+      const saved = entryAsRead(page, { title: 't', items: [X, Z, C] }) as Page
+      const [KX, KZ] = saved.items.map((i) => i._key as string)
+      // Since its first save, KX's item read B and KZ's item read X; this side puts KX's back.
+      const ancestor: Page = {
+        ...saved,
+        items: [{ ...saved.items[0], ...B }, { ...saved.items[1], ...X }, saved.items[2]],
+      }
+      const branch: Page = {
+        ...ancestor,
+        items: [{ ...ancestor.items[0], ...X }, ancestor.items[2]],
+      }
+      const base: Page = {
+        ...ancestor,
+        items: ancestor.items.map((item, n) => (n === 1 ? { ...item, text: 'base' } : item)),
+      }
+      expect(merge(base, branch, ancestor).conflicts).toEqual([[`items.${KZ}`, 'removed-by-you']])
+      const deleted: Page = { ...ancestor, items: [ancestor.items[0], ancestor.items[2]] }
+      expect(merge(deleted, branch, ancestor).items).toEqual([
+        [KX, 'x', '/x'],
+        [saved.items[2]._key, 'c', '/c'],
       ])
     })
 
@@ -2503,9 +2529,9 @@ describe('sections, one rewritten to read like a twin section deleted, by key', 
     items,
     _key: key,
   })
-  // The first section was saved holding i3 alone, then given i2: its key went stale. The second,
-  // its twin as saved, still reads under its key. The branch moved i2 out of the first and
-  // deleted the second; the base deleted i2.
+  // The second section was saved as the first's twin and since lost i2: its key went stale,
+  // while the first's still hashes it. The branch moved i2 out of the first and deleted the
+  // second; the base deleted i2.
   const [S, S2] = ['hGDpoYqCgw', 'hGDpoYqCgw-2']
 
   it('the rewritten first section is the first, and nothing conflicts', () => {

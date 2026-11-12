@@ -239,7 +239,10 @@ function twinsAmbiguous(o: Model, a: Model, b: Model, keyed: boolean, rekeyed: b
   }
   const differs = (x: Model, id: string) => JSON.stringify(o.get(id)) !== JSON.stringify(x.get(id))
   // A hand edit that keys a list anew deals its twins' keys out by order, whichever twin is which.
-  if (rekeyed && [...groups.values()].some((ids) => ids.length > 1)) return true
+  const touched = (id: string) => differs(a, id) || differs(b, id)
+  if (rekeyed && [...groups.values()].some((ids) => ids.length > 1 && ids.some(touched))) {
+    return true
+  }
   const bothTouched =
     !keyed &&
     [...groups.values()].some(
@@ -294,12 +297,11 @@ function readAsDropped(o: Model, x: Model, keys?: Keys): Model[] {
       if (holder === dropped || !o.has(holder) || kept.list !== item.list) continue
       if (contentOf(kept) !== contentOf(item)) continue
       // With `keys`: only an item the side changed into the other's content, not a twin all
-      // along, and only where the keys leave the data reading both ways. Under a key that no
-      // longer hashes its content, the holder names its item where the item it names, or the
-      // one it took, also went stale.
+      // along, and only where the keys leave the data reading both ways, as the alignment reads
+      // them: the dropped item's key still hashed it, and the holder's is not stale on both sides.
       if (keys && contentOf(o.get(holder)!) === contentOf(item)) continue
-      const named = keys && !keys.fresh(kept, holder)
-      if (named && !(keys.wasFresh.has(holder) && keys.wasFresh.has(dropped))) continue
+      if (keys && !keys.wasFresh.has(dropped)) continue
+      if (keys && !keys.fresh(kept, holder) && !keys.wasFresh.has(holder)) continue
       const went = x.get(dropped)
       const read = new Map(x)
       read.set(dropped, { ...kept })
