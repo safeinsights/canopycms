@@ -153,6 +153,8 @@ interface Walk {
   texts: TextMerge[]
   /** Every key the ancestor's read gives its list items, across the entry. */
   ancestorKeys: ReadonlySet<string>
+  /** The keys each side holds in a list whose ancestor read gives no such key: items moved in. */
+  movedKeys: { a: ReadonlySet<string>; b: ReadonlySet<string> }
   /**
    * True when the branch holds `key` inside enclosing items `within` in more than one list. A
    * remap names an item by those alone, so it would move the other list's threads too, maybe
@@ -441,7 +443,7 @@ function mergeList(
   const O = asList(o)
   const identities =
     namedBy === undefined
-      ? identifyByKey(O, a, b, walk.ancestorKeys)
+      ? identifyByKey(O, a, b, walk.ancestorKeys, walk.movedKeys)
       : identifyByName(O, a, b, namedBy)
   // A list too far apart to align in time, or whose items can't all be told apart, is one value.
   // So is one with an item not clearly new or old, unless the other side holds the ancestor's
@@ -470,8 +472,16 @@ function mergeList(
   const held = new Set([...a, ...b].flatMap((item) => usableKey(item) ?? []))
   const index = (ids: readonly string[]) => new Map(ids.map((id, n) => [id, n]))
   const [oAt, aAt, bAt] = [index(oKeys), index(aIds), index(bIds)]
+  // An item kept whole from one side keeps its key, so it claims the key before any merged item
+  // picks one: a merged item never takes a key another item of the merged list holds.
   const used = new Set<string>()
   const out: unknown[] = []
+  const keep = (item: unknown) => {
+    const key = usableKey(item)
+    if (key !== undefined) used.add(key)
+    out.push(item)
+  }
+  const keyLater: Array<() => void> = []
 
   for (const id of mergeOrder(oKeys, aIds, bIds)) {
     const i = isNewIdentity(id) ? undefined : oAt.get(id)
@@ -512,7 +522,7 @@ function mergeList(
       continue
     }
     if (ja === undefined || jb === undefined) {
-      out.push(ja === undefined ? bi : ai)
+      keep(ja === undefined ? bi : ai)
       continue
     }
     // Matched by place alone, it may be another item: one side's change stands whole, two conflict.
@@ -525,7 +535,7 @@ function mergeList(
       if (aChanged && !bChanged && from !== undefined && !walk.ambiguous(at.branchKeys, from)) {
         walk.pendingRemaps.push({ at: itemAt.segments, within: at.branchKeys, from })
       }
-      out.push(aChanged && !bChanged ? ai : bi)
+      keep(aChanged && !bChanged ? ai : bi)
       continue
     }
     const merged = mergeValue(oi, ai, bi, itemAt, walk)
@@ -542,18 +552,26 @@ function mergeList(
       (!held.has(baseKey) || baseKey === usableKey(bi)) &&
       (bReadKeys[jb] === undefined || !walk.ambiguous(at.branchKeys, bReadKeys[jb]))
     const keys = { base: rekey ? baseKey : undefined, branchRead: bReadKeys[jb] }
-    const keyed = withListKey(merged, ai, bi, keys, used, at, walk)
-    // An item left with no key reads under a hash of its merged content: the branch's threads
-    // follow it there, once the merged entry reads.
-    if (
-      usableKey(keyed) === undefined &&
-      keys.branchRead !== undefined &&
-      !walk.ambiguous(at.branchKeys, keys.branchRead)
-    ) {
-      walk.pendingRemaps.push({ at: itemAt.segments, within: at.branchKeys, from: keys.branchRead })
-    }
-    out.push(keyed)
+    const place = out.push(merged) - 1
+    keyLater.push(() => {
+      const keyed = withListKey(merged, ai, bi, keys, used, at, walk)
+      // An item left with no key reads under a hash of its merged content: the branch's threads
+      // follow it there, once the merged entry reads.
+      if (
+        usableKey(keyed) === undefined &&
+        keys.branchRead !== undefined &&
+        !walk.ambiguous(at.branchKeys, keys.branchRead)
+      ) {
+        walk.pendingRemaps.push({
+          at: itemAt.segments,
+          within: at.branchKeys,
+          from: keys.branchRead,
+        })
+      }
+      out[place] = keyed
+    })
   }
+  for (const key of keyLater) key()
   return out
 }
 
@@ -562,10 +580,11 @@ function identifyByKey(
   a: readonly unknown[],
   b: readonly unknown[],
   inEntry: ReadonlySet<string>,
+  moved: Walk['movedKeys'],
 ) {
   const oKeys = itemKeysAsRead(O).map((key, i) => key ?? `${i}`)
-  const aligned = alignToAncestor(a, O, oKeys, 'a', inEntry)
-  const bAligned = alignToAncestor(b, O, oKeys, 'b', inEntry)
+  const aligned = alignToAncestor(a, O, oKeys, 'a', inEntry, moved.a)
+  const bAligned = alignToAncestor(b, O, oKeys, 'b', inEntry, moved.b)
   if (!aligned || !bAligned) return undefined
   pairNewItems(a, aligned.ids, b, bAligned.ids)
   return {
@@ -702,6 +721,37 @@ export function mergeEntry({
   }
   const ancestorKeys = new Set<string>()
   visitItems(ancestor.data, (_item, key) => ancestorKeys.add(key))
+  // Each list by the own keys of the items enclosing it, as a parent's read key changes with its
+  // content and its own key does not; by its field path alone where the ancestor has no such
+  // parent, as for a keyless parent a side edited and then keyed.
+  const exact = new Map<string, Set<string>>()
+  const byField = new Map<string, Set<string>>()
+  const parents = new Set<string>()
+  const field = (list: string) => list.replace(/\[[^\]]*\]/g, '[]')
+  // A keyless ancestor item by its place, and by the key a side's first save gave it.
+  for (const keylessByRead of [false, true]) {
+    visitByOwnKey(
+      ancestor.data,
+      (_item, read, list, at) => {
+        exact.set(list, (exact.get(list) ?? new Set()).add(read))
+        byField.set(field(list), (byField.get(field(list)) ?? new Set()).add(read))
+        parents.add(at)
+      },
+      keylessByRead,
+    )
+  }
+  const movedIn = (data: unknown) => {
+    const keys = new Set<string>()
+    visitByOwnKey(data, (item, _read, list) => {
+      const own = usableKey(item)
+      if (own === undefined) return
+      const parent = list.slice(0, list.lastIndexOf(']') + 1)
+      const there =
+        parent === '' || parents.has(parent) ? exact.get(list) : byField.get(field(list))
+      if (!there?.has(own)) keys.add(own)
+    })
+    return keys
+  }
   const asRead = (side: MergeSide) => (fields ? entryAsRead(fields, side.data) : side.data)
   const root = { ...ROOT, asRead: { a: asRead(base), b: asRead(branch) } }
   const walk: Walk = {
@@ -710,6 +760,7 @@ export function mergeEntry({
     pendingRemaps: [],
     texts: [],
     ancestorKeys,
+    movedKeys: { a: movedIn(base.data), b: movedIn(branch.data) },
     ambiguous: ambiguityOf(root.asRead.b, fields !== undefined),
   }
   const data = mergeRecord(ancestor.data, base.data, branch.data, root, walk)
@@ -796,6 +847,34 @@ function keyedItems(data: unknown): Map<string, KeyedItem | null> {
 
 /** An item's content as a name, so an item a side moved without its key is still found. */
 const contentName = (item: unknown): string => `${ITEM_KEY}:${valueToken(item)}`
+
+/**
+ * Each list item of `node` with its read key, its list's path and its own: enclosing items by own
+ * key, else by place, or with `keylessByRead` by read key.
+ */
+function visitByOwnKey(
+  node: unknown,
+  onItem: (item: unknown, read: string, list: string, at: string) => void,
+  keylessByRead = false,
+  list = '',
+): void {
+  if (Array.isArray(node)) {
+    const reads = itemKeysAsRead(node)
+    node.forEach((item, index) => {
+      const own = usableKey(item)
+      const read = reads[index]
+      // A key a list holds twice names only its first holder.
+      const name = own !== undefined && own === read ? own : keylessByRead ? read : undefined
+      const at = `${list}[${name ?? `#${index}`}]`
+      if (read !== undefined) onItem(item, read, list, at)
+      visitByOwnKey(item, onItem, keylessByRead, at)
+    })
+  } else if (isPlainRecord(node)) {
+    for (const [name, value] of Object.entries(node)) {
+      visitByOwnKey(value, onItem, keylessByRead, `${list}.${name}`)
+    }
+  }
+}
 
 /** Calls `onItem` for every record in a list in `node`, with its read key, list and path. */
 function visitItems(
@@ -1031,6 +1110,7 @@ export function mergeCollectionMeta(
     pendingRemaps: [],
     texts: [],
     ancestorKeys: new Set(),
+    movedKeys: { a: new Set(), b: new Set() },
     ambiguous: () => false,
   }
   const data: Record<string, unknown> = {}

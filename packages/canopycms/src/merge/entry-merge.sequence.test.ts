@@ -4,7 +4,9 @@
  * instead (a clean rebase, or "Update branch" on the pull request), which takes the base's
  * changes in under the branch's own keys: an item keeps the key a read gave it before the base
  * changed it, so a later merge meets keys that no longer hash its content, or that hash another
- * item's. Lists hold twins, identical items whose read keys differ only by their repeat suffix.
+ * item's. Lists hold twins, identical items whose read keys differ only by their repeat suffix,
+ * and the editor sometimes makes an item read exactly like another: where that side also dropped
+ * the other, the data reads either way, and either answer passes.
  *
  * Each item has an identity the merge never sees. Each sync applies known operations on both
  * sides, the branch as the editor and the base as the editor or a developer editing the file by
@@ -34,10 +36,25 @@ type List = (typeof LISTS)[number]
 type Side = { file: File; ids: Record<List, string[]> }
 /** What the operations meant: each item by its identity, with its values and list. */
 type Model = Map<string, { title: string; detail: string; list: List }>
-type Op = 'editDetail' | 'editTitle' | 'editBoth' | 'delete' | 'reorder' | 'moveAcross'
+type Op =
+  | 'editDetail'
+  | 'editTitle'
+  | 'editBoth'
+  | 'becomeOther'
+  | 'delete'
+  | 'reorder'
+  | 'moveAcross'
 type Mode = 'editor' | 'dev' | 'devStrip' | 'devBackfill' | 'devRekey'
 
-const OPS: Op[] = ['editDetail', 'editTitle', 'editBoth', 'delete', 'reorder', 'moveAcross']
+const OPS: Op[] = [
+  'editDetail',
+  'editTitle',
+  'editBoth',
+  'becomeOther',
+  'delete',
+  'reorder',
+  'moveAcross',
+]
 const MODES: Mode[] = ['editor', 'dev', 'devStrip', 'devBackfill', 'devRekey']
 
 const generator = (seed: number) => {
@@ -97,6 +114,11 @@ function apply(
       const next = { ...item }
       if (op === 'editDetail' || op === 'editBoth') next.detail = `${item.detail}-${name}${n}`
       if (op === 'editTitle' || op === 'editBoth') next.title = `${item.title}~${name}${n}`
+      // The editor's edit that makes an item read exactly like another of its list.
+      if (op === 'becomeOther' && mode === 'editor' && read.length > 1) {
+        const like = read[(k + 1 + g.int(read.length - 1)) % read.length]
+        ;[next.title, next.detail] = [like.title, like.detail]
+      }
       if (op === 'delete') return
       if (op === 'reorder') moved.push([list, next, id, list])
       else if (op === 'moveAcross') moved.push([list === 'items' ? 'l2' : 'items', next, id, list])
@@ -223,6 +245,31 @@ function twinsAmbiguous(o: Model, a: Model, b: Model, keyed: boolean): boolean {
 }
 
 /**
+ * `x` read the other way where it made an item of the ancestor read exactly like another ancestor
+ * item it took out of that list: the two swapped, so the other item stayed as it was and the
+ * edited one went where the other went, or was dropped.
+ */
+function readAsDropped(o: Model, x: Model, changedOnly: boolean): Model[] {
+  const reads: Model[] = []
+  for (const [dropped, item] of o) {
+    if (x.get(dropped)?.list === item.list) continue
+    for (const [holder, kept] of x) {
+      if (holder === dropped || !o.has(holder) || kept.list !== item.list) continue
+      if (contentOf(kept) !== contentOf(item)) continue
+      // `changedOnly`: an item the side changed into the other's content, not a twin all along.
+      if (changedOnly && contentOf(o.get(holder)!) === contentOf(item)) continue
+      const went = x.get(dropped)
+      const read = new Map(x)
+      read.set(dropped, { ...kept })
+      if (went) read.set(holder, went)
+      else read.delete(holder)
+      reads.push(read)
+    }
+  }
+  return reads
+}
+
+/**
  * `file`, each item given the identity in `want` that holds its content and list: the one whose
  * key it carries in `sides` first, as identical items are told apart by their keys alone.
  */
@@ -345,8 +392,14 @@ function life(seed: number, syncs: number): string {
     }
     const baseMode = g.pick(MODES)
     byEditor &&= baseMode === 'editor'
-    const base = apply(o, opsA, 'A', baseMode, g, sync)
-    const mine = apply(branch, opsB, 'B', 'editor', g, sync)
+    // Making one item read like another is the editor-only case N1 found; with hand edits on the
+    // other side it is the hand-edited case the heuristic can misread.
+    const lookalikes = (ops: Map<string, Op>) =>
+      new Map(
+        [...ops].map(([id, op]) => [id, op === 'becomeOther' && !byEditor ? 'editDetail' : op]),
+      )
+    const base = apply(o, lookalikes(opsA), 'A', baseMode, g, sync)
+    const mine = apply(branch, lookalikes(opsB), 'B', 'editor', g, sync)
     const [mo, ma, mb] = [modelOf(o), modelOf(base), modelOf(mine)]
     // Relative to this sync's ancestor, the branch's earlier changes count as its own: an item
     // both sides changed is one the editor and a hand edit can disagree on, so the life ends.
@@ -355,9 +408,26 @@ function life(seed: number, syncs: number): string {
     const both = [...mo.keys()].some((id) => differs(ma, id) && differs(mb, id))
     if (both && baseMode !== 'editor') break
     if (twinsAmbiguous(mo, ma, mb, byEditor)) break
-    const want = intended(mo, ma, mb)
+    // Where a side made an item read exactly like one it dropped, the data also reads as that
+    // item kept and the other dropped: either answer is right.
+    const read = (changedOnly: boolean) =>
+      [ma, ...readAsDropped(mo, ma, changedOnly)].flatMap((x) =>
+        [mb, ...readAsDropped(mo, mb, changedOnly)].map((y): [Model, Model] => [x, y]),
+      )
+    // Twins a side dropped read either way too, where the data allows, but in editor-only lives
+    // their keys tell them apart: only an item made to read like another excuses those checks.
+    const readings = read(false)
+    const [want, ...others] = readings.map(([x, y]) => intended(mo, x, y))
     if (want === 'ambiguous') break
-    if (!both && want !== 'conflict' && g.next() < 0.4) {
+    const edited = [
+      want,
+      ...read(true)
+        .slice(1)
+        .map(([x, y]) => intended(mo, x, y)),
+    ]
+    const broad = [want, ...others.filter((w) => w !== 'ambiguous')]
+    const answers = byEditor ? edited.filter((w) => w !== 'ambiguous') : broad
+    if (readings.length === 1 && !both && want !== 'conflict' && g.next() < 0.4) {
       byEditor = false
       branch = gitMerged(want, base, mine)
       o = base
@@ -371,24 +441,29 @@ function life(seed: number, syncs: number): string {
       fields,
     })
     if (result.kind !== 'merged') break
-    const at = `seed ${seed}, sync ${sync}`
+    const at = `seed ${seed}, sync ${sync}${byEditor ? ' [editor]' : ''}`
     if (result.conflicts.length > 0) {
-      if (byEditor && want !== 'conflict') return `${at}: conflicts where none was due`
+      if (byEditor && !edited.includes('conflict')) return `${at}: conflicts where none was due`
       break
     }
     const merged = result.data as File
-    const meant = (data: File) =>
-      want !== 'conflict' &&
-      LISTS.every(
-        (l) => JSON.stringify(data[l].map(contentOf).sort()) === JSON.stringify(contents(want, l)),
-      )
-    if (!meant(merged)) {
+    const fits = answers.find(
+      (w): w is Model =>
+        w !== 'conflict' &&
+        LISTS.every(
+          (l) => JSON.stringify(merged[l].map(contentOf).sort()) === JSON.stringify(contents(w, l)),
+        ),
+    )
+    if (!fits) {
       return `${at}: merged to ${JSON.stringify(merged)}, meant ${JSON.stringify(want === 'conflict' ? want : [...want])}`
     }
     checked++
+    // Read the other way, the merge named items as the identities don't: the life ends here.
+    if (fits !== want) break
     o = base
-    const next = identify(merged, want as Model, [mine, base])
-    if (byEditor) {
+    const next = identify(merged, fits, [mine, base])
+    // Keys name items only where the data reads one way.
+    if (byEditor && edited.length === 1) {
       const wrong = keyedWrongly(mine, next, result.keyRemaps)
       if (wrong) return `${at}: ${wrong}`
     }
