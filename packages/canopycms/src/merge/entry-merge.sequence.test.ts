@@ -249,13 +249,15 @@ function twinsAmbiguous(o: Model, a: Model, b: Model, keyed: boolean): boolean {
  * item it took out of that list: the two swapped, so the other item stayed as it was and the
  * edited one went where the other went, or was dropped.
  */
-function readAsDropped(o: Model, x: Model): Model[] {
+function readAsDropped(o: Model, x: Model, changedOnly: boolean): Model[] {
   const reads: Model[] = []
   for (const [dropped, item] of o) {
     if (x.get(dropped)?.list === item.list) continue
     for (const [holder, kept] of x) {
       if (holder === dropped || !o.has(holder) || kept.list !== item.list) continue
       if (contentOf(kept) !== contentOf(item)) continue
+      // `changedOnly`: an item the side changed into the other's content, not a twin all along.
+      if (changedOnly && contentOf(o.get(holder)!) === contentOf(item)) continue
       const went = x.get(dropped)
       const read = new Map(x)
       read.set(dropped, { ...kept })
@@ -408,9 +410,14 @@ function life(seed: number, syncs: number): string {
     if (twinsAmbiguous(mo, ma, mb, byEditor)) break
     // Where a side made an item read exactly like one it dropped, the data also reads as that
     // item kept and the other dropped: either answer is right.
-    const readings = [ma, ...readAsDropped(mo, ma)].flatMap((x) =>
-      [mb, ...readAsDropped(mo, mb)].map((y): [Model, Model] => [x, y]),
-    )
+    const read = (changedOnly: boolean) =>
+      [ma, ...readAsDropped(mo, ma, changedOnly)].flatMap((x) =>
+        [mb, ...readAsDropped(mo, mb, changedOnly)].map((y): [Model, Model] => [x, y]),
+      )
+    // Twins a side dropped read either way too, where the data allows, but in editor-only lives
+    // their keys tell them apart: only an item made to read like another excuses those checks.
+    const readings = read(false)
+    const edited = read(true).map(([x, y]) => intended(mo, x, y))
     const [want, ...others] = readings.map(([x, y]) => intended(mo, x, y))
     if (want === 'ambiguous') break
     const answers = [want, ...others.filter((w) => w !== 'ambiguous')]
@@ -430,7 +437,7 @@ function life(seed: number, syncs: number): string {
     if (result.kind !== 'merged') break
     const at = `seed ${seed}, sync ${sync}${byEditor ? ' [editor]' : ''}`
     if (result.conflicts.length > 0) {
-      if (byEditor && !answers.includes('conflict')) return `${at}: conflicts where none was due`
+      if (byEditor && !edited.includes('conflict')) return `${at}: conflicts where none was due`
       break
     }
     const merged = result.data as File
@@ -450,7 +457,7 @@ function life(seed: number, syncs: number): string {
     o = base
     const next = identify(merged, fits, [mine, base])
     // Keys name items only where the data reads one way.
-    if (byEditor && readings.length === 1) {
+    if (byEditor && edited.length === 1) {
       const wrong = keyedWrongly(mine, next, result.keyRemaps)
       if (wrong) return `${at}: ${wrong}`
     }

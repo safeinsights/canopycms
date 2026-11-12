@@ -2228,6 +2228,62 @@ describe('an item edited to read exactly like one deleted, with no git-level mer
   })
 })
 
+describe('twins in a nested list, after a git-level merge that also edited their parent', () => {
+  const page: FieldConfig[] = [
+    ...text('title'),
+    {
+      name: 'sections',
+      type: 'object',
+      list: true,
+      fields: [
+        ...text('name'),
+        { name: 'cards', type: 'object', list: true, fields: text('h', 't') },
+      ],
+    },
+  ]
+  const [C, R, O, P] = [
+    { h: 'Card', t: 'same' },
+    { h: 'Card', t: 'reworded' },
+    { h: 'O', t: 'o' },
+    { h: 'P', t: 'p' },
+  ]
+  type Page = { title: string; sections: Array<{ name: string; cards: Data[] }> }
+  const first = entryAsRead(page, {
+    title: 't',
+    sections: [
+      { name: 's1', cards: [R, O] },
+      { name: 's2', cards: [C, C, P] },
+    ],
+  }) as Page
+  // The base reworded s2's first twin and renamed s1, by hand; a git-level merge brought both in.
+  const ancestor = {
+    title: 't',
+    sections: [
+      { name: 's1!', cards: [R, O] },
+      { name: 's2', cards: [R, C, P] },
+    ],
+  }
+  const branch = structuredClone(first)
+  branch.sections[0].name = 's1!'
+  branch.sections[1].cards[0].t = 'reworded'
+
+  it('the base deletes the reworded twin: it stays deleted', () => {
+    const base = structuredClone(ancestor)
+    base.sections[1].cards.splice(0, 1)
+    const result = mergeEntry({
+      format: 'json',
+      ancestor: { data: ancestor },
+      base: { data: base },
+      branch: { data: branch },
+      fields: page,
+    })
+    if (result.kind !== 'merged') throw new Error('expected a merge')
+    expect(result.conflicts).toEqual([])
+    const sections = result.data.sections as Array<{ cards: Data[] }>
+    expect(sections[1].cards.map((c) => c.t)).toEqual(['same', 'p'])
+  })
+})
+
 describe('twins reworded alike, beside a third in another list', () => {
   const lists: FieldConfig[] = [
     { name: 'items', type: 'object', list: true, fields: text('heading', 'text', 'link') },

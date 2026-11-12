@@ -720,16 +720,18 @@ export function mergeEntry({
     }
   }
   const ancestorKeys = new Set<string>()
+  // A list by its field path: an edited parent reads under another key, the same list still.
+  const field = (list: string) => list.replace(/\[[^\]]*\]/g, '[]')
   const listKeys = new Map<string, Set<string>>()
   visitItems(ancestor.data, (_item, key, list) => {
     ancestorKeys.add(key)
-    listKeys.set(list, (listKeys.get(list) ?? new Set()).add(key))
+    listKeys.set(field(list), (listKeys.get(field(list)) ?? new Set()).add(key))
   })
   const movedIn = (data: unknown) => {
     const keys = new Set<string>()
     visitItems(data, (item, _key, list) => {
       const own = usableKey(item)
-      if (own !== undefined && !listKeys.get(list)?.has(own)) keys.add(own)
+      if (own !== undefined && !listKeys.get(field(list))?.has(own)) keys.add(own)
     })
     return keys
   }
