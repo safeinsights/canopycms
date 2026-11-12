@@ -30,7 +30,6 @@ import type { DataPathSegment } from '../editor/entry-diff'
 import type { FieldConflictKind, SidePaths } from '../merge/entry-merge'
 import { keyOfDataPath } from '../merge/conflict-path'
 import {
-  LOCATION_CONFLICT_KEY,
   MergeConflictStore,
   MergeConflictsFileMalformedError,
   MergeConflictsFileNewerError,
@@ -515,8 +514,10 @@ const entryHandler = async (
     return { ok: false, status: 503, error: RECORD_UNREADABLE_ERROR }
   }
   const { versions, fields: schemaFields } = read
+  // A key the merge named under the schema is the drawer's already; one named without it, which
+  // stops at the first field (`?name`), is named again here, where no list item is on the way.
   const drawerKeyOf = (field: NonNullable<MergeConflictEntry['fields']>[number]): string => {
-    if (!schemaFields || field.key === LOCATION_CONFLICT_KEY) return field.key
+    if (!schemaFields || !field.key.includes('?')) return field.key
     const side = [field.sides.branch, field.sides.base, field.sides.ancestor]
       .map((sha) => (sha ? versions[sha] : undefined))
       .find((v): v is EntryChangeSide => v !== undefined && !('unavailable' in v))

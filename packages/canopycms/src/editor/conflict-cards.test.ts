@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
+import type { EntryChangeSide } from '../api/branch-entry-changes'
+import type { EntryConflictData } from '../api/merge-conflicts'
+import type { FieldConfig } from '../config'
+import { itemKeysAsRead } from '../item-keys'
+import { mergeEntry } from '../merge/entry-merge'
+import { entryAsRead } from '../utils/calendar-day'
+import { withLatest } from './conflict-choices'
 import { buildEntryConflicts, type ConflictCard } from './conflict-cards'
 import {
   ANCESTOR_SHA,
@@ -7,6 +14,7 @@ import {
   conflictFields,
   fieldsConflictData,
   savedValue,
+  keylessConflictData,
 } from './components/__test__/conflict-fixtures'
 
 const build = (...only: Parameters<typeof fieldsConflictData>[0][]) =>
@@ -197,5 +205,137 @@ describe('buildEntryConflicts', () => {
       ).fields[0].cards,
     )
     expect(same).toMatchObject({ yours: { kind: 'text', text: 'A guide to your first edit.' } })
+  })
+
+  it('shows each version at its own place, for an item the latest version keyed apart', () => {
+    const { fields, incomplete } = buildEntryConflicts(
+      keylessConflictData(),
+      conflictFields,
+      'body',
+    )
+    expect(incomplete).toBe(false)
+    expect(fields[0].latestPlaceable).toBe(true)
+    expect(fields[0].cards[0]).toMatchObject({
+      type: 'value',
+      before: { kind: 'text', text: 'Configure' },
+      latest: { kind: 'text', text: 'Configure the editor' },
+      yours: { kind: 'text', text: 'Configure the site' },
+    })
+    expect(fields[0].cards[0]).not.toHaveProperty('latestUnavailable')
+  })
+
+  it("shows a version it can't key as the merge named it as one it can't show", () => {
+    // Another item of the latest version already holds the merged key, so the merged path would
+    // find that one.
+    const data = keylessConflictData()
+    const latestVersion = data.versions[BASE_SHA] as EntryChangeSide
+    data.versions[BASE_SHA] = {
+      ...latestVersion,
+      data: {
+        ...latestVersion.data,
+        steps: [
+          { _key: 'k2', text: 'Another item' },
+          { _key: 'kLatest', text: 'Configure the editor' },
+        ],
+      },
+    }
+    const { fields, incomplete } = buildEntryConflicts(data, conflictFields, 'body')
+    expect(incomplete).toBe(true)
+    expect(fields[0].latestPlaceable).toBe(false)
+    expect(fields[0].cards[0]).toMatchObject({ latestUnavailable: true })
+    expect(JSON.stringify(fields[0].cards[0])).not.toContain('Another item')
+  })
+
+  it('lets the latest version take out a nested item, inside an item it keyed apart', () => {
+    // The base removed a row and reworded the outer item, in lists it left keyless; you edited the
+    // row. The merge's own output, as the API serves it.
+    const schema: FieldConfig[] = [
+      {
+        name: 'items',
+        type: 'object',
+        list: true,
+        fields: [
+          { name: 'name', type: 'string' },
+          { name: 'n2', type: 'string' },
+          {
+            name: 'rows',
+            type: 'object',
+            list: true,
+            fields: [
+              { name: 't', type: 'string' },
+              { name: 'u', type: 'string' },
+            ],
+          },
+        ],
+      },
+    ]
+    const [r1, r2] = [
+      { t: 't', u: 'u' },
+      { t: 'x', u: 'y' },
+    ]
+    const [k1, k2] = itemKeysAsRead([r1, r2])
+    const outer = { name: 'n', n2: 'm', rows: [r1, r2] }
+    const outerKey = itemKeysAsRead([outer])[0]
+    const versions = {
+      ancestor: { items: [outer] },
+      base: { items: [{ name: 'nA', n2: 'm', rows: [r2] }] },
+      branch: {
+        items: [
+          {
+            _key: outerKey,
+            name: 'n',
+            n2: 'm',
+            rows: [
+              { _key: k1, t: 'tB', u: 'u' },
+              { _key: k2, ...r2 },
+            ],
+          },
+        ],
+      },
+    }
+    const merged = mergeEntry({
+      format: 'json',
+      ancestor: { data: versions.ancestor },
+      base: { data: versions.base },
+      branch: { data: versions.branch },
+      fields: schema,
+    })
+    if (merged.kind !== 'merged') throw new Error('expected a merge')
+    const shas = { ancestor: 'a'.repeat(40), base: 'b'.repeat(40), branch: 'c'.repeat(40) }
+    const asServed = (data: Record<string, unknown>) => ({
+      format: 'json' as const,
+      entryType: 'page',
+      data: entryAsRead(schema, data),
+    })
+    const data: EntryConflictData = {
+      contentId: 'pg0000000001',
+      kind: 'fields',
+      path: 'content/pages/page.home.pg0000000001.json',
+      logicalPath: 'content/pages/home',
+      mergeSha: 'd'.repeat(40),
+      sides: shas,
+      fields: merged.conflicts.map((c) => ({
+        key: c.key,
+        drawerKey: c.key,
+        dataPath: c.dataPath,
+        sidePaths: c.sidePaths,
+        kind: c.kind,
+        ...(c.item && { item: true as const }),
+        mergeSha: 'd'.repeat(40),
+        sides: shas,
+      })),
+      versions: {
+        [shas.ancestor]: asServed(versions.ancestor),
+        [shas.base]: asServed(versions.base),
+        [shas.branch]: asServed(versions.branch),
+      },
+    }
+    const saved = entryAsRead(schema, versions.branch)
+    const built = buildEntryConflicts(data, schema, undefined, undefined, saved)
+    const removed = built.fields.find((f) => f.key === `items.${outerKey}.rows.${k1}`)
+    expect(removed?.latestPlaceable).toBe(true)
+    const placed = withLatest(saved, removed!, undefined)
+    const rows = (placed?.items as Array<{ rows: Array<{ _key: string }> }>)[0].rows
+    expect(rows.map((r) => r._key)).toEqual([k2])
   })
 })

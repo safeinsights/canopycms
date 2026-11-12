@@ -493,6 +493,22 @@ describe('GET /:branch/conflicts/...entryPath', () => {
     expect(data.fields[0]).toMatchObject({ key: '?title', drawerKey: 'title' })
   })
 
+  it('keeps a key the merge named under the schema, whatever key a version gives the item', async () => {
+    // The branch's version holds the block keyless, so its read keys it by content.
+    const keyless = post('Hello you', 'Welcome friends')
+    const branch = await blob(
+      json({ ...keyless, sections: keyless.sections.map(({ _key: _k, ...item }) => item) }),
+    )
+    const entry = helloRecord()
+    entry.fields = [entry.fields![1]].map((f) => ({ ...f, sides: { ...f.sides, branch } }))
+    await recordAs({ [ID.hello]: entry })
+    const data = (await entryConflict(createCtx(), 'blog/hello')).data!
+    expect(data.fields[0]).toMatchObject({
+      key: 'sections.hero1.heading',
+      drawerKey: 'sections.hero1.heading',
+    })
+  })
+
   it('keeps an item conflict’s key and kind, and the location pseudo-key (rows 13, 14)', async () => {
     const entry = helloRecord()
     entry.fields = [

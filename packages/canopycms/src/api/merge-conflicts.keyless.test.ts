@@ -1,6 +1,6 @@
 /**
  * A conflict inside a list the base left keyless, end to end: real repositories, the worker's own
- * merge (`buildMergeCommit`), the record as the worker writes it, `GET /:branch/conflicts/...`, and
+ * merge (`planMerge`), the record as the worker writes it, `GET /:branch/conflicts/...`, and
  * the editor's cards and "Use latest version". The base's read keys the item it edited by that
  * item's new content, so only each version's own path (`sidePaths`) finds the latest value there.
  */
@@ -24,7 +24,7 @@ import { MergeConflictStore, withFoundConflicts } from '../merge-conflicts'
 import { unsafeAsBranchName, unsafeAsLogicalPath } from '../paths/test-utils'
 import { createMockApiContext, createMockBranchContext, initTestRepo } from '../test-utils'
 import { entryAsRead } from '../utils/calendar-day'
-import { buildMergeCommit } from '../worker/branch-merge'
+import { planMerge } from '../worker/branch-merge'
 import { MERGE_CONFLICT_ROUTES } from './merge-conflicts'
 
 const fields: FieldConfig[] = [
@@ -124,16 +124,29 @@ describe('a conflict in a list the base left keyless', () => {
   it('shows the latest version’s value and places it with "Use latest version"', async () => {
     const head = (await git.raw(['rev-parse', 'feature'])).trim()
     const other = (await git.raw(['rev-parse', 'main'])).trim()
-    const built = await buildMergeCommit(git, clonePath, {
+    const plan = await planMerge(git, clonePath, {
       head,
       other,
-      message: 'merge',
       contentRoot: 'content',
       timeoutMs: 30_000,
     })
-    if (built.kind !== 'built') throw new Error(`expected a merge, got ${built.kind}`)
+    if (plan.kind !== 'planned') throw new Error(`expected a merge, got ${plan.kind}`)
+    // The merge commit, as the worker makes it from the plan: `head` first, then the base.
+    const mergeSha = (
+      await git.raw([
+        'commit-tree',
+        '-p',
+        head,
+        '-p',
+        other,
+        '-m',
+        'merge',
+        '--end-of-options',
+        plan.tree,
+      ])
+    ).trim()
     await new MergeConflictStore(clonePath, 0).update(() => ({
-      entries: withFoundConflicts({}, built.conflicts, built.sha),
+      entries: withFoundConflicts({}, plan.conflicts, mergeSha),
     }))
 
     const res = await MERGE_CONFLICT_ROUTES.entry.handler(
@@ -156,8 +169,8 @@ describe('a conflict in a list the base left keyless', () => {
     expect(field.sidePaths.base).not.toEqual(field.dataPath)
 
     const saved = entryAsRead(fields, branchData)
-    const { fields: built2 } = buildEntryConflicts(data, fields, undefined, undefined, saved)
-    const conflict = built2[0]
+    const { fields: cards } = buildEntryConflicts(data, fields, undefined, undefined, saved)
+    const conflict = cards[0]
     expect(conflict.latestPlaceable).toBe(true)
     expect(conflict.cards[0]).toMatchObject({
       type: 'value',

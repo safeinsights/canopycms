@@ -115,6 +115,8 @@ interface Places {
 type RawConflict = Omit<FieldConflict, 'key' | 'dataPath' | 'sidePaths'> & {
   at: RawSegment[]
   places: Places
+  /** Each step's places, as `trail` holds each step's versions. */
+  placeTrail?: Places[]
   /** Each step's versions, so a conflict can be lifted to an enclosing value. */
   trail?: Versions[]
 }
@@ -122,6 +124,8 @@ type RawConflict = Omit<FieldConflict, 'key' | 'dataPath' | 'sidePaths'> & {
 interface At {
   segments: RawSegment[]
   places: Places
+  /** `places` after each step of `segments`: a side keeps its place up to an item it lacks. */
+  placeTrail: Places[]
   /** The versions of the value at each step of `segments`. */
   trail: Versions[]
   /** The branch's keys of the list items enclosing this place, outermost first. */
@@ -134,6 +138,7 @@ interface At {
 interface TextMerge {
   at: RawSegment[]
   places: Places
+  placeTrail: Places[]
   versions: { o: unknown; a: string; b: string }
   conflict?: RawConflict
 }
@@ -149,6 +154,7 @@ interface Walk {
 const ROOT: At = {
   segments: [],
   places: { o: [], a: [], b: [] },
+  placeTrail: [],
   trail: [],
   branchKeys: [],
   item: false,
@@ -164,13 +170,17 @@ const placesOn = (places: Places, step: (side: keyof Places) => RawSegment | und
   return { o: on('o'), a: on('a'), b: on('b') }
 }
 
-const child = (at: At, segment: RawSegment, versions: Versions): At => ({
-  segments: [...at.segments, segment],
-  places: placesOn(at.places, () => segment),
-  trail: [...at.trail, versions],
-  branchKeys: at.branchKeys,
-  item: false,
-})
+const child = (at: At, segment: RawSegment, versions: Versions): At => {
+  const places = placesOn(at.places, () => segment)
+  return {
+    segments: [...at.segments, segment],
+    places,
+    placeTrail: [...at.placeTrail, places],
+    trail: [...at.trail, versions],
+    branchKeys: at.branchKeys,
+    item: false,
+  }
+}
 
 /** `record`'s own member `name`: never one it inherits, and `__proto__` as a member. */
 const member = (record: Record<string, unknown>, name: string): unknown =>
@@ -221,6 +231,7 @@ function conflict(o: unknown, a: unknown, b: unknown, at: At, walk: Walk): void 
   walk.conflicts.push({
     at: at.segments,
     places: at.places,
+    placeTrail: at.placeTrail,
     trail: at.trail,
     kind: kindOf(a, b),
     ...(at.item && { item: true as const }),
@@ -264,11 +275,17 @@ function mergeLeaf(o: unknown, a: unknown, b: unknown, at: At, walk: Walk): unkn
   ) {
     const merged = mergeText(typeof o === 'string' ? o : '', a, b)
     if (merged) {
-      const text: TextMerge = { at: at.segments, places: at.places, versions: { o, a, b } }
+      const text: TextMerge = {
+        at: at.segments,
+        places: at.places,
+        placeTrail: at.placeTrail,
+        versions: { o, a, b },
+      }
       if (merged.regions.length > 0) {
         text.conflict = {
           at: at.segments,
           places: at.places,
+          placeTrail: at.placeTrail,
           trail: at.trail,
           kind: 'changed',
           ...versions(o, a, b),
@@ -429,12 +446,14 @@ function mergeList(
       jb === undefined ? undefined : b[jb],
     ]
     const itemVersions = { o: oi, a: ai, b: bi }
+    const itemPlaces = placesOn(at.places, (side) => {
+      const index = { o: i, a: ja, b: jb }[side]
+      return index === undefined ? undefined : { index }
+    })
     const itemAt: At = {
       segments: [...at.segments, { index: out.length }],
-      places: placesOn(at.places, (side) => {
-        const index = { o: i, a: ja, b: jb }[side]
-        return index === undefined ? undefined : { index }
-      }),
+      places: itemPlaces,
+      placeTrail: [...at.placeTrail, itemPlaces],
       trail: [...at.trail, itemVersions],
       branchKeys: [...at.branchKeys, (jb !== undefined && bReadKeys[jb]) || id],
       item: true,
@@ -748,28 +767,37 @@ function named(
   const asRead = (side: unknown) =>
     fields && isPlainRecord(side) ? entryAsRead(fields, side) : side
   const reads = { o: asRead(sides.o), a: asRead(sides.a), b: asRead(sides.b) }
-  for (const { at, places, trail, ...rest } of conflicts) {
+  for (const { at, places, placeTrail, trail, ...rest } of conflicts) {
     const { key, dataPath, depth } = describePath(fields, read, at)
     if (seen.has(key)) continue
     seen.add(key)
-    // Each version's own path to where its value below was taken: its place, cut where the name
-    // stops when the merge's trail gave the whole value, the merged path when the whole value was
-    // found by member names alone, and none otherwise. A side naming it at another depth offers none.
+    // Each version's own path to where its value below was taken: its place, or its place at the
+    // step the name stops at when the merge's trail gave the whole value, or the merged path when
+    // the whole value was found by member names alone. A version without the item a conflict names
+    // is named through the list it holds, so the item's absence is found there. A side naming the
+    // place at another depth offers none.
     const prefix = at.slice(0, depth)
     const byName = prefix.every((segment) => 'field' in segment)
     const placeOf = (side: keyof Places): RawSegment[] | undefined =>
       depth === at.length
         ? places[side]
         : trail?.[depth - 1]
-          ? places[side]?.slice(0, depth)
+          ? placeTrail?.[depth - 1]?.[side]
           : byName
             ? prefix
             : undefined
-    const sidePath = (side: keyof Places): DataPathSegment[] | undefined => {
-      const place = placeOf(side)
-      if (!place) return undefined
+    const describe = (side: keyof Places, place: RawSegment[]) => {
       const named = describePath(fields, reads[side], place)
       return named.depth === place.length ? named.dataPath : undefined
+    }
+    const sidePath = (side: keyof Places): DataPathSegment[] | undefined => {
+      const place = placeOf(side)
+      if (place) return describe(side, place)
+      const list =
+        depth === at.length && rest.item ? placeTrail?.[at.length - 2]?.[side] : undefined
+      const holder = list && describe(side, list)
+      const missing = dataPath.at(-1)
+      return holder && missing && 'item' in missing ? [...holder, missing] : undefined
     }
     const [ancestor, base, branch] = [sidePath('o'), sidePath('a'), sidePath('b')]
     const sidePaths: SidePaths = {
@@ -838,6 +866,7 @@ function undoUnparseableMdx(
     const whole: RawConflict = {
       at: text.at,
       places: text.places,
+      placeTrail: text.placeTrail,
       trail: text.conflict?.trail,
       kind: 'changed',
       ...versions(o, a, b),

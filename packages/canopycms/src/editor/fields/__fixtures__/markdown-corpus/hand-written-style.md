@@ -4,22 +4,20 @@ title: Written by hand
 order: 2
 ---
 
-Overview
-========
+# Overview
 
-Some *emphasis*, some __strong__ text, and a line that the author
+Some _emphasis_, some **strong** text, and a line that the author
 wrapped by hand before the end of the sentence.
 
-* A star bullet
-* Another one
-    * Nested four spaces in
+- A star bullet
+- Another one
+  - Nested four spaces in
 
-1) A parenthesis list
-2) Second
+1. A parenthesis list
+2. Second
 
-***
+---
 
-Section
--------
+## Section
 
 An [inline link](https://example.com/reference) and a closing line.

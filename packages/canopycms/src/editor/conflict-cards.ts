@@ -124,33 +124,37 @@ const versionOf = (
  * `version` with its list items along `from`, its own path to a conflict's place, keyed as `to`,
  * the merged path, names them, so `to` finds the value in it: an item of a list a side left keyless
  * reads there with a key of its own content (api/merge-conflicts.ts `EntryConflictField.sidePaths`).
- * Unchanged where there is no `from`, where the two paths don't run alike, or where a key `to` names
- * is another item's in that list.
+ * Unchanged where there is no `from` or it is `to`. Undefined, as a version that can't be shown,
+ * where the two paths don't run alike or a key `to` names is another item's in that list: the
+ * merged path would find that item there.
  */
 const alignedTo = (
   version: ConflictVersion | undefined,
   from: readonly DataPathSegment[] | undefined,
   to: readonly DataPathSegment[],
 ): ConflictVersion | undefined => {
-  if (!version || !from || equal(from, to) || from.length !== to.length) return version
+  if (!version || !from || equal(from, to)) return version
+  if (from.length !== to.length) return undefined
   const data = structuredClone(version.data)
   let node: unknown = data
   for (const [i, segment] of from.entries()) {
     const target = to[i]
     if ('field' in segment) {
-      if (!('field' in target) || target.field !== segment.field) return version
+      if (!('field' in target) || target.field !== segment.field) return undefined
       node = isPlainRecord(node) ? node[segment.field] : undefined
     } else if ('blockData' in segment) {
-      if (!('blockData' in target)) return version
+      if (!('blockData' in target)) return undefined
       node = isPlainRecord(node) ? (isPlainRecord(node.value) ? node.value : node) : undefined
     } else {
-      if (!('item' in target) || !Array.isArray(node)) return version
+      if (!('item' in target) || !Array.isArray(node)) return undefined
       const keyed = (key: string) =>
         (node as unknown[]).find((x) => isPlainRecord(x) && x[ITEM_KEY] === key)
       const item = keyed(segment.item)
-      if (!isPlainRecord(item)) return version
+      // An item the version lacks ends its path: the record names it there to say it is gone.
+      if (item === undefined && i === from.length - 1 && target.item === segment.item) break
+      if (!isPlainRecord(item)) return undefined
       if (target.item !== segment.item) {
-        if (keyed(target.item) !== undefined) return version
+        if (keyed(target.item) !== undefined) return undefined
         item[ITEM_KEY] = target.item
       }
       node = item
@@ -250,6 +254,7 @@ export function buildEntryConflicts(
       yours: alignedTo(read.yours, field.sidePaths.branch, field.dataPath),
     }
     const realigned = (['before', 'latest', 'yours'] as const).some((v) => versions[v] !== read[v])
+    if (Object.values(versions).some((v) => v === undefined)) incomplete = true
     const latest = versions.latest ? formValueOfSide(versions.latest) : undefined
     const latestPlaceable =
       !!latest &&

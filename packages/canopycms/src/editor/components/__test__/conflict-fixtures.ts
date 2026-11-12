@@ -188,6 +188,42 @@ export function fieldsConflictData(
   }
 }
 
+/**
+ * A field of a list item the latest version holds under another key, as in a list it left keyless,
+ * where a read keys an item by its content: the record names where each version holds it.
+ */
+export function keylessConflictData(): EntryConflictData {
+  const data = fieldsConflictData([])
+  const dataPath: EntryConflictField['dataPath'] = [
+    { field: 'steps' },
+    { item: 'k2' },
+    { field: 'text' },
+  ]
+  const keyedApart = side(
+    {
+      ...latest.data,
+      steps: [
+        { _key: 'k1', text: 'Install' },
+        { _key: 'kLatest', text: 'Configure the editor' },
+      ],
+    },
+    baseBody,
+  )
+  return {
+    ...data,
+    fields: [
+      field('steps.k2.text', dataPath, 'changed', {
+        sidePaths: {
+          ancestor: dataPath,
+          base: [{ field: 'steps' }, { item: 'kLatest' }, { field: 'text' }],
+          branch: dataPath,
+        },
+      }),
+    ],
+    versions: { ...data.versions, [BASE_SHA]: keyedApart },
+  }
+}
+
 /** An entry-level conflict of `kind`. */
 export function entryConflictData(
   kind: Exclude<EntryConflictData['kind'], 'fields'>,
