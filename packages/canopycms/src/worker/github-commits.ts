@@ -140,7 +140,7 @@ export function rewriteCleared(branch: BranchMetadata): Partial<BranchMetadata> 
 }
 
 /** A branch this deployment put on GitHub. Any other GitHub branch of that name is not its own. */
-function isPublished({ branch }: BranchMetadataFile): boolean {
+export function isPublished({ branch }: BranchMetadataFile): boolean {
   return branch.pushedToGitHubAt !== undefined || branch.pullRequestNumber !== undefined
 }
 
@@ -837,7 +837,9 @@ async function followRecord(
   const same = (ids: readonly string[] | undefined) =>
     JSON.stringify([...(ids ?? [])].sort()) === JSON.stringify(conflictFiles)
   // Read first: the locked update costs every branch a lock each cycle, and nearly all agree.
-  if (same((await BranchMetadataFileManager.loadOnly(branchPath))?.branch.conflictFiles)) return
+  const read = (await BranchMetadataFileManager.loadOnly(branchPath))?.branch
+  if (read === undefined || (branchRef !== null && read.name !== branchRef)) return
+  if (same(read.conflictFiles)) return
   const saved = await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update(
     (existing) =>
       existing !== null &&

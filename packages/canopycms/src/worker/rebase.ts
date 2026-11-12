@@ -45,6 +45,7 @@ import {
   bringInGitHubCommits,
   catchUpWithPublished,
   contains,
+  isPublished,
   mergeIntoBranch,
   reconcileMergeConflicts,
   returnToReview,
@@ -1538,12 +1539,18 @@ async function rebaseOneBranch(
         (await countAboveBase(['--merges', '--end-of-options', aboveBase])) !== '0' ||
         (await countAboveBase(['--end-of-options', aboveBase, '--', CANOPY_META_DIR])) !== '0'
       const head = (await branchGit.revparse(['HEAD'])).trim()
-      // Commits on top of what `remote.git` published, as "Get latest changes" makes from saved work
-      // on a branch already submitted once: a rebase would rewrite the published commit under them,
-      // which reads as a push this clone never saw. A merge publishes them as a fast-forward.
+      // Commits on top of what this branch published, as "Get latest changes" makes from saved work
+      // on a branch submitted once, or a submit whose push failed: a rebase would rewrite the
+      // published commit under them, which reads as a push this clone never saw. A merge publishes
+      // them as a fast-forward. A same-named ref at a commit the base holds is no work of this branch.
       const published = canPublish ? await readPublishedSha(ctx, branchRef) : null
       const aheadOfPublished =
-        published !== null && published !== head && (await contains(branchGit, head, published))
+        published !== null &&
+        published !== head &&
+        metaFile?.branch.name === branchRef &&
+        isPublished(metaFile) &&
+        (await contains(branchGit, head, published)) &&
+        !(await contains(branchGit, fetchedBaseTip, published))
       /**
        * The base taken in by a merge (github-commits.ts), which decides each value against the fork
        * point and leaves what both sides changed differently for a person, rather than a rebase,

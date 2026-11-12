@@ -814,12 +814,65 @@ describe('a branch published before, with saved work committed to get the latest
     expect(await s.remoteSha(`refs/heads/${BRANCH}`)).toBe(await s.head())
     expect(await queued(s, 'push-branch')).toEqual([BRANCH])
 
+    // GitHub still at the old tip, the push on its way: nothing comes back in.
+    const merged = await s.head()
+    expect((await cycle(s)).rebased).toEqual([])
+    expect(await s.head()).toBe(merged)
+
     await s.push()
 
     const subjects = await s.log('HEAD')
     expect(subjects.filter((subject) => subject === 'editor work')).toHaveLength(1)
     expect(subjects.filter((subject) => subject.startsWith('Save changes'))).toHaveLength(1)
     expect((await cycle(s)).rebased).toEqual([])
+  })
+})
+
+describe("a same-named ref in remote.git that is no work of the branch's", () => {
+  let tmpDir: string
+  let s: Setup
+
+  beforeEach(async () => {
+    mockConsole()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-foreign-ref-'))
+    s = await createSetup(tmpDir)
+    await s.commit({ 'editor.txt': 'v1\n' })
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  const pointRef = (sha: string | null) =>
+    simpleGit().raw(['--git-dir', s.remoteGit, 'update-ref', `refs/heads/${BRANCH}`, sha ?? ''])
+  const expectUntouched = async (ref: string | null) => {
+    expect(await s.remoteSha(`refs/heads/${BRANCH}`)).toBe(ref)
+    expect(await queued(s, 'push-branch')).toEqual([])
+    const parents = (await s.clone.raw(['rev-list', '--parents', '-n1', 'HEAD'])).trim().split(' ')
+    expect(parents).toHaveLength(2)
+  }
+
+  it('never has the clone published on top of a ref it never submitted', async () => {
+    const ref = await s.head()
+    await s.clone.raw(['push', '-q', 'origin', `${ref}:refs/heads/${BRANCH}`])
+    await s.commit({ 'editor.txt': 'v2\n' })
+    await writeMeta(s, { pushedToGitHubAt: undefined })
+    await s.advanceBase({ 'base2.txt': 'moved\n' })
+
+    await cycle(s)
+
+    await expectUntouched(ref)
+  })
+
+  it('never has the clone published on top of a ref at a commit the base holds', async () => {
+    const ref = await s.remoteSha(`refs/heads/${BASE}`)
+    await pointRef(ref)
+    await writeMeta(s)
+    await s.advanceBase({ 'base2.txt': 'moved\n' })
+
+    await cycle(s)
+
+    await expectUntouched(ref)
   })
 })
 

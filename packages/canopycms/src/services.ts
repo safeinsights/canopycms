@@ -214,8 +214,9 @@ export interface CanopyServices {
   }) => Promise<void>
   /**
    * Commit the branch's saved but uncommitted work in its clone, pushing nothing. A later submit
-   * pushes it, or, on a branch published before, the worker's merge of the base publishes it with
-   * the merge. Its trailers name the editors who saved since the last commit.
+   * pushes it, or, on a branch published before, the worker's merge of the base once it moves
+   * (worker/rebase.ts, `aheadOfPublished`). Its trailers name the editors who saved since the last
+   * commit.
    * Holds the branch's content-write lock; rejects with `ContentWriteLockBusyError` when busy.
    * Resolves whether there was anything to commit.
    */
