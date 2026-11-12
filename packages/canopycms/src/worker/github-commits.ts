@@ -612,7 +612,7 @@ async function holdsCommit(git: SimpleGit, sha: string): Promise<boolean> {
  * failure throws, since it says nothing about either commit, and the caller's catch retries next
  * cycle: read as no, it would report a rewrite that never happened.
  */
-async function contains(git: SimpleGit, commit: string, ancestor: string): Promise<boolean> {
+export async function contains(git: SimpleGit, commit: string, ancestor: string): Promise<boolean> {
   if (!(await holdsCommit(git, commit)) || !(await holdsCommit(git, ancestor))) return false
   return (await commitsApart(git, ancestor, commit)).onlyA === 0
 }
@@ -825,6 +825,31 @@ async function applyRemaps(
   )
 }
 
+/** `branch.json` `conflictFiles` as `entries` has them, written only when the two differ. */
+async function followRecord(
+  ctx: GitHubCommitsContext,
+  branchPath: string,
+  branchDir: string,
+  branchRef: string | null,
+  entries: Readonly<Record<string, MergeConflictEntry>>,
+): Promise<void> {
+  const { conflictFiles, conflictStatus } = conflictFilesOf(entries)
+  const same = (ids: readonly string[] | undefined) =>
+    JSON.stringify([...(ids ?? [])].sort()) === JSON.stringify(conflictFiles)
+  // Read first: the locked update costs every branch a lock each cycle, and nearly all agree.
+  if (same((await BranchMetadataFileManager.loadOnly(branchPath))?.branch.conflictFiles)) return
+  const saved = await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update(
+    (existing) =>
+      existing !== null &&
+      (branchRef === null || existing.branch.name === branchRef) &&
+      !same(existing.branch.conflictFiles)
+        ? { branch: { conflictFiles, conflictStatus } }
+        : null,
+    { keepUpdatedAt: true },
+  )
+  if (saved) workerLog(`  ${branchDir}: ${conflictFiles.length} entries with conflicts on record`)
+}
+
 /**
  * Bring merge-conflicts.json in line with the branch's history: a record changed by a merge the
  * branch never got gives back the one it replaced (`withoutMergesGone`), and `branch.json`
@@ -833,7 +858,7 @@ async function applyRemaps(
  * threads take a merge's item keys only once the clone holds it. While either can't be read in the
  * clone, nothing is judged. A record that does not parse is moved aside, so the branch's merges
  * carry on with a new one. Each cycle, before the branch takes anything in. A clone with no record
- * keeps whatever `conflictFiles` it has. Never throws.
+ * has no conflict open, so `conflictFiles` written before the record existed clears. Never throws.
  */
 export async function reconcileMergeConflicts(
   ctx: GitHubCommitsContext,
@@ -855,7 +880,10 @@ export async function reconcileMergeConflicts(
       workerLogWarn(`  ${branchDir}: its conflict record does not parse; moved it to ${aside}`)
       current = null
     }
-    if (current === null) return
+    if (current === null) {
+      await followRecord(ctx, branchPath, branchDir, branchRef, {})
+      return
+    }
     const published = branchRef === null ? null : await readPublishedSha(ctx, branchRef)
     if (published !== null && !(await holdsCommit(git, published))) {
       await fetchFromRemoteGit(git, ctx.remoteGitPath, `refs/heads/${branchRef}`)
@@ -879,19 +907,7 @@ export async function reconcileMergeConflicts(
           return { ...rest, entries: kept, ...(stays && { landing }) }
         })
       )?.entries ?? current.entries
-    const { conflictFiles, conflictStatus } = conflictFilesOf(entries)
-    const same = (ids: readonly string[] | undefined) =>
-      JSON.stringify([...(ids ?? [])].sort()) === JSON.stringify(conflictFiles)
-    const saved = await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update(
-      (existing) =>
-        existing !== null &&
-        (branchRef === null || existing.branch.name === branchRef) &&
-        !same(existing.branch.conflictFiles)
-          ? { branch: { conflictFiles, conflictStatus } }
-          : null,
-      { keepUpdatedAt: true },
-    )
-    if (saved) workerLog(`  ${branchDir}: ${conflictFiles.length} entries with conflicts on record`)
+    await followRecord(ctx, branchPath, branchDir, branchRef, entries)
     await applyRemaps(
       branchPath,
       (sha) => inHead.has(sha),

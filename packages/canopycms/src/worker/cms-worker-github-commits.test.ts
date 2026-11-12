@@ -24,6 +24,7 @@ import { initTestRepo, mockConsole } from '../test-utils'
 import { useLocalGitHubGateway } from '../test-utils/worker-gateway'
 import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import type { BranchMetadata } from '../types'
+import type { ContentId } from '../paths/types'
 import type { BranchPolicyDescription } from './branch-policy'
 import { CmsWorker } from './cms-worker'
 import {
@@ -772,6 +773,83 @@ describe('row 42: a pull request in review that GitHub reports dirty', () => {
       expect(meta?.conflictFiles).toBeUndefined()
       expect((await new MergeConflictStore(s.branchPath).read())?.entries ?? {}).toEqual({})
     }
+  })
+})
+
+describe('a branch published before, with saved work committed to get the latest changes', () => {
+  let tmpDir: string
+  let s: Setup
+
+  beforeEach(async () => {
+    mockConsole()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-latest-after-publish-'))
+    s = await createSetup(tmpDir)
+    // Submitted once, then withdrawn: remote.git and GitHub hold its tip.
+    await s.commit({ 'editor.txt': 'v1\n' })
+    await s.push()
+    await writeMeta(s, { status: 'editing', pullRequestNumber: 7 })
+    await s.advanceBase({ 'base2.txt': 'moved\n' })
+    // What "Get latest changes" commits from the saves since, pushing nothing.
+    await s.commit({ 'editor.txt': 'v2\n' }, 'Save changes before getting the latest')
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('takes the base in by a merge published as a fast-forward, and the next submit pushes', async () => {
+    const published = await s.remoteSha(`refs/heads/${BRANCH}`)
+    const saved = await s.head()
+
+    const summary = await cycle(s)
+
+    expect(summary.rebased).toEqual([BRANCH])
+    expect(summary.failed).toEqual([])
+    expect((await readMeta(s))?.rebaseFailure).toBeUndefined()
+    expect(await s.file('base2.txt')).toBe('moved\n')
+    expect(await s.file('editor.txt')).toBe('v2\n')
+    const parents = (await s.clone.raw(['rev-list', '--parents', '-n1', 'HEAD'])).trim().split(' ')
+    expect(parents[1]).toBe(saved)
+    expect(await contains(s, await s.head(), published ?? '')).toBe(true)
+    expect(await s.remoteSha(`refs/heads/${BRANCH}`)).toBe(await s.head())
+    expect(await queued(s, 'push-branch')).toEqual([BRANCH])
+
+    await s.push()
+
+    const subjects = await s.log('HEAD')
+    expect(subjects.filter((subject) => subject === 'editor work')).toHaveLength(1)
+    expect(subjects.filter((subject) => subject.startsWith('Save changes'))).toHaveLength(1)
+    expect((await cycle(s)).rebased).toEqual([])
+  })
+})
+
+describe('conflict flags written before the conflict record existed, on a branch in review', () => {
+  let tmpDir: string
+  let s: Setup
+  const flagged: Partial<BranchMetadata> = {
+    conflictFiles: [CONFLICTED_ID as ContentId],
+    conflictStatus: 'conflicts-detected',
+  }
+
+  beforeEach(async () => {
+    mockConsole()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-legacy-flags-'))
+    s = await createSetup(tmpDir)
+    await s.commit({ 'editor.txt': 'v1\n' })
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('clear with no record to back them', async () => {
+    await writeMeta(s, { ...flagged, status: 'submitted' })
+
+    await cycle(s)
+
+    const meta = await readMeta(s)
+    expect(meta?.conflictFiles).toEqual([])
+    expect(meta?.conflictStatus).toBe('clean')
   })
 })
 

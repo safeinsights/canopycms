@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { simpleGit, type SimpleGit } from 'simple-git'
 
 import { BranchMetadataFileManager } from '../branch-metadata'
+import { MergeConflictStore } from '../merge-conflicts'
 import { resolveBranchParam } from '../branch-param'
 import { ROOT_COLLECTION_ID } from '../paths/types'
 import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
@@ -406,6 +407,17 @@ describe('CmsWorker rebaseActiveBranches', () => {
 
     it('keeps the conflict record and clears a stale rebaseFailure when the branch is caught up', async () => {
       const setup = await createBranchSetup(tmpDir, 'my-feature')
+      const head = (await setup.branchGit.revparse(['HEAD'])).trim()
+      await new MergeConflictStore(setup.branchPath).update(() => ({
+        entries: {
+          EARLIERabcde: {
+            path: 'content/a.json',
+            mergeSha: head,
+            kind: 'unreadable',
+            sides: { branch: 'b'.repeat(40) },
+          },
+        },
+      }))
       await writeMeta(setup.branchPath, setup.contentBranchesPath, {
         conflictStatus: 'conflicts-detected',
         conflictFiles: ['EARLIERabcde'],
@@ -724,7 +736,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
       expect(meta?.conflictFiles).toEqual([ENTRY_ID])
     })
 
-    it('keeps an earlier conflict through a later clean rebase', async () => {
+    it('clears conflict flags no record backs, written before the record existed', async () => {
       const setup = await createBranchSetup(tmpDir, 'my-feature')
       await setup.commitToBranch({ 'branch-content.txt': 'branch work' })
       await setup.pushToRemote({ 'main-update.txt': 'new from main' })
@@ -737,8 +749,8 @@ describe('CmsWorker rebaseActiveBranches', () => {
 
       expect((await setup.branchGit.status()).behind).toBe(0)
       const meta = await readMeta(setup.branchPath)
-      expect(meta?.conflictStatus).toBe('conflicts-detected')
-      expect(meta?.conflictFiles).toEqual(['EARLIERabcde'])
+      expect(meta?.conflictStatus).toBe('clean')
+      expect(meta?.conflictFiles).toEqual([])
     })
 
     it('excludes non-entry files from conflictFiles (conflictStatus stays clean)', async () => {
