@@ -139,7 +139,12 @@ type EntryCardKind = Exclude<EntryConflictData['kind'], 'fields'> | 'fields-on-d
 /** What an entry-level conflict is, and the choices that settle it, in order. */
 const ENTRY_KINDS: Record<
   EntryCardKind,
-  { heading: string; choices: Array<{ choice: EntryConflictChoice; label: string; danger?: true }> }
+  {
+    heading: string
+    /** What the choices mean, where the heading alone doesn't say. */
+    body?: string
+    choices: Array<{ choice: EntryConflictChoice; label: string; danger?: true }>
+  }
 > = {
   'deleted-on-base': {
     heading: 'This entry was deleted in the latest version, but you changed it',
@@ -158,6 +163,7 @@ const ENTRY_KINDS: Record<
   // Keeping it deleted clears the record: `keep` resolves a `fields` record whole (api/merge-conflicts.ts).
   'fields-on-deleted': {
     heading: 'You deleted this entry, but fields in it were changed by you and by someone else',
+    body: `Keeping it deleted drops these changes. To keep them instead, use "${EDITOR_ACTIONS.restoreEntry}", then choose in its form.`,
     choices: [{ choice: 'keep', label: EDITOR_ACTIONS.keepItDeleted }],
   },
   unreadable: {
@@ -606,7 +612,7 @@ const EntryCard: React.FC<{
 }> = ({ kind, reason, unsavedEdits, onResolve }) => {
   const [working, setWorking] = useState<EntryConflictChoice>()
   const [refusal, setRefusal] = useState<EntryChoiceRefusal & { choice: EntryConflictChoice }>()
-  const { heading, choices } = ENTRY_KINDS[kind]
+  const { heading, body, choices } = ENTRY_KINDS[kind]
   const resolve = async (choice: EntryConflictChoice) => {
     if (!onResolve || working) return
     setWorking(choice)
@@ -635,6 +641,11 @@ const EntryCard: React.FC<{
             {heading}
           </Text>
         </Group>
+        {body && (
+          <Text size="sm" data-testid="conflict-entry-body">
+            {body}
+          </Text>
+        )}
         {onResolve && (
           <Group gap="xs" wrap="wrap" align="center">
             {choices.map(({ choice, label, danger }) => (

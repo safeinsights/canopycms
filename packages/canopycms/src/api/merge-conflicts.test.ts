@@ -756,6 +756,24 @@ describe('POST /:branch/resolve-entry/...entryPath', () => {
     expect(await recorded()).toEqual({})
   })
 
+  it('keeps deleted an entry the branch deleted with field conflicts open, clearing them', async () => {
+    // The editor's "Keep it deleted" card for an entry whose field conflicts outlived it.
+    await recordAs({ [ID.gone]: { ...helloRecord(), path: files.gone } })
+    const read = await entryConflict(createCtx(), 'content/blog/gone', ID.gone)
+    expect(read.ok).toBe(true)
+    expect(read.data?.kind).toBe('fields')
+    const res = await resolveEntry(createCtx(), 'content/blog/gone', {
+      id: ID.gone,
+      mergeSha: MERGE,
+      choice: 'keep',
+    })
+    expect(res.ok).toBe(true)
+    expect(res.data?.openCount).toBe(0)
+    expect(await recorded()).toEqual({})
+    expect(await conflictFiles()).toEqual([])
+    await expect(fs.stat(path.join(branchRoot, files.gone))).rejects.toThrow()
+  })
+
   it('replaces an entry that can’t merge field by field with the latest version (rows 33, 43)', async () => {
     const latest = json({ title: 'Latest', sections: [] })
     const { merge, blobs } = await mergeTaking({ [files.hello]: latest })
