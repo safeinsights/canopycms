@@ -73,14 +73,33 @@ beforeEach(() => {
   mockSyncPrComments.mockResolvedValue(undefined)
 })
 
-import { requestChanges, approveBranch } from './branch-review'
+import { requestChanges, approveBranch, BRANCH_MOVED_ERROR } from './branch-review'
 import { RESERVED_GROUPS } from '../authorization'
 import { CommentStore } from '../comment-store'
 import { mockConsole, createMockApiContext, createMockBranchContext } from '../test-utils'
 
-// Extract handlers for testing
-const requestChangesHandler = requestChanges.handler
-const approveBranchHandler = approveBranch.handler
+/** The clone's head in these tests, which a request names unless a test says otherwise. */
+const HEAD = 'a'.repeat(40)
+const OTHER_HEAD = 'b'.repeat(40)
+const cloneHead = { sha: HEAD }
+beforeEach(() => {
+  cloneHead.sha = HEAD
+})
+
+type Args = Parameters<typeof approveBranch.handler>
+// Each request names the clone's head unless its test passes another body.
+const requestChangesHandler = (
+  ctx: Args[0],
+  req: Args[1],
+  params: Args[2],
+  body?: Parameters<typeof requestChanges.handler>[3],
+) => requestChanges.handler(ctx, req, params, { headSha: HEAD, ...body })
+const approveBranchHandler = (
+  ctx: Args[0],
+  req: Args[1],
+  params: Args[2],
+  body: Args[3] = { headSha: HEAD },
+) => approveBranch.handler(ctx, req, params, body)
 
 // The creator is not one of the test reviewers, because the creator cannot approve.
 const baseContext = createMockBranchContext({
@@ -95,10 +114,14 @@ const admin = {
   user: { type: 'authenticated' as const, userId: 'rev1', groups: [RESERVED_GROUPS.ADMINS] },
 }
 
+const mockHeadSha = vi.fn(async () => cloneHead.sha)
 const makeCtx = (githubService?: any) =>
   createMockApiContext({
     branchContext: baseContext,
-    services: githubService ? { githubService } : undefined,
+    services: {
+      ...(githubService && { githubService }),
+      createGitManagerFor: vi.fn(() => ({ headSha: mockHeadSha })) as never,
+    },
   })
 
 describe('branch review api - requestChanges', () => {
@@ -303,6 +326,7 @@ describe('branch review api - requestChanges', () => {
         state: 'changes-requested',
         by: { userId: 'rev1', name: 'Rae bViewer/b' },
         at: expect.stringMatching(/^\d{4}-\d\d-\d\dT[\d:.]+Z$/),
+        commit: HEAD,
       },
     })
     expect(JSON.stringify(res.data?.branch)).not.toContain('rev1')
@@ -328,6 +352,7 @@ describe('branch review api - requestChanges', () => {
       state: 'changes-requested',
       by: { userId: 'rev2' },
       at: expect.any(String),
+      commit: HEAD,
     })
   })
 
@@ -670,6 +695,7 @@ describe('branch review api - approveBranch', () => {
           state: 'approved',
           by: { userId: 'rev1' },
           at: expect.stringMatching(/^\d{4}-\d\d-\d\dT[\d:.]+Z$/),
+          commit: HEAD,
         },
       },
     })
@@ -696,6 +722,7 @@ describe('branch review api - approveBranch', () => {
       state: 'approved',
       by: { userId: 'rev1', name: 'Rae Viewer' },
       at: expect.any(String),
+      commit: HEAD,
     })
     expect(res.data?.branch).not.toHaveProperty('review')
     expect(JSON.stringify(res.data)).not.toContain('rae@example.com')
@@ -761,5 +788,79 @@ describe('branch review api - approveBranch', () => {
     expect(res.status).toBe(400)
     expect(res.error).toContain('pull request was closed')
     expect(mockMetadataSave).not.toHaveBeenCalled()
+  })
+})
+
+describe('the commit the reviewer saw', () => {
+  const reviewer = {
+    user: { type: 'authenticated' as const, userId: 'rev1', groups: [RESERVED_GROUPS.REVIEWERS] },
+  }
+  const params = { branch: 'feature/x' as BranchName }
+  const moved = { ok: false, status: 409, code: 'BRANCH_MOVED', error: BRANCH_MOVED_ERROR }
+  beforeEach(() => {
+    mockMetadataSave.mockClear()
+    mockHeadSha.mockClear()
+  })
+
+  describe('approve', () => {
+    it('approves the head it names, and records it', async () => {
+      const res = await approveBranch.handler(makeCtx(), reviewer, params, { headSha: HEAD })
+      expect(res.status).toBe(200)
+      expect(mockMetadataSave.mock.calls[0]![0].branch.review.commit).toBe(HEAD)
+    })
+
+    it.each([
+      ['another head', { headSha: OTHER_HEAD }],
+      ['no head, as from a page loaded before the editor sent one', {}],
+      ['no body at all', undefined],
+    ])('refuses %s, and leaves the branch submitted', async (_label, body) => {
+      const res = await approveBranch.handler(makeCtx(), reviewer, params, body)
+      expect(res).toEqual(moved)
+      expect(mockMetadataSave).not.toHaveBeenCalled()
+      expect(mockSyncPrComments).not.toHaveBeenCalled()
+    })
+
+    it('refuses a branch that moved after the page loaded', async () => {
+      cloneHead.sha = OTHER_HEAD
+      const res = await approveBranch.handler(makeCtx(), reviewer, params, { headSha: HEAD })
+      expect(res).toEqual(moved)
+      expect(mockMetadataSave).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('request changes', () => {
+    const convertToDraft = vi.fn().mockResolvedValue(undefined)
+    beforeEach(() => convertToDraft.mockClear())
+    const run = (body: Parameters<typeof requestChanges.handler>[3]) =>
+      requestChanges.handler(makeCtx({ convertToDraft }), reviewer, params, body)
+
+    it('requests changes on the head it names, and records it', async () => {
+      const res = await run({ headSha: HEAD, note: 'Fix the intro.' })
+      expect(res.status).toBe(200)
+      expect(mockMetadataSave.mock.calls[0]![0].branch.review.commit).toBe(HEAD)
+      expect(convertToDraft).toHaveBeenCalledWith(123)
+    })
+
+    it.each([
+      ['another head', { headSha: OTHER_HEAD, note: 'Fix the intro.' }],
+      ['no head', { note: 'Fix the intro.' }],
+      ['no body at all', undefined],
+    ])('refuses %s before converting the pull request or saving the note', async (_label, body) => {
+      const addComment = vi.spyOn(CommentStore.prototype, 'addComment')
+      const res = await run(body)
+      expect(res).toEqual(moved)
+      expect(convertToDraft).not.toHaveBeenCalled()
+      expect(mockMetadataSave).not.toHaveBeenCalled()
+      expect(addComment).not.toHaveBeenCalled()
+      addComment.mockRestore()
+    })
+
+    it('checks again under the lock: a move after the first check is refused', async () => {
+      mockHeadSha.mockResolvedValueOnce(HEAD).mockResolvedValueOnce(OTHER_HEAD)
+      const res = await run({ headSha: HEAD })
+      expect(res).toEqual(moved)
+      expect(mockHeadSha).toHaveBeenCalledTimes(2)
+      expect(mockMetadataSave).not.toHaveBeenCalled()
+    })
   })
 })

@@ -51,6 +51,11 @@ class StaleStatusError extends Error {
   override readonly name = 'StaleStatusError'
 }
 
+/** The API's `BRANCH_MOVED`: the branch's head isn't the one the reviewer's page was pinned to. */
+class BranchMovedError extends Error {
+  override readonly name = 'BranchMovedError'
+}
+
 /** An answer that refused the action, with its HTTP status: a 4xx is a refusal no retry passes. */
 class RefusedError extends Error {
   override readonly name = 'RefusedError'
@@ -70,6 +75,7 @@ function actionError(result: ApiResponse, fallback: string, staleIsConflict = fa
   if (isGatewayFailure(result)) return new UnansweredError()
   const message = result.error || fallback
   if (result.ok) return new Error(message)
+  if (result.code === 'BRANCH_MOVED') return new BranchMovedError(message)
   // Open conflicts refuse the action where the branch still is, so they are no stale status.
   return staleIsConflict &&
     result.status === 409 &&
@@ -489,6 +495,9 @@ export interface UseBranchManagerOptions {
   /** A request for changes went through; the branch may now carry the reviewer's note as a comment. */
   onChangesRequested?: (branchName: string) => void
 
+  /** A review was refused as the branch moved: read its content again, after its new pin. */
+  onBranchMoved?: (branchName: string) => void
+
   /**
    * How to ask for the latest changes on `branchName` once it is withdrawn, or undefined where
    * that can't apply. With it, withdrawing a branch that conflicts with its base asks right after.
@@ -760,6 +769,19 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const latest = useRef({ branchName, resolved, branches, branchesData })
   latest.current = { branchName, resolved, branches, branchesData }
 
+  // The head a review sends for each branch: the first one a listing showed this page, or null for
+  // a branch first listed without one, as out of review. No later listing moves it, as the form can
+  // still show what loaded before; a refusal's recovery does, before it reads the content again.
+  const reviewPins = useRef(new Map<string, string | null>())
+  useEffect(() => {
+    for (const b of branchesData?.branches ?? []) {
+      if (!reviewPins.current.has(b.name)) reviewPins.current.set(b.name, b.headSha ?? null)
+    }
+  }, [branchesData])
+  const reviewedHead = (branch: string) => ({
+    headSha: reviewPins.current.get(branch) ?? undefined,
+  })
+
   // A card, deep link or URL can carry a short name, an exact form or the raw form of a listed
   // name; the actions resolve it once, the way an arriving name resolves, then key, look up and
   // send the listed name.
@@ -923,6 +945,26 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
       afterUnanswered?: (fresh: BranchesData | undefined) => void
     },
   ) => {
+    if (err instanceof BranchMovedError) {
+      // Pinned from this listing, then read: the content is never older than the pin.
+      reviewPins.current.delete(branch)
+      const fresh = await reloadBranches()
+      const listed = fresh?.branches.find((b) => b.name === branch)
+      if (listed) reviewPins.current.set(branch, listed.headSha ?? null)
+      options.onBranchMoved?.(branch)
+      const id = reviewFailureId(kind, branch)
+      notifications.hide(id)
+      notifications.show({
+        id,
+        message: details.note
+          ? `${err.message} Your note is kept for when you request changes again.`
+          : err.message,
+        color: 'yellow',
+        autoClose: false,
+        withCloseButton: true,
+      })
+      return
+    }
     if (err instanceof StaleStatusError) {
       showLeftReview(branch, err.message, details.note)
       // What the branch is now decides whether a Request changes note is still wanted.
@@ -1191,9 +1233,10 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
             async () => {
               options.setBusy(true)
               try {
-                const result = await apiClient.workflow.approve({
-                  branch: sendName(branchNameToApprove),
-                })
+                const result = await apiClient.workflow.approve(
+                  { branch: sendName(branchNameToApprove) },
+                  reviewedHead(branchNameToApprove),
+                )
                 if (!result.ok) throw actionError(result, 'Failed to approve branch', true)
                 notifications.hide(reviewFailureId('approve', branchNameToApprove))
                 notifications.show({ message: 'Branch approved', color: 'green' })
@@ -1241,7 +1284,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               try {
                 const result = await apiClient.workflow.requestChanges(
                   { branch: sendName(branchNameForChanges) },
-                  { note: note.trim() || undefined },
+                  { note: note.trim() || undefined, ...reviewedHead(branchNameForChanges) },
                 )
                 if (!result.ok) throw actionError(result, 'Failed to request changes', true)
                 noteDrafts.current.delete(branchNameForChanges)

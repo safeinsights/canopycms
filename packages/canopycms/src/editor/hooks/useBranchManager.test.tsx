@@ -11,6 +11,7 @@ import {
   CREATED_BRANCH_GRACE_MS,
   useBranchManager,
   UseBranchManagerOptions,
+  UseBranchManagerReturn,
   withdrawPullRequestBullet,
 } from './useBranchManager'
 import type { BranchListItem } from '../../api/branch'
@@ -2064,7 +2065,7 @@ describe('useBranchManager', () => {
 
         expect(mockClient.workflow.submit).toHaveBeenCalledWith({ branch: sent }, expect.anything())
         expect(mockClient.workflow.withdraw).toHaveBeenCalledWith({ branch: sent })
-        expect(mockClient.workflow.approve).toHaveBeenCalledWith({ branch: sent })
+        expect(mockClient.workflow.approve).toHaveBeenCalledWith({ branch: sent }, {})
         expect(mockClient.workflow.requestChanges).toHaveBeenCalledWith({ branch: sent }, {})
         expect(mockClient.branches.delete).toHaveBeenCalledWith({ branch: sent })
       })
@@ -2771,6 +2772,114 @@ describe('useBranchManager', () => {
       return () => value
     }
 
+    describe('the head a review sends', () => {
+      const SEEN = 'a'.repeat(40)
+      const NEWER = 'b'.repeat(40)
+      const headed = (headSha: string | undefined, status = 'submitted'): BranchMetadata[] => [
+        mockBranches[0],
+        Object.assign({}, mockBranches[1], { status, headSha }),
+      ]
+      const moved = {
+        ok: false,
+        status: 409,
+        code: 'BRANCH_MOVED',
+        error: 'This branch changed since you opened it. Review the latest changes.',
+      } as const
+      const approve = async (hook: { result: { current: UseBranchManagerReturn } }) => {
+        await act(async () => {
+          // A refusal rejects once it is reported.
+          await hook.result.current.handleApprove('feature').catch(() => {})
+        })
+      }
+
+      it('sends the head the first listing showed', async () => {
+        mockClient.workflow.approve.mockResolvedValue({ ok: true, status: 200 })
+        const hook = await loaded(headed(SEEN))
+        await approve(hook)
+        expect(mockClient.workflow.approve).toHaveBeenCalledWith(
+          { branch: 'feature' },
+          { headSha: SEEN },
+        )
+      })
+
+      it('keeps it when a later listing shows a newer head, as the page may not show it yet', async () => {
+        mockClient.workflow.approve.mockResolvedValue({ ok: true, status: 200 })
+        const hook = await loaded(headed(SEEN))
+        listing(headed(NEWER))
+        await act(async () => {
+          await hook.result.current.loadBranches()
+        })
+        await approve(hook)
+        expect(mockClient.workflow.approve).toHaveBeenLastCalledWith(
+          { branch: 'feature' },
+          { headSha: SEEN },
+        )
+      })
+
+      it('sends none for a branch first listed out of review, though a later listing has one', async () => {
+        mockClient.workflow.approve.mockResolvedValue(moved)
+        const hook = await loaded(headed(undefined, 'editing'))
+        listing(headed(NEWER))
+        await act(async () => {
+          await hook.result.current.loadBranches()
+        })
+        await approve(hook)
+        expect(mockClient.workflow.approve).toHaveBeenCalledWith({ branch: 'feature' }, {})
+      })
+
+      it('on a refusal, pins the head a fresh listing shows, then has the content read again', async () => {
+        const { notifications } = await import('@mantine/notifications')
+        const order: string[] = []
+        const onBranchMoved = vi.fn(() => order.push('content'))
+        mockClient.workflow.approve.mockResolvedValueOnce(moved)
+        const hook = await loaded(headed(SEEN), { onBranchMoved })
+        mockClient.branches.list.mockImplementation(async () => {
+          order.push('listing')
+          return { ok: true, status: 200, data: { branches: headed(NEWER), users: [] } }
+        })
+
+        await approve(hook)
+
+        expect(order).toEqual(['listing', 'content'])
+        expect(onBranchMoved).toHaveBeenCalledWith('feature')
+        expect(notifications.show).toHaveBeenLastCalledWith({
+          id: 'canopy-approve-failed-feature',
+          message: moved.error,
+          color: 'yellow',
+          autoClose: false,
+          withCloseButton: true,
+        })
+
+        mockClient.workflow.approve.mockResolvedValueOnce({ ok: true, status: 200 })
+        await approve(hook)
+        expect(mockClient.workflow.approve).toHaveBeenLastCalledWith(
+          { branch: 'feature' },
+          { headSha: NEWER },
+        )
+      })
+
+      it('keeps the note of a refused request for changes for the next try, and says so', async () => {
+        const { notifications } = await import('@mantine/notifications')
+        mockClient.workflow.requestChanges.mockResolvedValueOnce(moved)
+        await confirmAfter(typeNote('Fix the intro.'))
+        const hook = await loaded(headed(SEEN))
+
+        await call(() => hook.result.current.handleRequestChanges('feature'))
+
+        expect(mockClient.workflow.requestChanges).toHaveBeenCalledWith(
+          { branch: 'feature' },
+          { note: 'Fix the intro.', headSha: SEEN },
+        )
+        expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toMatchObject({
+          message: `${moved.error} Your note is kept for when you request changes again.`,
+          color: 'yellow',
+        })
+        const note = await nextDialogNote()
+        await call(() => hook.result.current.handleRequestChanges('feature'))
+        expect(note()).toBe('Fix the intro.')
+      })
+    })
+
     it('approves through the API, toasts in green and reloads the list', async () => {
       const { notifications } = await import('@mantine/notifications')
       mockClient.workflow.approve.mockResolvedValueOnce({ ok: true, status: 200 })
@@ -2781,7 +2890,7 @@ describe('useBranchManager', () => {
         await result.current.handleApprove('feature')
       })
 
-      expect(mockClient.workflow.approve).toHaveBeenCalledWith({ branch: 'feature' })
+      expect(mockClient.workflow.approve).toHaveBeenCalledWith({ branch: 'feature' }, {})
       expect(notifications.show).toHaveBeenCalledWith({
         message: 'Branch approved',
         color: 'green',
