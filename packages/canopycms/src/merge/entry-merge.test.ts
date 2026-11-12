@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest'
 import type { ContentFormat, FieldConfig } from '../config'
 import { parseEntryParts } from '../content-listing'
 import { computeEntryDiff } from '../editor/entry-diff'
-import { itemKeysAsRead } from '../item-keys'
+import { itemKeysAsRead, itemKeysOnPath, resolveThreadPath } from '../item-keys'
 import { entryAsRead } from '../utils/calendar-day'
 import { serializeFrontmatter, serializeYaml } from '../utils/content-serialize'
 import {
@@ -1563,20 +1563,31 @@ describe('stale keys a git rebase leaves', () => {
     expect(result.conflicts).toEqual([])
   })
 
-  it('row 18: a stale item two items match alike pairs with neither by its values', () => {
+  it('row 18: a stale item two items match alike makes the list one conflicting value', () => {
     const [x, y] = [
       { h: 'x', t: '1', k: 'k' },
       { h: 'y', t: '1', k: 'k' },
     ]
     const mine = stale({ h: 'z', t: '1', k: 'k' }, { h: 'z0', t: '0', k: 'k' })
     const result = sync({ items: [x, y] }, { items: [{ ...x, h: 'x2' }, y] }, { items: [mine] })
-    expect(kinds(result)).toEqual([
-      {
-        key: `items.${itemKeysAsRead([{ ...x, h: 'x2' }, y])[0]}`,
-        kind: 'removed-by-you',
-        item: true,
-      },
-    ])
+    expect(kinds(result)).toEqual([{ key: 'items', kind: 'changed' }])
+    expect(result.data.items).toEqual([mine])
+  })
+
+  it('row 18: a stale two-field item no clear match finds conflicts, never reads as new', () => {
+    const two: FieldConfig[] = [
+      { name: 'items', type: 'object', list: true, fields: text('q', 'a') },
+    ]
+    const q0 = { q: 'q0-A', a: 'a0' }
+    const mine = { q: 'q0-A', a: 'a0-B', _key: itemKeysAsRead([{ q: 'q0', a: 'a0' }])[0] }
+    const result = run(
+      { data: { items: [q0, { q: 'q1', a: 'a1' }] } },
+      { data: { items: [{ q: 'q1', a: 'a1' }] } },
+      { data: { items: [mine] } },
+      'json',
+      two,
+    )
+    expect(result.conflicts).not.toEqual([])
   })
 
   it('row 18: a stale item keeping under half of the values pairs only by place', () => {
@@ -1645,6 +1656,111 @@ describe('keys as a read gives them', () => {
     )
     expect((result.data.items as Data[])[0]._key).toBe(keyAsRead(base)[0])
     expect(result.keyRemaps).toEqual([{ within: [], from: branch[0]._key, to: keyAsRead(base)[0] }])
+  })
+
+  it('remaps a thread on an item no version keyed, to the key its merged content reads under', () => {
+    const page: FieldConfig[] = [
+      ...text('title'),
+      { name: 'items', type: 'object', list: true, fields: text('title', 'body') },
+    ]
+    const o = {
+      title: 'P',
+      items: [
+        { title: 'T', body: 'B' },
+        { title: 'Q', body: 'R' },
+      ],
+    }
+    const base = { ...o, items: [{ title: 'T2', body: 'B' }, o.items[1]] }
+    const result = run({ data: o }, { data: base }, { data: { ...o, title: 'P2' } }, 'json', page)
+    const thread = itemKeysOnPath(page, entryAsRead(page, o), 'items[0].title')
+    expect(result.keyRemaps).toEqual([
+      { within: [], from: thread?.[0], to: itemKeysAsRead([base.items[0]])[0] },
+    ])
+    const merged = entryAsRead(page, result.data)
+    const moved = result.keyRemaps.find((r) => r.from === thread?.[0])?.to
+    expect(resolveThreadPath(page, merged, 'items[0].title', [moved as string])).toBe(
+      'items[0].title',
+    )
+  })
+
+  it('never re-keys an item onto a key another item of the list holds', () => {
+    const page: FieldConfig[] = [
+      { name: 'items', type: 'object', list: true, fields: text('t', 'd') },
+    ]
+    const [x, y] = [
+      { t: 'x', d: 'd' },
+      { t: 'y', d: 'd' },
+    ]
+    const [hX, hY] = itemKeysAsRead([x, y]) as string[]
+    // A rebase left the branch's y1 under Y's key; the base then made x read like y.
+    const branch = {
+      items: [
+        { ...x, _key: hX },
+        { t: 'y1', d: 'd', _key: hY },
+      ],
+    }
+    const result = run(
+      { data: { items: [x, { t: 'y1', d: 'd' }] } },
+      { data: { items: [y, { t: 'y1', d: 'd' }] } },
+      { data: branch },
+      'json',
+      page,
+    )
+    const keys = (result.data.items as Data[]).map((i) => i._key)
+    expect(new Set(keys).size).toBe(keys.length)
+  })
+
+  it('never remaps a key the branch holds alike in two lists, which a thread could not tell apart', () => {
+    const page: FieldConfig[] = [
+      { name: 'items', type: 'object', list: true, fields: text('t', 'd') },
+      { name: 'l2', type: 'object', list: true, fields: text('t', 'd') },
+    ]
+    const x = { t: 'x', d: 'd' }
+    const hX = itemKeysAsRead([x])[0]
+    const result = run(
+      { data: { items: [x], l2: [x] } },
+      { data: { items: [{ ...x, d: 'd2' }], l2: [x] } },
+      { data: { items: [{ ...x, _key: hX }], l2: [{ ...x, _key: hX }] } },
+      'json',
+      page,
+    )
+    expect(result.keyRemaps).toEqual([])
+    expect((result.data.items as Data[])[0]).toEqual({ ...x, d: 'd2', _key: hX })
+  })
+
+  it('never remaps an ambiguous key to the base key or to an unkeyed item', () => {
+    const page: FieldConfig[] = [
+      ...text('title'),
+      { name: 'items', type: 'object', list: true, fields: text('t', 'd') },
+      { name: 'l2', type: 'object', list: true, fields: text('t', 'd') },
+    ]
+    const x = { t: 'x', d: 'd' }
+    const hX = itemKeysAsRead([x])[0]
+    const edited = { ...x, d: 'd2' }
+    // The base backfilled its own keys: the edited item's key replaces the branch's.
+    const backfilled = run(
+      { data: { title: 'T', items: [x], l2: [x] } },
+      {
+        data: {
+          title: 'T',
+          items: [{ ...edited, _key: itemKeysAsRead([edited])[0] }],
+          l2: [{ ...x, _key: hX }],
+        },
+      },
+      { data: { title: 'T', items: [{ ...x, _key: hX }], l2: [{ ...x, _key: hX }] } },
+      'json',
+      page,
+    )
+    expect(backfilled.keyRemaps).toEqual([])
+    // No version keyed anything: the edited item reads under a new hash.
+    const keyless = run(
+      { data: { title: 'T', items: [x], l2: [x] } },
+      { data: { title: 'T', items: [edited], l2: [x] } },
+      { data: { title: 'T2', items: [x], l2: [x] } },
+      'json',
+      page,
+    )
+    expect(keyless.keyRemaps).toEqual([])
   })
 
   it('reads a key a person typed, matching one in another list, as no move', () => {

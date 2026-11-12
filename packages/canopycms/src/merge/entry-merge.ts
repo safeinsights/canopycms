@@ -125,6 +125,11 @@ interface Walk {
   texts: TextMerge[]
   /** Every key the ancestor's read gives its list items, across the entry. */
   ancestorKeys: ReadonlySet<string>
+  /**
+   * True when the branch holds the item key `key` inside enclosing items `within` in more than
+   * one list: a remap names an item by those alone, so it could not tell them apart.
+   */
+  ambiguous: (within: readonly string[], key: string) => boolean
 }
 
 const ROOT: At = {
@@ -384,13 +389,14 @@ function mergeList(
     namedBy === undefined
       ? identifyByKey(O, a, b, walk.ancestorKeys)
       : identifyByName(O, a, b, namedBy)
-  // A list too far apart to align in time is one value.
+  // A list too far apart to align in time, or whose items can't all be told apart, is one value.
   if (!identities) return undefined
   const { oKeys, aIds, bIds, aByPlace, bByPlace } = identities
   const readList = (v: unknown, raw: readonly unknown[]) =>
     Array.isArray(v) && v.length === raw.length ? v : raw
   const [aRead, bRead] = [readList(at.asRead.a, a), readList(at.asRead.b, b)]
   const [aReadKeys, bReadKeys] = [itemKeysAsRead(aRead), itemKeysAsRead(bRead)]
+  const held = new Set([...a, ...b].flatMap((item) => usableKey(item) ?? []))
   const index = (ids: readonly string[]) => new Map(ids.map((id, n) => [id, n]))
   const [oAt, aAt, bAt] = [index(oKeys), index(aIds), index(bIds)]
   const used = new Set<string>()
@@ -440,7 +446,9 @@ function mergeList(
       // The base's item stands in the branch's place: the branch's threads follow it there.
       const from = bReadKeys[jb]
       if (aChanged && !bChanged && from !== undefined) {
-        walk.pendingRemaps.push({ at: itemAt.segments, within: at.branchKeys, from })
+        if (!walk.ambiguous(at.branchKeys, from)) {
+          walk.pendingRemaps.push({ at: itemAt.segments, within: at.branchKeys, from })
+        }
       }
       out.push(aChanged && !bChanged ? ai : bi)
       continue
@@ -448,9 +456,28 @@ function mergeList(
     const merged = mergeValue(oi, ai, bi, itemAt, walk)
     // A keyless item the base changed takes the key the base's version reads under, which the
     // next sync's ancestor names it by, never the branch's read key for content it no longer has.
-    const rekey = oi !== undefined && usableKey(bi) !== undefined && !sameValue(oi, ai)
-    const keys = { base: rekey ? aReadKeys[ja] : undefined, branchRead: bReadKeys[jb] }
-    out.push(withListKey(merged, ai, bi, keys, used, at, walk))
+    // Never onto a key another item of either version holds, nor for a branch key that names
+    // items in two lists alike, which a remap could not tell apart.
+    const baseKey = aReadKeys[ja]
+    const rekey =
+      oi !== undefined &&
+      usableKey(bi) !== undefined &&
+      !sameValue(oi, ai) &&
+      baseKey !== undefined &&
+      (!held.has(baseKey) || baseKey === usableKey(bi)) &&
+      (bReadKeys[jb] === undefined || !walk.ambiguous(at.branchKeys, bReadKeys[jb]))
+    const keys = { base: rekey ? baseKey : undefined, branchRead: bReadKeys[jb] }
+    const keyed = withListKey(merged, ai, bi, keys, used, at, walk)
+    // An item left with no key reads under a hash of its merged content: the branch's threads
+    // follow it there, once the merged entry reads.
+    if (
+      usableKey(keyed) === undefined &&
+      keys.branchRead !== undefined &&
+      !walk.ambiguous(at.branchKeys, keys.branchRead)
+    ) {
+      walk.pendingRemaps.push({ at: itemAt.segments, within: at.branchKeys, from: keys.branchRead })
+    }
+    out.push(keyed)
   }
   return out
 }
@@ -516,7 +543,11 @@ function withListKey(
     return carried === undefined ? merged : { ...merged, [ITEM_KEY]: carried }
   }
   used.add(key)
-  if (branchReadKey !== undefined && branchReadKey !== key) {
+  if (
+    branchReadKey !== undefined &&
+    branchReadKey !== key &&
+    !walk.ambiguous(at.branchKeys, branchReadKey)
+  ) {
     walk.keyRemaps.push({ within: at.branchKeys, from: branchReadKey, to: key })
   }
   return { ...merged, [ITEM_KEY]: key }
@@ -583,9 +614,16 @@ export function mergeEntry({
   }
   const ancestorKeys = new Set<string>()
   visitItems(ancestor.data, (_item, key) => ancestorKeys.add(key))
-  const walk: Walk = { conflicts: [], keyRemaps: [], pendingRemaps: [], texts: [], ancestorKeys }
   const asRead = (side: MergeSide) => (fields ? entryAsRead(fields, side.data) : side.data)
   const root = { ...ROOT, asRead: { a: asRead(base), b: asRead(branch) } }
+  const walk: Walk = {
+    conflicts: [],
+    keyRemaps: [],
+    pendingRemaps: [],
+    texts: [],
+    ancestorKeys,
+    ambiguous: ambiguityOf(root.asRead.b),
+  }
   const data = mergeRecord(ancestor.data, base.data, branch.data, root, walk)
   if (fields) undoUnparseableMdx(fields, data, walk)
   flagItemsMovedAway(ancestor.data, base.data, branch.data, data, walk)
@@ -620,6 +658,27 @@ export function mergeEntry({
     }),
     keyRemaps: walk.keyRemaps,
   }
+}
+
+/** {@link Walk.ambiguous} for `branch`, as read: how often each key sits inside the same keys. */
+function ambiguityOf(branch: unknown): Walk['ambiguous'] {
+  const seen = new Map<string, number>()
+  const name = (within: readonly string[], key: string) => JSON.stringify([...within, key])
+  const visit = (node: unknown, within: string[]) => {
+    if (Array.isArray(node)) {
+      const keys = itemKeysAsRead(node)
+      node.forEach((item, n) => {
+        const key = keys[n]
+        if (key === undefined) return
+        seen.set(name(within, key), (seen.get(name(within, key)) ?? 0) + 1)
+        visit(item, [...within, key])
+      })
+    } else if (isPlainRecord(node)) {
+      for (const value of Object.values(node)) visit(value, within)
+    }
+  }
+  visit(branch, [])
+  return (within, key) => (seen.get(name(within, key)) ?? 0) > 1
 }
 
 interface KeyedItem {
@@ -835,6 +894,7 @@ export function mergeCollectionMeta(
     pendingRemaps: [],
     texts: [],
     ancestorKeys: new Set(),
+    ambiguous: () => false,
   }
   const data: Record<string, unknown> = {}
   for (const name of new Set([

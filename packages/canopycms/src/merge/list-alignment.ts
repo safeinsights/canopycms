@@ -103,7 +103,7 @@ export interface Alignment {
  * The rest align as diff3 aligns lines: equal content in order, then equal content out of order
  * (a move), then, in each gap between two matches, by shared values and last by place
  * ({@link pairInGap}).
- * Undefined when the diff ran out of time.
+ * Undefined when the diff ran out of time, or a stale-keyed item finds no clear match.
  */
 export function alignToAncestor(
   items: readonly unknown[],
@@ -238,6 +238,10 @@ export function alignToAncestor(
       if (place) byPlace.add(j)
     }
   }
+  // An item under a stale key existed before: one still unpaired, beside ancestor items still
+  // unmatched, is one of them but not clearly which, so the list merges as one value.
+  const unmatched_ = ancestorItems.some((item, i) => !taken.has(ancestorKeys[i]) && !isMinted(item))
+  if (unmatched_ && [...stale].some((j) => ids[j] === undefined)) return undefined
   return { ids: ids.map((id, j) => id ?? newIdentity(side, j)), byPlace }
 }
 
