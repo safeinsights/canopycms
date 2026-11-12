@@ -390,7 +390,10 @@ function mergeList(
       ? identifyByKey(O, a, b, walk.ancestorKeys)
       : identifyByName(O, a, b, namedBy)
   // A list too far apart to align in time, or whose items can't all be told apart, is one value.
+  // So is one with an item not clearly new or old that both sides changed: when only one side
+  // changed it, that side's list is the merge whichever the item is.
   if (!identities) return undefined
+  if (identities.unsure && !sameValue(O, a) && !sameValue(O, b)) return undefined
   const { oKeys, aIds, bIds, aByPlace, bByPlace } = identities
   const readList = (v: unknown, raw: readonly unknown[]) =>
     Array.isArray(v) && v.length === raw.length ? v : raw
@@ -446,9 +449,7 @@ function mergeList(
       // The base's item stands in the branch's place: the branch's threads follow it there.
       const from = bReadKeys[jb]
       if (aChanged && !bChanged && from !== undefined) {
-        if (!walk.ambiguous(at.branchKeys, from)) {
-          walk.pendingRemaps.push({ at: itemAt.segments, within: at.branchKeys, from })
-        }
+        walk.pendingRemaps.push({ at: itemAt.segments, within: at.branchKeys, from })
       }
       out.push(aChanged && !bChanged ? ai : bi)
       continue
@@ -456,8 +457,8 @@ function mergeList(
     const merged = mergeValue(oi, ai, bi, itemAt, walk)
     // A keyless item the base changed takes the key the base's version reads under, which the
     // next sync's ancestor names it by, never the branch's read key for content it no longer has.
-    // Never onto a key another item of either version holds, nor for a branch key that names
-    // items in two lists alike, which a remap could not tell apart.
+    // Never onto a key another item of either version holds as its own, nor for a branch key that
+    // names items in two lists alike, which a remap could not tell apart.
     const baseKey = aReadKeys[ja]
     const rekey =
       oi !== undefined &&
@@ -470,11 +471,7 @@ function mergeList(
     const keyed = withListKey(merged, ai, bi, keys, used, at, walk)
     // An item left with no key reads under a hash of its merged content: the branch's threads
     // follow it there, once the merged entry reads.
-    if (
-      usableKey(keyed) === undefined &&
-      keys.branchRead !== undefined &&
-      !walk.ambiguous(at.branchKeys, keys.branchRead)
-    ) {
+    if (usableKey(keyed) === undefined && keys.branchRead !== undefined) {
       walk.pendingRemaps.push({ at: itemAt.segments, within: at.branchKeys, from: keys.branchRead })
     }
     out.push(keyed)
@@ -499,6 +496,7 @@ function identifyByKey(
     bIds: bAligned.ids,
     aByPlace: aligned.byPlace,
     bByPlace: bAligned.byPlace,
+    unsure: aligned.unsure || bAligned.unsure,
   }
 }
 
@@ -520,7 +518,8 @@ function identifyByName(
   }
   const [oKeys, aIds, bIds] = [ids(O), ids(a), ids(b)]
   if (!oKeys || !aIds || !bIds) return undefined
-  return { oKeys, aIds, bIds, aByPlace: new Set<number>(), bByPlace: new Set<number>() }
+  const none = new Set<number>()
+  return { oKeys, aIds, bIds, aByPlace: none, bByPlace: none, unsure: false }
 }
 
 /** `merged` with the key its list gives it, recording the remap when the branch's key changes. */
@@ -543,11 +542,7 @@ function withListKey(
     return carried === undefined ? merged : { ...merged, [ITEM_KEY]: carried }
   }
   used.add(key)
-  if (
-    branchReadKey !== undefined &&
-    branchReadKey !== key &&
-    !walk.ambiguous(at.branchKeys, branchReadKey)
-  ) {
+  if (branchReadKey !== undefined && branchReadKey !== key) {
     walk.keyRemaps.push({ within: at.branchKeys, from: branchReadKey, to: key })
   }
   return { ...merged, [ITEM_KEY]: key }
@@ -666,9 +661,8 @@ function ambiguityOf(branch: unknown): Walk['ambiguous'] {
   const name = (within: readonly string[], key: string) => JSON.stringify([...within, key])
   const visit = (node: unknown, within: string[]) => {
     if (Array.isArray(node)) {
-      const keys = itemKeysAsRead(node)
-      node.forEach((item, n) => {
-        const key = keys[n]
+      node.forEach((item) => {
+        const key = usableKey(item)
         if (key === undefined) return
         seen.set(name(within, key), (seen.get(name(within, key)) ?? 0) + 1)
         visit(item, [...within, key])

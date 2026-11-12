@@ -89,6 +89,11 @@ export interface Alignment {
   ids: string[]
   /** Items matched by their place alone, sharing no value with any ancestor item left in the gap. */
   byPlace: Set<number>
+  /**
+   * An item under a stale key is left unpaired beside ancestor items still unmatched: it is one
+   * of them, or new, but not clearly which. It is named new.
+   */
+  unsure: boolean
 }
 
 /**
@@ -238,11 +243,9 @@ export function alignToAncestor(
       if (place) byPlace.add(j)
     }
   }
-  // An item under a stale key existed before: one still unpaired, beside ancestor items still
-  // unmatched, is one of them but not clearly which, so the list merges as one value.
   const unmatched_ = ancestorItems.some((item, i) => !taken.has(ancestorKeys[i]) && !isMinted(item))
-  if (unmatched_ && [...stale].some((j) => ids[j] === undefined)) return undefined
-  return { ids: ids.map((id, j) => id ?? newIdentity(side, j)), byPlace }
+  const unsure = unmatched_ && [...stale].some((j) => ids[j] === undefined)
+  return { ids: ids.map((id, j) => id ?? newIdentity(side, j)), byPlace, unsure }
 }
 
 /** Above this many value matches counted in one gap, its items pair by place or not at all. */

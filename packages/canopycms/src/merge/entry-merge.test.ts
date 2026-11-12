@@ -1728,7 +1728,7 @@ describe('keys as a read gives them', () => {
     expect((result.data.items as Data[])[0]).toEqual({ ...x, d: 'd2', _key: hX })
   })
 
-  it('never remaps an ambiguous key to the base key or to an unkeyed item', () => {
+  it('remaps an ambiguous key whose item changes key anyway: one of the two threads follows', () => {
     const page: FieldConfig[] = [
       ...text('title'),
       { name: 'items', type: 'object', list: true, fields: text('t', 'd') },
@@ -1737,21 +1737,16 @@ describe('keys as a read gives them', () => {
     const x = { t: 'x', d: 'd' }
     const hX = itemKeysAsRead([x])[0]
     const edited = { ...x, d: 'd2' }
+    const hEdited = itemKeysAsRead([edited])[0]
     // The base backfilled its own keys: the edited item's key replaces the branch's.
     const backfilled = run(
       { data: { title: 'T', items: [x], l2: [x] } },
-      {
-        data: {
-          title: 'T',
-          items: [{ ...edited, _key: itemKeysAsRead([edited])[0] }],
-          l2: [{ ...x, _key: hX }],
-        },
-      },
+      { data: { title: 'T', items: [{ ...edited, _key: hEdited }], l2: [{ ...x, _key: hX }] } },
       { data: { title: 'T', items: [{ ...x, _key: hX }], l2: [{ ...x, _key: hX }] } },
       'json',
       page,
     )
-    expect(backfilled.keyRemaps).toEqual([])
+    expect(backfilled.keyRemaps).toEqual([{ within: [], from: hX, to: hEdited }])
     // No version keyed anything: the edited item reads under a new hash.
     const keyless = run(
       { data: { title: 'T', items: [x], l2: [x] } },
@@ -1760,7 +1755,83 @@ describe('keys as a read gives them', () => {
       'json',
       page,
     )
-    expect(keyless.keyRemaps).toEqual([])
+    expect(keyless.keyRemaps).toEqual([{ within: [], from: hX, to: hEdited }])
+    // The base re-keyed both lists: the first list's thread follows rather than neither.
+    const other = { t: 'x', d: 'd3' }
+    const both = run(
+      { data: { title: 'T', items: [x], l2: [x] } },
+      {
+        data: {
+          title: 'T',
+          items: [{ ...edited, _key: hEdited }],
+          l2: [{ ...other, _key: itemKeysAsRead([other])[0] }],
+        },
+      },
+      { data: { title: 'T', items: [{ ...x, _key: hX }], l2: [{ ...x, _key: hX }] } },
+      'json',
+      page,
+    )
+    const moved = both.keyRemaps.find((r) => r.from === hX)?.to
+    const merged = entryAsRead(page, both.data)
+    expect(resolveThreadPath(page, merged, 'items[0].d', [moved as string])).toBe('items[0].d')
+    // The base replaced the item in place with one sharing no value: it stands in the branch's place.
+    const replaced = { t: 'z', d: 'z' }
+    const inPlace = run(
+      { data: { title: 'T', items: [x], l2: [x] } },
+      { data: { title: 'T', items: [replaced], l2: [x] } },
+      { data: { title: 'T', items: [{ ...x, _key: hX }], l2: [{ ...x, _key: hX }] } },
+      'json',
+      page,
+    )
+    expect(inPlace.keyRemaps).toEqual([{ within: [], from: hX, to: itemKeysAsRead([replaced])[0] }])
+  })
+
+  it('keeps the keys and remaps of a list only the base changed, beside an item under a stale key', () => {
+    const page: FieldConfig[] = [
+      { name: 'items', type: 'object', list: true, fields: text('h', 't', 'k') },
+    ]
+    const [p, q, r] = ['p', 'q', 'r'].map((h) => ({ h, t: '1', k: 'k' }))
+    const [, , hR] = itemKeysAsRead([p, q, r]) as string[]
+    // A rebase left the base's new item under a key no content hashes to.
+    const staleKey = itemKeysAsRead([{ h: 'gone', t: '0', k: '0' }])[0] as string
+    const base = [
+      { h: 'p-new', t: '7', k: 'zz', _key: staleKey },
+      { ...r, t: '3b' },
+    ]
+    const keys = itemKeysAsRead([p, q, r])
+    const branch = { items: [p, q, r].map((item, i) => ({ ...item, _key: keys[i] })) }
+    const result = run(
+      { data: { items: [p, q, r] } },
+      { data: { items: base } },
+      { data: branch },
+      'json',
+      page,
+    )
+    expect(result.conflicts).toEqual([])
+    expect((result.data.items as Data[]).map(({ _key, ...rest }) => rest)).toEqual(
+      base.map(({ _key, ...rest }) => rest),
+    )
+    const moved = result.keyRemaps.find((m) => m.from === hR)?.to
+    const merged = entryAsRead(page, result.data)
+    expect(resolveThreadPath(page, merged, 'items[2].t', [moved as string])).toBe('items[1].t')
+  })
+
+  it('reads a list the schema lacks as no ambiguity, so an item the base changed is re-keyed', () => {
+    const page: FieldConfig[] = [
+      { name: 'items', type: 'object', list: true, fields: text('t', 'd') },
+    ]
+    const x = { t: 'x', d: 'd' }
+    const e1 = { t: 'x', d: 'e1' }
+    const [hX, hE1] = [itemKeysAsRead([x])[0], itemKeysAsRead([e1])[0]]
+    const result = run(
+      { data: { items: [x], extra: [x] } },
+      { data: { items: [e1], extra: [x] } },
+      { data: { items: [{ ...x, _key: hX }], extra: [x] } },
+      'json',
+      page,
+    )
+    expect((result.data.items as Data[])[0]._key).toBe(hE1)
+    expect(result.keyRemaps).toEqual([{ within: [], from: hX, to: hE1 }])
   })
 
   it('reads a key a person typed, matching one in another list, as no move', () => {
