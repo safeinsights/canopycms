@@ -3490,6 +3490,37 @@ describe('shapes the fix review found', () => {
     expect(result.data).toEqual({ items: [], l2: [added, { ...kept, detail: 'd-base' }] })
     expect(result.conflicts).toEqual([])
   })
+
+  describe('an item moved in beside an alike item the other side added', () => {
+    const x = { title: 'x', detail: 'd' }
+    const moved = { ...x, _key: itemKeysAsRead([x])[0]! }
+    const copy = { ...x, _key: 'Kcopyaaaaaaa' }
+
+    it('keeps both where the base duplicated a twin the branch moved one in beside', () => {
+      const twin = { ...x, _key: 'Ktwinaaaaaaa' }
+      const result = run(
+        { data: { items: [twin], l2: [moved] } },
+        { data: { items: [twin, copy], l2: [moved] } },
+        { data: { items: [moved, twin], l2: [] } },
+        'md',
+        lists,
+      )
+      expect(result.data).toEqual({ items: [moved, twin, copy], l2: [] })
+      expect(result.conflicts).toEqual([])
+    })
+
+    it('keeps both where the base added an alike item to the list the branch moved one into', () => {
+      const result = run(
+        { data: { items: [], l2: [moved] } },
+        { data: { items: [copy], l2: [moved] } },
+        { data: { items: [moved], l2: [] } },
+        'md',
+        lists,
+      )
+      expect(result.data).toEqual({ items: [copy, moved], l2: [] })
+      expect(result.conflicts).toEqual([])
+    })
+  })
 })
 
 describe('conflicts inside a value the drawer shows whole are named at that value', () => {

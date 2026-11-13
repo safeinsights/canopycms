@@ -470,14 +470,16 @@ export const isNewIdentity = (id: string): boolean => id.startsWith(INTERNAL)
 /**
  * Pairs the items new on the base with the items new on the branch that are the same addition:
  * the same key, else equal content, in order. The branch's identity replaces the base's in
- * `baseIds` for each pair, so an item both sides added alike is one item. Pairing is skipped by
- * content when the diff runs out of time: the additions stay apart, and none is lost.
+ * `baseIds` for each pair, so an item both sides added alike is one item; one moved in from another
+ * list (`movedHere`) is no addition, and pairs by key only. Pairing is skipped by content when the
+ * diff runs out of time: the additions stay apart, and none is lost.
  */
 export function pairNewItems(
   baseItems: readonly unknown[],
   baseIds: string[],
   branchItems: readonly unknown[],
   branchIds: readonly string[],
+  movedHere: (key: string) => boolean,
 ): void {
   const baseNew = baseIds.flatMap((id, j) => (isNewIdentity(id) ? [j] : []))
   const branchNew = branchIds.flatMap((id, j) => (isNewIdentity(id) ? [j] : []))
@@ -507,7 +509,12 @@ export function pairNewItems(
       restBase.map((j) => valueToken(baseItems[j])),
       restBranch.map((j) => valueToken(branchItems[j])),
     ) ?? []
-  ).filter(([x, y]) => !(isMinted(baseItems[restBase[x]]) && isMinted(branchItems[restBranch[y]])))
+  ).filter(([x, y]) => {
+    const [a, b] = [baseItems[restBase[x]], branchItems[restBranch[y]]]
+    const [ka, kb] = [ownKey(a), ownKey(b)]
+    const movedIn = (k?: string) => k !== undefined && movedHere(k)
+    return !(isMinted(a) && isMinted(b)) && !(ka !== kb && (movedIn(ka) || movedIn(kb)))
+  })
   for (const [x, y] of pairs) baseIds[restBase[x]] = branchIds[restBranch[y]]
 }
 
