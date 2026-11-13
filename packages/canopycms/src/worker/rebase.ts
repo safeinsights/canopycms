@@ -1598,6 +1598,20 @@ async function rebaseOneBranch(
         return { kind: 'skippedDirty' }
       }
 
+      // A merge of GitHub's commits whose result holds the base `remote.git` holds answers a request
+      // for the latest changes as a merge of the base does, conflicts included.
+      const tookInByGitHubMerge = async (keptEntries: number): Promise<BranchRebaseOutcome> => {
+        if (editorDirt.length > 0) return await skipIfDirty()
+        const baseTip = await readPublishedSha(ctx, ctx.baseBranch).catch(() => null)
+        const holdsBase =
+          baseTip !== null && (await contains(branchGit, 'HEAD', baseTip).catch(() => false))
+        if (!holdsBase) return { kind: 'none' }
+        probe.baseSha = baseTip
+        probe.keptEntries = keptEntries
+        await clearRebaseFailure(ctx, branchPath, branchRef, { latestChangesWaiting: undefined })
+        return { kind: 'rebased' }
+      }
+
       // Before the dirty return: a fast-forward passes saves that touch other files.
       let unpushed = false
       if (commitArgs !== null) {
@@ -1606,6 +1620,7 @@ async function rebaseOneBranch(
           return recordBlocked(ctx, branchDir, branchPath, branchRef, outcome.reason)
         }
         if (outcome.kind === 'unpushed') unpushed = true
+        else if (outcome.kind === 'merged') return await tookInByGitHubMerge(outcome.keptEntries)
         else if (outcome.kind !== 'in-step') return await skipIfDirty()
         // A merge of the base this worker published and never moved the clone to comes first.
         const caughtUp = await catchUpWithPublished(ctx, commitArgs)
@@ -1818,6 +1833,10 @@ async function rebaseOneBranch(
         lockCompromised,
       )
 
+      // The tip the rebase made, read before anything else awaits: past a lost lock a commit can
+      // land on it, and only this tip may be published as the rewrite.
+      const rebasedHead = (await branchGit.revparse(['HEAD'])).trim()
+
       // Outside the round loop's try/catch, so a throwing test hook can
       // never be misread as a rebase error.
       if (completed) await ctx.afterRebaseCompletedForTesting()
@@ -1917,7 +1936,7 @@ async function rebaseOneBranch(
         branchRef,
         publishedSha,
         preRebaseHead,
-        rebasedHead: (await branchGit.revparse(['HEAD'])).trim(),
+        rebasedHead,
         gatewayPolicy,
       })
 

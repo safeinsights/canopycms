@@ -740,4 +740,23 @@ describe('CmsWorker.rebaseActiveBranches() on a branch.json that changes mid-cyc
     expect(await fs.readFile(branchJson(setup.branchPath), 'utf-8')).toBe(replaced)
     expect(await queuedPushBranches(setup.workspacePath)).toEqual([])
   })
+
+  it('publishes the tip the rebase made, never a commit landing on it before the publish', async () => {
+    const setup = await createPublishSetup(tmpDir, 'feature-late-commit')
+    await setup.commitToBranch({ 'entry.md': 'editor v1\n' }, 'editor work')
+    await setup.submit()
+    await setup.advanceBase({ 'base2.txt': 'moved on\n' })
+    await writeMeta(setup.branchPath, setup.contentBranchesPath)
+    let rebasedTip = ''
+
+    // What "Get latest changes" commits once a lost lock lets it in.
+    await rebaseWith(setup.workspacePath, async () => {
+      rebasedTip = (await setup.branchGit.revparse(['HEAD'])).trim()
+      await setup.commitToBranch({ 'unsubmitted.md': 'saved\n' }, 'unsubmitted saved work')
+    })
+
+    expect(await setup.remoteSha('refs/heads/feature-late-commit')).toBe(rebasedTip)
+    expect(await setup.remoteLog('refs/heads/feature-late-commit')).not.toContain('unsubmitted')
+    expect((await readMeta(setup.branchPath))?.historyRewrittenTo).toBe(rebasedTip)
+  })
 })

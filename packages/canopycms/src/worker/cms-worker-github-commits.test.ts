@@ -2998,6 +2998,29 @@ describe('an entry deleted or renamed in the clone, not yet submitted', () => {
     expect((await readMeta(s))?.conflictFiles).toEqual([CONFLICTED_ID])
   })
 
+  it("answers Get latest changes with the conflict a merge of GitHub's Update branch left", async () => {
+    await writeMeta(s, { status: 'editing', pullRequestNumber: 7 })
+    await s.advanceBase({ [ENTRY]: '{"title":"base"}\n' })
+    await s.updateBranchOnGitHub()
+    await fs.rm(path.join(s.branchPath, ENTRY))
+    expect((await cycle(s)).skippedDirty).toEqual([BRANCH])
+    expect((await readMeta(s))?.latestChangesWaiting).toBeDefined()
+
+    await s.clone.raw(['rm', '-q', '--cached', ENTRY])
+    await s.clone.commit('Save changes before getting the latest')
+    const asked = await readMeta(s)
+    await writeMeta(s, {
+      ...asked,
+      baseUpdateRequestedAt: new Date(Date.now() - 1000).toISOString(),
+    })
+    expect((await cycle(s)).rebased).toEqual([BRANCH])
+
+    const meta = await readMeta(s)
+    expect(meta?.conflictFiles).toEqual([CONFLICTED_ID])
+    expect(meta?.lastBaseUpdate).toMatchObject({ outcome: 'conflicts', keptEntries: 1 })
+    expect(meta?.latestChangesWaiting).toBeUndefined()
+  })
+
   it("keeps a renamed entry's old path gone while GitHub changes it", async () => {
     const head = await s.head()
     await s.commitOnGitHub({ [ENTRY]: '{"title":"github"}\n' })

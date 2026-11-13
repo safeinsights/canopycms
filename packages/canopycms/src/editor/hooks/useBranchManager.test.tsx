@@ -2892,6 +2892,23 @@ describe('useBranchManager', () => {
         expect(lastApproval()).toEqual({ headSha: NEWER })
       })
 
+      it('re-pins a branch opened before when it is opened again after it moved', async () => {
+        const onReviewPinned = vi.fn()
+        mockClient.workflow.approve.mockResolvedValue({ ok: true, status: 200 })
+        const hook = await loaded(headed(SEEN), { initialBranch: 'feature', onReviewPinned })
+        await waitFor(() => expect(onReviewPinned).toHaveBeenCalledTimes(1))
+        act(() => hook.result.current.setBranchName(mockBranches[0].name))
+        await waitFor(() =>
+          expect(hook.result.current.currentBranch?.name).toBe(mockBranches[0].name),
+        )
+        await relist(hook, headed(NEWER))
+
+        act(() => hook.result.current.setBranchName('feature'))
+        await waitFor(() => expect(onReviewPinned).toHaveBeenCalledTimes(2))
+        await approve(hook)
+        expect(lastApproval()).toEqual({ headSha: NEWER })
+      })
+
       it('on a refusal, pins the head a fresh listing shows, after the content is read again', async () => {
         const { notifications } = await import('@mantine/notifications')
         const order: string[] = []

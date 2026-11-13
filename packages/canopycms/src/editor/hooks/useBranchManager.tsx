@@ -775,6 +775,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const reviewPins = useRef(new Map<string, string | null>())
   const shown = useRef(new Set<string>())
   const pinning = useRef(new Map<string, symbol>())
+  const lastOpen = useRef<string | undefined>(undefined)
   const pinThenReread = async (branch: string, data: BranchesData | undefined) => {
     const headSha = data?.branches.find((b) => b.name === branch)?.headSha
     const claim = Symbol(branch)
@@ -797,7 +798,10 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     if (!open) return
     const firstHead =
       open.headSha && reviewPins.current.get(open.name) === null && !pinning.current.has(open.name)
-    if (!shown.current.has(open.name) || firstHead) {
+    // Coming back to a branch opens it again: its entries are read afresh, so its pin is too.
+    const reopened = lastOpen.current !== open.name
+    lastOpen.current = open.name
+    if (!shown.current.has(open.name) || firstHead || reopened) {
       shown.current.add(open.name)
       pinThenReread(open.name, branchesData).catch(console.error)
     }
