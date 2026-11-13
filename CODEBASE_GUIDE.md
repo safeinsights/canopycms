@@ -118,7 +118,7 @@ Route handlers, one file per endpoint namespace:
 
 - `branch.ts` — `/branches`: create, list, delete; `toBranchListItem` shapes branch responses, with server-computed `isProtected` / `readOnly`
 - `branch-status.ts` — `/branch-status`: status and submit (`SubmitBranchResponse`)
-- `branch-update-from-base.ts` — `POST /:branch/update-from-base` (`updateFromBase`): `commitSavedWork`, enqueue `sync-branch`
+- `branch-update-from-base.ts` — `POST /:branch/update-from-base` (`updateFromBase`): `commitSavedWork`, `sync-branch` or `runBaseUpdateNow`
 - `branch-withdraw.ts` — `/branch-withdraw`: withdraw a PR
 - `archived-branches.ts` — `POST /:branch/archive`, `POST /admin/archived-branches/delete`
 - `branch-review.ts` — `/branch-review`: approve, request changes
@@ -237,7 +237,7 @@ The three access layers, reserved groups, and bootstrap admins are described in
 [AGENTS.md](packages/canopycms/src/worker/AGENTS.md), which holds the module map, the one-way import
 direction, and every invariant.
 
-- `cms-worker.ts` — the `CmsWorker` class: lifecycle (draining `stop()`, `selfStopped`), worker lock, scheduling, `remote.git` provisioning, base-branch detection (`resolveBaseBranch`, `recordBaseBranchInRemoteHead`), and one delegating method per cluster
+- `cms-worker.ts` — the `CmsWorker` class: lifecycle (draining `stop()`, `selfStopped`), worker lock, scheduling, `remote.git` provisioning, base-branch detection (`resolveBaseBranch`, `recordBaseBranchInRemoteHead`), `createLocalWorker`, and one delegating method per cluster
 - `worker-context.ts` — `WorkerContext`, the only channel between the class and its clusters
 - `task-runner.ts` — the task-queue cluster below `processTaskQueue`, including `PermanentTaskError`
 - `git-sync.ts` — the git-sync cluster below `syncGit`: tracking, settings push, base refresh (`BaseRefreshReport`), trash sweep, `repairBranchDirResidue`, `unpublishable-branches.ts` (`readCarriedGatewayPolicy`)
@@ -900,7 +900,7 @@ in `server.ts` and `client.ts`. See
 - `entry-url.ts` — `computeEntryUrl` (collection plus slug to URL) and `isIndexSlug`
 - `typed-filename.ts` — `parseTypedFilename`, the `{type}.{slug}.{id}.{ext}` grammar
 - `flatten-group-fields.ts` — `flattenGroupFields`, flattens inline groups
-- `git.ts` — `detectHeadBranch`, `readHeadBranch`, `resolveBaseBranch`, `isNonFastForwardRejection`, `workflowPushRefusalFile`, `isRebaseInProgress`, `CANOPY_META_DIR`, `isCanopyInternalPath`, `stageAllExceptCanopyState`
+- `git.ts` — `detectHeadBranch`, `readHeadBranch`, `resolveBaseBranch`, `isNonFastForwardRejection`, `workflowPushRefusalFile`, `isRebaseInProgress`, `readHeadCommitFromFiles`, `CANOPY_META_DIR`, `isCanopyInternalPath`, `stageAllExceptCanopyState`
 - `base-branch.ts` — `baseBranchOf`, resolved base branch; prod throws `BaseBranchUnresolvedError`
 - `fs.ts` — `filePathExists`
 - `sanitize-href.ts` — `sanitizeHref` for content, `isHttpUrlOrSameOriginPath` for config, `neutralizeImplicitOffOrigin`

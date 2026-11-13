@@ -1,11 +1,12 @@
 import fs from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import { testLogger as log } from '../../../../packages/canopycms/src/utils/debug'
 import { bumpResourceGeneration } from '../../../../packages/canopycms/src/resource-generation'
 import { resetTaskQueue } from './admin-workspace'
 import { resetAssetStore } from './media-workspace'
-import { branchKey, branchShort } from './branch-page'
+import { branchKey, branchRef, branchShort } from './branch-page'
 
 /**
  * Base path for the test-app workspace.
@@ -564,7 +565,27 @@ export async function withdrawBranchViaAPI(
 }
 
 /**
- * Approve a branch (reviewer action) via API.
+ * The head commit the branch listing shows `userId` for the branch created from `branchName`,
+ * which a review sends back as the commit the reviewer saw (api/branch-review.ts).
+ */
+async function listedHeadSha(
+  baseUrl: string,
+  branchName: string,
+  userId: string,
+): Promise<string | undefined> {
+  const response = await fetch(`${baseUrl}/api/canopycms/branches`, {
+    headers: { 'X-Test-User': userId },
+  })
+  if (!response.ok) throw new Error(`listedHeadSha: ${response.status} ${await response.text()}`)
+  const listing = (await response.json()) as {
+    data: { branches: Array<{ name: string; headSha?: string }> }
+  }
+  const ref = branchRef(branchName)
+  return listing.data.branches.find((b) => b.name === ref)?.headSha
+}
+
+/**
+ * Approve a branch (reviewer action) via API, naming the head the listing shows.
  * @param baseUrl - Base URL of the test app
  * @param branchName - Name of the branch to approve (the name it was created from; the API path carries its short name)
  * @param userId - User ID to make the request as (should be reviewer or admin)
@@ -574,19 +595,20 @@ export async function approveBranchViaAPI(
   branchName: string,
   userId: string,
 ): Promise<Response> {
+  const headSha = await listedHeadSha(baseUrl, branchName, userId)
   const response = await fetch(`${baseUrl}/api/canopycms/${branchShort(branchName)}/approve`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'X-Test-User': userId,
     },
-    body: JSON.stringify({}),
+    body: JSON.stringify({ headSha }),
   })
   return response
 }
 
 /**
- * Request changes on a branch (reviewer action) via API.
+ * Request changes on a branch (reviewer action) via API, naming the head the listing shows.
  * @param baseUrl - Base URL of the test app
  * @param branchName - Name of the branch (the name it was created from; the API path carries its short name)
  * @param userId - User ID to make the request as (should be reviewer or admin)
@@ -596,6 +618,7 @@ export async function requestChangesViaAPI(
   branchName: string,
   userId: string,
 ): Promise<Response> {
+  const headSha = await listedHeadSha(baseUrl, branchName, userId)
   const response = await fetch(
     `${baseUrl}/api/canopycms/${branchShort(branchName)}/request-changes`,
     {
@@ -604,7 +627,7 @@ export async function requestChangesViaAPI(
         'Content-Type': 'application/json',
         'X-Test-User': userId,
       },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ headSha }),
     },
   )
   return response
@@ -726,6 +749,58 @@ export async function removeFileFromMain(contentRelativePath: string): Promise<v
   await git.rm([path.join('content', contentRelativePath)])
   await git.commit('E2E: remove test file')
   await git.push('origin', 'main', ['--force'])
+}
+
+/**
+ * The base a branch clone was made from, which "Get latest changes" brings in: the one ref under
+ * `origin/` in its single-branch clone. In dev that is the checkout's branch, not always `main`.
+ */
+export async function branchBaseRef(typed: string): Promise<string> {
+  const git = simpleGit({ baseDir: path.join(BRANCHES_DIR, branchKey(typed)) })
+  const refs = (
+    await git.raw(['for-each-ref', '--format=%(refname:strip=3)', 'refs/remotes/origin'])
+  )
+    .split('\n')
+    .filter((ref) => ref !== '' && ref !== 'HEAD')
+  if (refs.length !== 1)
+    throw new Error(`Expected one base ref for ${typed}, found: ${refs.join(', ')}`)
+  return refs[0]
+}
+
+/**
+ * Commit `content` (or, with null, the file's removal) to `base` on remote.git, through a
+ * throwaway clone, as a change made on the site would land there.
+ */
+export async function commitToBase(
+  base: string,
+  contentRelativePath: string,
+  content: string | null,
+): Promise<void> {
+  const remotePath = path.join(TEST_APP_ROOT, '.canopy-dev/remote.git')
+  const clonePath = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-e2e-base-'))
+  try {
+    await simpleGit().clone(remotePath, clonePath, ['--branch', base, '--single-branch'])
+    const git = simpleGit({ baseDir: clonePath })
+    await git.addConfig('user.name', 'CanopyCMS Test Bot')
+    await git.addConfig('user.email', 'test@example.com')
+    const filePath = path.join(clonePath, 'content', contentRelativePath)
+    if (content === null) {
+      const exists = await fs.access(filePath).then(
+        () => true,
+        () => false,
+      )
+      if (!exists) return
+      await git.rm([path.join('content', contentRelativePath)])
+    } else {
+      await fs.mkdir(path.dirname(filePath), { recursive: true })
+      await fs.writeFile(filePath, content, 'utf8')
+      await git.add([path.join('content', contentRelativePath)])
+    }
+    await git.commit('E2E: change on the base')
+    await git.push('origin', base)
+  } finally {
+    await fs.rm(clonePath, { recursive: true, force: true })
+  }
 }
 
 /**

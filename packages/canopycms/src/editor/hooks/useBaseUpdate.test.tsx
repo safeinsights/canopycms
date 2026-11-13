@@ -75,14 +75,39 @@ describe('useBaseUpdate', () => {
     vi.useRealTimers()
   })
 
-  it('applies to an editing branch the user may act on, where a worker answers', async () => {
-    const { result } = render()
+  it.each(['prod', 'dev'] as const)(
+    'applies to an editing branch the user may act on in %s mode',
+    async (operatingMode) => {
+      const { result } = render({ operatingMode })
+      await waitFor(() => expect(result.current.branch).toBeDefined())
+      expect(result.current.available).toBe(true)
+    },
+  )
+
+  it('reports an answer that came with the response, as dev answers in the request', async () => {
+    const requestedAt = new Date().toISOString()
+    const answer: LastBaseUpdate = { at: requestedAt, outcome: 'merged', baseSha: 'abc' }
+    client.workflow.updateFromBase.mockResolvedValue({
+      ok: true,
+      status: 202,
+      data: {
+        requestedAt,
+        branch: editing({ baseUpdateRequestedAt: requestedAt, lastBaseUpdate: answer }),
+      },
+    })
+    const { result, onUpdated } = render({ operatingMode: 'dev' })
     await waitFor(() => expect(result.current.branch).toBeDefined())
-    expect(result.current.available).toBe(true)
+
+    await act(() => result.current.request())
+
+    expect(result.current.wait).toBe('none')
+    expect(shown()).toContainEqual(
+      expect.objectContaining({ color: 'green', message: 'Latest changes added' }),
+    )
+    expect(onUpdated).toHaveBeenCalledTimes(1)
   })
 
   it.each([
-    ['dev mode, with no worker', { operatingMode: 'dev' as const }, editing()],
     ['a user who may not act on it', { permitted: false }, editing()],
     ['a branch in review', {}, editing({ status: 'submitted' })],
     ['the protected base branch', {}, editing({ isProtected: true })],
@@ -337,6 +362,44 @@ describe('useBaseUpdate', () => {
     expect(onUpdated).toHaveBeenCalledTimes(1)
   })
 
+  it('says the latest changes wait, and not once an older listing arrives after the answer', async () => {
+    listed = editing({ latestChangesWaiting: 'a'.repeat(40) })
+    const { result } = render()
+    await waitFor(() => expect(result.current.latestChangesWaiting).toBe(true))
+
+    const requestedAt = new Date().toISOString()
+    const asked = { ...listed, baseUpdateRequestedAt: requestedAt }
+    listed = asked
+    await act(() => result.current.reload())
+    await waitFor(() => expect(result.current.wait).toBe('waiting'))
+    listed = editing({
+      baseUpdateRequestedAt: requestedAt,
+      lastBaseUpdate: { at: requestedAt, outcome: 'merged' },
+    })
+    await act(() => result.current.reload())
+    await waitFor(() => expect(result.current.wait).toBe('none'))
+    expect(result.current.latestChangesWaiting).toBe(false)
+
+    // Other hosts' snapshots from before the answer, and from before the request.
+    listed = asked
+    await act(() => result.current.reload())
+    expect(result.current.branch?.lastBaseUpdate).toBeUndefined()
+    expect(result.current.latestChangesWaiting).toBe(false)
+    listed = editing({ latestChangesWaiting: 'a'.repeat(40) })
+    await act(() => result.current.reload())
+    expect(result.current.branch?.baseUpdateRequestedAt).toBeUndefined()
+    expect(result.current.latestChangesWaiting).toBe(false)
+
+    // A mark the worker writes after the answer stands.
+    listed = editing({
+      baseUpdateRequestedAt: requestedAt,
+      lastBaseUpdate: { at: requestedAt, outcome: 'merged' },
+      latestChangesWaiting: 'b'.repeat(40),
+    })
+    await act(() => result.current.reload())
+    expect(result.current.latestChangesWaiting).toBe(true)
+  })
+
   it('offers no Retry on a failure to a viewer who may not ask', async () => {
     const requestedAt = new Date().toISOString()
     listed = editing({ baseUpdateRequestedAt: requestedAt })
@@ -360,7 +423,7 @@ describe('useBaseUpdate', () => {
     const { result } = render()
     await waitFor(() => expect(result.current.branch).toBeDefined())
     await act(() => result.current.request())
-    expect(shown()[0]).toMatchObject({ color: 'red', message: 'This branch is in review.' })
+    expect(shown()[0]).toMatchObject({ color: 'yellow', message: 'This branch is in review.' })
     await waitFor(() => expect(result.current.available).toBe(false))
   })
 
@@ -374,7 +437,20 @@ describe('useBaseUpdate', () => {
     await waitFor(() => expect(result.current.branch).toBeDefined())
     await act(() => result.current.request())
     expect(shown()).toHaveLength(1)
-    expect(shown()[0]).toMatchObject({ color: 'red', autoClose: false })
+    // A 409 is a conflict with the branch's state, which the guidelines colour yellow.
+    expect(shown()[0]).toMatchObject({ color: 'yellow', autoClose: false })
     expect(result.current.wait).toBe('none')
+  })
+
+  it('reports a refusal that is no conflict in red', async () => {
+    client.workflow.updateFromBase.mockResolvedValue({
+      ok: false,
+      status: 500,
+      error: "Your saved changes couldn't be prepared, so the latest changes weren't requested.",
+    })
+    const { result } = render()
+    await waitFor(() => expect(result.current.branch).toBeDefined())
+    await act(() => result.current.request())
+    expect(shown()[0]).toMatchObject({ color: 'red', autoClose: false })
   })
 })

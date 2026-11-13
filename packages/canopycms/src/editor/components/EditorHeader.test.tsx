@@ -2452,6 +2452,96 @@ describe('EditorHeader - Get latest changes', () => {
     expect(submit.getAttribute('aria-disabled')).toBe('true')
   })
 
+  it('says the latest changes are waiting, with the way to get them on focus', async () => {
+    renderHeader({ ...owner, baseUpdate: control(), latestChangesWaiting: true })
+    const badge = screen.getByTestId('branch-latest-waiting')
+    expect(badge.textContent).toBe('Latest changes waiting')
+    act(() => badge.closest<HTMLElement>('[tabindex="0"]')?.focus())
+    expect((await screen.findByRole('tooltip')).textContent).toContain('"Get latest changes"')
+  })
+
+  it('announces the wait once, not again as unsaved changes change its detail', () => {
+    const { rerender } = renderHeader({
+      ...owner,
+      baseUpdate: control(),
+      latestChangesWaiting: true,
+    })
+    const announced = () =>
+      screen
+        .getAllByRole('status')
+        .map((s) => s.textContent ?? '')
+        .join('|')
+    const before = announced()
+    expect(before).toContain('Latest changes waiting')
+    expect(screen.getByTestId('branch-latest-waiting').closest('[role="status"]')).toBeNull()
+
+    rerender(
+      <Headers
+        {...defaultProps}
+        {...owner}
+        baseUpdate={control({ blockedReason: 'Save your changes first.' })}
+        latestChangesWaiting
+      />,
+    )
+    expect(announced()).toBe(before)
+  })
+
+  it('says to save first while unsaved changes hold "Get latest changes"', async () => {
+    renderHeader({
+      ...owner,
+      baseUpdate: control({ blockedReason: 'Save your changes first.' }),
+      latestChangesWaiting: true,
+    })
+    act(() =>
+      screen.getByTestId('branch-latest-waiting').closest<HTMLElement>('[tabindex="0"]')?.focus(),
+    )
+    expect((await screen.findByRole('tooltip')).textContent).toContain(
+      'Save your changes, then choose "Get latest changes" to bring them in.',
+    )
+  })
+
+  it('is an icon below md, named, pointing to the branch menu', async () => {
+    window.matchMedia = (query: string) =>
+      ({
+        matches: query.startsWith('(max-width:'),
+        media: query,
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      }) as MediaQueryList
+    renderHeader({ ...owner, baseUpdate: control(), latestChangesWaiting: true })
+    expect(screen.getByTestId('branch-latest-waiting').textContent).toBe('')
+    const icon = screen.getByRole('img', { name: 'Latest changes waiting' })
+    act(() => icon.focus())
+    expect((await screen.findByRole('tooltip')).textContent).toContain(
+      'Choose "Get latest changes" in the branch menu',
+    )
+  })
+
+  it('leaves the waiting badge out while a hold shows its way forward', () => {
+    renderHeader({
+      ...owner,
+      baseUpdate: control(),
+      latestChangesWaiting: true,
+      branchHold: { kind: 'rewritten' },
+    })
+    expect(screen.getByTestId('branch-hold-status')).toBeTruthy()
+    expect(screen.queryByTestId('branch-latest-waiting')).toBeNull()
+  })
+
+  it('drops the waiting badge while the latest changes come in', () => {
+    renderHeader({
+      ...owner,
+      baseUpdate: control({ wait: 'waiting' }),
+      latestWait: 'waiting',
+      latestChangesWaiting: true,
+    })
+    expect(screen.queryByTestId('branch-latest-waiting')).toBeNull()
+  })
+
   it('lets Submit for review act again once the wait is slow and the form editable', () => {
     renderHeader({ ...owner, baseUpdate: control({ wait: 'slow' }), latestWait: 'slow' })
     expect(screen.getByTestId('submit-button').getAttribute('aria-disabled')).toBeNull()

@@ -72,7 +72,8 @@ export interface ApiResponse<TData = unknown> {
  * another name can pass; no other create failure carries it. `OPEN_CONFLICTS`: a submit or approval
  * was refused while a merge's conflicts are open on the branch (a 409, merge-conflicts.ts).
  * `CONFLICT_CHANGED`: a resolve-entry named a conflict the record no longer holds as shown (a 409);
- * re-read the branch's conflicts.
+ * re-read the branch's conflicts. `BRANCH_MOVED`: an approval or a request for changes named a commit
+ * other than the branch's head, or none (a 409, api/branch-review.ts); reload the branch first.
  */
 export type ApiErrorCode =
   | 'SCHEMA_UNAVAILABLE'
@@ -85,3 +86,4 @@ export type ApiErrorCode =
   | 'BRANCH_NAME_REFUSED'
   | 'OPEN_CONFLICTS'
   | 'CONFLICT_CHANGED'
+  | 'BRANCH_MOVED'

@@ -123,6 +123,11 @@ export interface UseEntryManagerOptions {
   }
 }
 
+/** `withChanges: false` leaves the branch's changes to the caller, who reads them itself. */
+interface RefreshOptions {
+  withChanges?: boolean
+}
+
 export interface UseEntryManagerReturn {
   selectedPath: string
   /** Opens an entry the user chose, adding a history entry, so Back returns to the one before. */
@@ -146,14 +151,16 @@ export interface UseEntryManagerReturn {
   entriesLoadFailed: boolean
   navigatorOpen: boolean
   setNavigatorOpen: (open: boolean) => void
-  refreshEntries: (branch?: string) => Promise<EditorEntry[]>
+  refreshEntries: (branch?: string, refresh?: RefreshOptions) => Promise<EditorEntry[]>
   /** `refreshEntries`, resolving to the collections it read too. */
   refreshContent: (
     branch?: string,
+    refresh?: RefreshOptions,
   ) => Promise<{ entries: EditorEntry[]; collections: EditorCollection[] }>
   handleCreateEntry: (collectionPath: LogicalPath, entryTypeName?: string) => Promise<void>
   renameEntry: (path: string, newSlug: string) => Promise<void>
-  loadEntry: (entry: EditorEntry) => Promise<FormValue>
+  /** `isCurrent`, asked once the read lands, says whether to record its OCC token. */
+  loadEntry: (entry: EditorEntry, isCurrent?: () => boolean) => Promise<FormValue>
   /** Reads an entry's server value without recording the OCC token that `loadEntry` records. */
   readEntryValue: (entry: EditorEntry) => Promise<FormValue>
   saveEntry: (entry: EditorEntry, value: FormValue) => Promise<FormValue>
@@ -473,14 +480,14 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     return result.data
   }
 
-  const loadEntry = async (entry: EditorEntry) => {
+  const loadEntry = async (entry: EditorEntry, isCurrent: () => boolean = () => true) => {
     // Pin the branch this request targets: if the user switches branches
     // while the read is in flight, the token must be recorded under the
     // branch that actually served it, not the current one.
     const requestBranch = options.branchName
     const data = await readEntryPayload(entry, requestBranch)
     // Capture OCC version token for next save
-    if (entry.contentId && typeof data?.version === 'number') {
+    if (entry.contentId && typeof data?.version === 'number' && isCurrent()) {
       entryVersionsRef.current.set(versionKey(requestBranch, entry.contentId), data.version)
     }
     return normalizeContentPayload(data)
@@ -663,9 +670,10 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   // back) can reuse it instead of refetching.
   const refreshContent = async (
     branch: string = options.branchName,
+    { withChanges = true }: RefreshOptions = {},
   ): Promise<{ entries: EditorEntry[]; collections: EditorCollection[] }> => {
     if (!branch) return { entries: [], collections: [] }
-    options.onContentRefresh?.(branch)
+    if (withChanges) options.onContentRefresh?.(branch)
     const seq = claimRefreshSeq(branch)
     const fetched = await fetchEntriesAndSchema(apiClient, branch, {
       resolvePreviewSrc: options.resolvePreviewSrc,
@@ -686,8 +694,10 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     return fetched
   }
 
-  const refreshEntries = async (branch: string = options.branchName): Promise<EditorEntry[]> =>
-    (await refreshContent(branch)).entries
+  const refreshEntries = async (
+    branch: string = options.branchName,
+    refresh?: RefreshOptions,
+  ): Promise<EditorEntry[]> => (await refreshContent(branch, refresh)).entries
 
   const handleCreateEntry = async (collectionPath: LogicalPath, _?: string) => {
     const col = collectionByPath.get(collectionPath)

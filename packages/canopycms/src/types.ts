@@ -48,6 +48,8 @@ export interface BranchReview {
   by: { userId: CanopyUserId; name?: string }
   /** ISO timestamp of the verdict. */
   at: string
+  /** The head commit the reviewer's page showed, which the API checked against the clone's. */
+  commit?: string
 }
 
 /** What keeps a pull request behind its base. `base` is the branch GitHub says it targets now. */
@@ -96,9 +98,10 @@ export interface BranchMetadata {
    */
   pushedToGitHubAt?: string
   /**
-   * The latest editor URL a submit took from its request (editor-url.ts); a submit that took
-   * none, or used config.editorUrl, leaves it as it was. A comment change re-renders the PR's
-   * comment summary with config.editorUrl or this, so a commenter never supplies the links.
+   * The editor URL the latest submit resolved (editor-url.ts): config.editorUrl, else one taken
+   * from its request; a submit that resolved none leaves it as it was. A comment change re-renders
+   * the PR's comment summary with config.editorUrl or this, so a commenter never supplies the
+   * links. The worker links the conflicts status with it (worker/conflicts-status.ts).
    */
   editorUrl?: string
   /** Sync status for async GitHub operations (used when Lambda has no internet) */
@@ -149,6 +152,12 @@ export interface BranchMetadata {
    * rebase loop's self-heal pass.
    */
   historyRewrittenFrom?: string
+  /**
+   * The rebased tip of the latest rewrite while `historyRewrittenFrom` is set: the one commit a
+   * rewrite's publish moves `remote.git` to, since the clone can hold a commit made after it that
+   * no one has submitted. Advanced by each rewrite, cleared with the marker.
+   */
+  historyRewrittenTo?: string
   /**
    * The newest commit this deployment has seen on GitHub's branch, or knows it will hold once a
    * queued push of a rewrite lands: the last one it pushed, took in or published, and any
@@ -212,6 +221,12 @@ export interface BranchMetadata {
   baseUpdateRequestedAt?: string
   /** The worker's answer to the latest request for the latest changes (worker/rebase.ts). */
   lastBaseUpdate?: LastBaseUpdate
+  /**
+   * The first base commit the worker's automatic sync left out because the branch holds saved but
+   * uncommitted work, which it never commits (worker/rebase.ts). The editor shows that the latest
+   * changes are waiting; cleared once the sync finds the branch holding the base, or in review.
+   */
+  latestChangesWaiting?: string
 }
 
 /** How a requested update from the base went. */
@@ -339,6 +354,22 @@ export interface UnpublishableBranchesReport {
 }
 
 /**
+ * The last git sync's failures to set the "CanopyCMS conflicts" status on pull request heads
+ * (worker/conflicts-status.ts): `permission` when GitHub refused the credential (it lacks the Commit
+ * statuses permission), `unreachable` when GitHub or the gateway could not be reached or GitHub was
+ * busy, `other` for anything else, a gateway refusal or an unreadable conflict record included.
+ * `branches` lists at most 50 names, `count` all of them.
+ */
+export interface ConflictsStatusFailure {
+  reason: 'permission' | 'unreachable' | 'other'
+  /** [REDACT] Served to the admin panel, so sanitized. */
+  message: string
+  branches: string[]
+  count: number
+  at: string
+}
+
+/**
  * Wire shape of the worker's self-reported status file (worker-status.json, under
  * the task queue dir), written by the CmsWorker daemon. Read-only here: GET
  * /admin/status parses it as-is.
@@ -430,6 +461,8 @@ export interface WorkerStatusReport {
    * into a restarted worker's first snapshot, so the bound survives restarts.
    */
   baseHold?: BaseSchemaHold
+  /** Present while the last git sync failed to set a conflicts status; not carried over a restart. */
+  conflictsStatusFailure?: ConflictsStatusFailure
   /**
    * How the last worker that ran stopped, carried into each new worker's snapshot
    * (task-queue/worker-status.ts's `readCarriedOverStatus`). A worker that fails at startup

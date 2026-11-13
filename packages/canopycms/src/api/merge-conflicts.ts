@@ -11,7 +11,11 @@ import { z } from 'zod'
 
 import type { BranchContext, BranchContextWithSchema } from '../types'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
-import type { ContentFormat, EntrySchema, FlatSchemaItem } from '../config'
+import type { CanopyConfig, ContentFormat, EntrySchema, FlatSchemaItem } from '../config'
+import { SYNC_BRANCH_ACTION } from '../base-update'
+import { operatingStrategy } from '../operating-mode'
+import { enqueueTask } from '../task-queue/cms-task-queue'
+import { getTaskQueueDir } from '../task-queue/task-queue-config'
 import {
   entryRefFromRepoPath,
   entryRefFromRepoPathShape,
@@ -294,11 +298,30 @@ const mayAccess = (
 }
 
 /**
+ * Wake the worker's git sync for `branch`, whose last open choice was just resolved, so the pull
+ * request's conflicts status (worker/conflicts-status.ts) turns to success within a sync's rest: a
+ * required check would otherwise hold the merge until the next regular cycle. Only where a worker
+ * answers the queue; best-effort, as that next cycle sets it anyway.
+ */
+async function wakeConflictsStatus(config: Pick<CanopyConfig, 'mode'>, branch: string) {
+  if (operatingStrategy(config.mode).baseUpdateRunsInRequest()) return
+  try {
+    await enqueueTask(getTaskQueueDir(config), { action: SYNC_BRANCH_ACTION, payload: { branch } })
+  } catch (err) {
+    canopyLogWarn(
+      `CanopyCMS: Could not queue a sync for ${branch} after its last conflict was resolved:`,
+      getErrorMessage(err),
+    )
+  }
+}
+
+/**
  * Change the record's entries by `change`, under the record's locks, then `branch.json`
- * `conflictFiles` to match. `change` returning null writes nothing. Resolves the entries written,
- * or null.
+ * `conflictFiles` to match, and wake the worker when that resolved the last open choice.
+ * `change` returning null writes nothing. Resolves the entries written, or null.
  */
 const changeRecord = async (
+  config: Pick<CanopyConfig, 'mode'>,
   branchContext: BranchContext,
   change: (
     entries: Readonly<Record<string, MergeConflictEntry>>,
@@ -317,6 +340,10 @@ const changeRecord = async (
         : null,
     { keepUpdatedAt: true },
   )
+  // Each change takes a choice off, so none open now means this one took the last.
+  if (openConflictCount(state.entries) === 0 && !state.held) {
+    await wakeConflictsStatus(config, branchContext.branch.name)
+  }
   return state.entries
 }
 
@@ -327,12 +354,13 @@ const changeRecord = async (
  * the one lock order (docs/concurrency.md).
  */
 export async function clearFieldConflicts(
+  config: Pick<CanopyConfig, 'mode'>,
   branchContext: BranchContext,
   contentId: string,
   resolved: readonly ResolvedFieldConflict[],
 ): Promise<ResolvedFieldConflict[]> {
   let cleared: ResolvedFieldConflict[] = []
-  await changeRecord(branchContext, (entries) => {
+  await changeRecord(config, branchContext, (entries) => {
     const next = withoutResolvedFields(entries, contentId, resolved)
     cleared = next.cleared
     return next.cleared.length > 0 ? next.entries : null
@@ -623,6 +651,8 @@ const resolveBodySchema = z.object({
    * field by field with the latest version (`unreadable`).
    */
   choice: z.enum(['keep', 'delete', 'restore', 'use-latest']),
+  /** The card promised the entry stays deleted: a `keep` is refused if it is in the tree now. */
+  entryGone: z.literal(true).optional(),
 })
 
 export type ResolveEntryConflictBody = z.infer<typeof resolveBodySchema>
@@ -724,10 +754,15 @@ const resolveHandler = async (
     if (current?.kind !== entry.kind || current.mergeSha !== body.mergeSha) {
       throw new ConflictChangedError()
     }
+    // Read afresh: a restore since the drawer opened would make "keep it deleted" untrue.
+    if (body.entryGone) {
+      store.invalidateIndex()
+      if ((await store.idIndex()).findById(body.id) !== null) throw new ConflictChangedError()
+    }
   }
   // Clears the record as it stands under its lock, refusing when a merge changed it since.
   const clear = async () => {
-    const written = await changeRecord(branchContext, (now) => {
+    const written = await changeRecord(ctx.services.config, branchContext, (now) => {
       const current = now[body.id] as MergeConflictEntry | undefined
       if (current?.kind === 'fields' && current.mergeSha === body.mergeSha) {
         const { [body.id]: _kept, ...rest } = now
@@ -875,9 +910,10 @@ export type ReleaseConflictsHoldResponse = ApiResponse<{ released: boolean }>
  * clashed is lost, and the values stay as the merges left them. Under the content-write lock, as a
  * merge's record is written.
  */
-const releaseHoldHandler = async (gc: {
-  branchContext: BranchContext
-}): Promise<ReleaseConflictsHoldResponse> => {
+const releaseHoldHandler = async (
+  gc: { branchContext: BranchContext },
+  ctx: ApiContext,
+): Promise<ReleaseConflictsHoldResponse> => {
   const { branchRoot } = gc.branchContext
   try {
     const written = await withContentWriteLock(branchRoot, () =>
@@ -886,6 +922,9 @@ const releaseHoldHandler = async (gc: {
         return { ...current, held: undefined }
       }),
     )
+    if (written !== null && openConflictCount(written.entries) === 0) {
+      await wakeConflictsStatus(ctx.services.config, gc.branchContext.branch.name)
+    }
     return { ok: true, status: 200, data: { released: written !== null } }
   } catch (err) {
     if (err instanceof ContentWriteLockBusyError) {

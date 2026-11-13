@@ -124,6 +124,7 @@ export function createMockGitManager(): {
   commit: Mock
   push: Mock
   ensureAuthor: Mock
+  headSha: Mock
 } {
   return {
     checkoutBranch: vi.fn().mockResolvedValue(undefined),
@@ -137,6 +138,7 @@ export function createMockGitManager(): {
     commit: vi.fn().mockResolvedValue(undefined),
     push: vi.fn().mockResolvedValue(undefined),
     ensureAuthor: vi.fn().mockResolvedValue(undefined),
+    headSha: vi.fn().mockResolvedValue('0'.repeat(40)),
   }
 }
 
@@ -210,6 +212,7 @@ export function createMockServices(options: MockServicesOptions = {}): CanopySer
     bootstrapAdminIds: options.bootstrapAdminIds ?? new Set<string>(),
     commitFiles: options.commitFiles ?? vi.fn().mockResolvedValue(undefined),
     commitSavedWork: options.commitSavedWork ?? vi.fn().mockResolvedValue(false),
+    runBaseUpdateNow: options.runBaseUpdateNow ?? vi.fn().mockResolvedValue('answered'),
     submitBranch:
       options.submitBranch ??
       vi.fn().mockResolvedValue({

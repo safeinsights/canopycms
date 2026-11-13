@@ -43,6 +43,8 @@ import type { ApiContext, ApiRequest } from './types'
 import { CONTENT_ROUTES, type ContentWriteResponse } from './content'
 import { logicalPathSchema } from './validators'
 import { MERGE_CONFLICT_ROUTES, type ResolveEntryConflictBody } from './merge-conflicts'
+import { SYNC_BRANCH_ACTION } from '../base-update'
+import { listTasks } from '../task-queue/cms-task-queue'
 
 const postFields = [
   { name: 'title', type: 'string' as const, isTitle: true },
@@ -234,8 +236,14 @@ const helloRecord = (): MergeConflictEntry => ({
   ],
 })
 
-const createCtx = (options: { rules?: PathPermission[] } = {}): ApiContext => {
-  const config = defineCanopyTestConfig({ defaultBranchAccess: 'allow', schema })
+const createCtx = (
+  options: { rules?: PathPermission[]; mode?: 'dev' | 'prod' } = {},
+): ApiContext => {
+  const config = defineCanopyTestConfig({
+    defaultBranchAccess: 'allow',
+    schema,
+    ...(options.mode && { mode: options.mode }),
+  })
   const checkBranchAccess = createCheckBranchAccess('allow')
   const access = createTestContentAccess({
     checkBranchAccess,
@@ -293,7 +301,7 @@ const entryConflict = (ctx: ApiContext, entryPath: string, id?: string) =>
 const resolveEntry = (
   ctx: ApiContext,
   entryPath: string,
-  body: { id: string; mergeSha: string; choice: ResolveEntryConflictBody['choice'] },
+  body: Omit<ResolveEntryConflictBody, 'id'> & { id: string },
 ) =>
   MERGE_CONFLICT_ROUTES.resolveEntry.handler(
     ctx,
@@ -875,6 +883,58 @@ describe('POST /:branch/resolve-entry/...entryPath', () => {
     await expect(fs.stat(path.join(branchRoot, files.gone))).rejects.toThrow()
   })
 
+  it('keeps deleted, as the card promised, only while the entry is still gone', async () => {
+    await recordAs({ [ID.gone]: { ...helloRecord(), path: files.gone } })
+    const res = await resolveEntry(createCtx(), 'content/blog/gone', {
+      id: ID.gone,
+      mergeSha: MERGE,
+      choice: 'keep',
+      entryGone: true,
+    })
+    expect(res.ok).toBe(true)
+    expect(await recorded()).toEqual({})
+  })
+
+  it('refuses "keep it deleted" for an entry back in the branch since, clearing nothing', async () => {
+    // A restore the drawer never heard about: the entry is in the tree under its content id.
+    await recordAs({ [ID.hello]: helloRecord() })
+    const res = await resolveEntry(createCtx(), 'blog/hello', {
+      id: ID.hello,
+      mergeSha: MERGE,
+      choice: 'keep',
+      entryGone: true,
+    })
+    expect(res).toMatchObject({ ok: false, status: 409, code: 'CONFLICT_CHANGED' })
+    expect((await recorded())[ID.hello].fields).toHaveLength(2)
+  })
+
+  it('refuses "keep it deleted" for an entry restored after the request read the tree', async () => {
+    await recordAs({ [ID.gone]: { ...helloRecord(), path: files.gone } })
+    // The restore lands as the content-write lock is taken, after the request located the record.
+    const read = MergeConflictStore.prototype.read
+    let reads = 0
+    vi.spyOn(MergeConflictStore.prototype, 'read').mockImplementation(async function (
+      this: MergeConflictStore,
+    ) {
+      if (++reads === 2) {
+        await fs.writeFile(path.join(branchRoot, files.gone), json({ title: 'Back again' }))
+      }
+      return read.call(this)
+    })
+    onTestFinished(() => {
+      vi.restoreAllMocks()
+    })
+    const res = await resolveEntry(createCtx(), 'content/blog/gone', {
+      id: ID.gone,
+      mergeSha: MERGE,
+      choice: 'keep',
+      entryGone: true,
+    })
+    expect(reads).toBeGreaterThanOrEqual(2)
+    expect(res).toMatchObject({ ok: false, status: 409, code: 'CONFLICT_CHANGED' })
+    expect((await recorded())[ID.gone].fields).toHaveLength(2)
+  })
+
   it('replaces an entry that can’t merge field by field with the latest version (rows 33, 43)', async () => {
     const latest = json({ title: 'Latest', sections: [] })
     const { merge, blobs } = await mergeTaking({ [files.hello]: latest })
@@ -1072,5 +1132,89 @@ describe('POST /:branch/resolve-entry/...entryPath', () => {
     })
     expect(res).toMatchObject({ ok: false, status: 403 })
     await expect(fs.stat(path.join(branchRoot, files.secret))).resolves.toBeTruthy()
+  })
+})
+
+describe("waking the worker for the pull request's conflicts status", () => {
+  const taskDir = () => path.join(tmpDir, '.tasks')
+  const queuedSyncs = async () =>
+    (await listTasks(taskDir(), 'pending')).filter((t) => t.action === SYNC_BRANCH_ACTION)
+  beforeEach(() => {
+    vi.stubEnv('CANOPYCMS_WORKSPACE_ROOT', tmpDir)
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+  const deletedOnBase = (file: string) => ({
+    path: file,
+    mergeSha: MERGE,
+    kind: 'deleted-on-base' as const,
+    sides: {},
+  })
+
+  it('queues a sync of the branch when an entry resolution leaves no choice open, and only then', async () => {
+    await recordAs({ [ID.hello]: deletedOnBase(files.hello), [ID.memo]: deletedOnBase(files.memo) })
+    const ctx = createCtx({ mode: 'prod' })
+
+    await resolveEntry(ctx, 'blog/hello', { id: ID.hello, mergeSha: MERGE, choice: 'keep' })
+    expect(await queuedSyncs()).toEqual([])
+
+    await resolveEntry(ctx, 'notes/memo', { id: ID.memo, mergeSha: MERGE, choice: 'keep' })
+    expect((await queuedSyncs()).map((t) => t.payload)).toEqual([{ branch: 'feature' }])
+  })
+
+  it('queues one when a save makes the last field choice', async () => {
+    await recordAs({ [ID.hello]: helloRecord() })
+    const ctx = createCtx({ mode: 'prod' })
+    const save = async (key: string) =>
+      CONTENT_ROUTES.write.handler(
+        ctx,
+        { user },
+        { branch, path: unsafeAsLogicalPath('content/blog/hello') },
+        {
+          format: 'json',
+          data: post('Hello there', 'Welcome friends'),
+          expectedVersion: (
+            await CONTENT_ROUTES.read.handler(
+              ctx,
+              { user },
+              { branch, path: unsafeAsLogicalPath('content/blog/hello') },
+            )
+          ).data!.version,
+          resolvedConflicts: [{ mergeSha: MERGE, key }],
+        },
+      )
+
+    expect((await save('title')).ok).toBe(true)
+    expect(await queuedSyncs()).toEqual([])
+    expect((await save('sections.hero1.heading')).ok).toBe(true)
+    expect(await queuedSyncs()).toHaveLength(1)
+  })
+
+  it("queues one when an admin's release leaves nothing open", async () => {
+    await fs.mkdir(path.join(branchRoot, '.canopy-meta'), { recursive: true })
+    await fs.writeFile(path.join(branchRoot, '.canopy-meta', 'merge-conflicts.json'), '{"oops"')
+    await new MergeConflictStore(branchRoot, 0).quarantine()
+
+    await MERGE_CONFLICT_ROUTES.releaseHold.handler(
+      createCtx({ mode: 'prod' }),
+      { user: adminUser },
+      { branch },
+    )
+    expect(await queuedSyncs()).toHaveLength(1)
+  })
+
+  it('queues nothing in dev, where no worker sets a status', async () => {
+    // Dev's queue is under the working directory.
+    vi.spyOn(process, 'cwd').mockReturnValue(tmpDir)
+    const devTasks = path.join(tmpDir, '.canopy-dev', '.tasks')
+    await recordAs({ [ID.hello]: deletedOnBase(files.hello) })
+    const res = await resolveEntry(createCtx({ mode: 'dev' }), 'blog/hello', {
+      id: ID.hello,
+      mergeSha: MERGE,
+      choice: 'keep',
+    })
+    expect(res.ok).toBe(true)
+    expect(await listTasks(devTasks, 'pending')).toEqual([])
   })
 })

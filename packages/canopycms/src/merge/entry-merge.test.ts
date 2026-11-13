@@ -2066,6 +2066,271 @@ describe('an item edited to read exactly like one deleted, with no git-level mer
     })
   })
 
+  it('two twins rewritten to read like one deleted item each stay the twin their key names', () => {
+    const fields: FieldConfig[] = [
+      { name: 'items', type: 'object', list: true, fields: text('title', 'detail') },
+    ]
+    const [T, U] = [
+      { title: 't0', detail: 'd2' },
+      { title: 't3', detail: 'd0' },
+    ]
+    const [K, K2, K3] = itemKeysAsRead([T, T, T]) as string[]
+    const ancestor = { items: [T, T, T, U] }
+    const rewrote = {
+      items: [
+        { ...T, _key: K },
+        { ...U, _key: K2 },
+        { ...U, _key: K3 },
+      ],
+    }
+    const edited = {
+      items: [
+        { ...T, title: 't0~B1', _key: K },
+        { ...T, _key: K2 },
+        { ...T, _key: K3 },
+      ],
+    }
+    for (const [base, branch] of [
+      [rewrote, edited],
+      [edited, rewrote],
+    ]) {
+      const result = mergeEntry({
+        format: 'json',
+        ancestor: { data: ancestor },
+        base: { data: base },
+        branch: { data: branch },
+        fields,
+      })
+      if (result.kind !== 'merged') throw new Error('expected a merge')
+      expect(result.conflicts).toEqual([])
+      expect(result.data.items).toEqual([
+        { title: 't0~B1', detail: 'd2', _key: K },
+        { ...U, _key: K2 },
+        { ...U, _key: K3 },
+      ])
+    }
+  })
+
+  it('two items rewritten to read like one deleted item: each is its key, so C stays deleted', () => {
+    const both: Page = {
+      ...o,
+      items: [
+        { ...C, _key: KA },
+        { ...C, _key: KB },
+      ],
+    }
+    const gone = {
+      items: [
+        [KA, 'c', '/c'],
+        [KB, 'c', '/c'],
+      ],
+      conflicts: [],
+      remaps: [],
+    }
+    expect(merge(without(2), both)).toEqual(gone)
+    expect(merge(both, without(2))).toEqual(gone)
+    // The other side's edit of A meets the rewrite of A's own fields.
+    expect(merge(edit(0, { text: 'base edits A' }), both).conflicts).toEqual([
+      [`items.${KA}.text`, 'changed'],
+    ])
+  })
+
+  it('a copy of B under a minted key beside B made to read like a deleted C: B is its key, rewritten', () => {
+    const M = '1mmmmmmmmmmm'
+    const base: Page = {
+      ...o,
+      items: [o.items[0], { ...C, _key: KB }, { ...B, _key: M }],
+    }
+    const result = merge(base, edit(1, { text: 'branch edits B' }))
+    expect(result.items).toContainEqual([M, 'Read the docs', '/documentation'])
+    expect(result.conflicts).toEqual([[`items.${KB}.text`, 'changed']])
+  })
+
+  it('a copy beside an item rewritten to read like one the other side kept: never brought back', () => {
+    const [X0, X1] = [
+      { title: 't2', detail: 'd0' },
+      { title: 't2', detail: 'd0-A1' },
+    ]
+    const K0 = itemKeysAsRead([X0])[0] as string
+    const M = '1mmmmmmmmmmm'
+    const result = mergeEntry({
+      format: 'json',
+      fields: [{ name: 'items', type: 'object', list: true, fields: text('title', 'detail') }],
+      ancestor: { data: { items: [X0, X1] } },
+      base: { data: { items: [X1] } },
+      branch: {
+        data: {
+          items: [
+            { ...X1, _key: K0 },
+            { ...X0, _key: M },
+          ],
+        },
+      },
+    })
+    if (result.kind !== 'merged') throw new Error('expected a merge')
+    expect(result.conflicts.map((c) => [c.key, c.kind])).toEqual([
+      [`items.${K0}`, 'removed-on-base'],
+    ])
+  })
+
+  describe('two items rewritten to read like a deleted A, one beside a copy of its own item', () => {
+    const fields: FieldConfig[] = [
+      { name: 'items', type: 'object', list: true, fields: text('title', 'detail') },
+    ]
+    const [a, b, c] = ['a', 'b', 'c'].map((t) => ({ title: t, detail: `d${t}` }))
+    const [, Kb, Kc] = itemKeysAsRead([a, b, c]) as string[]
+    const M = '1mmmmmmmmmmm'
+    const run = (base: Data[], branch: Data[]) => {
+      const result = mergeEntry({
+        format: 'json',
+        ancestor: { data: { items: [a, b, c] } },
+        base: { data: { items: base } },
+        branch: { data: { items: branch } },
+        fields,
+      })
+      if (result.kind !== 'merged') throw new Error('expected a merge')
+      return result
+    }
+
+    it("still counts as a claimant: the other side's edit of A conflicts with its deletion", () => {
+      const edited = { ...a, detail: 'da-edit' }
+      const result = run(
+        [
+          { ...a, _key: Kb },
+          { ...a, _key: Kc },
+          { ...b, _key: M },
+        ],
+        [edited, b, c],
+      )
+      expect(result.conflicts.map((x) => [x.key, x.kind])).toEqual([
+        [`items.${itemKeysAsRead([edited])[0]}`, 'removed-on-base'],
+      ])
+      expect(result.data.items).toEqual([
+        edited,
+        { ...a, _key: Kb },
+        { ...a, _key: Kc },
+        { ...b, _key: M },
+      ])
+    })
+
+    it('reads the same way on both sides, where only one made the copy', () => {
+      const rewrote = [
+        { ...a, _key: Kb },
+        { ...c, _key: Kc },
+      ]
+      const result = run([...rewrote, { ...b, _key: M }], rewrote)
+      expect(result.conflicts).toEqual([])
+      expect(result.data.items).toEqual([...rewrote, { ...b, _key: M }])
+    })
+  })
+
+  it("the other side's copy of an item it didn't rewrite leaves the claim to the content", () => {
+    const fields: FieldConfig[] = [
+      { name: 'items', type: 'object', list: true, fields: text('title', 'detail') },
+    ]
+    const [b, c] = [
+      { title: 't2', detail: 'd0' },
+      { title: 't3', detail: 'd0' },
+    ]
+    const [Kb, Kc] = itemKeysAsRead([b, c]) as string[]
+    const result = mergeEntry({
+      format: 'json',
+      ancestor: { data: { items: [b, c] } },
+      base: {
+        data: {
+          items: [
+            { ...b, _key: Kb },
+            { ...b, _key: '1mmmmmmmmmmm' },
+            { ...c, title: 't3~A1', _key: Kc },
+          ],
+        },
+      },
+      branch: { data: { items: [{ ...c, _key: Kb }] } },
+      fields,
+    })
+    if (result.kind !== 'merged') throw new Error('expected a merge')
+    expect(result.conflicts).toEqual([])
+    expect((result.data.items as Data[]).map((i) => i.title)).toEqual(['t2', 't3~A1'])
+  })
+
+  it("a rewrite both sides hold, one under an alias of the other's key, reads alike", () => {
+    const day = new Date('2024-01-01T00:00:00.000Z')
+    const [P, Q, R] = [
+      { h: 'a', t: 'ta' },
+      { h: 'b', t: 'tb', d: day },
+      { h: 'c', t: 'tc' },
+    ]
+    const [KQ, KR] = (itemKeysAsRead([P, Q, R]) as string[]).slice(1)
+    const KQalias = itemKeysAsRead([{ ...Q, d: '2024-01-01' }])[0] as string
+    const M = '1mmmmmmmmmmm'
+    const result = mergeEntry({
+      format: 'json',
+      ancestor: { data: { items: [P, Q, R] } },
+      base: {
+        data: {
+          items: [
+            { ...P, _key: KQ },
+            { ...R, _key: KR },
+            { ...Q, _key: M },
+          ],
+        },
+      },
+      branch: {
+        data: {
+          items: [
+            { ...P, _key: KQalias },
+            { ...R, _key: KR },
+          ],
+        },
+      },
+    })
+    if (result.kind !== 'merged') throw new Error('expected a merge')
+    expect(result.conflicts).toEqual([])
+    expect((result.data.items as Data[]).map((i) => i.t)).toEqual(['ta', 'tc', 'tb'])
+  })
+
+  it('a claimant named through an alias, beside a copy of its item: the copy stays', () => {
+    const day = new Date('2024-01-01T00:00:00.000Z')
+    const [P, Q, R] = [
+      { h: 'a', t: 'ta' },
+      { h: 'b', t: 'tb', d: day },
+      { h: 'c', t: 'tc' },
+    ]
+    const [KP] = itemKeysAsRead([P]) as string[]
+    const KQ = itemKeysAsRead([{ ...Q, d: '2024-01-01' }])[0] as string
+    const M = '1mmmmmmmmmmm'
+    const result = mergeEntry({
+      format: 'json',
+      ancestor: { data: { items: [P, Q, R] } },
+      base: {
+        data: {
+          items: [
+            { ...P, _key: KP },
+            { ...R, _key: KQ },
+            { ...Q, _key: M },
+          ],
+        },
+      },
+      branch: { data: { items: [P, R] } },
+    })
+    if (result.kind !== 'merged') throw new Error('expected a merge')
+    expect((result.data.items as Data[]).map((i) => i.t)).toContain('tb')
+  })
+
+  it('an item under a key naming no item takes the content before one a key names', () => {
+    const KZ = itemKeysAsRead([{ heading: 'Z', text: 'z', link: '/z' }])[0] as string
+    const branch: Page = {
+      ...o,
+      items: [
+        { ...C, _key: KA },
+        { ...C, _key: KZ },
+      ],
+    }
+    const result = merge(edit(2, { text: 'base edits C' }), branch)
+    expect(result.conflicts).toEqual([])
+    expect(result.items.map(([, text]) => text).sort()).toEqual(['base edits C', 'c'])
+  })
+
   it('under keys the editor minted, each item is its key', () => {
     const [MA, MB, MC] = ['1aaaaaaaaaaa', '1bbbbbbbbbbb', '1ccccccccccc']
     const minted: Page = { ...o, items: [A, B, C].map((i, n) => ({ ...i, _key: [MA, MB, MC][n] })) }
@@ -3174,6 +3439,87 @@ describe('shapes the fix review found', () => {
     )
     expect(result.data).toEqual({ items: [], l2: [x] })
     expect(result.conflicts).toEqual([])
+  })
+
+  describe('an item moved in above the copy it once read like', () => {
+    // `x` keeps the key a read gave its first content, which its copy `y` still holds.
+    const first = { title: 'x', detail: 'd' }
+    const x = { title: 'x-reworded', detail: 'd', _key: itemKeysAsRead([first])[0]! }
+    const y = { ...first, _key: 'Kyaaaaaaaaaa' }
+    const o = { data: { items: [x], l2: [y] } }
+    const moved = { data: { items: [], l2: [x, y] } }
+
+    it("takes the base's edit of the copy onto the copy, with either side moving", () => {
+      const edited = { data: { items: [x], l2: [{ ...y, detail: 'd-base' }] } }
+      const want = { items: [], l2: [x, { ...y, detail: 'd-base' }] }
+      for (const [base, branch] of [
+        [edited, moved],
+        [moved, edited],
+      ]) {
+        const result = run(o, base, branch, 'md', lists)
+        expect(result.data).toEqual(want)
+        expect(result.conflicts).toEqual([])
+        expect(result.keyRemaps).toEqual([])
+      }
+    })
+
+    it("takes the base's delete of the copy, naming no other item", () => {
+      const result = run(o, { data: { items: [x], l2: [] } }, moved, 'md', lists)
+      expect(result.data).toEqual({ items: [], l2: [x] })
+      expect(result.conflicts).toEqual([])
+    })
+
+    it('conflicts where the branch deleted the copy the base edited, beside the item moved in', () => {
+      const edited = { data: { items: [x], l2: [{ ...y, detail: 'd-base' }] } }
+      const result = run(o, edited, { data: { items: [], l2: [x] } }, 'md', lists)
+      expect(result.conflicts.map((c) => c.kind)).toEqual(['removed-by-you'])
+    })
+  })
+
+  it('keeps a copy the branch added above the item it copies, under the key a read gives it', () => {
+    const z = { title: 'z', detail: 'd' }
+    const kept = { ...z, _key: 'Kzaaaaaaaaaa' }
+    const added = { ...z, _key: itemKeysAsRead([z])[0]! }
+    const result = run(
+      { data: { items: [], l2: [kept] } },
+      { data: { items: [], l2: [{ ...kept, detail: 'd-base' }] } },
+      { data: { items: [], l2: [added, kept] } },
+      'md',
+      lists,
+    )
+    expect(result.data).toEqual({ items: [], l2: [added, { ...kept, detail: 'd-base' }] })
+    expect(result.conflicts).toEqual([])
+  })
+
+  describe('an item moved in beside an alike item the other side added', () => {
+    const x = { title: 'x', detail: 'd' }
+    const moved = { ...x, _key: itemKeysAsRead([x])[0]! }
+    const copy = { ...x, _key: 'Kcopyaaaaaaa' }
+
+    it('keeps both where the base duplicated a twin the branch moved one in beside', () => {
+      const twin = { ...x, _key: 'Ktwinaaaaaaa' }
+      const result = run(
+        { data: { items: [twin], l2: [moved] } },
+        { data: { items: [twin, copy], l2: [moved] } },
+        { data: { items: [moved, twin], l2: [] } },
+        'md',
+        lists,
+      )
+      expect(result.data).toEqual({ items: [moved, twin, copy], l2: [] })
+      expect(result.conflicts).toEqual([])
+    })
+
+    it('keeps both where the base added an alike item to the list the branch moved one into', () => {
+      const result = run(
+        { data: { items: [], l2: [moved] } },
+        { data: { items: [copy], l2: [moved] } },
+        { data: { items: [moved], l2: [] } },
+        'md',
+        lists,
+      )
+      expect(result.data).toEqual({ items: [copy, moved], l2: [] })
+      expect(result.conflicts).toEqual([])
+    })
   })
 })
 

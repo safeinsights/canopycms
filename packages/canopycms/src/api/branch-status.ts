@@ -25,7 +25,7 @@ import { resolveEditorUrl } from '../editor-url'
 
 // Re-export for client generation
 export type { BranchMergeResponse } from './branch-merge'
-export type { RequestChangesBody } from './branch-review'
+export type { ApproveBody, RequestChangesBody } from './branch-review'
 export type { UpdateFromBaseResponse } from './branch-update-from-base'
 
 /**
@@ -269,8 +269,9 @@ const submitBranchForMergeHandler = async (
       status: 'submitted',
       submittedAt,
       ...pushed,
-      // Only a request-derived URL: config.editorUrl is read live by every later re-render.
-      ...(editorUrl && !ctx.services.config.editorUrl ? { editorUrl } : {}),
+      // config.editorUrl, when set, still wins in every later re-render here; the worker, which
+      // has no config, links the conflicts status with this.
+      ...(editorUrl ? { editorUrl } : {}),
       syncFailureReason: prResult.syncFailureReason,
       pullRequestUrl: prResult.prUrl ?? branchContext.branch.pullRequestUrl,
       pullRequestNumber: prResult.prNumber ?? branchContext.branch.pullRequestNumber,
