@@ -54,6 +54,168 @@ entries under **Released**.
 
 ## Released
 
+### 0.13.0
+
+#### Focus stays in "Show changes" after an entry-level conflict choice
+
+<!-- changeset: conflict-entry-choice-focus -->
+
+_First in 0.13.0._
+
+**What changed.** After "Keep it", "Keep it deleted", "Restore entry" or "Keep your version" on a
+conflict card, a status line says what happened. Focus moves to "Restore entry" while the entry
+stays deleted, and otherwise to the drawer's title, instead of dropping to the page.
+
+#### "Keep it deleted" on a conflict checks that the entry is still gone
+
+<!-- changeset: conflict-keep-deleted-check -->
+
+_First in 0.13.0._
+
+**What changed.** If an entry came back after "Show changes" opened (from another tab, or a
+restore whose answer was lost), "Keep it deleted" no longer clears its conflicts. The card reloads
+and shows what is left to choose.
+
+#### "Use latest version" never changes another list item
+
+<!-- changeset: conflict-use-latest-other-item -->
+
+_First in 0.13.0._
+
+**What changed.** In a list whose items look alike, a save could give one item the key of an item
+you had removed. That item's conflict card then offered "Use latest version", which overwrote the
+look-alike, and showed it as your version. The card now shows that item as removed, and its
+latest version can't be placed: change it in the form by hand, then choose "Mark resolved".
+
+#### "Get latest changes" works in dev mode
+
+<!-- changeset: dev-get-latest-changes -->
+
+_First in 0.13.0._
+
+**What changed.** In dev mode, "Get latest changes" now shows on an editing branch. The request
+runs the worker's merge for that branch alone and answers before it returns, so the result and
+any conflicts show at once. It brings in the local remote's base; a branch cloned from another
+remote is told so and left as it is. Prod still queues the request for the CMS worker, as before.
+
+#### A refused "Get latest changes" that is a conflict shows yellow
+
+<!-- changeset: get-latest-refusal-colour -->
+
+_First in 0.13.0._
+
+**What changed.** When "Get latest changes" is refused because of the branch's state, for example
+a branch in review or one busy with a save, the message now shows yellow, as other conflicts do.
+Other failures stay red.
+
+#### "Latest changes waiting" in the branch bar
+
+<!-- changeset: latest-changes-waiting -->
+
+_First in 0.13.0._
+
+**What changed.** The automatic sync still skips a branch with saved but uncommitted work and
+commits nothing on a timer. When the base has moved on meanwhile, the branch bar now shows "Latest
+changes waiting", whose tooltip points to "Get latest changes". It clears once the branch holds the
+base again.
+
+#### Approve and Request changes pin the commit the reviewer saw — **behaviour change**
+
+<!-- changeset: review-pins-the-commit-seen -->
+
+_First in 0.13.0._
+
+**What changed.** Approve and Request changes now send the commit the reviewer's page showed, and
+the API refuses either one when the branch has moved since: "This branch changed since you opened
+it. Review the latest changes." The editor then reloads the branch, keeping a Request changes
+note for the next try. An approval records its commit, and the worker sends an approved branch
+back to review when commits come in that are more than that commit with the base merged in. An editor tab opened before this
+release is refused the same way until the page is reloaded.
+
+#### A "CanopyCMS conflicts" status on pull requests — **new GitHub App permission**
+
+<!-- changeset: conflicts-commit-status -->
+
+_First in 0.13.0._
+
+**What changed.** The worker sets a `CanopyCMS conflicts` commit status on each pull request's
+head: it fails with the number of choices still open in the editor, and passes once none are.
+Make it a required check in branch protection to stop a by-hand merge of undecided content, on a
+branch the CMS opens every pull request into: other pull requests never get it.
+`init-github-app` now asks for the "Commit statuses: read and write" permission, and `verify`
+reports an installation without it. Until an installation has it, only the status is refused, and
+System health says so.
+
+**To adopt.** On an existing GitHub App, its owner adds "Commit statuses: read and write" in the
+App's permissions on GitHub, an owner of the account it is installed on accepts the request in the
+installation's settings, then `canopycms init-github-app verify` confirms it. A fine-grained token
+needs "Commit statuses: read and write"; a classic token's `repo` scope already covers it. See
+[Submitting for Review](README.md#submitting-for-review).
+
+#### List items rewritten to read like one deleted item no longer conflict as a whole list
+
+<!-- changeset: fm-list-items-rewritten-alike -->
+
+_First in 0.13.0._
+
+**What changed.** When one side of a merge rewrote two or more list items to read exactly like an
+item it deleted, the field merge raised a conflict on the whole list. Each rewritten item now
+merges as the item its key names. Where that side also copied an item it rewrote this way, the
+copy now stays a new item instead of being read as the original and dropped.
+
+#### Update branch on GitHub no longer leaves list items under keys that name other items
+
+<!-- changeset: fm-rekey-update-branch -->
+
+_First in 0.13.0._
+
+**What changed.** When "Update branch" on a pull request merges the base into a branch, git keeps each list item under the key the branch's copy held, which can name another item once the base changed it. Later merges could then misread the item and undo a deletion or miss a conflict. The worker now takes such a merge in with one more commit that gives those items the keys the field merge would, and moves the branch's comment threads with them. The commit changes item keys only, so an approved branch stays approved. On GitHub it is a new push to the pull request, which dismisses approvals where the repository dismisses stale approvals.
+
+#### "Get latest changes" reports the conflicts a merge of GitHub's commits leaves
+
+<!-- changeset: get-latest-answer-after-github-merge -->
+
+_First in 0.13.0._
+
+**What changed.** When the latest changes reached a branch through its pull request on GitHub, for example after Update branch, "Get latest changes" merged them, then answered "You already have the latest changes" a cycle later, even where the merge left values for a person to choose. Where that merge holds the base, it now answers as a merge of the base does, with the conflicts to resolve, and the "Latest changes waiting" badge clears at once.
+
+#### An item moved into a list no longer takes the identity of the copy beside it
+
+<!-- changeset: merge-moved-in-item-keeps-identity -->
+
+_First in 0.13.0._
+
+**What changed.** When an editor duplicated a list item, moved the copy to another list, and later moved the original into that list above the copy, the field merge could read the original as the copy. The base's edit of the copy then landed on the original with no conflict shown, and a base deletion of the copy was reported against the wrong item. An item now takes another's identity from a look-alike key only where no item on its side holds that item's own key, and never when the key belongs to an item of another list. Such a moved-in item is also no longer merged into an alike item the other side added to that list, so neither is lost.
+
+#### A rebased branch publishes only the commits the rebase made
+
+<!-- changeset: rewrite-publish-rebased-tip -->
+
+_First in 0.13.0._
+
+**What changed.** After rebasing a branch it had already published onto the base, the worker publishes the rewritten history to the workspace's remote and GitHub. It read the branch's head for that a few steps after the rebase. If the worker had lost its lock and the editor committed saved work in that moment, that unsubmitted work was published too. The worker now publishes the commit the rebase made, and saved work committed after it stays unpublished until it is submitted.
+
+#### An entry deleted or renamed in the editor no longer comes back when GitHub's commits are taken in
+
+<!-- changeset: take-in-keeps-saved-deletes -->
+
+_First in 0.13.0._
+
+**What changed.** When a branch's copy on GitHub had commits the editor's workspace lacked, such as an Update branch or a maintainer's fix, the worker brought them in and wrote back any entry the editor had deleted, or the old path of one it had renamed, while that change was not yet submitted. The deletion was lost, or a renamed entry ended up twice. The worker now waits instead, as it already does for a saved edit to a file those commits change. An editing branch that lacks the base shows that the latest changes are waiting, and the deletion merges with GitHub's commits once it is committed, by "Get latest changes" or a submit.
+
+#### Saved work stays off GitHub until it is submitted — **behaviour change**
+
+<!-- changeset: unsubmitted-work-stays-unpublished -->
+
+_First in 0.13.0._
+
+**What changed.** When the worker brings the base branch, or commits made on GitHub, into a branch
+that holds saved work its author has not submitted, the merge stays in the branch's clone: neither
+the worker's own repository nor GitHub receives it until the author submits, whose push carries it.
+This holds for a withdrawn branch, one sent back with "Request changes", and one whose GitHub branch
+was deleted, which the worker no longer recreates with that work. Finishing an interrupted rewrite
+of a published branch publishes only the rewritten history, never a commit made since.
+
 ### 0.12.1
 
 <!-- changeset: field-merge-engine -->
