@@ -445,8 +445,20 @@ async function carryForwardRewrittenHistory(
         )
         return
       }
-      if (await forcePublishToLocalRemote(ctx, branchPath, branchRef, publishedSha)) {
+      const publish = await forcePublishToLocalRemote(
+        ctx,
+        branchPath,
+        branchRef,
+        publishedSha,
+        rebasedHead,
+      )
+      if (publish.kind === 'published') {
         await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
+      } else if (publish.kind === 'failed') {
+        const reason = redactCredentials(
+          `this branch's rebased history could not be published into the deployment's repository: ${publish.message}`,
+        )
+        await recordRebaseFailure(ctx, branchPath, branchDir, reason, branchRef)
       }
     } else {
       const divergence =
@@ -540,12 +552,24 @@ function worthAnotherCycle(
 }
 
 /**
+ * What a request for the latest changes is answered from: the fetch of the base that the branch
+ * was brought up to. The worker's cycle takes it from its GitHub fetch; a run in the request
+ * ({@link syncBranchNow}) from its own start, its base being `remote.git`'s.
+ */
+interface BaseUpdateSource {
+  /** When that fetch began. */
+  fetchedAt: number
+  /** The base commit it found; undefined when it reported none. */
+  baseTip?: string
+}
+
+/**
  * Answer the branch's request for the latest changes in `lastBaseUpdate`, which ends the editor's
- * wait. Only from a cycle whose GitHub fetch began at or after the request, and only once the
- * branch holds the base that fetch found: an earlier fetch may predate the changes asked for, and a
- * base ref that didn't move (a held or failed update) isn't the latest. While the schema gate holds
- * the base the request stands. Anything else that settles nothing, a lock or a GitHub step on its
- * way among them, asks for another early cycle while the request is recent. Never throws.
+ * wait. Only from a fetch begun at or after the request, and only once the branch holds the base
+ * that fetch found: an earlier fetch may predate the changes asked for, and a base ref that didn't
+ * move (a held or failed update) isn't the latest. While the schema gate holds the base the request
+ * stands. Anything else that settles nothing, a lock or a GitHub step on its way among them, asks
+ * for another early cycle while the request is recent. Never throws.
  */
 async function answerBaseUpdate(
   ctx: RebaseContext,
@@ -553,7 +577,7 @@ async function answerBaseUpdate(
   branchPath: string,
   probe: BaseUpdateProbe,
   outcome: BranchRebaseOutcome,
-  gitHub: GitHubSnapshot | undefined,
+  source: BaseUpdateSource | undefined,
   requested: boolean,
 ): Promise<void> {
   const { request } = probe
@@ -565,22 +589,21 @@ async function answerBaseUpdate(
     }
     return
   }
-  if (!gitHub || ctx.ensureStatusReport().baseHold) return
+  if (!source || ctx.ensureStatusReport().baseHold) return
   const askAgain = () => {
     if (worthAnotherCycle({ status: 'editing', baseUpdateRequestedAt: request.requestedAt })) {
       ctx.requestBranchSync(request.branchRef)
     }
   }
   // The request's time is the Lambda's clock and the fetch's this host's: both keep NTP time.
-  if (gitHub.fetchedAt < Date.parse(request.requestedAt)) return askAgain()
+  if (source.fetchedAt < Date.parse(request.requestedAt)) return askAgain()
   const answer = answerFor(outcome, probe)
   if (answer === undefined) return askAgain()
-  const gitHubBase = gitHub.tips.get(ctx.baseBranch)
-  if (answer !== 'failed' && gitHubBase !== undefined && probe.baseSha !== gitHubBase) {
+  if (answer !== 'failed' && source.baseTip !== undefined && probe.baseSha !== source.baseTip) {
     return askAgain()
   }
   const lastBaseUpdate = {
-    at: new Date(gitHub.fetchedAt).toISOString(),
+    at: new Date(source.fetchedAt).toISOString(),
     outcome: answer,
     ...(probe.baseSha !== undefined && { baseSha: probe.baseSha }),
     ...(answer === 'conflicts' && { keptEntries: probe.keptEntries }),
@@ -604,13 +627,28 @@ async function answerBaseUpdate(
   }
 }
 
+/** A run with no GitHub publishes nothing there: an empty namespace is a gateway that pushes nothing. */
+const NO_GITHUB_POLICY: BranchPolicyDescription = {
+  configured: [],
+  githubDefault: null,
+  namespace: '',
+  legacy: [],
+  settingsBranch: null,
+}
+
+/** The GitHub fetch's answer source: when it began, and the base it found. */
+const sourceOf = (ctx: RebaseContext, gitHub: GitHubSnapshot): BaseUpdateSource => ({
+  fetchedAt: gitHub.fetchedAt,
+  baseTip: gitHub.tips.get(ctx.baseBranch),
+})
+
 /**
  * Rebase every branch workspace that is behind the base branch, one cycle.
  *
- * The per-branch work is {@link rebaseOneBranch}; what stays here is the walk
- * over `content-branches/`, the structural pre-filter (entries that are not
- * branch workspaces at all, plus the base branch's own clone), and folding
- * each branch's outcome into the summary.
+ * The per-branch work is {@link syncBranchDir}; what stays here is the walk
+ * over `content-branches/` and folding each branch's outcome into the summary.
+ * `source` answers requests for the latest changes; the GitHub fetch's by default. `local` is a
+ * run with no GitHub (see {@link syncBranchDir}).
  *
  * Deliberately sequential rather than concurrent: each branch's rebase holds
  * that branch's cross-host content-write lock and runs a series of git
@@ -621,6 +659,8 @@ export async function runRebaseCycle(
   gatewayPolicy?: BranchPolicyDescription,
   gitHub?: GitHubSnapshot,
   requested: ReadonlySet<string> = new Set(),
+  source: BaseUpdateSource | undefined = gitHub && sourceOf(ctx, gitHub),
+  local = false,
 ): Promise<RebaseSummary> {
   const rebased: string[] = []
   const skippedDirty: string[] = []
@@ -643,64 +683,17 @@ export async function runRebaseCycle(
       workerLog('  Rebase cycle stopped: the worker is draining')
       break
     }
-    // Known structural entries under content-branches/, not branch workspaces:
-    // branches.json (registry snapshot) and dot-prefixed entries
-    // (.canopy-meta/, transient lock dirs). Skipped SILENTLY so the no-.git
-    // skip logs below don't fire for them every cycle; everything else still
-    // logs loudly on skip.
-    if (branchDir.startsWith('.') || branchDir === 'branches.json') {
-      continue
-    }
-
-    const branchPath = path.join(ctx.contentBranchesPath, branchDir)
-    const gitDir = path.join(branchPath, '.git')
-
-    try {
-      const stat = await fs.stat(gitDir)
-      if (!stat.isDirectory()) {
-        workerLog(`  Skipping ${branchDir}: .git is not a directory`)
-        continue
-      }
-    } catch {
-      workerLog(`  Skipping ${branchDir}: no .git directory (not a branch workspace)`)
-      continue
-    }
-
-    // The base branch's own clone is refreshed ff-only by
-    // refreshBaseBranchWorkspace() earlier in syncGit(). Routing it through
-    // this loop could rewrite its history (the rebase below) and stamp
-    // meaningless conflict metadata on it. Compare
-    // sanitized-vs-sanitized: branchDir is a filesystem name, ctx.baseBranch
-    // is raw.
-    if (branchDir === ctx.sanitizedBaseBranch) {
-      workerLog(`  Skipping ${branchDir}: base branch (refreshed separately)`)
-      continue
-    }
-    // A settings branch is an orphan: rebasing it onto the base would give it content
-    // history. The API refuses to provision one, so a directory under that name is a
-    // leftover and is left alone.
-    if (isSettingsBranchName(branchDir, ctx.ensureSettingsBranch())) {
-      workerLogWarn(`  Skipping ${branchDir}: settings branch, never a content workspace`)
-      continue
-    }
-    const probe: BaseUpdateProbe = {}
-    const outcome = await holdAndRebaseOneBranch(
+    const outcome = await syncBranchDir(
       ctx,
       branchDir,
-      branchPath,
       gatewayPolicy,
       gitHub,
-      probe,
-    )
-    await answerBaseUpdate(
-      ctx,
-      branchDir,
-      branchPath,
-      probe,
-      outcome,
-      gitHub,
+      source,
       requested.has(branchDir),
+      {},
+      local,
     )
+    if (outcome === null) continue
     if (outcome.kind === 'rebased') rebased.push(branchDir)
     else if (outcome.kind === 'skippedDirty') skippedDirty.push(branchDir)
     else if (outcome.kind === 'skippedLocked') skippedLocked.push(branchDir)
@@ -713,6 +706,118 @@ export async function runRebaseCycle(
   }
 
   return { rebased, skippedDirty, skippedLocked, failed }
+}
+
+/**
+ * One entry of `content-branches/`: the structural pre-filter (entries that are not branch
+ * workspaces at all, the base branch's own clone, a settings branch), then
+ * {@link holdAndRebaseOneBranch} and the answer to its request. Null for an entry skipped before
+ * any of that. Never throws. A `local` run has no GitHub: it publishes nothing there, and
+ * `remote.git` is where a branch's work is published.
+ */
+async function syncBranchDir(
+  ctx: RebaseContext,
+  branchDir: string,
+  gatewayPolicy: BranchPolicyDescription | undefined,
+  gitHub: GitHubSnapshot | undefined,
+  source: BaseUpdateSource | undefined,
+  requested: boolean,
+  probe: BaseUpdateProbe,
+  local = false,
+): Promise<BranchRebaseOutcome | null> {
+  // Known structural entries under content-branches/, not branch workspaces:
+  // branches.json (registry snapshot) and dot-prefixed entries
+  // (.canopy-meta/, transient lock dirs). Skipped SILENTLY so the no-.git
+  // skip logs below don't fire for them every cycle; everything else still
+  // logs loudly on skip.
+  if (branchDir.startsWith('.') || branchDir === 'branches.json') return null
+
+  const branchPath = path.join(ctx.contentBranchesPath, branchDir)
+  const gitDir = path.join(branchPath, '.git')
+
+  try {
+    const stat = await fs.stat(gitDir)
+    if (!stat.isDirectory()) {
+      workerLog(`  Skipping ${branchDir}: .git is not a directory`)
+      return null
+    }
+  } catch {
+    workerLog(`  Skipping ${branchDir}: no .git directory (not a branch workspace)`)
+    return null
+  }
+
+  // The base branch's own clone is refreshed ff-only by
+  // refreshBaseBranchWorkspace() earlier in syncGit(). Routing it through
+  // this loop could rewrite its history (the rebase below) and stamp
+  // meaningless conflict metadata on it. Compare
+  // sanitized-vs-sanitized: branchDir is a filesystem name, ctx.baseBranch
+  // is raw.
+  if (branchDir === ctx.sanitizedBaseBranch) {
+    workerLog(`  Skipping ${branchDir}: base branch (refreshed separately)`)
+    return null
+  }
+  // A settings branch is an orphan: rebasing it onto the base would give it content
+  // history. The API refuses to provision one, so a directory under that name is a
+  // leftover and is left alone.
+  if (isSettingsBranchName(branchDir, ctx.ensureSettingsBranch())) {
+    workerLogWarn(`  Skipping ${branchDir}: settings branch, never a content workspace`)
+    return null
+  }
+  const outcome = await holdAndRebaseOneBranch(
+    ctx,
+    branchDir,
+    branchPath,
+    local ? NO_GITHUB_POLICY : gatewayPolicy,
+    gitHub,
+    probe,
+    local,
+  )
+  await answerBaseUpdate(ctx, branchDir, branchPath, probe, outcome, source, requested)
+  return outcome
+}
+
+/**
+ * Bring the base into one branch now and answer its request for the latest changes, for a mode that
+ * runs no worker loop (operating-mode `baseUpdateRunsInRequest`). With no GitHub, the base is
+ * `remote.git`'s, so the answer is from this run's start. A run that answers nothing writes
+ * `failed`, since nothing else ever will: `busy` says a lock held it back, which a retry in a moment
+ * gets past. Never throws but for the metadata write of that fallback.
+ */
+export async function syncBranchNow(
+  ctx: RebaseContext,
+  branchName: string,
+): Promise<'answered' | 'busy'> {
+  const startedAt = Date.now()
+  const branchDir = sanitizeBranchName(branchName)
+  const probe: BaseUpdateProbe = {}
+  const outcome = await syncBranchDir(
+    ctx,
+    branchDir,
+    undefined,
+    undefined,
+    { fetchedAt: startedAt },
+    true,
+    probe,
+    true,
+  )
+  const busy = outcome?.kind === 'skippedLocked'
+  const branchPath = path.join(ctx.contentBranchesPath, branchDir)
+  await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update(
+    (existing) =>
+      existing?.branch.name === branchName &&
+      existing.branch.status === 'editing' &&
+      existing.branch.baseUpdateRequestedAt !== undefined &&
+      Date.parse(existing.branch.baseUpdateRequestedAt) <= startedAt &&
+      isBaseUpdatePending(existing.branch)
+        ? {
+            branch: {
+              lastBaseUpdate: { at: new Date(startedAt).toISOString(), outcome: 'failed' },
+            },
+          }
+        : null,
+    { keepUpdatedAt: true },
+  )
+  return busy ? 'busy' : 'answered'
 }
 
 /**
@@ -785,6 +890,7 @@ async function holdAndRebaseOneBranch(
   gatewayPolicy: BranchPolicyDescription | undefined,
   gitHub: GitHubSnapshot | undefined,
   probe: BaseUpdateProbe,
+  local: boolean,
 ): Promise<BranchRebaseOutcome> {
   let hold: ProvisionedWorkspaceHold
   try {
@@ -811,23 +917,90 @@ async function holdAndRebaseOneBranch(
       gatewayPolicy,
       gitHub,
       probe,
+      local,
     )
   } finally {
     await releaseProvisionedWorkspace(hold.release, branchDir)
   }
 }
 
-/** Clear a recorded failure and any recorded rewrite: the caller knows neither stands. */
+/**
+ * Clear a recorded failure and any recorded rewrite, the caller knowing neither stands, with
+ * `alsoClear` in the same write.
+ */
 async function clearRebaseFailure(
   ctx: RebaseContext,
   branchPath: string,
   branchRef: string,
+  alsoClear: Partial<BranchMetadata> = {},
 ): Promise<void> {
   await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update((current) =>
     current?.branch.name === branchRef
-      ? { branch: { rebaseFailure: undefined, ...rewriteCleared(current.branch) } }
+      ? { branch: { rebaseFailure: undefined, ...rewriteCleared(current.branch), ...alsoClear } }
       : null,
   )
+}
+
+/**
+ * {@link recordLatestChangesWaiting} for a branch the sync skips for its saved work: marked while it
+ * lacks the base `remote.git` holds. Read from `remote.git` rather than fetched, so the skip moves no
+ * ref. Best-effort, so the skip stays a skip.
+ */
+async function noteLatestChangesWaiting(
+  ctx: RebaseContext,
+  git: SimpleGit,
+  branchPath: string,
+  metaFile: BranchMetadataFile,
+): Promise<void> {
+  if (metaFile.branch.status !== 'editing') return
+  let baseTip: string | null
+  let behind: boolean
+  try {
+    baseTip = await readPublishedSha(ctx, ctx.baseBranch)
+    behind = baseTip !== null && !(await contains(git, 'HEAD', baseTip))
+  } catch (err) {
+    workerLogWarn(
+      `  Could not compare ${escapeForLog(metaFile.branch.name)} with the base: ${getErrorMessage(err)}`,
+    )
+    return
+  }
+  await recordLatestChangesWaiting(
+    ctx,
+    branchPath,
+    metaFile,
+    behind ? (baseTip ?? undefined) : undefined,
+  )
+}
+
+/**
+ * Mark the branch `metaFile` names as lacking `baseSha`, the base commit the sync first left out, or
+ * clear the mark when undefined: the automatic sync never commits saved work, so a branch holding
+ * some waits for its author's "Get latest changes" (base-update.ts). Written only when the mark comes
+ * or goes, as every save regenerates the branch registry, and as bookkeeping, which leaves
+ * `updatedAt`. Best-effort: a failure leaves the hint as it was until the next cycle.
+ */
+async function recordLatestChangesWaiting(
+  ctx: RebaseContext,
+  branchPath: string,
+  metaFile: BranchMetadataFile,
+  baseSha?: string,
+): Promise<void> {
+  const { name } = metaFile.branch
+  const flips = (current: string | undefined) => (current === undefined) !== (baseSha === undefined)
+  if (!flips(metaFile.branch.latestChangesWaiting)) return
+  try {
+    await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update(
+      (current) =>
+        current?.branch.name === name && flips(current.branch.latestChangesWaiting)
+          ? { branch: { latestChangesWaiting: baseSha } }
+          : null,
+      { keepUpdatedAt: true },
+    )
+  } catch (err) {
+    workerLogWarn(
+      `  Could not record the latest changes waiting for ${escapeForLog(name)}: ${getErrorMessage(err)}`,
+    )
+  }
 }
 
 /** A branch github-commits.ts left for a person: logged, recorded, and in the cycle's summary. */
@@ -1185,6 +1358,7 @@ async function rebaseOneBranch(
   gatewayPolicy: BranchPolicyDescription | undefined,
   gitHub: GitHubSnapshot | undefined,
   probe: BaseUpdateProbe = {},
+  local = false,
 ): Promise<BranchRebaseOutcome> {
   // Read only by the catch below. See the `rebased` rider on
   // BranchRebaseOutcome.
@@ -1218,6 +1392,8 @@ async function rebaseOneBranch(
     // - archived: finished, with no PR left to poll.
     if (metaFile !== null && (branchStatus === 'submitted' || branchStatus === 'approved')) {
       workerLog(`  Skipping ${branchDir} (${branchStatus})`)
+      // Submit committed the saved work; a withdraw lets the next skip mark it again.
+      await recordLatestChangesWaiting(ctx, branchPath, metaFile)
       await reconcileInReview(ctx, branchDir, branchPath, metaFile, isProvisioningLockCompromised)
       const outcome = await bringInCommitsForBranchInReview(
         ctx,
@@ -1416,6 +1592,26 @@ async function rebaseOneBranch(
             }
           : null
 
+      const skipIfDirty = async (): Promise<BranchRebaseOutcome> => {
+        if (editorDirt.length === 0) return { kind: 'none' }
+        if (metaFile !== null) await noteLatestChangesWaiting(ctx, branchGit, branchPath, metaFile)
+        return { kind: 'skippedDirty' }
+      }
+
+      // A merge of GitHub's commits whose result holds the base `remote.git` holds answers a request
+      // for the latest changes as a merge of the base does, conflicts included.
+      const tookInByGitHubMerge = async (keptEntries: number): Promise<BranchRebaseOutcome> => {
+        if (editorDirt.length > 0) return await skipIfDirty()
+        const baseTip = await readPublishedSha(ctx, ctx.baseBranch).catch(() => null)
+        const holdsBase =
+          baseTip !== null && (await contains(branchGit, 'HEAD', baseTip).catch(() => false))
+        if (!holdsBase) return { kind: 'none' }
+        probe.baseSha = baseTip
+        probe.keptEntries = keptEntries
+        await clearRebaseFailure(ctx, branchPath, branchRef, { latestChangesWaiting: undefined })
+        return { kind: 'rebased' }
+      }
+
       // Before the dirty return: a fast-forward passes saves that touch other files.
       let unpushed = false
       if (commitArgs !== null) {
@@ -1424,20 +1620,19 @@ async function rebaseOneBranch(
           return recordBlocked(ctx, branchDir, branchPath, branchRef, outcome.reason)
         }
         if (outcome.kind === 'unpushed') unpushed = true
-        else if (outcome.kind !== 'in-step') {
-          return editorDirt.length > 0 ? { kind: 'skippedDirty' } : { kind: 'none' }
-        }
+        else if (outcome.kind === 'merged') return await tookInByGitHubMerge(outcome.keptEntries)
+        else if (outcome.kind !== 'in-step') return await skipIfDirty()
         // A merge of the base this worker published and never moved the clone to comes first.
         const caughtUp = await catchUpWithPublished(ctx, commitArgs)
         if (caughtUp?.kind === 'blocked') {
           return recordBlocked(ctx, branchDir, branchPath, branchRef, caughtUp.reason)
         }
-        if (caughtUp) return editorDirt.length > 0 ? { kind: 'skippedDirty' } : { kind: 'none' }
+        if (caughtUp) return await skipIfDirty()
       }
 
       if (editorDirt.length > 0) {
         workerLog(`  Skipping ${branchDir}: has uncommitted changes`)
-        return { kind: 'skippedDirty' }
+        return await skipIfDirty()
       }
 
       // `git rebase` refuses to start over ANY modified tracked file, so
@@ -1462,21 +1657,31 @@ async function rebaseOneBranch(
         return { kind: 'failed', error: reason }
       }
 
-      // [SYNC-H1] Self-heal: finish an interrupted publish even when this
-      // branch is not behind base. Every crash window in the arming sequence
-      // below leaves the marker set with the work unfinished, and this is what
-      // completes it -- without it one lost lease race strands the branch until
-      // the base happens to advance again. Gated on the loop-top snapshot, so
-      // unmarked branches (nearly all of them, every cycle) cost nothing.
+      // [SYNC-H1] Self-heal: finish a publish that never left remote.git at
+      // the marker's commit, even when this branch is not behind base -- a
+      // crash in the arming sequence below, or a failed push. Gated on the
+      // loop-top snapshot, so unmarked branches (nearly all of them, every
+      // cycle) cost nothing.
       if (canPublish && metaFile?.branch.historyRewrittenFrom) {
-        await reconcilePendingRewrite(ctx, {
+        const pending = await reconcilePendingRewrite(ctx, {
           branchPath,
           branchDir,
           branchRef,
           headSha: (await branchGit.revparse(['HEAD'])).trim(),
           marker: metaFile.branch.historyRewrittenFrom,
+          target: metaFile.branch.historyRewrittenTo,
           gatewayPolicy,
         })
+        // A rebase now would replace the rewrite remote.git still waits for, along with any commit
+        // made on top of it since, which only a submit may publish.
+        if (pending.kind === 'failed') {
+          // [REDACT] failed[] is served to the browser via worker-status.json.
+          const reason = redactCredentials(pending.reason)
+          workerLogWarn(`  Skipping ${branchDir}: ${reason}`)
+          await recordRebaseFailure(ctx, branchPath, branchDir, reason, branchRef)
+          return { kind: 'failed', error: reason }
+        }
+        if (pending.kind === 'waiting') return { kind: 'none' }
       }
 
       await fetchFromRemoteGit(branchGit, ctx.remoteGitPath, ctx.baseBranch)
@@ -1513,6 +1718,7 @@ async function rebaseOneBranch(
         // whose cause stands stays: remote.git still holds a commit this clone
         // lacks, and the next submit is refused for it.
         const currentMeta = await BranchMetadataFileManager.loadOnly(branchPath)
+        if (currentMeta !== null) await recordLatestChangesWaiting(ctx, branchPath, currentMeta)
         if (currentMeta?.branch.rebaseFailure === undefined) {
           return { kind: 'none' }
         }
@@ -1541,14 +1747,18 @@ async function rebaseOneBranch(
       const head = (await branchGit.revparse(['HEAD'])).trim()
       // Commits on top of what this branch published, as "Get latest changes" makes from saved work
       // on a branch submitted once, or a submit whose push failed: a rebase would rewrite the
-      // published commit under them, which reads as a push this clone never saw. A merge publishes
-      // them as a fast-forward. A same-named ref at a commit the base holds is no work of this branch.
+      // published commit under them, which reads as a push this clone never saw. A merge keeps
+      // them, unpublished until the submit pushes it (publish-decision.ts). A same-named ref at a
+      // commit the base holds is no work of this branch.
       const published = canPublish ? await readPublishedSha(ctx, branchRef) : null
+      // With no GitHub, a commit of the branch's in remote.git is published however it got there.
       const aheadOfPublished =
         published !== null &&
-        published !== head &&
         metaFile?.branch.name === branchRef &&
-        isPublished(metaFile) &&
+        (local ||
+          (published !== head &&
+            // A rewrite's tip is this branch's own publish, on GitHub or not.
+            (isPublished(metaFile) || published === metaFile.branch.historyRewrittenTo))) &&
         (await contains(branchGit, head, published)) &&
         !(await contains(branchGit, fetchedBaseTip, published))
       /**
@@ -1583,7 +1793,7 @@ async function rebaseOneBranch(
           return { kind: 'skippedLocked' }
         }
         probe.keptEntries = outcome.keptEntries
-        await clearRebaseFailure(ctx, branchPath, branchRef)
+        await clearRebaseFailure(ctx, branchPath, branchRef, { latestChangesWaiting: undefined })
         return { kind: 'rebased' }
       }
       if (commitArgs !== null && (cannotReplay || unpushed || aheadOfPublished)) {
@@ -1622,6 +1832,10 @@ async function rebaseOneBranch(
         fetchedBaseTip,
         lockCompromised,
       )
+
+      // The tip the rebase made, read before anything else awaits: past a lost lock a commit can
+      // land on it, and only this tip may be published as the rewrite.
+      const rebasedHead = (await branchGit.revparse(['HEAD'])).trim()
 
       // Outside the round loop's try/catch, so a throwing test hook can
       // never be misread as a rebase error.
@@ -1709,6 +1923,7 @@ async function rebaseOneBranch(
                 conflictStatus:
                   (existing.branch.conflictFiles?.length ?? 0) > 0 ? 'conflicts-detected' : 'clean',
                 rebaseFailure: undefined,
+                latestChangesWaiting: undefined,
               },
             }
           : null,
@@ -1721,7 +1936,7 @@ async function rebaseOneBranch(
         branchRef,
         publishedSha,
         preRebaseHead,
-        rebasedHead: (await branchGit.revparse(['HEAD'])).trim(),
+        rebasedHead,
         gatewayPolicy,
       })
 

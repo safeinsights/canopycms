@@ -30,6 +30,7 @@ import {
   untrackInIndex,
 } from './canopy-state'
 import { sweepArchivedBranches } from './archived-sweep'
+import { setConflictsStatuses } from './conflicts-status'
 import { hasPendingHistoryRewrite, recordSeenOnGitHub } from './history-rewrite'
 import { runRebaseCycle, type RebaseContext } from './rebase'
 import { describeMove, type GitHubGatewayHealth } from './github-gateway'
@@ -72,7 +73,8 @@ import type { WorkerContext } from './worker-context'
  * says the serving editor lacks a schema the incoming content names), push this
  * deployment's own settings
  * branch, fast-forward the base branch's workspace, ask the gateway for its branch policy,
- * rebase every branch that is behind it (rebase.ts), then sweep old tasks, expired trashed
+ * rebase every branch that is behind it (rebase.ts), set each pull request's conflicts status
+ * (conflicts-status.ts), then sweep old tasks, expired trashed
  * branch directories and, where retention is on, expired archived branches.
  *
  * One ordering is load-bearing and nothing enforces it: `runRebaseCycle` MUST
@@ -103,6 +105,7 @@ export type GitSyncContext = Pick<
   | 'ensureSettingsBranch'
   | 'ensureStatusReport'
   | 'warnedDivergences'
+  | 'conflictsStatusesSet'
   | 'isRunning'
   | 'takeBranchSyncRequests'
   | 'isDraining'
@@ -721,6 +724,9 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
       requested.branches,
     )
     if (stoppedForDrain(ctx, 'the cleanup sweeps')) return
+    // After the rebase cycle, whose merges can change a branch's conflicts. Heads the cycle's own
+    // pushes move are set by the cycle each push wakes.
+    const conflictsStatusFailure = await setConflictsStatuses(ctx, githubTips)
 
     await cleanupOldTasks(ctx.taskDir, undefined, ctx.log)
 
@@ -757,6 +763,9 @@ export async function syncGit(ctx: GitSyncContext): Promise<void> {
     const report = ctx.ensureStatusReport()
     report.lastGitSyncAt = new Date().toISOString()
     delete report.lastGitSyncError
+    // null: the stage could not say, so the last report stands.
+    if (conflictsStatusFailure) report.conflictsStatusFailure = conflictsStatusFailure
+    else if (conflictsStatusFailure === undefined) delete report.conflictsStatusFailure
     // Recorded once the cycle has done everything it can, so System health shows it.
     if (needsOperator !== null) {
       report.lastGitSyncError = { message: needsOperator, at: report.lastGitSyncAt }

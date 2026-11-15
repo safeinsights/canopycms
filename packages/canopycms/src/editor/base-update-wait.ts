@@ -75,6 +75,16 @@ export function getLatestChangesTooltip(baseBranch: string | undefined, isAdmin:
 }
 
 export const GETTING_LATEST_CHANGES = 'Getting latest changes…'
+/** The bar's badge while the automatic sync leaves the base out for the branch's saved work. */
+export const LATEST_CHANGES_WAITING = 'Latest changes waiting'
+
+/** The badge's detail: below `md` the action is in the branch menu, and unsaved changes hold it. */
+export function latestChangesWaitingDetail(inMenu: boolean, saveFirst: boolean): string {
+  const control = `"Get latest changes"${inMenu ? ' in the branch menu' : ''}`
+  return `Newer changes made on the site are waiting for this branch. ${
+    saveFirst ? `Save your changes, then choose ${control}` : `Choose ${control}`
+  } to bring them in.`
+}
 export const SAVE_FIRST_REASON = 'Save your changes first.'
 export const WAITING_NOTICE = 'Getting the latest changes. You can edit again when it finishes.'
 export const SLOW_NOTICE =

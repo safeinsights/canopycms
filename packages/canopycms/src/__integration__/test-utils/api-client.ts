@@ -216,3 +216,18 @@ export async function saveSamplePost(
   })
   if (res.status !== 200) throw new Error(`saveSamplePost: save returned ${res.status}`)
 }
+
+/**
+ * The head the branch listing shows `client` for `branchSlug`, which Approve and Request changes
+ * send back as the commit the reviewer saw (api/branch-review.ts).
+ */
+export async function listedHeadSha(
+  client: Awaited<ApiClient>,
+  branchSlug: string,
+): Promise<string | undefined> {
+  const res = await client.get('/api/canopycms/branches')
+  const listing = await res.json<{
+    data?: { branches: Array<{ shortName?: string; headSha?: string }> }
+  }>()
+  return listing.data?.branches.find((b) => b.shortName === branchSlug)?.headSha
+}

@@ -136,6 +136,11 @@ export function conflictHeading(card: ConflictCard): string {
  */
 type EntryCardKind = Exclude<EntryConflictData['kind'], 'fields'> | 'fields-on-deleted'
 
+const KEPT_YOURS = 'Conflict cleared. Your version of the entry stays.'
+
+/** @internal Exported for tests: how long a settled entry card waits for the reload to take it. */
+export const SETTLED_HOLD_MS = 10_000
+
 /** What an entry-level conflict is, and the choices that settle it, in order. */
 const ENTRY_KINDS: Record<
   EntryCardKind,
@@ -143,35 +148,61 @@ const ENTRY_KINDS: Record<
     heading: string
     /** What the choices mean, where the heading alone doesn't say. */
     body?: string
-    choices: Array<{ choice: EntryConflictChoice; label: string; danger?: true }>
+    /**
+     * `entryGone`: the choice promises the entry stays deleted, which the server checks. `done`:
+     * what a choice settled in place says; one that confirms after the drawer closes has none.
+     */
+    choices: Array<{
+      choice: EntryConflictChoice
+      label: string
+      danger?: true
+      entryGone?: true
+      done?: string
+    }>
   }
 > = {
   'deleted-on-base': {
     heading: 'This entry was deleted in the latest version, but you changed it',
     choices: [
-      { choice: 'keep', label: EDITOR_ACTIONS.keepIt },
+      { choice: 'keep', label: EDITOR_ACTIONS.keepIt, done: KEPT_YOURS },
       { choice: 'delete', label: EDITOR_ACTIONS.deleteEntry, danger: true },
     ],
   },
   'deleted-on-branch': {
     heading: 'You deleted this entry, but it was changed in the latest version',
     choices: [
-      { choice: 'restore', label: EDITOR_ACTIONS.restoreEntry },
-      { choice: 'keep', label: EDITOR_ACTIONS.keepItDeleted },
+      {
+        choice: 'restore',
+        label: EDITOR_ACTIONS.restoreEntry,
+        done: 'Entry restored as the latest version has it.',
+      },
+      {
+        choice: 'keep',
+        label: EDITOR_ACTIONS.keepItDeleted,
+        entryGone: true,
+        done: 'Conflict cleared. The entry stays deleted.',
+      },
     ],
   },
   // Keeping it deleted clears the record: `keep` resolves a `fields` record whole (api/merge-conflicts.ts).
   'fields-on-deleted': {
     heading: 'You deleted this entry, but fields in it were changed by you and by someone else',
     body: `Keeping it deleted drops the latest version's changes to it. You can still use "${EDITOR_ACTIONS.restoreEntry}" afterwards, to bring it back as the latest version has it.`,
-    choices: [{ choice: 'keep', label: EDITOR_ACTIONS.keepItDeleted }],
+    choices: [
+      {
+        choice: 'keep',
+        label: EDITOR_ACTIONS.keepItDeleted,
+        entryGone: true,
+        done: 'Conflicts cleared. The entry stays deleted.',
+      },
+    ],
   },
   unreadable: {
     heading:
       "This entry was changed by you and by someone else in a way that can't be compared field by field",
     choices: [
       { choice: 'use-latest', label: EDITOR_ACTIONS.useLatestVersion },
-      { choice: 'keep', label: EDITOR_ACTIONS.keepYourVersion },
+      { choice: 'keep', label: EDITOR_ACTIONS.keepYourVersion, done: KEPT_YOURS },
     ],
   },
 }
@@ -317,6 +348,8 @@ interface CardActions {
   choice?: FieldChoice
   /** The form still holds the place as the last choice left it, so a new choice loses nothing. */
   held: boolean
+  /** "Mark resolved" is offered though the form is unchanged: only a hand edit reaches the latest. */
+  markable?: boolean
   choose: (choice: FieldChoice | undefined) => void
   chooseRegion: (region: number, choice: RegionChoice) => void
   /** Takes back one region's choice, leaving the others. */
@@ -493,7 +526,7 @@ const FieldCardActions: React.FC<{ card: ConflictCard; actions: CardActions; lab
       <Group gap="xs" wrap="wrap" align="center">
         {side(EDITOR_ACTIONS.removeIt, removeIs, 'conflict-remove-it')}
         {side(EDITOR_ACTIONS.keepIt, keepIs, 'conflict-keep-it')}
-        {!held &&
+        {(!held || actions.markable) &&
           btn(
             EDITOR_ACTIONS.markResolved,
             () => actions.choose({ how: 'edited' }),
@@ -604,24 +637,52 @@ export interface EntryChoiceRefusal {
   tone: 'warning' | 'error'
 }
 
+/** An entry-level choice settled in place: what to say, and whether the entry stays deleted. */
+export interface EntryChoiceDone {
+  message: string
+  entryGone: boolean
+}
+
+type ResolveEntryChoice = (
+  choice: EntryConflictChoice,
+  options: { entryGone?: true },
+) => Promise<EntryChoiceRefusal | undefined>
+
 const EntryCard: React.FC<{
   kind: EntryCardKind
   reason?: string
   unsavedEdits?: boolean
-  onResolve?: (choice: EntryConflictChoice) => Promise<EntryChoiceRefusal | undefined>
-}> = ({ kind, reason, unsavedEdits, onResolve }) => {
+  onResolve?: ResolveEntryChoice
+  onDone?: (done: EntryChoiceDone) => void
+}> = ({ kind, reason, unsavedEdits, onResolve, onDone }) => {
   const [working, setWorking] = useState<EntryConflictChoice>()
+  const [settled, setSettled] = useState(false)
   const [refusal, setRefusal] = useState<EntryChoiceRefusal & { choice: EntryConflictChoice }>()
   const { heading, body, choices } = ENTRY_KINDS[kind]
+  // A choice settled in place keeps its button working until the reload takes the card away, or,
+  // should that reload fail, for SETTLED_HOLD_MS, after which the choices come back.
+  useEffect(() => {
+    if (!settled) return
+    const timer = setTimeout(() => {
+      setSettled(false)
+      setWorking(undefined)
+    }, SETTLED_HOLD_MS)
+    return () => clearTimeout(timer)
+  }, [settled])
   const resolve = async (choice: EntryConflictChoice) => {
     if (!onResolve || working) return
+    const made = choices.find((c) => c.choice === choice)
     setWorking(choice)
     setRefusal(undefined)
+    let done = false
     try {
-      const refused = await onResolve(choice)
+      const refused = await onResolve(choice, made?.entryGone ? { entryGone: true } : {})
       setRefusal(refused && { ...refused, choice })
+      done = !refused && !!made?.done
+      if (done) onDone?.({ message: made!.done!, entryGone: !!made!.entryGone })
     } finally {
-      setWorking(undefined)
+      if (done) setSettled(true)
+      else setWorking(undefined)
     }
   }
   return (
@@ -633,6 +694,7 @@ const EntryCard: React.FC<{
       style={CARD_ACCENT}
       data-testid="conflict-card"
       data-conflict-kind={kind}
+      data-entry-card
     >
       <Stack gap="xs">
         <Group gap="xs" wrap="nowrap" align="flex-start">
@@ -719,7 +781,9 @@ export interface ConflictsGroupProps {
   /** Closes the drawer and focuses the field in the form. */
   onEdit?: (field: FieldConflict) => void
   /** Settles an entry-level conflict; resolves with why it couldn't, when it couldn't. */
-  onResolveEntry?: (choice: EntryConflictChoice) => Promise<EntryChoiceRefusal | undefined>
+  onResolveEntry?: ResolveEntryChoice
+  /** An entry-level choice settled in place, its card about to go. */
+  onEntryDone?: (done: EntryChoiceDone) => void
   /** Why this user can't change the entry: the choices are hidden. */
   noEditReason?: string
   /** Why the choices can't act now: they stay, disabled, saying so. */
@@ -740,6 +804,7 @@ export const ConflictsGroup: React.FC<ConflictsGroupProps> = ({
   onChoose,
   onEdit,
   onResolveEntry,
+  onEntryDone,
   noEditReason,
   lockedReason,
   unsavedEdits,
@@ -801,6 +866,7 @@ export const ConflictsGroup: React.FC<ConflictsGroupProps> = ({
     return {
       reason: lockedReason,
       latestReason,
+      markable: field.otherItemHere,
       choice,
       held,
       choose: (next) => {
@@ -879,6 +945,7 @@ export const ConflictsGroup: React.FC<ConflictsGroupProps> = ({
             reason={lockedReason}
             unsavedEdits={unsavedEdits}
             onResolve={editable ? onResolveEntry : undefined}
+            onDone={onEntryDone}
           />
         ) : (
           <>
@@ -887,6 +954,7 @@ export const ConflictsGroup: React.FC<ConflictsGroupProps> = ({
                 kind="fields-on-deleted"
                 reason={lockedReason}
                 onResolve={editable ? onResolveEntry : undefined}
+                onDone={onEntryDone}
               />
             )}
             {conflicts.fields.flatMap((field) => {

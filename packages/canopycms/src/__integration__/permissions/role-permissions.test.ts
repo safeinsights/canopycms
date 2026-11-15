@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
 import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-workspace'
 import { createMockAuthPlugin, TEST_INTERNAL_GROUPS } from '../test-utils/multi-user'
-import { createApiClient, saveSamplePost } from '../test-utils/api-client'
+import { createApiClient, listedHeadSha, saveSamplePost } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
 import type { BranchListItemResponse, BranchListResponse } from '../../api/branch'
 import { getBranchMetadataFileManager, loadBranchContext } from '../../branch-metadata'
@@ -159,6 +159,7 @@ describe('Role Permission Integration', () => {
     // Reviewer approves
     const approveResponse = await reviewerClient.post('/api/canopycms/approval-test/approve', {
       message: 'Looks good',
+      headSha: await listedHeadSha(reviewerClient, 'approval-test'),
     })
 
     expect(approveResponse.status).toBe(200)
@@ -241,6 +242,7 @@ describe('Role Permission Integration', () => {
       '/api/canopycms/changes-test/request-changes',
       {
         message: 'Needs work',
+        headSha: await listedHeadSha(reviewerClient, 'changes-test'),
       },
     )
 

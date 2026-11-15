@@ -18,7 +18,7 @@ import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, 
 import type { BranchChangesResponse } from './branch-changes'
 import type { BranchEntryChangeResponse, RestoreEntryBody, RestoreEntryResponse } from './branch-entry-changes'
 import type { EntryConflictResponse, MergeConflictsResponse, ReleaseConflictsHoldResponse, ResolveEntryConflictBody, ResolveEntryConflictResponse } from './merge-conflicts'
-import type { BranchMergeResponse, RequestChangesBody, SubmitBranchBody, SubmitBranchResponse, UpdateFromBaseResponse } from './branch-status'
+import type { ApproveBody, BranchMergeResponse, RequestChangesBody, SubmitBranchBody, SubmitBranchResponse, UpdateFromBaseResponse } from './branch-status'
 import type { AdminDeleteTaskResponse, AdminRetryTaskResponse, AdminStatusResponse, AdminTasksResponse, BranchHealthResponse, DeleteArchivedBranchesBody, DeleteArchivedBranchesResponse, DismissUnpublishedResponse, PurgeBranchDirResponse, RepairBranchDirResponse, RepairContentDuplicatesResponse } from './admin'
 import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from './comments'
 import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse, RenameEntryBody, RenameEntryResponse, ValidateReferencesBody, WriteContentBody } from './content'
@@ -169,8 +169,8 @@ export class CanopyApiClient {
     },
 
     /** POST /:branch/approve */
-    approve: (params: Record<string, string>, options?: RequestOptions): Promise<BranchListItemResponse> => {
-      return this.request('POST', this.buildPath('/:branch/approve', params), undefined, 'standard', options)
+    approve: (params: Record<string, string>, body: ApproveBody, options?: RequestOptions): Promise<BranchListItemResponse> => {
+      return this.request('POST', this.buildPath('/:branch/approve', params), body, 'standard', options)
     },
 
     /** POST /:branch/mark-merged */

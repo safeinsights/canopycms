@@ -264,6 +264,7 @@ export function failedGateway(
     getPullRequest: refuse,
     createOrUpdatePullRequest: refuse,
     convertPullRequestToDraft: refuse,
+    setConflictsStatus: refuse,
     deleteBranch: refuse,
     authSnapshot: refuse,
     termination: (signal) => instance.termination(signal),

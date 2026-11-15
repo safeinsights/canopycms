@@ -38,6 +38,7 @@ describe('the history-rewrite marker', () => {
     expect(await read()).toMatchObject({
       name: 'canopycms/prod/spring',
       historyRewrittenFrom: 'a'.repeat(40),
+      historyRewrittenTo: 'b'.repeat(40),
       lastGitHubTip: 'b'.repeat(40),
     })
 
@@ -45,6 +46,7 @@ describe('the history-rewrite marker', () => {
     const cleared = await read()
     expect(cleared?.name).toBe('canopycms/prod/spring')
     expect(cleared?.historyRewrittenFrom).toBeUndefined()
+    expect(cleared?.historyRewrittenTo).toBeUndefined()
   })
 
   it('creates no branch.json where there is none', async () => {

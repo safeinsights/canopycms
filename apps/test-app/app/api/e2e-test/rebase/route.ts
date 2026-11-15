@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server'
 import path from 'node:path'
-import { CmsWorker } from 'canopycms/worker/cms-worker'
+import { createLocalWorker } from 'canopycms/worker/cms-worker'
 
 /**
- * Test-only endpoint that triggers rebaseActiveBranches() on demand.
- * Used by e2e tests to simulate the worker detecting upstream conflicts.
+ * Test-only endpoint that runs the worker's sync of every branch on demand, through the same
+ * GitHub-less worker dev's "Get latest changes" runs. Used by e2e tests to simulate the worker
+ * detecting upstream conflicts.
  *
  * POST /api/e2e-test/rebase
  */
@@ -21,17 +22,11 @@ export async function POST() {
 
   const workspacePath = path.resolve(process.cwd(), '.canopy-dev')
 
-  const worker = new CmsWorker({
+  await createLocalWorker({
     workspacePath,
-    githubOwner: 'test',
-    githubRepo: 'test',
-    githubToken: 'fake-token',
     baseBranch: 'main',
     contentRoot: 'content',
-  })
-
-  // Same pattern as unit tests — cast to access private method
-  await (worker as unknown as { rebaseActiveBranches(): Promise<void> }).rebaseActiveBranches()
+  }).syncBranchesNow()
 
   return NextResponse.json({ ok: true })
 }

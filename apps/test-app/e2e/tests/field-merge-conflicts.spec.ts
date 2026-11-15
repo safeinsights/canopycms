@@ -69,8 +69,8 @@ const latest = {
  * Field-level merge, end to end (plan rows 1, 4, 43, 45): the worker's real merge brings the
  * latest version into a branch, the entry and Submit say what waits, "Show changes" offers a card
  * per conflict (a field, a list item and a body region), and once each is chosen and saved,
- * Submit for review is allowed. "Get latest changes" itself is hidden in dev mode, so the merge is
- * started through the test-only rebase endpoint, as conflict-management.spec.ts starts it.
+ * Submit for review is allowed. The merge is started through the test-only rebase endpoint, as
+ * conflict-management.spec.ts starts it; get-latest-changes.spec.ts drives the button instead.
  */
 test.describe('Field-level conflicts', () => {
   let editorPage: EditorPage

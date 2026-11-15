@@ -17,14 +17,83 @@ import type { CanopyUser } from '../user'
 import type { BranchReview } from '../types'
 import { sanitizeDisplayName } from '../submission-attribution'
 
-/** Optional on the wire: a bodiless request means no note. */
+const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/
+
+/** Optional on the wire, so a request without one gets {@link BRANCH_MOVED_ERROR}, not a 400. */
+const headShaSchema = z.string().regex(FULL_SHA).optional()
+
 const requestChangesBodySchema = z
-  .object({ note: z.string().trim().max(REQUEST_CHANGES_NOTE_MAX_LENGTH).optional() })
+  .object({
+    note: z.string().trim().max(REQUEST_CHANGES_NOTE_MAX_LENGTH).optional(),
+    headSha: headShaSchema,
+  })
   .optional()
 
-export interface RequestChangesBody {
+const approveBodySchema = z.object({ headSha: headShaSchema }).optional()
+
+/** What a verdict carries besides the branch: the commit the reviewer's page showed. */
+interface ReviewedHead {
+  /** The listing's `headSha` (api/branch.ts) the page was showing. */
+  headSha?: string
+}
+
+export interface RequestChangesBody extends ReviewedHead {
   /** Saved as a branch comment; trimmed before its length is checked, and ignored when empty. */
   note?: string
+}
+
+export type ApproveBody = ReviewedHead
+
+/** @internal Exported for tests. */
+export const BRANCH_MOVED_ERROR =
+  'This branch changed since you opened it. Review the latest changes.'
+
+const branchMoved: BranchListItemResponse = {
+  ok: false,
+  status: 409,
+  code: 'BRANCH_MOVED',
+  error: BRANCH_MOVED_ERROR,
+}
+
+class BranchMovedError extends Error {
+  override readonly name = 'BranchMovedError'
+}
+
+class HeadUnreadableError extends Error {
+  override readonly name = 'HeadUnreadableError'
+}
+
+const headUnreadable: BranchListItemResponse = {
+  ok: false,
+  status: 503,
+  error: "Couldn't read this branch right now. Try again in a moment.",
+}
+
+/**
+ * Throws unless the clone's HEAD is `sent`, the commit the reviewer saw, and returns it. A request
+ * naming none, from a page loaded before the editor sent one, is refused: what it showed is
+ * unknown. Called under the content-write lock: a submit and the worker move HEAD only while
+ * holding it (docs/concurrency.md, "Who takes it"), so the head checked is the one the verdict is
+ * written against.
+ */
+const assertReviewedHead = async (
+  ctx: ApiContext,
+  { branch, branchRoot }: BranchContext,
+  sent: string | undefined,
+): Promise<string> => {
+  if (!sent) throw new BranchMovedError()
+  let head: string
+  try {
+    const git = ctx.services.createGitManagerFor(branchRoot, { baseBranch: branch.baseBranch })
+    head = await git.headSha()
+    // A git that exits quietly answers nothing, which is no head at all.
+    if (!FULL_SHA.test(head)) throw new Error(`no commit in its answer (${head.length} chars)`)
+  } catch (err) {
+    console.error(`CanopyCMS: Could not read the head of ${branch.name}:`, getErrorMessage(err))
+    throw new HeadUnreadableError()
+  }
+  if (head !== sent) throw new BranchMovedError()
+  return sent
 }
 
 const NOTE_NOT_SAVED_WARNING = "Changes were requested, but your note couldn't be saved."
@@ -62,13 +131,18 @@ const approveConflict = (status: string | undefined): BranchListItemResponse => 
  * The verdict `user` gives. The reviewer guard admits only authenticated users, and the record is
  * always written, so a new verdict replaces whatever the last one left.
  */
-const reviewBy = (user: CanopyUser, state: BranchReview['state']): BranchReview => ({
+const reviewBy = (
+  user: CanopyUser,
+  state: BranchReview['state'],
+  commit: string,
+): BranchReview => ({
   state,
   by: {
     userId: user.userId,
     name: user.type === 'authenticated' ? sanitizeDisplayName(user.name) : undefined,
   },
   at: new Date().toISOString(),
+  commit,
 })
 
 const requestChangesHandler = async (
@@ -84,29 +158,50 @@ const requestChangesHandler = async (
     return requestChangesConflict(branchContext.branch.status)
   }
 
-  await syncConvertToDraft(ctx, branchContext)
-
+  const headSha = body?.headSha
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
 
   // The status the guard read can be stale by now, so the save checks the status on disk, in the
-  // same step that writes. A branch that left review meanwhile is refused, and the draft
-  // conversion above is left as it is: withdraw converts the pull request to a draft too, and a
-  // merged one cannot be converted.
+  // same step that writes, and the head under the lock with it. A branch that left review or moved
+  // meanwhile is refused before the pull request is touched.
   let found: string | undefined
-  const updated = await meta.saveIf(
-    {
-      branch: {
-        name: branchContext.branch.name,
-        status: 'editing',
-        review: reviewBy(req.user, 'changes-requested'),
-      },
-    },
-    (existing) => {
-      found = existing?.branch.status
-      return canRequestChangesFrom(found)
-    },
-  )
+  let updated: Awaited<ReturnType<typeof meta.saveIf>>
+  try {
+    updated = await withContentWriteLock(branchContext.branchRoot, async () => {
+      const commit = await assertReviewedHead(ctx, branchContext, headSha)
+      return meta.saveIf(
+        {
+          branch: {
+            name: branchContext.branch.name,
+            status: 'editing',
+            review: reviewBy(req.user, 'changes-requested', commit),
+          },
+        },
+        (existing) => {
+          found = existing?.branch.status
+          return canRequestChangesFrom(found)
+        },
+      )
+    })
+  } catch (err) {
+    if (err instanceof BranchMovedError) return branchMoved
+    if (err instanceof HeadUnreadableError) return headUnreadable
+    if (err instanceof ContentWriteLockBusyError) {
+      return {
+        ok: false,
+        status: 409,
+        error:
+          err.outcome === 'not-run'
+            ? "This branch is being synced, so changes weren't requested. Try again in a moment."
+            : 'This branch was being synced while changes were requested, so the request may not have been recorded. Refresh to check.',
+      }
+    }
+    throw err
+  }
   if (!updated) return requestChangesConflict(found)
+
+  // Best-effort: syncConvertToDraft only logs a failure.
+  await syncConvertToDraft(ctx, { ...branchContext, branch: updated.branch })
 
   // The note is written after the status change so a failed write never blocks the branch from
   // returning to editing; the caller is warned instead.
@@ -149,8 +244,10 @@ const approveBranchHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
   _params: z.infer<typeof branchParamSchema>,
+  body: z.infer<typeof approveBodySchema>,
 ): Promise<BranchListItemResponse> => {
   const { branchContext } = gc
+  const headSha = body?.headSha
 
   // Approve is a CanopyCMS status only. The CMS authors its pull requests and GitHub refuses
   // an author's approval review, so nothing is sent to GitHub.
@@ -186,23 +283,24 @@ const approveBranchHandler = async (
 
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
 
-  // As for request changes, the status on disk decides, in the step that writes. So does an
-  // unfinished submit: what's approved may not be what the pull request holds. So do conflicts: a
-  // merge of GitHub's commits can record some on a branch in review, under the content-write lock
-  // held here, so none lands between the check and the write.
+  // As for request changes, the status on disk and the head decide, in the step that writes. So
+  // does an unfinished submit: what's approved may not be what the pull request holds. So do
+  // conflicts: a merge of GitHub's commits can record some on a branch in review, under the
+  // content-write lock held here, so none lands between the check and the write.
   let found: string | undefined
   let unfinished = false
   let notQueued = false
   let updated: Awaited<ReturnType<typeof meta.saveIf>>
   try {
     updated = await withContentWriteLock(branchContext.branchRoot, async () => {
+      const commit = await assertReviewedHead(ctx, branchContext, headSha)
       await assertNoOpenConflicts(branchContext.branchRoot)
       return meta.saveIf(
         {
           branch: {
             name: branchContext.branch.name,
             status: 'approved',
-            review: reviewBy(req.user, 'approved'),
+            review: reviewBy(req.user, 'approved', commit),
           },
         },
         (existing) => {
@@ -214,6 +312,8 @@ const approveBranchHandler = async (
       )
     })
   } catch (err) {
+    if (err instanceof BranchMovedError) return branchMoved
+    if (err instanceof HeadUnreadableError) return headUnreadable
     if (err instanceof OpenMergeConflictsError) {
       return {
         ok: false,
@@ -293,6 +393,8 @@ export const approveBranch = defineEndpoint({
   method: 'POST',
   path: '/:branch/approve',
   params: branchParamSchema,
+  body: approveBodySchema,
+  bodyType: 'ApproveBody',
   responseType: 'BranchListItemResponse',
   response: {} as BranchListItemResponse,
   defaultMockData: {

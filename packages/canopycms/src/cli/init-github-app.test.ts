@@ -58,16 +58,17 @@ describe('the App manifest', () => {
     expect(manifest.default_permissions).toEqual({
       contents: 'write',
       pull_requests: 'write',
+      statuses: 'write',
       metadata: 'read',
     })
   })
 
-  it('grants no permission outside contents and pull_requests', () => {
+  it('grants no permission outside contents, pull_requests and statuses', () => {
     // `metadata: read` is implied by any repository permission, so it is not a
     // choice. Anything else would be.
     const permissions = manifest.default_permissions as Record<string, string>
     for (const name of Object.keys(permissions)) {
-      expect(['contents', 'pull_requests', 'metadata']).toContain(name)
+      expect(['contents', 'pull_requests', 'statuses', 'metadata']).toContain(name)
     }
     // The ones a PR bot most plausibly acquires by accident: labels and
     // assignees go through the Issues API, and `workflows` is needed to push
@@ -278,7 +279,12 @@ describe('`create` end to end, with the account type GitHub reports', () => {
         if (url.endsWith('/repos/an-org/a-content-site/installation')) {
           return response({
             id: 555,
-            permissions: { contents: 'write', pull_requests: 'write', metadata: 'read' },
+            permissions: {
+              contents: 'write',
+              pull_requests: 'write',
+              statuses: 'write',
+              metadata: 'read',
+            },
             repository_selection: 'selected',
             suspended_at: null,
             app_slug: SLUG,
@@ -453,7 +459,12 @@ describe('verify normalises the key the same way the worker does', () => {
       if (method === 'GET' && url.endsWith('/repos/an-org/a-content-site/installation')) {
         return response({
           id: installationId,
-          permissions: { contents: 'write', pull_requests: 'write', metadata: 'read' },
+          permissions: {
+            contents: 'write',
+            pull_requests: 'write',
+            statuses: 'write',
+            metadata: 'read',
+          },
           repository_selection: 'selected',
           suspended_at: null,
           app_slug: 'a-content-site-canopycms',
@@ -527,7 +538,7 @@ describe('verify normalises the key the same way the worker does', () => {
 describe('readbackVerdict', () => {
   const healthy = {
     id: 42,
-    permissions: { contents: 'write', pull_requests: 'write', metadata: 'read' },
+    permissions: { contents: 'write', pull_requests: 'write', statuses: 'write', metadata: 'read' },
     repository_selection: 'selected',
     suspended_at: null,
   }
@@ -614,9 +625,9 @@ describe('readbackVerdict', () => {
       repository_selection: 'all',
       suspended_at: '2026-09-01T00:00:00Z',
     })
-    // suspended + scope + three missing (contents, pull_requests, metadata)
+    // suspended + scope + four missing (contents, pull_requests, statuses, metadata)
     // + one extra (issues)
-    expect(findings).toHaveLength(6)
+    expect(findings).toHaveLength(7)
     expect(findings.every((f) => f.severity === 'error')).toBe(true)
   })
 })

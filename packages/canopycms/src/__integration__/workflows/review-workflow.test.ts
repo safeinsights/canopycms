@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
 import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-workspace'
 import { createMockAuthPlugin, TEST_INTERNAL_GROUPS } from '../test-utils/multi-user'
-import { createApiClient, saveSamplePost } from '../test-utils/api-client'
+import { createApiClient, listedHeadSha, saveSamplePost } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
 import type { BranchListItemResponse } from '../../api/branch'
 import type { ApiResponse } from '../../api/types'
@@ -112,6 +112,7 @@ describe('Review Workflow Integration', () => {
       '/api/canopycms/feature-review-test/request-changes',
       {
         message: 'Needs more details',
+        headSha: await listedHeadSha(reviewerClient, 'feature-review-test'),
       },
     )
 
@@ -149,6 +150,7 @@ describe('Review Workflow Integration', () => {
       '/api/canopycms/feature-review-test/approve',
       {
         message: 'Looks good!',
+        headSha: await listedHeadSha(reviewerClient, 'feature-review-test'),
       },
     )
 

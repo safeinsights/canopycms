@@ -101,14 +101,16 @@ export interface Alignment {
  * side an identity of its own. `ancestorKeys` are the ancestor's items' keys as a read gives them.
  * An item with a key of its own is named by the key a read gives it: that key the first time the
  * list holds it, else a hash of its content. A name the ancestor's read gave, or another key a
- * read could have given an ancestor item ({@link ancestorAliases}), is that ancestor item; any
+ * read could have given an ancestor item ({@link ancestorAliases}) unless an item here holds that
+ * item's own key or the ancestor's read gave it to an item of another list, is that ancestor item; any
  * other key marks the item new when it was minted for it, the ancestor knows it (a copy), or the
  * ancestor's read gave it to an item of another list (`inEntry`, every key the ancestor's read
  * gives across the entry): that item moved here.
  *
  * The rest align as diff3 aligns lines: equal content in order, then equal content out of order
  * (a move), then, in each gap between two matches, by shared values and last by place
- * ({@link pairInGap}).
+ * ({@link pairInGap}). `otherSide` is the other version's list: its copy of an item counts here
+ * where it holds the same rewrite.
  * Undefined when the diff ran out of time.
  */
 export function alignToAncestor(
@@ -118,6 +120,7 @@ export function alignToAncestor(
   side: string,
   inEntry: ReadonlySet<string>,
   movedIn: ReadonlySet<string>,
+  otherSide: readonly unknown[] = [],
 ): Alignment | undefined {
   const known = new Set(ancestorKeys)
   const aliases = ancestorAliases(ancestorItems, ancestorKeys)
@@ -144,28 +147,73 @@ export function alignToAncestor(
     if (!isMinted(item)) unheldFresh.add(token)
   })
   const at = new Map(ancestorKeys.map((key, i) => [key, i]))
-  const usurped = (j: number, own: string): boolean => {
-    if (!hasContentKeyShape(own)) return false
+  // Content a copy holds, under a key minted for it that the ancestor doesn't know.
+  const copies = (list: readonly unknown[]) =>
+    new Set(
+      list.flatMap((item) => {
+        const own = ownKey(item)
+        return own !== undefined && !hasContentKeyShape(own) && !known.has(own)
+          ? [valueToken(item)]
+          : []
+      }),
+    )
+  const [copied, otherCopied] = [copies(items), copies(otherSide)]
+  // The other side's copy counts where it holds the same rewrite, so both read that item alike.
+  // A key is compared by the ancestor item it names, so an alias matches its read key.
+  const names = (key: string | undefined) =>
+    key === undefined || known.has(key) ? key : (aliases.get(key) ?? key)
+  const otherHolds = new Set(
+    otherSide.map((item) => `${names(ownKey(item))}\u0000${valueToken(item)}`),
+  )
+  const sameRewrite = (j: number, own: string) =>
+    otherHolds.has(`${names(own)}\u0000${valueToken(items[j])}`)
+  // Whether the item may be the unheld item holding its content: `named` when its key names
+  // another, `keyed` when a copy also shows that one was rewritten, `unnamed` when it names none.
+  const claim = (j: number, own: string): 'named' | 'keyed' | 'unnamed' | undefined => {
+    if (!hasContentKeyShape(own)) return undefined
     const content = valueToken(items[j])
     const holders = unheld.get(content) ?? 0
-    if (holders === 0) return false
+    if (holders === 0) return undefined
     const read = readKeys[j]
     const named = read !== undefined && known.has(read) ? read : aliases.get(own)
     const i = named === undefined ? undefined : at.get(named)
     // A key that has gone stale on both sides is history, not content: it names its item.
     if (i !== undefined) {
-      if (isMinted(ancestorItems[i]) && isMinted(items[j])) return false
+      if (isMinted(ancestorItems[i]) && isMinted(items[j])) return undefined
       // A key takes only an unheld item still under its read key: one gone stale was edited.
-      if (!unheldFresh.has(content)) return false
-      return valueToken(ancestorItems[i]) !== content
+      if (!unheldFresh.has(content)) return undefined
+      // With a copy of the item its key names beside it, the side rewrote that item: read by key.
+      const was = valueToken(ancestorItems[i])
+      if (was === content) return undefined
+      return copied.has(was) || (otherCopied.has(was) && sameRewrite(j, own)) ? 'keyed' : 'named'
     }
     // A key naming no item here pairs by content only where one item holds it, twins by place.
-    return holders === 1
+    return holders === 1 ? 'unnamed' : undefined
+  }
+  const claims = items.map((item, j) => {
+    const own = ownKey(item)
+    return own === undefined ? undefined : claim(j, own)
+  })
+  const claimants = new Map<string, number>()
+  claims.forEach((c, j) => {
+    const content = valueToken(items[j])
+    if (c !== undefined) claimants.set(content, (claimants.get(content) ?? 0) + 1)
+  })
+  // More claimants than holders can't all be those items: one a key names is that item instead.
+  const usurped = (j: number): boolean => {
+    const content = valueToken(items[j])
+    if (claims[j] !== 'named') return claims[j] === 'unnamed'
+    return (claimants.get(content) ?? 0) <= (unheld.get(content) ?? 0)
+  }
+  const literal = new Set(items.flatMap((item) => ownKey(item) ?? []).filter((k) => known.has(k)))
+  const aliasOf = (own: string): string | undefined => {
+    const id = inEntry.has(own) ? undefined : aliases.get(own)
+    return id !== undefined && !literal.has(id) ? id : undefined
   }
   items.forEach((item, j) => {
     const own = ownKey(item)
     const read = readKeys[j]
-    if (own !== undefined && usurped(j, own)) {
+    if (own !== undefined && usurped(j)) {
       minted.add(j)
       byContent.add(j)
       stale.add(j)
@@ -179,7 +227,7 @@ export function alignToAncestor(
         : read !== undefined && known.has(read)
           ? read
           : !known.has(own)
-            ? aliases.get(own)
+            ? aliasOf(own)
             : undefined
     if (id !== undefined && !taken.has(id)) {
       ids[j] = id
@@ -422,14 +470,16 @@ export const isNewIdentity = (id: string): boolean => id.startsWith(INTERNAL)
 /**
  * Pairs the items new on the base with the items new on the branch that are the same addition:
  * the same key, else equal content, in order. The branch's identity replaces the base's in
- * `baseIds` for each pair, so an item both sides added alike is one item. Pairing is skipped by
- * content when the diff runs out of time: the additions stay apart, and none is lost.
+ * `baseIds` for each pair, so an item both sides added alike is one item; one moved in from another
+ * list (`movedHere`) is no addition, and pairs by key only. Pairing is skipped by content when the
+ * diff runs out of time: the additions stay apart, and none is lost.
  */
 export function pairNewItems(
   baseItems: readonly unknown[],
   baseIds: string[],
   branchItems: readonly unknown[],
   branchIds: readonly string[],
+  movedHere: (key: string) => boolean,
 ): void {
   const baseNew = baseIds.flatMap((id, j) => (isNewIdentity(id) ? [j] : []))
   const branchNew = branchIds.flatMap((id, j) => (isNewIdentity(id) ? [j] : []))
@@ -459,7 +509,12 @@ export function pairNewItems(
       restBase.map((j) => valueToken(baseItems[j])),
       restBranch.map((j) => valueToken(branchItems[j])),
     ) ?? []
-  ).filter(([x, y]) => !(isMinted(baseItems[restBase[x]]) && isMinted(branchItems[restBranch[y]])))
+  ).filter(([x, y]) => {
+    const [a, b] = [baseItems[restBase[x]], branchItems[restBranch[y]]]
+    const [ka, kb] = [ownKey(a), ownKey(b)]
+    const movedIn = (k?: string) => k !== undefined && movedHere(k)
+    return !(isMinted(a) && isMinted(b)) && !(ka !== kb && (movedIn(ka) || movedIn(kb)))
+  })
   for (const [x, y] of pairs) baseIds[restBase[x]] = branchIds[restBranch[y]]
 }
 

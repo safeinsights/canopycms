@@ -88,7 +88,7 @@
     "README.md": {
       "historyMarkers": 0,
       "maxSectionWords": 4969,
-      "words": 17348
+      "words": 17416
     },
     "docs/concurrency.md": {
       "historyMarkers": 0,
@@ -182,8 +182,8 @@
     },
     "packages/canopycms/src/worker/AGENTS.md": {
       "historyMarkers": 0,
-      "maxSectionWords": 350,
-      "words": 809
+      "maxSectionWords": 364,
+      "words": 828
     }
   }
 }

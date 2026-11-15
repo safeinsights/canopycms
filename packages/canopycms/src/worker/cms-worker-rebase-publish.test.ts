@@ -270,6 +270,7 @@ describe('CmsWorker.rebaseActiveBranches() publishes rewritten history', () => {
     // and that hop is queued.
     const meta = await readMeta(setup.branchPath)
     expect(meta?.historyRewrittenFrom).toBe(published)
+    expect(meta?.historyRewrittenTo).toBe(rebasedTip)
     expect(await queuedPushBranches(setup.workspacePath)).toEqual(['feature-resubmit'])
 
     // What the editor does next: edit and submit again. Before the fix this
@@ -320,11 +321,11 @@ describe('CmsWorker.rebaseActiveBranches() publishes rewritten history', () => {
     await runRebase(makeWorker(setup.workspacePath))
 
     const meta = await readMeta(setup.branchPath)
+    const head = (await setup.branchGit.revparse(['HEAD'])).trim()
     expect(meta?.historyRewrittenFrom).toBe(originallyPublished)
-    // remote.git still follows the clone.
-    expect(await setup.remoteSha('refs/heads/feature-twice')).toBe(
-      (await setup.branchGit.revparse(['HEAD'])).trim(),
-    )
+    // The tip it publishes follows each rewrite, as remote.git follows the clone.
+    expect(meta?.historyRewrittenTo).toBe(head)
+    expect(await setup.remoteSha('refs/heads/feature-twice')).toBe(head)
   })
 
   it('self-heals a publish that never landed, without waiting for another base advance', async () => {
@@ -342,12 +343,151 @@ describe('CmsWorker.rebaseActiveBranches() publishes rewritten history', () => {
     const rewrittenTip = (await setup.branchGit.revparse(['HEAD'])).trim()
     await writeMeta(setup.branchPath, setup.contentBranchesPath, {
       historyRewrittenFrom: published,
+      historyRewrittenTo: rewrittenTip,
     })
 
     await runRebase(makeWorker(setup.workspacePath))
 
     expect(await setup.remoteSha('refs/heads/feature-crashed')).toBe(rewrittenTip)
     expect(await queuedPushBranches(setup.workspacePath)).toEqual(['feature-crashed'])
+  })
+
+  it('self-heals with the rebased tip alone, leaving a commit made since unpublished', async () => {
+    const setup = await createPublishSetup(tmpDir, 'feature-crashed-saved')
+    await setup.commitToBranch({ 'entry.md': 'v1\n' }, 'editor work')
+    await setup.submit()
+    const published = await setup.remoteSha('refs/heads/feature-crashed-saved')
+    await setup.branchGit.raw(['commit', '--amend', '-m', 'editor work (rewritten)'])
+    const rewrittenTip = (await setup.branchGit.revparse(['HEAD'])).trim()
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      historyRewrittenFrom: published,
+      historyRewrittenTo: rewrittenTip,
+    })
+    // Saved work committed after the crash, as "Get latest changes" commits it.
+    await setup.commitToBranch({ 'entry.md': 'v2\n' }, 'Save changes before getting the latest')
+    const saved = (await setup.branchGit.revparse(['HEAD'])).trim()
+
+    await runRebase(makeWorker(setup.workspacePath))
+
+    expect(await setup.remoteSha('refs/heads/feature-crashed-saved')).toBe(rewrittenTip)
+    expect(await queuedPushBranches(setup.workspacePath)).toEqual(['feature-crashed-saved'])
+    expect((await setup.branchGit.revparse(['HEAD'])).trim()).toBe(saved)
+  })
+
+  it('publishes nothing from a rewrite recorded without its rebased tip', async () => {
+    const setup = await createPublishSetup(tmpDir, 'feature-no-target')
+    await setup.commitToBranch({ 'entry.md': 'v1\n' }, 'editor work')
+    await setup.submit()
+    const published = await setup.remoteSha('refs/heads/feature-no-target')
+    await setup.branchGit.raw(['commit', '--amend', '-m', 'editor work (rewritten)'])
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      historyRewrittenFrom: published,
+    })
+
+    await runRebase(makeWorker(setup.workspacePath))
+
+    expect(await setup.remoteSha('refs/heads/feature-no-target')).toBe(published)
+    expect(await queuedPushBranches(setup.workspacePath)).toEqual([])
+
+    // Nor does the base come in over it: a rebase would replace what remote.git waits for.
+    const head = (await setup.branchGit.revparse(['HEAD'])).trim()
+    await setup.advanceBase({ 'base2.txt': 'moved on\n' })
+    await runRebase(makeWorker(setup.workspacePath))
+
+    expect((await setup.branchGit.revparse(['HEAD'])).trim()).toBe(head)
+    expect(await setup.remoteSha('refs/heads/feature-no-target')).toBe(published)
+    expect(await queuedPushBranches(setup.workspacePath)).toEqual([])
+    expect((await readMeta(setup.branchPath))?.rebaseFailure?.message).toContain(
+      'recorded without the commit to publish',
+    )
+  })
+
+  it('takes nothing in while its rewrite waits to publish, then publishes only the rewrite', async () => {
+    const setup = await createPublishSetup(tmpDir, 'feature-blocked')
+    await setup.commitToBranch({ 'entry.md': 'v1\n' }, 'editor work')
+    await setup.submit()
+    const published = await setup.remoteSha('refs/heads/feature-blocked')
+    await setup.branchGit.raw(['commit', '--amend', '-m', 'editor work (rewritten)'])
+    const rewrittenTip = (await setup.branchGit.revparse(['HEAD'])).trim()
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      historyRewrittenFrom: published,
+      historyRewrittenTo: rewrittenTip,
+    })
+    await setup.commitToBranch({ 'entry.md': 'v2\n' }, 'Save changes before getting the latest')
+    const saved = (await setup.branchGit.revparse(['HEAD'])).trim()
+    // A publish that fails for a reason other than a refused lease.
+    const lock = path.join(setup.remoteGitPath, 'refs', 'heads', 'feature-blocked.lock')
+    await fs.writeFile(lock, '')
+    await setup.advanceBase({ 'base2.txt': 'moved on\n' })
+
+    await runRebase(makeWorker(setup.workspacePath))
+
+    expect((await setup.branchGit.revparse(['HEAD'])).trim()).toBe(saved)
+    expect(await setup.remoteSha('refs/heads/feature-blocked')).toBe(published)
+    expect(await queuedPushBranches(setup.workspacePath)).toEqual([])
+    expect((await readMeta(setup.branchPath))?.rebaseFailure?.message).toContain(
+      'could not be published',
+    )
+
+    // Once it can, the self-heal publishes the rewrite alone, and the base comes in by a merge
+    // that holds the saved commit back.
+    await fs.rm(lock)
+    await runRebase(makeWorker(setup.workspacePath))
+
+    expect(await setup.remoteSha('refs/heads/feature-blocked')).toBe(rewrittenTip)
+    expect(await setup.remoteLog('refs/heads/feature-blocked')).not.toContain('Save changes')
+    const parents = (await setup.branchGit.raw(['rev-list', '--parents', '-n1', 'HEAD']))
+      .trim()
+      .split(' ')
+    expect(parents).toHaveLength(3)
+    expect(parents[1]).toBe(saved)
+    expect(await fs.readFile(path.join(setup.branchPath, 'base2.txt'), 'utf8')).toBe('moved on\n')
+    expect((await readMeta(setup.branchPath))?.rebaseFailure).toBeUndefined()
+  })
+
+  it('records a rewrite whose publish fails, and publishes it once it can', async () => {
+    const setup = await createPublishSetup(tmpDir, 'feature-publish-fails')
+    await setup.commitToBranch({ 'entry.md': 'v1\n' }, 'editor work')
+    await setup.submit()
+    const published = await setup.remoteSha('refs/heads/feature-publish-fails')
+    await setup.advanceBase({ 'base2.txt': 'moved on\n' })
+    await writeMeta(setup.branchPath, setup.contentBranchesPath)
+    const lock = path.join(setup.remoteGitPath, 'refs', 'heads', 'feature-publish-fails.lock')
+    await fs.writeFile(lock, '')
+
+    await runRebase(makeWorker(setup.workspacePath))
+
+    expect(await setup.remoteSha('refs/heads/feature-publish-fails')).toBe(published)
+    expect((await readMeta(setup.branchPath))?.rebaseFailure?.message).toContain(
+      'could not be published',
+    )
+
+    await fs.rm(lock)
+    await runRebase(makeWorker(setup.workspacePath))
+
+    expect(await setup.remoteSha('refs/heads/feature-publish-fails')).toBe(
+      (await setup.branchGit.revparse(['HEAD'])).trim(),
+    )
+    expect((await readMeta(setup.branchPath))?.rebaseFailure).toBeUndefined()
+  })
+
+  it('publishes nothing to a recorded tip that is not a commit ID', async () => {
+    const setup = await createPublishSetup(tmpDir, 'feature-bad-target')
+    await setup.commitToBranch({ 'entry.md': 'v1\n' }, 'editor work')
+    await setup.submit()
+    const published = await setup.remoteSha('refs/heads/feature-bad-target')
+    await setup.branchGit.raw(['commit', '--amend', '-m', 'editor work (rewritten)'])
+    await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+      historyRewrittenFrom: published,
+      historyRewrittenTo: 'HEAD',
+    })
+
+    await runRebase(makeWorker(setup.workspacePath))
+
+    expect(await setup.remoteSha('refs/heads/feature-bad-target')).toBe(published)
+    expect((await readMeta(setup.branchPath))?.rebaseFailure?.message).toContain(
+      'recorded without the commit to publish',
+    )
   })
 
   it('self-heals a queued push that was lost, without re-pushing remote.git', async () => {
@@ -380,6 +520,7 @@ describe('CmsWorker.rebaseActiveBranches() publishes rewritten history', () => {
     await setup.branchGit.raw(['commit', '--amend', '-m', 'editor work (rewritten)'])
     await writeMeta(setup.branchPath, setup.contentBranchesPath, {
       historyRewrittenFrom: published,
+      historyRewrittenTo: (await setup.branchGit.revparse(['HEAD'])).trim(),
     })
 
     await runRebase(makeWorker(setup.workspacePath))
@@ -598,5 +739,24 @@ describe('CmsWorker.rebaseActiveBranches() on a branch.json that changes mid-cyc
 
     expect(await fs.readFile(branchJson(setup.branchPath), 'utf-8')).toBe(replaced)
     expect(await queuedPushBranches(setup.workspacePath)).toEqual([])
+  })
+
+  it('publishes the tip the rebase made, never a commit landing on it before the publish', async () => {
+    const setup = await createPublishSetup(tmpDir, 'feature-late-commit')
+    await setup.commitToBranch({ 'entry.md': 'editor v1\n' }, 'editor work')
+    await setup.submit()
+    await setup.advanceBase({ 'base2.txt': 'moved on\n' })
+    await writeMeta(setup.branchPath, setup.contentBranchesPath)
+    let rebasedTip = ''
+
+    // What "Get latest changes" commits once a lost lock lets it in.
+    await rebaseWith(setup.workspacePath, async () => {
+      rebasedTip = (await setup.branchGit.revparse(['HEAD'])).trim()
+      await setup.commitToBranch({ 'unsubmitted.md': 'saved\n' }, 'unsubmitted saved work')
+    })
+
+    expect(await setup.remoteSha('refs/heads/feature-late-commit')).toBe(rebasedTip)
+    expect(await setup.remoteLog('refs/heads/feature-late-commit')).not.toContain('unsubmitted')
+    expect((await readMeta(setup.branchPath))?.historyRewrittenTo).toBe(rebasedTip)
   })
 })

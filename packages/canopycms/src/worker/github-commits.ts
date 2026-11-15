@@ -27,6 +27,7 @@ import { escapeForLog } from '../utils/escape-text'
 import { isCanopyInternalPath } from '../utils/git'
 import { publishesBranch, type BranchPolicyDescription } from './branch-policy'
 import {
+  buildRekey,
   commitMerge,
   commitsApart,
   isCleanMergeOf,
@@ -41,7 +42,12 @@ import {
 } from './canopy-state'
 import { enqueueGitHubPush, readPublishedSha, recordSeenOnGitHub } from './history-rewrite'
 import { workerLog, workerLogWarn } from './log'
-import { assertNoIncomingSubmodules, fetchFromRemoteGit } from './shared-repo-git'
+import { decidePublish } from './publish-decision'
+import {
+  SHARED_REPO_STATUS_ARGS,
+  assertNoIncomingSubmodules,
+  fetchFromRemoteGit,
+} from './shared-repo-git'
 import type { WorkerContext } from './worker-context'
 
 /**
@@ -175,7 +181,10 @@ export async function catchUpWithPublished(
   )
     .trim()
     .split(' ')
-  if (parents.length !== 3 || parents[1] !== head) return null
+  // A merge built on the clone's head, or a re-key built on GitHub's commits past it.
+  const builtOnHead = parents.length === 3 && parents[1] === head
+  const rekeyPastHead = parents.length === 2 && (await contains(git, published, head))
+  if (!builtOnHead && !rekeyPastHead) return null
   return fastForward(ctx, args, head, published)
 }
 
@@ -239,6 +248,11 @@ export async function bringInGitHubCommits(
   // below builds on remote.git's head whenever it can.
   if (published !== null && published !== head) {
     if ((await commitsApart(git, head, published)).onlyA === 0) {
+      // GitHub's commits, which reconcile moved `remote.git` to, come in re-keyed where they need it.
+      if (gitHubTip === published) {
+        const rekeyed = await rekeyTakenIn(ctx, args, head, published)
+        if (rekeyed) return rekeyed
+      }
       const stopped = await fastForward(ctx, args, head, published)
       if (stopped) return stopped
       head = published
@@ -464,7 +478,7 @@ async function fastForward(
   try {
     await moveClone(git, branchPath, to)
   } catch (err) {
-    if (!/would be overwritten/.test(getErrorMessage(err))) throw err
+    if (!overwritesSaves(err)) throw err
     workerLog(`  ${branchDir}: local changes overlap commits from GitHub, which wait for a submit`)
     return { kind: 'wait' }
   }
@@ -485,20 +499,137 @@ async function fastForward(
 }
 
 /**
+ * GitHub's commits brought in under the item keys a field merge gives, where a merge among them
+ * left an item under a key that names another item (branch-merge.ts `buildRekey`): one commit on
+ * `tip`, recorded, published and moved to in {@link mergeIntoBranch}'s order, its remaps moving the
+ * branch's comment threads once it lands. Null, for the caller to fast-forward to `tip` as git
+ * keyed it, where no item needs a new key, where the commit could not be published (gateway policy,
+ * {@link decidePublish}, a `remote.git` head it doesn't contain), or where the clone's saves would
+ * keep the clone from moving to it ({@link savesMeet}).
+ */
+async function rekeyTakenIn(
+  ctx: GitHubCommitsContext,
+  args: GitHubCommitsArgs,
+  head: string,
+  tip: string,
+): Promise<GitHubCommitsOutcome | null> {
+  const { git, branchPath, branchDir, branchRef, gatewayPolicy, lockLost } = args
+  if (gatewayPolicy && !publishesBranch(gatewayPolicy, branchRef)) return null
+  const published = await readPublishedSha(ctx, branchRef)
+  if ((await decidePublish(git, { head, published })).kind !== 'publish') return null
+  const built = await rekeyOf(ctx, args, head, tip)
+  if (built === null) return null
+  const { sha } = built
+  // A re-key the clone can't move to stays unpublished; the commits come in once the saves do.
+  if (args.dirty && (await savesMeet(git, head, sha))) return null
+  if (published !== null && !(await contains(git, sha, published))) return null
+  const refused = await refuseIncoming(args, head, sha)
+  if (refused) return refused
+  if (lockLost()) return { kind: 'wait' }
+  // Judged on content: the commit changes item keys only, which `isCleanMergeOf` sets aside.
+  if (await changesWhatWasReviewed(ctx, args, head, sha)) await returnToReview(ctx, args)
+  await recordMerge(ctx, args, built, { head, also: tip, fromGitHub: true })
+  if (lockLost()) return { kind: 'wait' }
+  await recordSeenOnGitHub(ctx, branchRef, tip)
+  if (!(await publishPlainToLocalRemote(ctx, branchPath, branchRef, sha))) return { kind: 'wait' }
+  await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
+  if (lockLost()) return { kind: 'wait' }
+  try {
+    await moveClone(git, branchPath, sha)
+  } catch (err) {
+    if (!overwritesSaves(err)) throw err
+    // Unreached: `savesMeet` looked under the content-write lock this cycle still holds.
+    workerLog(`  ${branchDir}: local changes overlap commits from GitHub, which wait for a submit`)
+    return { kind: 'wait' }
+  }
+  await landed(ctx, args, sha).catch((err: unknown) =>
+    workerLogWarn(
+      `  ${branchDir}: what this re-key moves is noted on the next cycle: ${getErrorMessage(err)}`,
+    ),
+  )
+  await recordGitHubTip(ctx, args, tip)
+  workerLog(
+    `  ${branchDir}: brought in commits from GitHub, with the items its merges brought in keyed anew (now at ${sha.slice(0, 7)})`,
+  )
+  return { kind: 'merged', keptEntries: 0 }
+}
+
+/** {@link buildRekey} on GitHub's commits from `head` to `tip`, or null when none needs a new key. */
+function rekeyOf(
+  ctx: GitHubCommitsContext,
+  { git, branchPath, branchRef }: GitHubCommitsArgs,
+  head: string,
+  tip: string,
+  unchangedIn?: { head: string; since: string },
+): Promise<BuiltMerge | null> {
+  return buildRekey(git, branchPath, {
+    from: head,
+    tip,
+    contentRoot: ctx.contentRoot,
+    timeoutMs: ctx.taskTimeoutMs,
+    message: `Key the items that merges on GitHub brought into ${branchRef}`,
+    ...(unchangedIn && { unchangedIn }),
+  })
+}
+
+/**
+ * Whether the clone's saves (changes, deletions, new files) touch a path `from..to` changes: the
+ * clone can't move to `to` until they are committed, and that commit merges against `from`'s keys.
+ */
+async function savesMeet(git: SimpleGit, from: string, to: string): Promise<boolean> {
+  const saved = new Set(
+    (await git.status([...SHARED_REPO_STATUS_ARGS])).files.flatMap((f) =>
+      f.from ? [f.path, f.from] : [f.path],
+    ),
+  )
+  const changed = (
+    await git.raw(['diff-tree', '-r', '-z', '--name-only', '--end-of-options', from, to])
+  )
+    .split('\0')
+    .filter(Boolean)
+  return changed.some((file) => saved.has(file))
+}
+
+/** A move of the clone refused for saves it would overwrite, as git refuses a changed file. */
+class SavesInTheWay extends Error {}
+
+/** Whether `err` is a move refused for the clone's saves: git's own refusal, or {@link moveClone}'s. */
+const overwritesSaves = (err: unknown): boolean =>
+  err instanceof SavesInTheWay || /would be overwritten/.test(getErrorMessage(err))
+
+/**
  * Fast-forward the clone to `to`. The caches' markers move after it, as for any bulk mutation, and
  * before it too: nothing repairs a marker lost after the move, as the next cycle sees a clone in
- * step, and the earlier bump leaves only a read racing the move able to stamp the old tree.
+ * step, and the earlier bump leaves only a read racing the move able to stamp the old tree. Git
+ * refuses to move over a saved change to a file the commits change, but writes a file deleted in
+ * the working tree back: an entry the editor deleted, or a renamed entry's old path. So a move over
+ * such a deletion is refused here alike ({@link SavesInTheWay}), until the deletion is submitted.
  */
 async function moveClone(git: SimpleGit, branchPath: string, to: string): Promise<void> {
+  const deleted = (await git.status([...SHARED_REPO_STATUS_ARGS])).files.flatMap((f) => [
+    ...(f.working_dir === 'D' || f.index === 'D' ? [f.path] : []),
+    ...(f.from ? [f.from] : []),
+  ])
+  if (deleted.some((file) => !isCanopyInternalPath(file))) {
+    const changed = new Set(
+      (await git.raw(['diff-tree', '-r', '-z', '--name-only', '--end-of-options', 'HEAD', to]))
+        .split('\0')
+        .filter(Boolean),
+    )
+    const lost = deleted.filter((file) => changed.has(file) && !isCanopyInternalPath(file))
+    if (lost.length > 0) {
+      throw new SavesInTheWay(`saved deletions would be brought back: ${listPaths(lost)}`)
+    }
+  }
   await invalidateBranchContentCaches(branchPath)
   await git.raw(['merge', '--ff-only', '--end-of-options', to])
   await invalidateBranchContentCaches(branchPath)
 }
 
 /**
- * `other` merged into the branch: built, recorded, published to `remote.git`, queued for GitHub,
- * and the clone moved to it, in that order, so each step leaves what the next cycle picks up and
- * only the last touches the working tree. `fromGitHub` says `other` is GitHub's tip rather than the
+ * `other` merged into the branch: built, recorded, published to `remote.git` and queued for GitHub
+ * unless it holds unsubmitted work (publish-decision.ts), and the clone moved to it, in that order,
+ * so each step leaves what the next cycle picks up and only the last touches the working tree. `fromGitHub` says `other` is GitHub's tip rather than the
  * base. `inReview` takes only a merge with nothing for a person to choose; any other leaves the
  * branch as it is and records nothing, and GitHub's own conflict notice stands on the pull request. A lock lost before the clone moves leaves it where it was: `wait`.
  */
@@ -515,9 +646,20 @@ export async function mergeIntoBranch(
 ): Promise<GitHubCommitsOutcome> {
   const { git, branchPath, branchDir, branchRef, gatewayPolicy, lockLost } = args
   const { head, other, message, fromGitHub, inReview } = merge
+  // GitHub's merges come in under the field merge's keys, as a fast-forward takes them in, for the
+  // entries the merge takes from GitHub whole: one the branch changed too merges by git's keys.
+  const bases = fromGitHub
+    ? (await git.raw(['merge-base', '--all', '--end-of-options', head, other]))
+        .split('\n')
+        .filter((line) => COMMIT_ID.test(line))
+    : []
+  // With one merge base, as the field merge needs; none or several leave git's merge as it is.
+  const rekey =
+    bases.length === 1 ? await rekeyOf(ctx, args, head, other, { head, since: bases[0] }) : null
+  const into = rekey?.sha ?? other
   const plan = await planMerge(git, branchPath, {
     head,
-    other,
+    other: into,
     contentRoot: ctx.contentRoot,
     timeoutMs: ctx.taskTimeoutMs,
   })
@@ -540,7 +682,9 @@ export async function mergeIntoBranch(
         `To continue, a developer merges them by hand.`,
     }
   }
-  const built = await commitMerge(git, plan, { head, other, message })
+  const merged = await commitMerge(git, plan, { head, other: into, message })
+  // The re-key's remaps cover entries the branch left alone, the merge's those both changed.
+  const built = rekey ? { ...merged, keyRemaps: [...rekey.keyRemaps, ...merged.keyRemaps] } : merged
   const { sha, conflicts } = built
   const refused = await refuseIncoming(args, head, sha)
   if (refused) return refused
@@ -560,21 +704,32 @@ export async function mergeIntoBranch(
   // Recorded before the merge is visible anywhere: the next cycle only fast-forwards to it, and
   // the conflicts cannot be read back from the merge. A merge that never lands leaves records the
   // next cycle's reconcile turns back.
-  await recordMerge(ctx, args, built, { head, fromGitHub })
+  await recordMerge(ctx, args, built, { head, ...(fromGitHub && { also: other }), fromGitHub })
   if (lockLost()) return { kind: 'wait' }
   // Before `remote.git` holds it, as reconcile does: a crash past this point leaves GitHub's commit
   // in `remote.git`, and a removal then has to read as one (`rewrittenFrom`).
   if (fromGitHub) await recordSeenOnGitHub(ctx, branchRef, other)
-  if (published !== null) {
+  const publish = await decidePublish(git, { head, published })
+  if (publish.kind === 'publish') {
     if (!(await publishPlainToLocalRemote(ctx, branchPath, branchRef, sha))) {
       return { kind: 'blocked', reason: unpublishable }
     }
     await enqueueGitHubPush(ctx, branchRef, gatewayPolicy)
+  } else if (publish.kind === 'hold') {
+    workerLog(`  ${branchDir}: holds work not yet submitted, so the merge stays unpublished`)
   }
   // Published and not yet in the clone: the next cycle brings it in, by `bringInGitHubCommits` or
   // `catchUpWithPublished`.
   if (lockLost()) return { kind: 'wait' }
-  await moveClone(git, branchPath, sha)
+  try {
+    await moveClone(git, branchPath, sha)
+  } catch (err) {
+    if (!overwritesSaves(err)) throw err
+    // Callers move a clean tree. Published, the next cycle catches up with it once the saves are
+    // committed; held, reconcile turns it back.
+    workerLog(`  ${branchDir}: local changes overlap the merge, which waits for a submit`)
+    return { kind: 'wait' }
+  }
   // Landed: a failure here leaves the remaps and the stamp for the next cycle's reconcile.
   await landed(ctx, args, sha).catch((err: unknown) =>
     workerLogWarn(
@@ -619,10 +774,13 @@ export async function contains(git: SimpleGit, commit: string, ancestor: string)
 }
 
 /**
- * Whether moving an approved branch from `from` to `to` changes what was approved: yes unless `to`
- * is exactly `from` with the base up to where `to` has it, which leaves the pull request's diff as
- * it was reviewed. A hand-made change inside a merge commit therefore counts. Read fresh, so an
- * approval given since the cycle's start counts too.
+ * Whether moving an approved branch to `to` changes what was approved: yes unless `to` is exactly
+ * the approved commit with the base up to where `to` has it, which leaves the pull request's diff
+ * as it was reviewed. The approved commit is the one the approval recorded, so clean merges since
+ * it are judged together; `from`, the head before this move, stands in for an approval that
+ * recorded none. A recorded commit this clone doesn't hold counts as a change, as does a
+ * hand-made change inside a merge commit. Read fresh, so an approval given since the cycle's
+ * start counts too.
  */
 async function changesWhatWasReviewed(
   ctx: GitHubCommitsContext,
@@ -632,10 +790,12 @@ async function changesWhatWasReviewed(
 ): Promise<boolean> {
   const fresh = (await BranchMetadataFileManager.loadOnly(branchPath))?.branch
   if (fresh?.status !== 'approved') return false
+  const approved = fresh.review?.commit ?? from
+  if (!(await holdsCommit(git, approved))) return true
   await fetchFromRemoteGit(git, ctx.remoteGitPath, fresh.baseBranch ?? ctx.baseBranch)
   const base = (await git.revparse(['FETCH_HEAD'])).trim()
   const forkPoint = (await git.raw(['merge-base', '--end-of-options', to, base])).trim()
-  return forkPoint === '' || !(await isCleanMergeOf(git, to, from, forkPoint))
+  return forkPoint === '' || !(await isCleanMergeOf(git, to, approved, forkPoint, ctx.contentRoot))
 }
 
 /**
@@ -662,17 +822,23 @@ export async function returnToReview(
  * IDs it names in `branch.json` `conflictFiles`. The record is first settled against `head`, which
  * the merge builds on, so a record of a merge that never landed can't carry into this one. Before
  * the merge is visible: one that never lands leaves records the next
- * {@link reconcileMergeConflicts} turns back.
+ * {@link reconcileMergeConflicts} turns back. A merge `also` holds, GitHub's tip the merge takes in,
+ * is landing rather than gone. An earlier landing either commit holds is published, and this one
+ * replaces it: what it kept over GitHub's commits is noted for the pull request body now.
  */
 async function recordMerge(
   ctx: GitHubCommitsContext,
   args: GitHubCommitsArgs,
   built: BuiltMerge,
-  merge: { head: string; fromGitHub: boolean },
+  merge: { head: string; also?: string; fromGitHub: boolean },
 ): Promise<void> {
   const { git, branchPath, branchRef } = args
   const { sha, conflicts, keptPaths, keyRemaps, paths } = built
-  const inHead = await settleRecord(git, branchPath, merge.head)
+  const inHead = await settleRecord(git, branchPath, merge.head, merge.also)
+  const earlier = (await new MergeConflictStore(branchPath).read())?.landing
+  if (earlier && earlier.mergeSha !== sha && inHead(earlier.mergeSha)) {
+    await noteKeptOverGitHub(ctx, args, earlier.keptOverGitHub ?? [])
+  }
   const state = await new MergeConflictStore(branchPath).update((current) => ({
     entries: withFoundConflicts(
       withRemappedItemKeys(
@@ -727,24 +893,35 @@ async function landed(
   )
   const landing = current.landing
   if (landing?.mergeSha !== sha) return
-  const kept = landing.keptOverGitHub ?? []
-  if (kept.length > 0) {
-    await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update((existing) =>
-      existing?.branch.name === branchRef
-        ? {
-            branch: {
-              keptOverGitHub: [...new Set([...(existing.branch.keptOverGitHub ?? []), ...kept])],
-            },
-          }
-        : null,
-    )
-    await enqueueReviewBlockSync(ctx, branchRef, metaFile)
-  }
+  await noteKeptOverGitHub(ctx, { branchPath, branchRef, metaFile }, landing.keptOverGitHub ?? [])
   await store.update((now) => {
     if (now?.landing?.mergeSha !== sha) return null
     const { landing: _done, ...rest } = now
     return rest
   })
+}
+
+/** `kept`, paths a merge kept over GitHub's commits, in `keptOverGitHub` for the PR body. */
+async function noteKeptOverGitHub(
+  ctx: GitHubCommitsContext,
+  {
+    branchPath,
+    branchRef,
+    metaFile,
+  }: Pick<GitHubCommitsArgs, 'branchPath' | 'branchRef' | 'metaFile'>,
+  kept: readonly string[],
+): Promise<void> {
+  if (kept.length === 0) return
+  await getBranchMetadataFileManager(branchPath, ctx.contentBranchesPath).update((existing) =>
+    existing?.branch.name === branchRef
+      ? {
+          branch: {
+            keptOverGitHub: [...new Set([...(existing.branch.keptOverGitHub ?? []), ...kept])],
+          },
+        }
+      : null,
+  )
+  await enqueueReviewBlockSync(ctx, branchRef, metaFile)
 }
 
 /** Every merge a record names, its earlier versions' included. */
@@ -777,30 +954,32 @@ async function mergesHeld(
 }
 
 /**
- * The record as `head` has it: comment threads take the item keys of merges `head` holds, other
- * merges' remaps go, and records changed by merges it lacks give back the ones they replaced.
- * Resolves whether `head` holds a merge the record named then; a merge recorded since counts as
- * held, as nothing settled it.
+ * The record as `head` has it, or `also` with it: comment threads take the item keys of merges
+ * `head` holds, the remaps of merges neither holds go, and records changed by merges neither holds
+ * give back the ones they replaced. Resolves whether either holds a merge the record named then; a
+ * merge recorded since counts as held, as nothing settled it.
  */
 async function settleRecord(
   git: SimpleGit,
   branchPath: string,
   head: string,
+  also?: string,
 ): Promise<(mergeSha: string) => boolean> {
   const store = new MergeConflictStore(branchPath)
   const current = await store.read()
   if (current === null) return () => true
-  const [held] = await mergesHeld(git, current, [head])
+  const [held, alsoHeld] = await mergesHeld(git, current, also ? [head, also] : [head])
   const known = new Set([
     ...Object.values(current.entries).flatMap(mergesNamedBy),
     ...(current.remaps ?? []).map(({ mergeSha }) => mergeSha),
   ])
   const inHead = (sha: string) => held.has(sha) || !known.has(sha)
-  // The threads can wait: the remaps stay for the next cycle.
-  await applyRemaps(branchPath, inHead, (sha) => !inHead(sha)).catch((err: unknown) =>
+  const kept = (sha: string) => inHead(sha) || (alsoHeld?.has(sha) ?? false)
+  // Threads move only to merges the clone holds; the rest wait, unless neither commit holds them.
+  await applyRemaps(branchPath, inHead, (sha) => !kept(sha)).catch((err: unknown) =>
     workerLogWarn(`  comment threads keep their item keys for now: ${getErrorMessage(err)}`),
   )
-  return inHead
+  return kept
 }
 
 /**

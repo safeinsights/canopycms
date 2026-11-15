@@ -583,10 +583,11 @@ function identifyByKey(
   moved: Walk['movedKeys'],
 ) {
   const oKeys = itemKeysAsRead(O).map((key, i) => key ?? `${i}`)
-  const aligned = alignToAncestor(a, O, oKeys, 'a', inEntry, moved.a)
-  const bAligned = alignToAncestor(b, O, oKeys, 'b', inEntry, moved.b)
+  const aligned = alignToAncestor(a, O, oKeys, 'a', inEntry, moved.a, b)
+  const bAligned = alignToAncestor(b, O, oKeys, 'b', inEntry, moved.b, a)
   if (!aligned || !bAligned) return undefined
-  pairNewItems(a, aligned.ids, b, bAligned.ids)
+  const known = new Set(oKeys)
+  pairNewItems(a, aligned.ids, b, bAligned.ids, (key) => inEntry.has(key) && !known.has(key))
   return {
     oKeys,
     aIds: aligned.ids,

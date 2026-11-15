@@ -28,7 +28,7 @@ import { tryAcquireContentWriteLock } from '../utils/content-write-lock'
 import { BASE_UPDATE_GIVE_UP_MS } from '../base-update'
 import { branchProvisioningLockName, tryAcquireProvisioningLock } from '../utils/provisioning-lock'
 import type { BranchPolicyDescription } from './branch-policy'
-import { CmsWorker } from './cms-worker'
+import { CmsWorker, createLocalWorker } from './cms-worker'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1557,5 +1557,145 @@ describe('CmsWorker rebase loop answering a request for the latest changes', () 
       .log.filter((line) => line.includes('Rebasing '))
       .map((line) => (line.includes('z-requested') ? 'z-requested' : 'a-first'))
     expect(order).toEqual(['z-requested', 'a-first'])
+  })
+})
+
+describe('a run in the request (createLocalWorker), as dev runs "Get latest changes"', () => {
+  let tmpDir: string
+  let consoleSpy: MockConsole
+
+  beforeEach(async () => {
+    consoleSpy = mockConsole()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-sync-now-test-'))
+  })
+
+  afterEach(async () => {
+    consoleSpy.restore()
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  const ENTRY_FILE = 'page.about.TESTENTRYabc.json'
+  const localWorker = () =>
+    createLocalWorker({ workspacePath: tmpDir, baseBranch: 'main', contentRoot: 'content' })
+  const requestNow = (setup: BranchSetup, at = new Date(Date.now() - 1_000).toISOString()) =>
+    writeMeta(setup.branchPath, setup.contentBranchesPath, { baseUpdateRequestedAt: at })
+  const remoteTip = async (setup: BranchSetup) => (await setup.remoteGit.revparse(['HEAD'])).trim()
+
+  it("brings the base in and answers the branch's request from the run's start", async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature')
+    await setup.pushToRemote({ 'new-file.txt': 'from main' })
+    await requestNow(setup)
+    const before = Date.now()
+
+    await expect(localWorker().syncBranchNow('my-feature')).resolves.toBe('answered')
+
+    const answer = (await readMeta(setup.branchPath))?.lastBaseUpdate
+    expect(answer).toMatchObject({ outcome: 'merged', baseSha: await remoteTip(setup) })
+    expect(Date.parse(answer!.at)).toBeGreaterThanOrEqual(before)
+    expect(await fs.readFile(path.join(setup.branchPath, 'new-file.txt'), 'utf8')).toBe('from main')
+  })
+
+  it('answers "conflicts", leaving the conflict for a person', async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature', {
+      initialFiles: { [ENTRY_FILE]: '{"title":"base content"}' },
+    })
+    await setup.commitToBranch({ [ENTRY_FILE]: '{"title":"branch version"}' })
+    await setup.pushToRemote({ [ENTRY_FILE]: '{"title":"main version"}' })
+    await requestNow(setup)
+
+    await localWorker().syncBranchNow('my-feature')
+
+    expect((await readMeta(setup.branchPath))?.lastBaseUpdate).toMatchObject({
+      outcome: 'conflicts',
+      keptEntries: 1,
+    })
+  })
+
+  it('syncs that branch only', async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature')
+    await requestNow(setup)
+    const other = path.join(setup.contentBranchesPath, 'other')
+    await simpleGit().clone(path.join(tmpDir, 'remote.git'), other)
+    await simpleGit(other).checkoutLocalBranch('other')
+    await writeMeta(other, setup.contentBranchesPath, {})
+    const otherHead = (await simpleGit(other).revparse(['HEAD'])).trim()
+    await setup.pushToRemote({ 'new-file.txt': 'from main' })
+
+    await localWorker().syncBranchNow('my-feature')
+
+    expect((await simpleGit(other).revparse(['HEAD'])).trim()).toBe(otherHead)
+    expect((await readMeta(setup.branchPath))?.lastBaseUpdate?.outcome).toBe('merged')
+  })
+
+  it('answers "failed" and says busy when a save holds the branch, since nothing else answers', async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature')
+    await setup.pushToRemote({ 'new-file.txt': 'from main' })
+    await requestNow(setup)
+    const release = await tryAcquireContentWriteLock(setup.branchPath)
+
+    const run = await localWorker()
+      .syncBranchNow('my-feature')
+      .finally(() => release())
+
+    expect(run).toBe('busy')
+    expect((await readMeta(setup.branchPath))?.lastBaseUpdate?.outcome).toBe('failed')
+    await expect(fs.access(path.join(setup.branchPath, 'new-file.txt'))).rejects.toThrow()
+  })
+
+  it('leaves a request made after the run started for the run that made it', async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature')
+    await requestNow(setup, new Date(Date.now() + 30_000).toISOString())
+
+    await expect(localWorker().syncBranchNow('my-feature')).resolves.toBe('answered')
+
+    expect((await readMeta(setup.branchPath))?.lastBaseUpdate).toBeUndefined()
+  })
+
+  it.each([
+    ['with nothing saved since', false],
+    ['with work saved since', true],
+  ])(
+    'merges the base into a branch submitted once, %s, keeping what remote.git published',
+    async (_case, savedSince) => {
+      // A dev submit pushes the branch to remote.git and records no GitHub push.
+      const setup = await createBranchSetup(tmpDir, 'my-feature')
+      await setup.commitToBranch({ 'mine.txt': 'submitted' })
+      await setup.branchGit.raw(['push', '-q', path.join(tmpDir, 'remote.git'), 'my-feature'])
+      if (savedSince) await setup.commitToBranch({ 'mine.txt': 'saved after the withdraw' })
+      await setup.pushToRemote({ 'new-file.txt': 'from main' })
+      await requestNow(setup)
+      const published = (
+        await simpleGit(path.join(tmpDir, 'remote.git')).revparse(['refs/heads/my-feature'])
+      ).trim()
+
+      await localWorker().syncBranchNow('my-feature')
+
+      const meta = await readMeta(setup.branchPath)
+      expect(meta?.lastBaseUpdate?.outcome).toBe('merged')
+      expect(meta?.rebaseFailure).toBeUndefined()
+      const head = (await setup.branchGit.revparse(['HEAD'])).trim()
+      // A merge, so remote.git's commit is still in the branch, which it now names.
+      await expect(
+        setup.branchGit.raw(['merge-base', '--is-ancestor', published, head]),
+      ).resolves.toBeDefined()
+      const remoteNow = (
+        await simpleGit(path.join(tmpDir, 'remote.git')).revparse(['refs/heads/my-feature'])
+      ).trim()
+      // Work saved since the submit stays unpublished until the next submit (publish-decision.ts).
+      expect(remoteNow).toBe(savedSince ? published : head)
+      // Nothing waits on a GitHub push that dev never makes.
+      await expect(fs.readdir(path.join(tmpDir, '.tasks', 'pending'))).rejects.toThrow()
+    },
+  )
+
+  it('syncs every branch for the e2e route, answering their requests', async () => {
+    const setup = await createBranchSetup(tmpDir, 'my-feature')
+    await setup.pushToRemote({ 'new-file.txt': 'from main' })
+    await requestNow(setup)
+
+    const summary = await localWorker().syncBranchesNow()
+
+    expect(summary.rebased).toEqual(['my-feature'])
+    expect((await readMeta(setup.branchPath))?.lastBaseUpdate?.outcome).toBe('merged')
   })
 })

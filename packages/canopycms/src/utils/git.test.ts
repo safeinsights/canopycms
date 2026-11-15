@@ -9,6 +9,7 @@ import {
   detectHeadBranch,
   isNetworkRemoteUrl,
   isNonFastForwardRejection,
+  readHeadCommitFromFiles,
   resolveBaseBranch,
   stageAllExceptCanopyState,
   workflowPushRefusalFile,
@@ -428,5 +429,61 @@ describe('stageAllExceptCanopyState', () => {
     const staged = (await git.raw(['diff', '--cached', '--name-status'])).trim().split('\n').sort()
     // src/app.ts is absent only because it is out of the cone, so it is not a deletion.
     expect(staged).toEqual(['A\troot-new.md', 'A\tsrc/stray.ts', 'M\tcontent/edited.md'])
+  })
+})
+
+describe('readHeadCommitFromFiles', () => {
+  const revParse = async (root: string, rev = 'HEAD') =>
+    (await simpleGit({ baseDir: root }).revparse([rev])).trim()
+
+  it('reads a branch from its loose ref', async () => {
+    const root = await initRepo('feature')
+    expect(await readHeadCommitFromFiles(root)).toBe(await revParse(root))
+  })
+
+  it('reads a branch from packed-refs once its loose ref is packed', async () => {
+    const root = await initRepo('feature')
+    await simpleGit({ baseDir: root }).raw(['pack-refs', '--all'])
+    await expect(fs.stat(path.join(root, '.git/refs/heads/feature'))).rejects.toThrow()
+    expect(await readHeadCommitFromFiles(root)).toBe(await revParse(root))
+  })
+
+  it('reads the loose ref over a stale packed one', async () => {
+    const root = await initRepo('feature')
+    const git = simpleGit({ baseDir: root })
+    await git.raw(['pack-refs', '--all'])
+    await git.commit('second', ['--allow-empty'])
+    expect(await readHeadCommitFromFiles(root)).toBe(await revParse(root))
+  })
+
+  it('reads a detached HEAD', async () => {
+    const root = await initRepo()
+    const git = simpleGit({ baseDir: root })
+    const first = await revParse(root)
+    await git.commit('second', ['--allow-empty'])
+    await git.checkout(first)
+    expect(await readHeadCommitFromFiles(root)).toBe(first)
+  })
+
+  it('reads a linked worktree, whose refs live in the main repository', async () => {
+    const root = await initRepo()
+    const linked = path.join(await tmpDir(), 'linked')
+    await simpleGit({ baseDir: root }).raw(['worktree', 'add', '-b', 'side', linked])
+    await simpleGit({ baseDir: linked }).commit('on side', ['--allow-empty'])
+    expect(await readHeadCommitFromFiles(linked)).toBe(await revParse(linked))
+    expect(await readHeadCommitFromFiles(linked)).not.toBe(await revParse(root))
+  })
+
+  it('answers null where the files do not name a commit', async () => {
+    const empty = await tmpDir()
+    expect(await readHeadCommitFromFiles(empty)).toBeNull()
+    const unborn = await tmpDir()
+    await simpleGit({ baseDir: unborn }).init(['--initial-branch=main'])
+    expect(await readHeadCommitFromFiles(unborn)).toBeNull()
+    // A ref naming a path outside the refs, where a commit-like file waits.
+    const escaping = await initRepo()
+    await fs.writeFile(path.join(escaping, 'HEAD'), `${'d'.repeat(40)}\n`)
+    await fs.writeFile(path.join(escaping, '.git/HEAD'), 'ref: refs/heads/../../../HEAD\n')
+    expect(await readHeadCommitFromFiles(escaping)).toBeNull()
   })
 })

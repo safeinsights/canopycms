@@ -107,6 +107,7 @@ const branchMetadataShape = {
     .object({ message: z.string(), firstAt: z.string(), lastAt: z.string() })
     .optional(),
   historyRewrittenFrom: z.string().optional(),
+  historyRewrittenTo: z.string().optional(),
   lastGitHubTip: z.string().optional(),
   keptOverGitHub: z.array(z.string()).optional(),
   rewrittenOnGitHub: z.string().optional(),
@@ -124,16 +125,19 @@ const branchMetadataShape = {
     ])
     .optional()
     .catch(undefined),
-  // Dropped when malformed: it only decorates the PR body, so it never fails a read.
+  // Dropped when malformed, never failing a read: it decorates the PR body, and without `commit`
+  // the worker judges a move against the clone's head before it (worker/github-commits.ts).
   review: z
     .object({
       state: z.enum(['approved', 'changes-requested']),
       by: z.object({ userId: z.string(), name: z.string().optional() }),
       at: z.string(),
+      commit: z.string().optional(),
     })
     .optional()
     .catch(undefined),
   baseUpdateRequestedAt: z.string().optional().catch(undefined),
+  latestChangesWaiting: z.string().optional().catch(undefined),
   // Dropped when malformed: it only ends the editor's wait, which then times out instead.
   lastBaseUpdate: z
     .object({

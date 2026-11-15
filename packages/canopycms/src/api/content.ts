@@ -682,7 +682,12 @@ const writeContentHandler = async (
     const afterWrite = async ({ id }: { id?: string }) => {
       if (!id || resolving.length === 0) return
       try {
-        resolvedConflicts = await clearFieldConflicts(branchContext, id, resolving)
+        resolvedConflicts = await clearFieldConflicts(
+          ctx.services.config,
+          branchContext,
+          id,
+          resolving,
+        )
       } catch (err) {
         canopyLogWarn(
           `CanopyCMS: saved ${logicalPathSegments.join('/')} but couldn't mark its conflicts resolved:`,

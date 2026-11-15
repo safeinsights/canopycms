@@ -29,6 +29,13 @@ export const BASE_UPDATE_EARLY_RETRY_MS = 2 * 60_000
  */
 export const BASE_UPDATE_CLOCK_SKEW_MS = 60_000
 
+/**
+ * How a run in the request (operating-mode `baseUpdateRunsInRequest`) went: it answered the
+ * request; a lock held it back; or the branch clones from a remote other than the workspace's
+ * `remote.git`, the only one such a run fetches.
+ */
+export type BaseUpdateRun = 'answered' | 'busy' | 'other-remote'
+
 /** Whether the branch's latest request for the latest changes is still unanswered. */
 export function isBaseUpdatePending(
   branch: Pick<BranchMetadata, 'baseUpdateRequestedAt' | 'lastBaseUpdate'>,

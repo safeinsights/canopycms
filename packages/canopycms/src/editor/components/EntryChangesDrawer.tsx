@@ -28,6 +28,7 @@ import {
   IconAlertTriangle,
   IconExternalLink,
   IconArrowsMove,
+  IconCircleCheck,
   IconInfoCircle,
   IconMinus,
   IconPencil,
@@ -66,7 +67,12 @@ import {
   plural,
   type Side,
 } from './change-parts'
-import { ConflictsGroup, type ConflictsGroupProps } from './ConflictsGroup'
+import {
+  ConflictsGroup,
+  SETTLED_HOLD_MS,
+  type ConflictsGroupProps,
+  type EntryChoiceDone,
+} from './ConflictsGroup'
 import { LoadingCards, LoadingSummary } from './EntryChangesSkeleton'
 
 /** The entry a drawer compares, as the editor knows it. */
@@ -534,7 +540,8 @@ const ConflictsSection: React.FC<{
   undo?: EntryChangesUndo
   noEditReason?: string
   lockedReason?: string
-}> = ({ conflicts, subject, referenceTitle, undo, noEditReason, lockedReason }) => {
+  onEntryDone: (done: EntryChoiceDone) => void
+}> = ({ conflicts, subject, referenceTitle, undo, noEditReason, lockedReason, onEntryDone }) => {
   const { data, error, isValidating, reload } = conflicts.state
   const bodyField = useMemo(() => {
     const side =
@@ -587,6 +594,7 @@ const ConflictsSection: React.FC<{
       onChoose={conflicts.onChoose}
       onEdit={conflicts.onEdit}
       onResolveEntry={conflicts.onResolveEntry}
+      onEntryDone={onEntryDone}
       noEditReason={noEditReason}
       lockedReason={lockedReason}
       unsavedEdits={conflicts.unsavedEdits ?? subject.unsavedEdits}
@@ -595,23 +603,89 @@ const ConflictsSection: React.FC<{
   )
 }
 
-/** The drawer's body: the entry's conflicts, if any, above its changes. */
-export const EntryChangesView: React.FC<EntryChangesViewProps> = (props) =>
-  props.conflicts ? (
-    <Stack gap="lg">
-      <ConflictsSection
-        conflicts={props.conflicts}
-        subject={props.subject}
-        referenceTitle={props.referenceTitle}
-        undo={props.undo}
-        noEditReason={props.noEditReason}
-        lockedReason={props.lockedReason}
-      />
-      <EntryChangesBody {...props} />
+/** Focus once a choice's card is gone: "Restore entry" if it is offered, else the drawer's title. */
+const focusAfterEntryChoice = (root: HTMLElement | null, entryGone: boolean) => {
+  const restore = entryGone
+    ? root?.querySelector<HTMLElement>('[data-testid="entry-changes-restore"]')
+    : null
+  if (restore) return restore.focus()
+  const titleId = root?.closest('[role="dialog"]')?.getAttribute('aria-labelledby')
+  const title = titleId ? document.getElementById(titleId) : null
+  if (!title) return
+  title.tabIndex = -1
+  title.focus()
+}
+
+/** Conflicts, what a choice settled, then the changes, which keep their place as conflicts go. */
+export const EntryChangesView: React.FC<EntryChangesViewProps> = (props) => {
+  const rootRef = useRef<HTMLDivElement>(null)
+  const [said, setSaid] = useState<{ id: number; message: string; path: string }>()
+  const entryDone = said?.path === props.subject.logicalPath ? said : undefined
+  // Focus waits for the card to go: only then may "Restore entry" be offered in its place.
+  const focusAfter = useRef<{ entryGone: boolean; path: string; at: number }>()
+  const onEntryDone = (done: EntryChoiceDone) => {
+    setSaid((last) => ({
+      id: (last?.id ?? 0) + 1,
+      message: done.message,
+      path: props.subject.logicalPath,
+    }))
+    focusAfter.current = {
+      entryGone: done.entryGone,
+      path: props.subject.logicalPath,
+      at: Date.now(),
+    }
+  }
+  useEffect(() => {
+    const root = rootRef.current
+    const pending = focusAfter.current
+    if (!root || !pending) return
+    // No longer than the card holds its choice: a card gone later went for another reason.
+    if (pending.path !== props.subject.logicalPath || Date.now() - pending.at > SETTLED_HOLD_MS) {
+      focusAfter.current = undefined
+    }
+    if (!focusAfter.current || root.querySelector('[data-entry-card]')) return
+    focusAfter.current = undefined
+    // Focus anywhere but the page or the drawer itself was put there since, and stays.
+    const dialog = root.closest('[role="dialog"]')
+    const active = document.activeElement
+    if (active && active !== document.body && active !== dialog) return
+    focusAfterEntryChoice(root, pending.entryGone)
+  })
+  return (
+    <Stack gap="lg" ref={rootRef}>
+      {props.conflicts && (
+        <ConflictsSection
+          conflicts={props.conflicts}
+          subject={props.subject}
+          referenceTitle={props.referenceTitle}
+          undo={props.undo}
+          noEditReason={props.noEditReason}
+          lockedReason={props.lockedReason}
+          onEntryDone={onEntryDone}
+        />
+      )}
+      <div>
+        {(props.conflicts || entryDone) && (
+          <Group
+            gap={6}
+            wrap="nowrap"
+            role="status"
+            mb={entryDone ? 'md' : 0}
+            data-testid="entry-choice-done"
+          >
+            {entryDone && (
+              <React.Fragment key={entryDone.id}>
+                <IconCircleCheck size={16} color="var(--mantine-color-green-filled)" aria-hidden />
+                <Text size="sm">{entryDone.message}</Text>
+              </React.Fragment>
+            )}
+          </Group>
+        )}
+        <EntryChangesBody {...props} />
+      </div>
     </Stack>
-  ) : (
-    <EntryChangesBody {...props} />
   )
+}
 
 /** The changes: their states, then the summary and one card per change. */
 const EntryChangesBody: React.FC<EntryChangesViewProps> = ({

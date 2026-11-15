@@ -18,6 +18,7 @@ import { Editor } from './Editor'
 import { ApiClientProvider } from './context'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../paths/test-utils'
 import { plainBranchPath } from '../test-utils/branch-wire'
+import { mockConsole } from '../test-utils/console-spy'
 
 vi.mock('@mantine/modals', () => ({
   ModalsProvider: ({ children }: { children: React.ReactNode }) => children,
@@ -134,6 +135,11 @@ const stubApi = (
             ],
             entrySchemas: { postSchema: schema },
           }),
+        )
+      }
+      if (/\/api\/canopycms\/[^/]+\/changes$/.test(plainBranchPath(url))) {
+        return Promise.resolve(
+          okJson({ base: 'main', entries: [], collections: [], hiddenChanges: false }),
         )
       }
       if (url.includes('/entries')) {
@@ -350,6 +356,102 @@ describe('Editor on a read-only branch', () => {
     renderEditor()
     await waitFor(() => expect(screen.getByTestId('read-only-draft-notice')).toBeTruthy())
     expect(screen.getByText(sentence)).toBeTruthy()
+  })
+})
+
+describe('Editor on a branch in review, pinned for its reviews', () => {
+  it('reads the saved copy again once pinned, though a draft is kept for it', async () => {
+    seedDraft()
+    const inReview = {
+      ...protectedMain,
+      status: 'submitted',
+      isProtected: false,
+      readOnly: false,
+      headSha: 'a'.repeat(40),
+    }
+    stubApi([inReview])
+    const reads = () =>
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(
+          ([input, init]) =>
+            plainBranchPath(String(input)) === entryApiPath &&
+            (!init?.method || init.method === 'GET'),
+        ).length
+    renderEditor()
+
+    await titleInput()
+    // The read the page opened with, and the one after its pin: a locked branch keeps no copy.
+    await waitFor(() => expect(reads()).toBe(2))
+  })
+})
+
+describe('Editor pinning a branch while an entry read is in flight', () => {
+  const inReview = {
+    ...protectedMain,
+    status: 'submitted',
+    isProtected: false,
+    readOnly: false,
+    headSha: 'a'.repeat(40),
+  }
+  /** Holds the listing and the first entry read until the test lets each go. */
+  const holdListingAndFirstRead = (firstRead: () => Response) => {
+    stubApi([inReview])
+    const base = vi.mocked(fetch).getMockImplementation()!
+    const held = { listing: () => {}, firstRead: () => {}, reads: 0 }
+    vi.mocked(fetch).mockImplementation((input, init) => {
+      const url = String(input)
+      if (url.endsWith('/api/canopycms/branches')) {
+        return new Promise((resolve) => {
+          held.listing = () => resolve(base(input, init))
+        })
+      }
+      if (plainBranchPath(url) === entryApiPath && (!init?.method || init.method === 'GET')) {
+        held.reads += 1
+        if (held.reads === 1) {
+          return new Promise((resolve) => {
+            held.firstRead = () => resolve(firstRead())
+          })
+        }
+      }
+      return base(input, init)
+    })
+    return held
+  }
+
+  it('lets the older read land nothing, and reads the entry again', async () => {
+    // The read from before the pin: its content is older than the pinned head.
+    const held = holdListingAndFirstRead(() =>
+      okJson({ title: 'Older title', body: '* one\n* two\n', version: 99 }),
+    )
+    renderEditor()
+
+    await waitFor(() => expect(held.reads).toBe(1))
+    await act(async () => held.listing())
+    await waitFor(() => expect(held.reads).toBe(2))
+    await act(async () => held.firstRead())
+
+    await titleInput()
+    expect(screen.queryByDisplayValue('Older title')).toBeNull()
+  })
+
+  it('reports nothing for an older read that fails', async () => {
+    const { notifications } = await import('@mantine/notifications')
+    vi.mocked(notifications.show).mockClear()
+    const consoleSpy = mockConsole()
+    const held = holdListingAndFirstRead(() => new Response('{}', { status: 500 }))
+    renderEditor()
+
+    await waitFor(() => expect(held.reads).toBe(1))
+    await act(async () => held.listing())
+    await waitFor(() => expect(held.reads).toBe(2))
+    await act(async () => held.firstRead())
+
+    await titleInput()
+    expect(consoleSpy).toHaveErrored('Load failed: 500')
+    expect(notifications.show).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Failed to load entry' }),
+    )
   })
 })
 

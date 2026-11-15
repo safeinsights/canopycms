@@ -159,11 +159,23 @@ describe('approve while conflicts are open', () => {
     await getBranchMetadataFileManager(branchRoot, tmpDir).save({ branch: branchContext.branch })
   })
 
+  // The clone's head, which the worker can move while it holds the lock.
+  const SEEN = 'a'.repeat(40)
+  const head = { sha: SEEN }
+  beforeEach(() => {
+    head.sha = SEEN
+  })
   const approve = () =>
     WORKFLOW_ROUTES.approve.handler(
-      createMockApiContext({ branchContext }),
+      createMockApiContext({
+        branchContext,
+        services: {
+          createGitManagerFor: vi.fn(() => ({ headSha: async () => head.sha })) as never,
+        },
+      }),
       { user: { type: 'authenticated', userId: 'rev1', groups: [RESERVED_GROUPS.REVIEWERS] } },
       { branch: 'feature' as BranchName },
+      { headSha: SEEN },
     )
   const status = async () => (await BranchMetadataFileManager.loadOnly(branchRoot))?.branch.status
 
@@ -194,6 +206,16 @@ describe('approve while conflicts are open', () => {
     await recordOpen()
     await release()
     expect(await pending).toMatchObject({ ok: false, status: 409, code: 'OPEN_CONFLICTS' })
+    expect(await status()).toBe('submitted')
+  })
+
+  it('waits for a move holding the content-write lock, then refuses the head it left', async () => {
+    const release = await tryAcquireContentWriteLock(branchRoot)
+    const pending = approve()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    head.sha = 'b'.repeat(40)
+    await release()
+    expect(await pending).toMatchObject({ ok: false, status: 409, code: 'BRANCH_MOVED' })
     expect(await status()).toBe('submitted')
   })
 

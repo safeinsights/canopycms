@@ -260,3 +260,42 @@ describe('useEntryChangeData', () => {
     })
   })
 })
+
+describe('useBranchChangesData reread', () => {
+  it('reads the list though it is not shown, and empties a cached entry change', async () => {
+    client.changes.list.mockResolvedValue(ok('content/a'))
+    client.changes.entry.mockResolvedValue(entryOk('Before'))
+    const { result, rerender } = renderHook(
+      ({ shown }: { shown: boolean }) => ({
+        list: useBranchChangesData(client as never, 'feature', shown),
+        entry: useEntryChangeData(
+          client as never,
+          'feature',
+          shown ? { logicalPath: 'content/a' } : undefined,
+        ),
+      }),
+      { wrapper: createApiClientWrapper(client), initialProps: { shown: true } },
+    )
+    await waitFor(() => expect(result.current.entry.data).toEqual(entrySides('Before')))
+    // Hidden: neither key is mounted, so a revalidation alone would leave both as they were.
+    rerender({ shown: false })
+
+    client.changes.list.mockResolvedValue(ok('content/b'))
+    let entryRead: (value: ReturnType<typeof entryOk>) => void = () => {}
+    client.changes.entry.mockImplementation(() => new Promise((resolve) => (entryRead = resolve)))
+    await act(() => result.current.list.reread())
+
+    rerender({ shown: true })
+    expect(result.current.list.data).toEqual(answer('content/b'))
+    // The drawer shows no comparison until its own read lands, never the one from before.
+    expect(result.current.entry.data).toBeUndefined()
+    await act(async () => entryRead(entryOk('After')))
+    await waitFor(() => expect(result.current.entry.data).toEqual(entrySides('After')))
+  })
+
+  it('rejects when the list cannot be read', async () => {
+    client.changes.list.mockResolvedValue(failed)
+    const { result } = renderChanges('feature', false)
+    await expect(act(() => result.current.reread())).rejects.toThrow("Couldn't load")
+  })
+})

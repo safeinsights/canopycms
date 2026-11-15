@@ -51,6 +51,10 @@ class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrateg
     }
   }
 
+  baseUpdateRunsInRequest(): boolean {
+    return false
+  }
+
   requiresExistingRepo(): boolean {
     return false // Will clone if needed
   }
@@ -118,6 +122,10 @@ class DevStrategy extends DevClientSafeStrategy implements ClientUnsafeStrategy 
       defaultRemotePath: '.canopy-dev/remote.git',
       envVarName: 'CANOPYCMS_REMOTE_URL',
     }
+  }
+
+  baseUpdateRunsInRequest(): boolean {
+    return true
   }
 
   requiresExistingRepo(): boolean {

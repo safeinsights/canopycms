@@ -51,6 +51,11 @@ class StaleStatusError extends Error {
   override readonly name = 'StaleStatusError'
 }
 
+/** The API's `BRANCH_MOVED`: the branch's head isn't the one the reviewer's page was pinned to. */
+class BranchMovedError extends Error {
+  override readonly name = 'BranchMovedError'
+}
+
 /** An answer that refused the action, with its HTTP status: a 4xx is a refusal no retry passes. */
 class RefusedError extends Error {
   override readonly name = 'RefusedError'
@@ -70,6 +75,7 @@ function actionError(result: ApiResponse, fallback: string, staleIsConflict = fa
   if (isGatewayFailure(result)) return new UnansweredError()
   const message = result.error || fallback
   if (result.ok) return new Error(message)
+  if (result.code === 'BRANCH_MOVED') return new BranchMovedError(message)
   // Open conflicts refuse the action where the branch still is, so they are no stale status.
   return staleIsConflict &&
     result.status === 409 &&
@@ -489,6 +495,9 @@ export interface UseBranchManagerOptions {
   /** A request for changes went through; the branch may now carry the reviewer's note as a comment. */
   onChangesRequested?: (branchName: string) => void
 
+  /** A branch is being pinned for its reviews: read its content again if it is open, settling once read. */
+  onReviewPinned?: (branchName: string) => Promise<void> | void
+
   /**
    * How to ask for the latest changes on `branchName` once it is withdrawn, or undefined where
    * that can't apply. With it, withdrawing a branch that conflicts with its base asks right after.
@@ -760,6 +769,48 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const latest = useRef({ branchName, resolved, branches, branchesData })
   latest.current = { branchName, resolved, branches, branchesData }
 
+  // The head a review sends, never newer than what the page shows of the branch. One not shown
+  // follows each listing; opening one, a head listed for the open one while its pin is null, and a
+  // refusal's recovery pin it from a listing already fetched once its content is read again.
+  const reviewPins = useRef(new Map<string, string | null>())
+  const shown = useRef(new Set<string>())
+  const pinning = useRef(new Map<string, symbol>())
+  const lastOpen = useRef<string | undefined>(undefined)
+  const pinThenReread = async (branch: string, data: BranchesData | undefined) => {
+    const headSha = data?.branches.find((b) => b.name === branch)?.headSha
+    const claim = Symbol(branch)
+    pinning.current.set(branch, claim)
+    reviewPins.current.set(branch, null)
+    try {
+      if (headSha) await options.onReviewPinned?.(branch)
+      // A failed read leaves it null, for the next listing to try again.
+      if (pinning.current.get(branch) === claim) reviewPins.current.set(branch, headSha ?? null)
+    } finally {
+      if (pinning.current.get(branch) === claim) pinning.current.delete(branch)
+    }
+  }
+  useEffect(() => {
+    const listed = branchesData?.branches ?? []
+    for (const b of listed) {
+      if (!shown.current.has(b.name)) reviewPins.current.set(b.name, b.headSha ?? null)
+    }
+    const open = currentBranchName && listed.find((b) => b.name === currentBranchName)
+    if (!open) return
+    const firstHead =
+      open.headSha && reviewPins.current.get(open.name) === null && !pinning.current.has(open.name)
+    // Coming back to a branch opens it again: its entries are read afresh, so its pin is too.
+    const reopened = lastOpen.current !== open.name
+    lastOpen.current = open.name
+    if (!shown.current.has(open.name) || firstHead || reopened) {
+      shown.current.add(open.name)
+      pinThenReread(open.name, branchesData).catch(console.error)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `pinThenReread` reads only refs and options
+  }, [branchesData, currentBranchName])
+  const reviewedHead = (branch: string) => ({
+    headSha: reviewPins.current.get(branch) ?? undefined,
+  })
+
   // A card, deep link or URL can carry a short name, an exact form or the raw form of a listed
   // name; the actions resolve it once, the way an arriving name resolves, then key, look up and
   // send the listed name.
@@ -899,6 +950,11 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   }
 
   const reviewFailureId = (kind: ReviewKind, branch: string) => `canopy-${kind}-failed-${branch}`
+  /** A verdict that went through answers either kind's refusal. */
+  const hideReviewFailures = (branch: string) => {
+    notifications.hide(reviewFailureId('approve', branch))
+    notifications.hide(reviewFailureId('request-changes', branch))
+  }
   const submitRefusedId = (branch: string) => `canopy-submit-refused-${branch}`
   const deleteRefusedId = (branch: string) => `canopy-delete-refused-${branch}`
 
@@ -923,6 +979,22 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
       afterUnanswered?: (fresh: BranchesData | undefined) => void
     },
   ) => {
+    if (err instanceof BranchMovedError) {
+      // A listing that fails, or leaves the branch out, pins none for now.
+      void pinThenReread(branch, await reloadBranches()).catch(console.error)
+      const id = reviewFailureId(kind, branch)
+      notifications.hide(id)
+      notifications.show({
+        id,
+        message: details.note
+          ? `${err.message} Your note is kept for when you request changes again.`
+          : err.message,
+        color: 'yellow',
+        autoClose: false,
+        withCloseButton: true,
+      })
+      return
+    }
     if (err instanceof StaleStatusError) {
       showLeftReview(branch, err.message, details.note)
       // What the branch is now decides whether a Request changes note is still wanted.
@@ -1191,11 +1263,12 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
             async () => {
               options.setBusy(true)
               try {
-                const result = await apiClient.workflow.approve({
-                  branch: sendName(branchNameToApprove),
-                })
+                const result = await apiClient.workflow.approve(
+                  { branch: sendName(branchNameToApprove) },
+                  reviewedHead(branchNameToApprove),
+                )
                 if (!result.ok) throw actionError(result, 'Failed to approve branch', true)
-                notifications.hide(reviewFailureId('approve', branchNameToApprove))
+                hideReviewFailures(branchNameToApprove)
                 notifications.show({ message: 'Branch approved', color: 'green' })
                 updateCreatedBranch(branchNameToApprove, result.data?.branch)
                 await loadBranches()
@@ -1241,11 +1314,11 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
               try {
                 const result = await apiClient.workflow.requestChanges(
                   { branch: sendName(branchNameForChanges) },
-                  { note: note.trim() || undefined },
+                  { note: note.trim() || undefined, ...reviewedHead(branchNameForChanges) },
                 )
                 if (!result.ok) throw actionError(result, 'Failed to request changes', true)
                 noteDrafts.current.delete(branchNameForChanges)
-                notifications.hide(reviewFailureId('request-changes', branchNameForChanges))
+                hideReviewFailures(branchNameForChanges)
                 notifications.show({ message: 'Changes requested', color: 'blue' })
                 // The note is saved apart from the status change, so it can fail on its own;
                 // the warning stays up, with the note to copy, because the words are not saved.

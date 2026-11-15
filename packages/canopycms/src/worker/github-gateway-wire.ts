@@ -92,6 +92,15 @@ export const requests = {
     })
     .strict(),
   convertPullRequestToDraft: z.object({ number: prNumber }).strict(),
+  setConflictsStatus: z
+    .object({
+      pullRequest: prNumber,
+      sha: objectId,
+      state: z.enum(['success', 'failure']),
+      description: z.string().max(4096),
+      targetUrl: z.string().max(4096).optional(),
+    })
+    .strict(),
   deleteBranch: z.object({ branch: name }).strict(),
   authSnapshot: z.object({}).strict(),
   termination: z.object({}).strict(),
@@ -138,6 +147,7 @@ export const answers = {
     .strict(),
   createOrUpdatePullRequest: pullRequestRef.extend({ created: z.boolean() }).strict(),
   convertPullRequestToDraft: empty,
+  setConflictsStatus: empty,
   deleteBranch: empty,
   authSnapshot: z
     .object({
@@ -192,6 +202,7 @@ export const JSON_ROUTES: Readonly<Record<JsonOperation, string>> = {
   getPullRequest: `${WIRE_PREFIX}/pull-request/get`,
   createOrUpdatePullRequest: `${WIRE_PREFIX}/pull-request/create-or-update`,
   convertPullRequestToDraft: `${WIRE_PREFIX}/pull-request/convert-to-draft`,
+  setConflictsStatus: `${WIRE_PREFIX}/pull-request/conflicts-status`,
   deleteBranch: `${WIRE_PREFIX}/branch/delete`,
   authSnapshot: `${WIRE_PREFIX}/auth-snapshot`,
   termination: `${WIRE_PREFIX}/termination`,
@@ -270,7 +281,7 @@ const errorEnvelope = z.discriminatedUnion('kind', [
     .object({
       kind: z.literal('refusal'),
       push: z.boolean(),
-      operation: z.enum(['push', 'delete', 'pull-request']),
+      operation: z.enum(['push', 'delete', 'pull-request', 'commit-status']),
       branch: name,
       reason: z.enum([
         'invalid',
@@ -280,6 +291,7 @@ const errorEnvelope = z.discriminatedUnion('kind', [
         'outside-namespace',
         'not-a-commit',
         'too-long',
+        'not-head',
       ]),
       message,
     })
@@ -509,7 +521,7 @@ export function decodeError(value: unknown): Error {
     case 'refusal': {
       const { push, operation, branch, reason } = envelope
       if (!push) return new GatewayRefusalError(operation, branch, reason, envelope.message)
-      if (operation !== 'push' || reason === 'too-long') {
+      if (operation !== 'push' || reason === 'too-long' || reason === 'not-head') {
         return new GitHubGatewayProtocolError(
           `The GitHub gateway answered with a push refusal for ${operation}, reason ${reason}`,
         )
