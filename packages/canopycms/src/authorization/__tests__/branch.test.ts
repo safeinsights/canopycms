@@ -23,6 +23,27 @@ const baseContext: BranchContext = {
 }
 
 describe('branch access', () => {
+  it('shuts an excluded user out through a group and on an open branch, but not admins', () => {
+    const excluded = { x: { by: 'owner', at: 't', byAdmin: false } }
+    for (const access of [{ allowedGroups: ['team'], excluded }, { excluded }]) {
+      const context: BranchContext = { ...baseContext, branch: { ...baseContext.branch, access } }
+      expect(
+        checkBranchAccessWithDefault(
+          context,
+          { type: 'authenticated', userId: 'x', groups: ['team'] },
+          'allow',
+        ).allowed,
+      ).toBe(false)
+      expect(
+        checkBranchAccessWithDefault(
+          context,
+          { type: 'authenticated', userId: 'x', groups: [RESERVED_GROUPS.ADMINS] },
+          'allow',
+        ).allowed,
+      ).toBe(true)
+    }
+  })
+
   it('lets a restricted empty list admit only admins and reviewers, under either default', () => {
     const restricted: BranchContext = {
       ...baseContext,

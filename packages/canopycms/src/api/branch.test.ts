@@ -1322,6 +1322,15 @@ describe('canDeleteBranch', () => {
     expect(result.reason).toBe('admin')
   })
 
+  it('refuses a creator who may no longer open the branch', () => {
+    const result = canDeleteBranch(
+      { type: 'authenticated', userId: 'u1', groups: [] },
+      makeBranchContext('u1'),
+      false,
+    )
+    expect(result.allowed).toBe(false)
+  })
+
   it('allows branch creator to delete their branch', () => {
     const result = canDeleteBranch(
       { type: 'authenticated', userId: 'u1', groups: [] },

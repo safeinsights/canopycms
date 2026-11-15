@@ -60,6 +60,7 @@ export {
   isReviewer,
   isPrivileged,
   isLockedOutOfBranch,
+  isExcludedFrom,
 } from './helpers'
 
 export {

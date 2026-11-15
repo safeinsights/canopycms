@@ -24,7 +24,7 @@ import type {
 } from '../types'
 import type { CanopyUser } from '../user'
 import { isSystemUserId } from '../system-users'
-import { isAdmin, isReservedGroup } from './helpers'
+import { isAdmin, isExcludedFrom, isReservedGroup } from './helpers'
 
 /** {@link BranchSharingConfig} with its defaults applied. */
 export type ResolvedBranchSharing = Required<BranchSharingConfig>
@@ -50,6 +50,7 @@ function isListedMember(
   access: BranchAccessControl,
   user: Pick<CanopyUser, 'userId' | 'groups'>,
 ): boolean {
+  if (isExcludedFrom(access, user.userId)) return false
   return (
     !!access.allowedUsers?.includes(user.userId) ||
     !!user.groups?.some((group) => access.allowedGroups?.includes(group))
@@ -90,7 +91,7 @@ export function branchSharingRights(
   const isMember = isListedMember(access, user)
   const isOwner =
     branch.createdBy === user.userId &&
-    !access.excluded?.[user.userId] &&
+    !isExcludedFrom(access, user.userId) &&
     (!hasAccessList(access) || isMember)
   if (isAdmin(user.groups)) return { isOwner, isMember, canAdd: true, canManage: true }
   if (access.managerOrAdminAllowed || isNobody(branch.createdBy) || branch.status === 'archived') {
@@ -139,6 +140,12 @@ export interface BranchAccessChangeResult {
   changed: boolean
   added: { users: CanopyUserId[]; groups: CanopyGroupId[] }
   removed: { users: CanopyUserId[]; groups: CanopyGroupId[] }
+  /** Exclusions lifted, by an unexclude or by an owner adding the person back. */
+  unexcluded: CanopyUserId[]
+  /** Exclusions this change recorded. */
+  excluded: CanopyUserId[]
+  /** Set only when the change moved who may add people. */
+  addBy?: BranchAddBy
 }
 
 export interface ApplyAccessChangeContext {
@@ -183,8 +190,14 @@ export function applyAccessChange(
   if (both.length > 0) {
     return refuse('ACCESS_CHANGE_INVALID', 'An entry cannot be added and removed at once.', both)
   }
-  if (change.restricted === false && adding) {
-    return refuse('ACCESS_CHANGE_INVALID', 'Opening a branch and adding people cannot be combined.')
+  if (
+    change.restricted === false &&
+    (adding || removeUsers.length + removeGroups.length + unexclude.length > 0 || change.addBy)
+  ) {
+    return refuse(
+      'ACCESS_CHANGE_INVALID',
+      'Opening a branch cannot be combined with other changes.',
+    )
   }
 
   if (adding && !rights.canAdd) {
@@ -198,7 +211,9 @@ export function applyAccessChange(
   if (change.addBy === 'admins' && !actorIsAdmin) {
     return refuse('ACCESS_MANAGE_FORBIDDEN', 'Only an admin can change who may add people here.')
   }
-  const adminExclusions = unexclude.filter((id) => access.excluded?.[id]?.byAdmin)
+  const exclusionOf = (id: CanopyUserId) =>
+    isExcludedFrom(access, id) ? access.excluded?.[id] : undefined
+  const adminExclusions = unexclude.filter((id) => exclusionOf(id)?.byAdmin)
   if (!actorIsAdmin && adminExclusions.length > 0) {
     return refuse(
       'ACCESS_MANAGE_FORBIDDEN',
@@ -208,11 +223,19 @@ export function applyAccessChange(
   }
 
   const meta = access.entryMeta ?? {}
+  // Entries already gone need no right to remove, so a retried removal is harmless.
   const removals = [
-    ...removeUsers.map((id) => entryKey('user', id)),
-    ...removeGroups.map((id) => entryKey('group', id)),
+    ...removeUsers
+      .filter((id) => access.allowedUsers?.includes(id))
+      .map((id) => entryKey('user', id)),
+    ...removeGroups
+      .filter((id) => access.allowedGroups?.includes(id))
+      .map((id) => entryKey('group', id)),
   ]
-  if (!rights.canManage) {
+  if (!rights.canManage && removals.length > 0) {
+    if (!rights.canAdd) {
+      return refuse('ACCESS_MANAGE_FORBIDDEN', "You can't change who has access to this branch.")
+    }
     const notTheirs = removals.filter((key) => meta[key]?.addedBy !== actor.userId)
     if (notTheirs.length > 0) {
       return refuse(
@@ -239,7 +262,7 @@ export function applyAccessChange(
   }
   // An owner adding someone they removed allows them back; a member cannot.
   const blocked = addUsers.filter((id) => {
-    const exclusion = access.excluded?.[id]
+    const exclusion = exclusionOf(id)
     if (!exclusion) return false
     return !(rights.canManage && (actorIsAdmin || !exclusion.byAdmin))
   })
@@ -264,6 +287,8 @@ export function applyAccessChange(
       changed: !wasOpen,
       added: { users: [], groups: [] },
       removed: { users: access.allowedUsers ?? [], groups: access.allowedGroups ?? [] },
+      unexcluded: [],
+      excluded: [],
     }
   }
 
@@ -273,21 +298,24 @@ export function applyAccessChange(
   const excluded = { ...access.excluded }
   const added = { users: [] as CanopyUserId[], groups: [] as CanopyGroupId[] }
   const removed = { users: [] as CanopyUserId[], groups: [] as CanopyGroupId[] }
+  const unexcluded: CanopyUserId[] = []
+  const newlyExcluded: CanopyUserId[] = []
+  const isExcluded = (id: CanopyUserId) => Object.prototype.hasOwnProperty.call(excluded, id)
   let changed = false
 
   // The first share of an unlisted branch, or restricting it, keeps its owner on the list.
   const restricting = !hasAccessList(access) && (adding || change.restricted === true)
   if (restricting && (rights.isOwner || actorIsAdmin)) {
-    if (!isNobody(ctx.creator) && !access.excluded?.[ctx.creator] && !users.includes(ctx.creator)) {
+    if (!isNobody(ctx.creator) && !isExcluded(ctx.creator) && !users.includes(ctx.creator)) {
       users.push(ctx.creator)
       nextMeta[entryKey('user', ctx.creator)] = { addedBy: actor.userId, addedAt: ctx.now }
     }
   }
 
   for (const id of addUsers) {
-    if (excluded[id]) {
+    if (isExcluded(id)) {
       delete excluded[id]
-      changed = true
+      unexcluded.push(id)
     }
     if (users.includes(id)) continue
     users.push(id)
@@ -302,12 +330,17 @@ export function applyAccessChange(
   }
   for (const id of removeUsers) {
     const at = users.indexOf(id)
-    if (at === -1) continue
-    users.splice(at, 1)
-    delete nextMeta[entryKey('user', id)]
-    removed.users.push(id)
-    // A member undoing their own add leaves no exclusion; an owner's or admin's removal does.
-    if (rights.canManage) excluded[id] = { by: actor.userId, at: ctx.now, byAdmin: actorIsAdmin }
+    if (at !== -1) {
+      users.splice(at, 1)
+      delete nextMeta[entryKey('user', id)]
+      removed.users.push(id)
+    }
+    // An owner's or admin's removal excludes the person, even one reaching the branch through a
+    // group; a member undoing their own add leaves no exclusion.
+    if (rights.canManage && !isExcluded(id)) {
+      excluded[id] = { by: actor.userId, at: ctx.now, byAdmin: actorIsAdmin }
+      newlyExcluded.push(id)
+    }
   }
   for (const id of removeGroups) {
     const at = groups.indexOf(id)
@@ -317,15 +350,16 @@ export function applyAccessChange(
     removed.groups.push(id)
   }
   for (const id of unexclude) {
-    if (!excluded[id]) continue
+    if (!isExcluded(id)) continue
     delete excluded[id]
-    changed = true
+    unexcluded.push(id)
   }
 
   const restricted = hasAccessList(access) || restricting || undefined
   const addBy = change.addBy ?? access.addBy
   changed ||=
     added.users.length + added.groups.length + removed.users.length + removed.groups.length > 0 ||
+    unexcluded.length + newlyExcluded.length > 0 ||
     users.length !== (access.allowedUsers?.length ?? 0) ||
     restricted !== access.restricted ||
     addBy !== access.addBy
@@ -343,6 +377,9 @@ export function applyAccessChange(
     changed,
     added,
     removed,
+    unexcluded,
+    excluded: newlyExcluded,
+    ...(addBy !== access.addBy && addBy && { addBy }),
   }
 }
 
@@ -376,7 +413,7 @@ export function accessForViewer(
   access: BranchAccessControl,
   viewer: Pick<CanopyUser, 'userId' | 'groups'>,
   rights: BranchSharingRights,
-  privileged: boolean,
+  viewerIsAdmin: boolean,
 ): BranchAccessControl {
   const seen: BranchAccessControl = {
     ...(access.allowedUsers && { allowedUsers: access.allowedUsers }),
@@ -387,7 +424,7 @@ export function accessForViewer(
     ...(access.restricted !== undefined && { restricted: access.restricted }),
     ...(access.addBy && { addBy: access.addBy }),
   }
-  if (privileged || rights.canManage) {
+  if (viewerIsAdmin || rights.canManage) {
     return {
       ...seen,
       ...(access.excluded && { excluded: access.excluded }),

@@ -109,9 +109,26 @@ const runBranchGuard: GuardRunner = async (ctx, _req, params, accumulated) => {
   return { ok: true, context: { branchContext: context } }
 }
 
-/** A 403 for a caller the branch's access check refused, saying whether a lockdown is why. */
-const branchAccessRefused = (context: BranchContext, user: CanopyUser): ApiResponse<never> =>
-  isLockedOutOfBranch(context.branch.access, user.groups)
+/**
+ * A 403 for a caller the branch's access check refused. A lockdown is named only to someone the
+ * list would otherwise admit, so the code tells no one else anything about the branch.
+ */
+const branchAccessRefused = (
+  ctx: ApiContext,
+  context: BranchContext,
+  user: CanopyUser,
+): ApiResponse<never> =>
+  isLockedOutOfBranch(context.branch.access, user.groups) &&
+  ctx.services.checkBranchAccess(
+    {
+      ...context,
+      branch: {
+        ...context.branch,
+        access: { ...context.branch.access, managerOrAdminAllowed: false },
+      },
+    },
+    user,
+  ).allowed
     ? {
         ok: false,
         status: 403,
@@ -138,7 +155,7 @@ const runBranchAccessGuard: GuardRunner = async (ctx, req, params, accumulated) 
   if (!access.allowed) {
     return {
       ok: false,
-      response: branchAccessRefused(context, req.user),
+      response: branchAccessRefused(ctx, context, req.user),
     }
   }
 
@@ -176,7 +193,7 @@ const runBranchAccessWithSchemaGuard: GuardRunner = async (ctx, req, params, acc
   if (!access.allowed) {
     return {
       ok: false,
-      response: branchAccessRefused(context, req.user),
+      response: branchAccessRefused(ctx, context, req.user),
     }
   }
 

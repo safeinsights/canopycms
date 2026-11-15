@@ -189,7 +189,11 @@ describe('PATCH /:branch/access', () => {
 
   it.each([
     ['the base branch', 'main', { createdBy: SYSTEM_USER_ID, baseBranch: 'main' }],
-    ['a system-owned branch', 'feature/system', { createdBy: SYSTEM_USER_ID }],
+    [
+      'a system-owned branch it may open',
+      'feature/system',
+      { createdBy: SYSTEM_USER_ID, access: { restricted: true, allowedUsers: ['owner'] } },
+    ],
   ])('refuses sharing %s to a non-admin', async (_label, name, fields) => {
     await addBranch(name, fields)
 
@@ -265,6 +269,31 @@ describe('PATCH /:branch/access', () => {
 
     expect(res).toMatchObject({ ok: false, refused: { code: 'ACCESS_ADD_FORBIDDEN' } })
     expect((await onDisk(context))?.access.allowedUsers).toEqual(['owner'])
+  })
+})
+
+describe('PATCH /:branch/access, round-one cases', () => {
+  it('scope-checks every requested id, even one the copy it started from already lists', async () => {
+    await addBranch('feature/x', {
+      access: { restricted: true, allowedUsers: ['owner', 'outsider'] },
+    })
+
+    expect(await patch(owner, 'feature/x', { add: { users: ['outsider'] } })).toMatchObject({
+      status: 403,
+      code: 'USER_OUT_OF_SCOPE',
+    })
+  })
+
+  it('shuts out someone an owner removed even when a group on the list holds them', async () => {
+    const context = await addBranch('feature/x', {
+      access: { restricted: true, allowedUsers: ['owner'], allowedGroups: ['team'] },
+    })
+    expect((await patch(owner, 'feature/x', { remove: { users: ['pal'] } })).ok).toBe(true)
+
+    const onDiskContext = { ...context, branch: (await onDisk(context)) ?? context.branch }
+    expect(ctx().services.checkBranchAccess(onDiskContext, user('pal', ['team'])).allowed).toBe(
+      false,
+    )
   })
 })
 

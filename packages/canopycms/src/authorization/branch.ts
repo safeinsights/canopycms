@@ -1,6 +1,6 @@
 import type { BranchContext } from '../types'
 import type { CanopyConfig, DefaultBranchAccess } from '../config'
-import { isAdmin, isLockedOutOfBranch, isReviewer } from './helpers'
+import { isAdmin, isExcludedFrom, isLockedOutOfBranch, isReviewer } from './helpers'
 import { getBranchProtection } from './protected-branch'
 import type { CanopyUser } from '../user'
 import type { BranchAccessResult } from './types'
@@ -61,7 +61,7 @@ function isDevActiveBranch(
  *
  * Precedence, highest first:
  * 1. Admins and Reviewers
- * 2. `managerOrAdminAllowed` lockdown
+ * 2. `managerOrAdminAllowed` lockdown, and a user the list excludes
  * 3. An explicit user/group ACL, or a `restricted` one even when empty -- an
  *    allowlist omitting the creator still denies them, so an admin can lock
  *    down a branch someone else created
@@ -80,7 +80,7 @@ export function checkBranchAccessWithDefault(
   }
 
   const access = context.branch.access
-  if (isLockedOutOfBranch(access, user.groups)) {
+  if (isLockedOutOfBranch(access, user.groups) || isExcludedFrom(access, user.userId)) {
     return { allowed: false, reason: 'denied_by_acl' }
   }
 

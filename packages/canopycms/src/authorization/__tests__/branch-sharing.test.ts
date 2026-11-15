@@ -270,6 +270,75 @@ describe('applyAccessChange', () => {
   })
 })
 
+describe('applyAccessChange: exclusions and opening', () => {
+  it('excludes someone who reaches the branch through a group, so the group no longer admits them', () => {
+    const access = accessOf(apply(owner, shared, { remove: { users: ['gm'] } }))
+    expect(access.excluded?.gm).toMatchObject({ by: 'owner' })
+    expect(rights(groupMember, branch(access))).toMatchObject({ isMember: false, canAdd: false })
+  })
+
+  it('refuses opening a branch together with any other change', () => {
+    for (const change of [
+      { restricted: false, addBy: 'owner' as const },
+      { restricted: false, unexclude: ['x'] },
+      { restricted: false, remove: { users: ['member'] } },
+    ]) {
+      expect(codeOf(apply(owner, shared, change, { defaultAccess: 'allow' }))).toBe(
+        'ACCESS_CHANGE_INVALID',
+      )
+    }
+  })
+
+  it('keeps a legacy list with no restricted flag restricted once emptied', () => {
+    const legacy: BranchAccessControl = { allowedUsers: ['owner', 'member'] }
+    const access = accessOf(apply(admin, legacy, { remove: { users: ['owner', 'member'] } }))
+    expect(access.restricted).toBe(true)
+    expect(access.allowedUsers).toBeUndefined()
+  })
+
+  it("refuses a member removing their own additions once the list is the admins'", () => {
+    const withAdd = accessOf(apply(member, shared, { add: { users: ['pal'] } }))
+    const adminsOnly = { ...withAdd, addBy: 'admins' as const }
+    expect(codeOf(apply(member, adminsOnly, { remove: { users: ['pal'] } }))).toBe(
+      'ACCESS_MANAGE_FORBIDDEN',
+    )
+  })
+
+  it("treats a member's retried removal as already done", () => {
+    const withAdd = accessOf(apply(member, shared, { add: { users: ['pal'] } }))
+    const undone = accessOf(apply(member, withAdd, { remove: { users: ['pal'] } }))
+    const again = apply(member, undone, { remove: { users: ['pal'] } })
+    expect('refusal' in again).toBe(false)
+    if (!('refusal' in again)) expect(again.changed).toBe(false)
+  })
+
+  it('reads no inherited property as an exclusion', () => {
+    const result = apply(owner, shared, { add: { users: ['constructor', 'toString'] } })
+    if ('refusal' in result) throw new Error(`refused: ${result.refusal.code}`)
+    expect(result.access.allowedUsers).toEqual(['owner', 'member', 'constructor', 'toString'])
+    expect(result.access.excluded).toBeUndefined()
+    expect(result.unexcluded).toEqual([])
+    const withExclusion = { ...shared, excluded: { x: { by: 'owner', at: 't', byAdmin: false } } }
+    expect(
+      codeOf(apply(member, withExclusion, { add: { users: ['constructor'] } })),
+    ).toBeUndefined()
+  })
+
+  it('reports only what moved: lifted and recorded exclusions, and a new addBy', () => {
+    const removed = apply(owner, shared, { remove: { users: ['member'] } })
+    if ('refusal' in removed) throw new Error('refused')
+    expect(removed.excluded).toEqual(['member'])
+    const back = apply(owner, removed.access, { unexclude: ['member', 'nobody'], addBy: 'owner' })
+    if ('refusal' in back) throw new Error('refused')
+    expect(back.unexcluded).toEqual(['member'])
+    expect(back.addBy).toBe('owner')
+    const same = apply(owner, back.access, { addBy: 'owner' })
+    if ('refusal' in same) throw new Error('refused')
+    expect(same.changed).toBe(false)
+    expect(same.addBy).toBeUndefined()
+  })
+})
+
 describe('collectCmsUserIds', () => {
   it('takes path-permission users, internal group members, creators and editors, not list members', () => {
     const ids = collectCmsUserIds({

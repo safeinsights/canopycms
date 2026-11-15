@@ -323,7 +323,7 @@ export const toBranchListItem = (
     hold,
     approveBlocked: (inReview && branch.submitUnfinished) || undefined,
     shortName: shortNameOf(config, branch.name),
-    access: accessForViewer(access, viewer, rights, isPrivileged(viewer.groups)),
+    access: accessForViewer(access, viewer, rights, isAdmin(viewer.groups)),
     sharing: {
       isOwner: rights.isOwner,
       canAdd: rights.canAdd,
@@ -837,16 +837,21 @@ const mayHoldLostCommits = (branch: BranchMetadata): boolean =>
   branch.unpublishedAtMerge === true ||
   (branch.status === 'archived' && branch.rewrittenOnGitHub !== undefined)
 
-/** @internal Exported for tests. */
+/**
+ * Admins, and a creator who may still open the branch: one an admin locked out or excluded may not
+ * delete it.
+ * @internal Exported for tests.
+ */
 export const canDeleteBranch = (
   user: CanopyUser,
   branchContext: BranchContext,
+  creatorMayOpen = true,
 ): { allowed: boolean; reason: string } => {
   if (isAdmin(user.groups)) {
     return { allowed: true, reason: 'admin' }
   }
 
-  if (branchContext.branch.createdBy === user.userId) {
+  if (branchContext.branch.createdBy === user.userId && creatorMayOpen) {
     return { allowed: true, reason: 'creator' }
   }
 
@@ -888,7 +893,11 @@ export const deleteBranchHandler = async (
     return { ok: false, status: 400, error: 'Cannot delete the base branch' }
   }
 
-  const canDelete = canDeleteBranch(req.user, branchContext)
+  const canDelete = canDeleteBranch(
+    req.user,
+    branchContext,
+    ctx.services.checkBranchAccess(branchContext, req.user).allowed,
+  )
   if (!canDelete.allowed) {
     return {
       ok: false,

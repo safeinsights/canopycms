@@ -12,6 +12,7 @@ import {
   branchSharingRights,
   collectCmsUserIds,
   getBranchProtection,
+  hasAccessList,
   isAdmin,
   isLockedOutOfBranch,
   loadInternalGroups,
@@ -114,12 +115,41 @@ const rightsFor = (
     whoCanAdd: resolveBranchSharing(ctx.services.config).whoCanAdd,
   })
 
+/**
+ * A refusal for a caller the branch's access check turns away: a lockdown is named only to someone
+ * the list would otherwise admit, so it tells no one else anything about the branch.
+ */
+function branchAccessRefusal(
+  ctx: ApiContext,
+  actor: CanopyUser,
+  context: BranchContext,
+): AccessRefused | null {
+  if (ctx.services.checkBranchAccess(context, actor).allowed) return null
+  const unlocked: BranchContext = {
+    ...context,
+    branch: {
+      ...context.branch,
+      access: { ...context.branch.access, managerOrAdminAllowed: false },
+    },
+  }
+  return isLockedOutOfBranch(context.branch.access, actor.groups) &&
+    ctx.services.checkBranchAccess(unlocked, actor).allowed
+    ? refused(
+        403,
+        'BRANCH_LOCKED_DOWN',
+        'An admin has limited this branch to admins and reviewers.',
+      )
+    : refused(403, 'BRANCH_ACCESS_DENIED', "You don't have access to this branch.")
+}
+
 /** Why `actor` may not touch this branch's list at all, before any change is weighed. */
 function refuseOutright(
   ctx: ApiContext,
   actor: CanopyUser,
   context: BranchContext,
 ): AccessRefused | null {
+  const denied = branchAccessRefusal(ctx, actor, context)
+  if (denied) return denied
   const { branch } = context
   const admin = isAdmin(actor.groups)
   if (getBranchProtection(ctx.services.config, branch.name, branch.baseBranch).isProtected) {
@@ -131,16 +161,6 @@ function refuseOutright(
   }
   if (!admin && (isSystemUserId(branch.createdBy) || branch.createdBy === 'unknown')) {
     return refused(403, 'BRANCH_NOT_SHAREABLE', 'Only an admin can share this branch.')
-  }
-  if (isLockedOutOfBranch(branch.access, actor.groups)) {
-    return refused(
-      403,
-      'BRANCH_LOCKED_DOWN',
-      'An admin has limited this branch to admins and reviewers.',
-    )
-  }
-  if (!ctx.services.checkBranchAccess(context, actor).allowed) {
-    return refused(403, 'BRANCH_ACCESS_DENIED', "You don't have access to this branch.")
   }
   if (!admin && branch.status === 'archived') {
     return refused(403, 'BRANCH_ARCHIVED', "Archived branches can't be shared.")
@@ -179,7 +199,10 @@ export async function changeBranchAccess(
   // A dry run first, so a change the rules refuse costs no user lookup and no lock.
   const dryRun = apply(context.branch)
   if ('refusal' in dryRun) return { ok: false, refused: fromRefusal(dryRun.refusal) }
-  const scope = await checkUsersToAdd(ctx, actor, dryRun.added.users)
+  // Every requested id, not only the dry run's additions: the list on disk may differ from the
+  // copy the dry run read, and an id added there must have passed the same check.
+  const requested = [...new Set(change.add?.users ?? [])].filter((id) => id !== actor.userId)
+  const scope = await checkUsersToAdd(ctx, actor, requested)
   if (scope) return { ok: false, refused: scope }
 
   const metadata = getBranchMetadataFileManager(context.branchRoot, context.baseRoot)
@@ -206,7 +229,7 @@ export async function changeBranchAccess(
     throw err
   }
 
-  if (outcome.applied) logAccessChange(context.branch.name, actor.userId, change, outcome.applied)
+  if (outcome.applied) logAccessChange(context.branch.name, actor.userId, outcome.applied)
   return { ok: true, branch: saved ?? outcome.current, result: outcome.applied }
 }
 
@@ -243,7 +266,6 @@ export async function initialBranchAccess(
 function logAccessChange(
   branch: string,
   actor: CanopyUserId,
-  change: BranchAccessChange,
   result: BranchAccessChangeResult,
 ): void {
   canopyLog(
@@ -253,9 +275,10 @@ function logAccessChange(
       actor,
       added: result.added,
       removed: result.removed,
-      ...(change.restricted !== undefined && { restricted: change.restricted }),
-      ...(change.addBy && { addBy: change.addBy }),
-      ...(change.unexclude?.length && { unexclude: change.unexclude }),
+      restricted: hasAccessList(result.access),
+      ...(result.addBy && { addBy: result.addBy }),
+      ...(result.unexcluded.length > 0 && { unexcluded: result.unexcluded }),
+      ...(result.excluded.length > 0 && { excluded: result.excluded }),
     }),
   )
 }

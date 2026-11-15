@@ -11,6 +11,7 @@ import type { GuardId } from './guards'
 import { createMockApiContext, createMockBranchContext, createMockUser } from '../test-utils'
 import { mockConsole } from '../test-utils/console-spy'
 import type { CanopyConfig, FlatSchemaItem } from '../config'
+import type { BranchContext } from '../types'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -164,7 +165,15 @@ describe('executeGuards', () => {
         branchName: 'locked',
         access: { managerOrAdminAllowed: true },
       })
-      const ctx = createMockApiContext({ branchContext: bc, allowBranchAccess: false })
+      const ctx = createMockApiContext({
+        branchContext: bc,
+        services: {
+          checkBranchAccess: vi.fn((context: BranchContext) => ({
+            allowed: !context.branch.access.managerOrAdminAllowed,
+            reason: 'denied_by_acl' as const,
+          })),
+        },
+      })
 
       const result = await executeGuards(['branchAccess'] as const, ctx, makeReq(), {
         branch: 'locked',
@@ -173,6 +182,23 @@ describe('executeGuards', () => {
       expect(result.ok).toBe(false)
       if (!result.ok) {
         expect(result.response).toMatchObject({ status: 403, code: 'BRANCH_LOCKED_DOWN' })
+      }
+    })
+
+    it('names no lockdown to a caller the list would not admit anyway', async () => {
+      const bc = createMockBranchContext({
+        branchName: 'locked',
+        access: { managerOrAdminAllowed: true },
+      })
+      const ctx = createMockApiContext({ branchContext: bc, allowBranchAccess: false })
+
+      const result = await executeGuards(['branchAccess'] as const, ctx, makeReq(), {
+        branch: 'locked',
+      })
+
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.response).toMatchObject({ status: 403, code: 'BRANCH_ACCESS_DENIED' })
       }
     })
 

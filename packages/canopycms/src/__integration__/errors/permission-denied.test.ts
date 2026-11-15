@@ -53,10 +53,7 @@ describe('Permission Denied Errors', () => {
       title: 'Admin Only Branch',
     })
 
-    await adminClient.patch('/api/canopycms/admin-only/access', {
-      allowedUsers: ['test-admin'],
-      allowedGroups: [],
-    })
+    await adminClient.patch('/api/canopycms/admin-only/access', { restricted: true })
 
     // Editor tries to access
     const response = await editorClient.get('/api/canopycms/admin-only/status')
@@ -146,8 +143,7 @@ describe('Permission Denied Errors', () => {
 
     // Editor tries to modify access control (not their branch, not admin) - should fail
     const response = await editorClient.patch('/api/canopycms/feature-access-test/access', {
-      allowedUsers: ['test-editor'],
-      allowedGroups: [],
+      add: { users: ['test-editor'] },
     })
 
     expect(response.status).toBe(403)
@@ -161,10 +157,7 @@ describe('Permission Denied Errors', () => {
       title: 'Restricted',
     })
 
-    await adminClient.patch('/api/canopycms/restricted/access', {
-      allowedUsers: ['test-admin'],
-      allowedGroups: [],
-    })
+    await adminClient.patch('/api/canopycms/restricted/access', { restricted: true })
 
     // Editor tries to access
     const response = await editorClient.get('/api/canopycms/restricted/status')

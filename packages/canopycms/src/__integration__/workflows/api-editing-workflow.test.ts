@@ -124,9 +124,7 @@ describe('API Editing Workflow Integration', () => {
 
     // STEP 2: Admin restricts branch access
     const patchResponse = await adminClient.patch('/api/canopycms/admin-only-branch/access', {
-      allowedUsers: ['test-admin'],
-      allowedGroups: [],
-      managerOrAdminAllowed: true,
+      restricted: true,
     })
 
     expect(patchResponse.status).toBe(200)
@@ -200,9 +198,7 @@ describe('API Editing Workflow Integration', () => {
 
     // Admin restricts their branch to admin-only
     const restrictResponse = await adminClient.patch('/api/canopycms/admin-feature/access', {
-      allowedUsers: ['test-admin'],
-      allowedGroups: [],
-      managerOrAdminAllowed: true,
+      restricted: true,
     })
     expect(restrictResponse.status).toBe(200)
 
