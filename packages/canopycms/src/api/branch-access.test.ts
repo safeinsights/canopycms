@@ -1,0 +1,305 @@
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
+
+import type { AuthPlugin } from '../auth/plugin'
+import { RESERVED_GROUPS } from '../authorization'
+import { createCheckBranchAccess } from '../authorization/branch'
+import { buildInitialBranchMetadata, BranchMetadataFileManager } from '../branch-metadata'
+import { BRANCH_META_DIR, BRANCH_META_FILE } from '../branch-metadata-file'
+import type { CanopyConfig } from '../config'
+import { sanitizeBranchName } from '../paths/branch-name'
+import type { BranchName } from '../paths/types'
+import { SYSTEM_USER_ID } from '../system-users'
+import type { BranchContext, BranchMetadata } from '../types'
+import type { CanopyUser } from '../user'
+import { changeBranchAccess, initialBranchAccess } from './branch-access'
+import { updateBranchAccessHandler, type UpdateBranchAccessBody } from './branch'
+import type { ApiContext } from './types'
+
+const user = (userId: string, groups: string[] = []): CanopyUser => ({
+  type: 'authenticated',
+  userId,
+  groups,
+})
+const owner = user('owner', ['writers'])
+const member = user('member')
+const admin = user('admin', [RESERVED_GROUPS.ADMINS])
+
+let baseRoot: string
+let contexts: BranchContext[]
+let config: CanopyConfig
+let knownUsers: Set<string>
+let logSpy: MockInstance<typeof console.log>
+
+const addBranch = async (name: string, fields: Partial<BranchMetadata> = {}) => {
+  const branchRoot = path.join(baseRoot, sanitizeBranchName(name))
+  const file = buildInitialBranchMetadata({ branch: { name, createdBy: 'owner', ...fields } })
+  await fs.mkdir(path.join(branchRoot, BRANCH_META_DIR), { recursive: true })
+  await fs.writeFile(path.join(branchRoot, BRANCH_META_DIR, BRANCH_META_FILE), JSON.stringify(file))
+  const context: BranchContext = { baseRoot, branchRoot, branch: file.branch }
+  contexts.push(context)
+  return context
+}
+
+const onDisk = async (context: BranchContext) =>
+  (await BranchMetadataFileManager.loadOnly(context.branchRoot))?.branch
+
+const authPlugin: AuthPlugin = {
+  authenticate: async () => ({ success: false }),
+  searchUsers: async () => [],
+  getUserMetadata: async (id) =>
+    knownUsers.has(id) ? { id, name: `Name of ${id}`, email: `${id}@example.test` } : null,
+  getGroupMetadata: async () => null,
+  listGroups: async () => [],
+}
+
+const ctx = (): ApiContext =>
+  ({
+    services: {
+      config,
+      checkBranchAccess: (context: BranchContext, u: CanopyUser) =>
+        createCheckBranchAccess(config.defaultBranchAccess ?? 'deny', config)(context, u),
+      getSettingsBranchRoot: async () => path.join(baseRoot, '.settings'),
+      bootstrapAdminIds: new Set<string>(),
+      registry: { list: async () => contexts },
+    },
+    authPlugin,
+    getBranchContext: async (name: string) => {
+      const known = contexts.find((c) => c.branch.name === name)
+      if (!known) return null
+      return { ...known, branch: (await onDisk(known)) ?? known.branch }
+    },
+  }) as unknown as ApiContext
+
+const patch = (actor: CanopyUser, branch: string, body: UpdateBranchAccessBody) =>
+  updateBranchAccessHandler(ctx(), { user: actor }, { branch: branch as BranchName }, body)
+
+beforeEach(async () => {
+  baseRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-branch-access-'))
+  contexts = []
+  config = { mode: 'dev', defaultBaseBranch: 'main', defaultBranchAccess: 'deny' } as CanopyConfig
+  knownUsers = new Set(['owner', 'member', 'pal', 'colleague', 'outsider', 'admin'])
+  logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+  // 'colleague' works in this CMS: they created a branch. 'outsider' only has an account.
+  await addBranch('feature/colleagues-work', { createdBy: 'colleague', editors: ['pal'] })
+})
+
+afterEach(async () => {
+  vi.restoreAllMocks()
+  await fs.rm(baseRoot, { recursive: true, force: true })
+})
+
+describe('PATCH /:branch/access', () => {
+  it("restricts the branch on its owner's first share, keeps the owner, and says what changed", async () => {
+    const context = await addBranch('feature/x')
+
+    const res = await patch(owner, 'feature/x', { add: { users: ['colleague'] } })
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.branch.access.allowedUsers).toEqual(['owner', 'colleague'])
+    expect(res.data?.branch.sharing).toMatchObject({
+      isOwner: true,
+      canManage: true,
+      restricted: true,
+      openToEveryone: false,
+    })
+    const saved = await onDisk(context)
+    expect(saved?.access).toMatchObject({ restricted: true, allowedUsers: ['owner', 'colleague'] })
+    expect(saved?.access.entryMeta?.['user:colleague']?.addedBy).toBe('owner')
+    const audit = logSpy.mock.calls
+      .map(([line]) => String(line))
+      .find((l) => l.includes('branch-access'))
+    expect(JSON.parse(audit ?? '{}')).toMatchObject({
+      event: 'branch-access',
+      branch: 'feature/x',
+      actor: 'owner',
+      added: { users: ['colleague'], groups: [] },
+    })
+  })
+
+  it('refuses a non-admin adding someone who does not work in this CMS, by id', async () => {
+    const context = await addBranch('feature/x')
+
+    const res = await patch(owner, 'feature/x', { add: { users: ['outsider'] } })
+
+    expect(res).toMatchObject({ ok: false, status: 403, code: 'USER_OUT_OF_SCOPE' })
+    expect((await onDisk(context))?.access).toEqual({})
+  })
+
+  it('lets an admin add anyone the sign-in provider knows, and no one it does not', async () => {
+    await addBranch('feature/x')
+
+    expect((await patch(admin, 'feature/x', { add: { users: ['outsider'] } })).ok).toBe(true)
+    expect(await patch(admin, 'feature/x', { add: { users: ['ghost'] } })).toMatchObject({
+      status: 400,
+      code: 'USER_NOT_FOUND',
+    })
+  })
+
+  it('refuses a creator an admin left off the list, so they cannot add themselves back', async () => {
+    const context = await addBranch('feature/x', {
+      access: { restricted: true, allowedUsers: ['member'] },
+    })
+
+    const res = await patch(owner, 'feature/x', { add: { users: ['owner'] } })
+
+    expect(res).toMatchObject({ status: 403, code: 'BRANCH_ACCESS_DENIED' })
+    expect((await onDisk(context))?.access.allowedUsers).toEqual(['member'])
+  })
+
+  it('refuses a locked-down creator', async () => {
+    await addBranch('feature/x', { access: { managerOrAdminAllowed: true } })
+
+    expect(await patch(owner, 'feature/x', { add: { users: ['colleague'] } })).toMatchObject({
+      status: 403,
+      code: 'BRANCH_LOCKED_DOWN',
+    })
+  })
+
+  it('keeps a member from adding back an owner an admin removed', async () => {
+    const context = await addBranch('feature/x', {
+      access: { restricted: true, allowedUsers: ['owner', 'member'] },
+    })
+    expect((await patch(admin, 'feature/x', { remove: { users: ['owner'] } })).ok).toBe(true)
+
+    expect(await patch(member, 'feature/x', { add: { users: ['owner'] } })).toMatchObject({
+      status: 403,
+      code: 'USER_EXCLUDED',
+    })
+    expect((await onDisk(context))?.access.allowedUsers).toEqual(['member'])
+  })
+
+  it('lets a member add people and remove only those they added', async () => {
+    const context = await addBranch('feature/x', {
+      access: { restricted: true, allowedUsers: ['owner', 'member'] },
+    })
+
+    expect((await patch(member, 'feature/x', { add: { users: ['pal'] } })).ok).toBe(true)
+    expect(await patch(member, 'feature/x', { remove: { users: ['owner'] } })).toMatchObject({
+      code: 'ACCESS_MANAGE_FORBIDDEN',
+    })
+    expect((await patch(member, 'feature/x', { remove: { users: ['pal'] } })).ok).toBe(true)
+    const saved = await onDisk(context)
+    expect(saved?.access.allowedUsers).toEqual(['owner', 'member'])
+    expect(saved?.access.excluded).toBeUndefined()
+  })
+
+  it.each([
+    ['the base branch', 'main', { createdBy: SYSTEM_USER_ID, baseBranch: 'main' }],
+    ['a system-owned branch', 'feature/system', { createdBy: SYSTEM_USER_ID }],
+  ])('refuses sharing %s to a non-admin', async (_label, name, fields) => {
+    await addBranch(name, fields)
+
+    expect(await patch(owner, name, { add: { users: ['colleague'] } })).toMatchObject({
+      status: 403,
+      code: 'BRANCH_NOT_SHAREABLE',
+    })
+  })
+
+  it('refuses sharing an archived branch, except by an admin', async () => {
+    await addBranch('feature/x', { status: 'archived' })
+
+    expect(await patch(owner, 'feature/x', { add: { users: ['colleague'] } })).toMatchObject({
+      code: 'BRANCH_ARCHIVED',
+    })
+    expect((await patch(admin, 'feature/x', { add: { users: ['colleague'] } })).ok).toBe(true)
+  })
+
+  it("opens a branch only on an 'allow' site", async () => {
+    await addBranch('feature/x', {
+      access: { restricted: true, allowedUsers: ['owner', 'member'] },
+    })
+
+    expect(await patch(owner, 'feature/x', { restricted: false })).toMatchObject({
+      code: 'OPEN_NOT_ALLOWED',
+    })
+    config = { ...config, defaultBranchAccess: 'allow' }
+    const opened = await patch(owner, 'feature/x', { restricted: false })
+    expect(opened.data?.branch.access.allowedUsers).toBeUndefined()
+    expect(opened.data?.branch.sharing).toMatchObject({ restricted: false, openToEveryone: true })
+  })
+
+  it('writes nothing for a change already in effect, so a retry is harmless', async () => {
+    const context = await addBranch('feature/x')
+    await patch(owner, 'feature/x', { add: { users: ['colleague'] } })
+    const first = await onDisk(context)
+    logSpy.mockClear()
+
+    const again = await patch(owner, 'feature/x', { add: { users: ['colleague'] } })
+
+    expect(again.ok).toBe(true)
+    expect(await onDisk(context)).toEqual(first)
+    expect(logSpy.mock.calls.some(([line]) => String(line).includes('branch-access'))).toBe(false)
+  })
+
+  it('keeps both of two concurrent shares', async () => {
+    const context = await addBranch('feature/x', {
+      access: { restricted: true, allowedUsers: ['owner', 'member'] },
+    })
+    const staleContext = { ...context }
+
+    await Promise.all([
+      changeBranchAccess(ctx(), owner, staleContext, { add: { users: ['colleague'] } }),
+      changeBranchAccess(ctx(), member, staleContext, { add: { users: ['pal'] } }),
+    ])
+
+    expect([...((await onDisk(context))?.access.allowedUsers ?? [])].sort()).toEqual([
+      'colleague',
+      'member',
+      'owner',
+      'pal',
+    ])
+  })
+
+  it('applies the rules to the list on disk, not the copy the request started from', async () => {
+    const context = await addBranch('feature/x', {
+      access: { restricted: true, allowedUsers: ['owner', 'member'] },
+    })
+    const before = { ...context, branch: { ...context.branch } }
+    expect((await patch(owner, 'feature/x', { remove: { users: ['member'] } })).ok).toBe(true)
+
+    const res = await changeBranchAccess(ctx(), member, before, { add: { users: ['pal'] } })
+
+    expect(res).toMatchObject({ ok: false, refused: { code: 'ACCESS_ADD_FORBIDDEN' } })
+    expect((await onDisk(context))?.access.allowedUsers).toEqual(['owner'])
+  })
+})
+
+describe('initialBranchAccess (sharing at create)', () => {
+  it('starts the branch restricted to its creator and the people added', async () => {
+    const res = await initialBranchAccess(ctx(), owner, {
+      users: ['colleague'],
+      groups: ['writers'],
+    })
+
+    expect(res).toMatchObject({
+      ok: true,
+      access: {
+        restricted: true,
+        allowedUsers: ['owner', 'colleague'],
+        allowedGroups: ['writers'],
+      },
+    })
+  })
+
+  it('refuses by the same rules as a later share', async () => {
+    expect(await initialBranchAccess(ctx(), owner, { users: ['outsider'] })).toMatchObject({
+      ok: false,
+      refused: { code: 'USER_OUT_OF_SCOPE' },
+    })
+    expect(await initialBranchAccess(ctx(), owner, { groups: ['strangers'] })).toMatchObject({
+      ok: false,
+      refused: { code: 'GROUP_NOT_YOURS' },
+    })
+  })
+
+  it('leaves the list alone when nobody is added', async () => {
+    expect(await initialBranchAccess(ctx(), owner, undefined)).toEqual({
+      ok: true,
+      access: undefined,
+    })
+  })
+})

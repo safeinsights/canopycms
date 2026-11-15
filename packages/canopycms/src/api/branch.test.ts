@@ -87,10 +87,8 @@ import {
   createBranchHandler as createBranch,
   listBranchesHandler,
   deleteBranchHandler as deleteBranch,
-  updateBranchAccessHandler as updateBranchAccess,
   canCreateBranch,
   canDeleteBranch,
-  canModifyBranchAccess,
   toBranchListItem,
 } from './branch'
 import { RESERVED_GROUPS } from '../authorization'
@@ -437,6 +435,38 @@ describe('branch api', () => {
       '"feature-test" would clash with the existing branch "canopycms/local/feature/test". Choose a different name.',
     )
     expect(res.code).toBe('BRANCH_NAME_REFUSED')
+  })
+
+  it('starts a branch shared at create restricted to its creator and the people added', async () => {
+    const provisionBranch = vi.fn(async ({ branchName }: { branchName: string }) => ({
+      kind: 'created',
+      context: createMockBranchContext({ branchName, createdBy: 'u1' }),
+    }))
+    vi.mocked(BranchWorkspaceManager).mockImplementationOnce(function () {
+      return { provisionBranch }
+    } as unknown as typeof BranchWorkspaceManager)
+
+    const res = await createBranch(baseCtx, asU1, {
+      branch: unsafeAsBranchName('feature-test'),
+      access: { add: { users: ['u2'] } },
+    })
+
+    expect(res.ok).toBe(true)
+    expect(provisionBranch.mock.calls[0]?.[0]).toMatchObject({
+      access: { restricted: true, allowedUsers: ['u1', 'u2'] },
+    })
+  })
+
+  it('refuses a share at create by the rules of a later share, before provisioning anything', async () => {
+    vi.mocked(BranchWorkspaceManager).mockClear()
+
+    const res = await createBranch(baseCtx, asU1, {
+      branch: unsafeAsBranchName('feature-test'),
+      access: { add: { users: ['stranger'] } },
+    })
+
+    expect(res).toMatchObject({ ok: false, status: 403, code: 'USER_OUT_OF_SCOPE' })
+    expect(BranchWorkspaceManager).not.toHaveBeenCalled()
   })
 
   it('refuses a provisioning that finds another branch under the key, naming that branch', async () => {
@@ -1708,241 +1738,6 @@ describe('deleteBranch api', () => {
       expect(res.data?.cleanupWarning).toContain('could not be queued')
       consoleErrorSpy.mockRestore()
     })
-  })
-})
-
-describe('canModifyBranchAccess', () => {
-  const makeBranchContext = (createdBy: string) =>
-    createMockBranchContext({ branchName: 'feature/x', createdBy })
-
-  it('allows admins to modify any branch', () => {
-    const result = canModifyBranchAccess(
-      {
-        type: 'authenticated',
-        userId: 'admin',
-        groups: [RESERVED_GROUPS.ADMINS],
-      },
-      makeBranchContext('other'),
-    )
-    expect(result.allowed).toBe(true)
-    expect(result.reason).toBe('admin')
-  })
-
-  it('allows branch creator to modify their branch', () => {
-    const result = canModifyBranchAccess(
-      { type: 'authenticated', userId: 'u1', groups: [] },
-      makeBranchContext('u1'),
-    )
-    expect(result.allowed).toBe(true)
-    expect(result.reason).toBe('creator')
-  })
-
-  it('denies non-creator non-admin from modifying', () => {
-    const result = canModifyBranchAccess(
-      { type: 'authenticated', userId: 'u2', groups: [] },
-      makeBranchContext('u1'),
-    )
-    expect(result.allowed).toBe(false)
-    expect(result.reason).toBe('not_authorized')
-  })
-
-  it('denies reviewers from modifying others branches', () => {
-    const result = canModifyBranchAccess(
-      {
-        type: 'authenticated',
-        userId: 'u2',
-        groups: [RESERVED_GROUPS.REVIEWERS],
-      },
-      makeBranchContext('u1'),
-    )
-    expect(result.allowed).toBe(false)
-    expect(result.reason).toBe('not_authorized')
-  })
-})
-
-describe('updateBranchAccess api', () => {
-  const makeBranchContext = (createdBy: string) =>
-    createMockBranchContext({ branchName: 'feature/x', createdBy })
-
-  it('returns 404 if branch not found', async () => {
-    const ctx = {
-      ...baseCtx,
-      getBranchContext: vi.fn().mockResolvedValue(null),
-    }
-    const res = await updateBranchAccess(
-      ctx,
-      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: unsafeAsBranchName('feature/missing') },
-      {},
-    )
-    expect(res.status).toBe(404)
-  })
-
-  it('returns 403 if user not authorized', async () => {
-    const ctx = {
-      ...baseCtx,
-      getBranchContext: vi.fn().mockResolvedValue(makeBranchContext('other')),
-    }
-    const res = await updateBranchAccess(
-      ctx,
-      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: unsafeAsBranchName('feature/x') },
-      {},
-    )
-    expect(res.status).toBe(403)
-    expect(res.error).toBe('You do not have permission to modify this branch')
-  })
-
-  // A base-branch ACL entry is not inert: canPerformWorkflowAction's
-  // `allowed_by_acl` grant reads it, so writing one here would hand arbitrary
-  // users Withdraw rights on the base branch.
-  it('rejects an ACL write on the protected base branch, even for an admin', async () => {
-    const ctx = {
-      ...baseCtx,
-      getBranchContext: vi.fn().mockResolvedValue(
-        createMockBranchContext({
-          branchName: 'main',
-          createdBy: 'canopycms-system',
-          baseRoot: '/test/repo',
-          branchRoot: '/test/repo',
-        }),
-      ),
-      services: { ...baseCtx.services, config: { defaultBaseBranch: 'main', mode: 'prod' } as any },
-    }
-    const res = await updateBranchAccess(
-      ctx,
-      { user: { type: 'authenticated', userId: 'admin', groups: [RESERVED_GROUPS.ADMINS] } },
-      { branch: unsafeAsBranchName('main') },
-      { allowedUsers: ['u2'] },
-    )
-    expect(res.status).toBe(403)
-    expect(res.error).toBe(
-      'The base branch does not take an access list. Create a branch to manage access.',
-    )
-  })
-
-  it('rejects an ACL write on the base branch in dev too (the grant is mode-independent)', async () => {
-    const ctx = {
-      ...baseCtx,
-      getBranchContext: vi.fn().mockResolvedValue(
-        createMockBranchContext({
-          branchName: 'main',
-          createdBy: 'canopycms-system',
-          baseRoot: '/test/repo',
-          branchRoot: '/test/repo',
-        }),
-      ),
-      services: { ...baseCtx.services, config: { defaultBaseBranch: 'main', mode: 'dev' } as any },
-    }
-    const res = await updateBranchAccess(
-      ctx,
-      { user: { type: 'authenticated', userId: 'admin', groups: [RESERVED_GROUPS.ADMINS] } },
-      { branch: unsafeAsBranchName('main') },
-      { allowedUsers: ['u2'] },
-    )
-    expect(res.status).toBe(403)
-  })
-
-  it('updates branch access when user is creator', async () => {
-    const ctx = {
-      ...baseCtx,
-      getBranchContext: vi.fn().mockResolvedValue(makeBranchContext('u1')),
-    }
-    const res = await updateBranchAccess(
-      ctx,
-      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: unsafeAsBranchName('feature/x') },
-      { allowedUsers: ['u2', 'u3'] },
-    )
-    expect(res.ok).toBe(true)
-    // A creator without the privileged lookup gets back only a count of the ids it set.
-    expect(res.data?.branch.access.allowedUsers).toEqual([])
-    expect(res.data?.branch.withheldAccess).toEqual({ users: 2, groups: 0 })
-  })
-
-  it('updates branch access when user is admin', async () => {
-    const ctx = {
-      ...baseCtx,
-      getBranchContext: vi.fn().mockResolvedValue(makeBranchContext('other')),
-    }
-    const res = await updateBranchAccess(
-      ctx,
-      {
-        user: {
-          type: 'authenticated',
-          userId: 'admin',
-          groups: [RESERVED_GROUPS.ADMINS],
-        },
-      },
-      { branch: unsafeAsBranchName('feature/x') },
-      { allowedGroups: ['editors'] },
-    )
-    expect(res.ok).toBe(true)
-    expect(res.data?.branch.access.allowedGroups).toEqual(['editors'])
-  })
-
-  // Test for missing branchRoot removed - BranchContext now requires branchRoot at type level
-
-  it('omits an unsupplied field from the save() payload entirely, rather than spreading the stale snapshot (regression)', async () => {
-    // branchContext.branch.access as resolved by getBranchContext() -- a
-    // snapshot taken before this handler acquires anything. It carries
-    // allowedGroups from some earlier state; a concurrent request could have
-    // already changed allowedGroups on disk by the time save() actually
-    // reloads and merges.
-    const ctx = {
-      ...baseCtx,
-      getBranchContext: vi.fn().mockResolvedValue(
-        createMockBranchContext({
-          branchName: 'feature/x',
-          createdBy: 'u1',
-          access: { allowedGroups: ['stale-group'] },
-        }),
-      ),
-    }
-    mockMetadataUpdate.mockClear()
-
-    const res = await updateBranchAccess(
-      ctx,
-      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: unsafeAsBranchName('feature/x') },
-      // Caller supplies ONLY allowedUsers -- allowedGroups is omitted.
-      { allowedUsers: ['u2', 'u3'] },
-    )
-    expect(res.ok).toBe(true)
-
-    // The save() payload's access delta must contain ONLY the supplied key.
-    // If allowedGroups were included (even with the stale snapshot's value),
-    // save()'s field-level merge (branch-metadata.ts) would let it silently
-    // clobber whatever a concurrent request wrote to allowedGroups on disk.
-    expect(mockMetadataUpdate).toHaveBeenCalledTimes(1)
-    const payload = mockMetadataUpdate.mock.calls[0][0] as { branch?: { access?: object } }
-    expect(payload.branch?.access).toEqual({ allowedUsers: ['u2', 'u3'] })
-    expect(payload.branch?.access).not.toHaveProperty('allowedGroups')
-  })
-
-  it('still clears a field when the caller explicitly supplies an empty array', async () => {
-    const ctx = {
-      ...baseCtx,
-      getBranchContext: vi.fn().mockResolvedValue(
-        createMockBranchContext({
-          branchName: 'feature/x',
-          createdBy: 'u1',
-          access: { allowedUsers: ['u2'], allowedGroups: ['editors'] },
-        }),
-      ),
-    }
-    mockMetadataUpdate.mockClear()
-
-    await updateBranchAccess(
-      ctx,
-      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: unsafeAsBranchName('feature/x') },
-      { allowedUsers: [] },
-    )
-
-    const payload = mockMetadataUpdate.mock.calls[0][0] as { branch?: { access?: object } }
-    expect(payload.branch?.access).toEqual({ allowedUsers: [] })
-    expect(payload.branch?.access).not.toHaveProperty('allowedGroups')
   })
 })
 

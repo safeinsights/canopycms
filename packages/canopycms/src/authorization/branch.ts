@@ -62,8 +62,9 @@ function isDevActiveBranch(
  * Precedence, highest first:
  * 1. Admins and Reviewers
  * 2. `managerOrAdminAllowed` lockdown
- * 3. An explicit user/group ACL -- an allowlist omitting the creator still
- *    denies them, so an admin can lock down a branch someone else created
+ * 3. An explicit user/group ACL, or a `restricted` one even when empty -- an
+ *    allowlist omitting the creator still denies them, so an admin can lock
+ *    down a branch someone else created
  * 4. With no ACL: the branch creator, then `defaultAccess`, and only where that
  *    would deny, the base branch or dev active branch grant ({@link BranchAccessOptions})
  * @internal Exported for tests.
@@ -86,7 +87,8 @@ export function checkBranchAccessWithDefault(
   const hasUserConstraint = !!access.allowedUsers?.length
   const hasGroupConstraint = !!access.allowedGroups?.length
 
-  if (!hasUserConstraint && !hasGroupConstraint) {
+  // A restricted list governs even when empty, so an emptied list never reopens the branch.
+  if (!hasUserConstraint && !hasGroupConstraint && !access.restricted) {
     // The branch creator owns their own un-ACL'd branch, as canDeleteBranch and
     // canModifyBranchAccess also grant: without it, under 'deny' a creator could
     // delete their branch and rewrite its ACL but not read a file on it. Scoped to the no-ACL case on purpose -- an EXPLICIT

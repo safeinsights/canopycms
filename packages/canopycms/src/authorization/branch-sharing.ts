@@ -1,0 +1,401 @@
+/**
+ * Who may change a branch's access list, and what a change does to it. Pure: the API resolves
+ * users and reads files, then applies these rules inside the branch.json lock
+ * (`api/branch-access.ts`).
+ *
+ * The owner is the branch's creator while the list admits them. Owners and admins remove people,
+ * restrict or open the branch and set who may add; listed members add people when the branch's
+ * `addBy` allows it, and remove only the entries they added. `addBy: 'admins'` leaves the list to
+ * admins alone. Removing a user records an exclusion, so a member cannot add them back.
+ */
+
+import type {
+  BranchSharingConfig,
+  CanopyConfig,
+  DefaultBranchAccess,
+  PathPermission,
+} from '../config'
+import type {
+  BranchAccessControl,
+  BranchAddBy,
+  BranchMetadata,
+  CanopyGroupId,
+  CanopyUserId,
+} from '../types'
+import type { CanopyUser } from '../user'
+import { isSystemUserId } from '../system-users'
+import { isAdmin, isReservedGroup } from './helpers'
+
+/** {@link BranchSharingConfig} with its defaults applied. */
+export type ResolvedBranchSharing = Required<BranchSharingConfig>
+
+export function resolveBranchSharing(
+  config: Pick<CanopyConfig, 'branchSharing'>,
+): ResolvedBranchSharing {
+  return {
+    whoCanAdd: config.branchSharing?.whoCanAdd ?? 'members',
+    searchable: config.branchSharing?.searchable ?? 'cms-users',
+    addableByEmail: config.branchSharing?.addableByEmail ?? 'all-users',
+  }
+}
+
+const entryKey = (kind: 'user' | 'group', id: string): string => `${kind}:${id}`
+
+/** Whether the list decides who may open the branch, rather than the creator rule and default. */
+export function hasAccessList(access: BranchAccessControl): boolean {
+  return !!access.restricted || !!access.allowedUsers?.length || !!access.allowedGroups?.length
+}
+
+function isListedMember(
+  access: BranchAccessControl,
+  user: Pick<CanopyUser, 'userId' | 'groups'>,
+): boolean {
+  return (
+    !!access.allowedUsers?.includes(user.userId) ||
+    !!user.groups?.some((group) => access.allowedGroups?.includes(group))
+  )
+}
+
+/** A creator id no person holds: a system user's, or the placeholder of a branch.json without one. */
+const isNobody = (userId: CanopyUserId): boolean => isSystemUserId(userId) || userId === 'unknown'
+
+export interface BranchSharingRights {
+  isOwner: boolean
+  isMember: boolean
+  /** May add people. */
+  canAdd: boolean
+  /** May remove anyone, restrict or open the branch, set who may add, and lift exclusions. */
+  canManage: boolean
+}
+
+const NO_RIGHTS: BranchSharingRights = {
+  isOwner: false,
+  isMember: false,
+  canAdd: false,
+  canManage: false,
+}
+
+/**
+ * What `user` may do to the branch's list. Membership is read from the list itself, never from
+ * the access check's reason, which reports a reviewer as privileged whether or not they are listed.
+ * The lockdown, the base branch and a system-owned branch leave everything to admins.
+ */
+export function branchSharingRights(
+  user: Pick<CanopyUser, 'userId' | 'groups'>,
+  branch: Pick<BranchMetadata, 'access' | 'createdBy' | 'status'>,
+  options: { isProtected: boolean; whoCanAdd: ResolvedBranchSharing['whoCanAdd'] },
+): BranchSharingRights {
+  if (options.isProtected) return NO_RIGHTS
+  const access = branch.access
+  const isMember = isListedMember(access, user)
+  const isOwner =
+    branch.createdBy === user.userId &&
+    !access.excluded?.[user.userId] &&
+    (!hasAccessList(access) || isMember)
+  if (isAdmin(user.groups)) return { isOwner, isMember, canAdd: true, canManage: true }
+  if (access.managerOrAdminAllowed || isNobody(branch.createdBy) || branch.status === 'archived') {
+    return { ...NO_RIGHTS, isOwner, isMember }
+  }
+  // 'admins' hands the whole list to admins, its owner included.
+  const addBy = access.addBy ?? options.whoCanAdd
+  if (addBy === 'admins') return { ...NO_RIGHTS, isOwner, isMember }
+  return {
+    isOwner,
+    isMember,
+    canAdd: isOwner || (isMember && addBy === 'members'),
+    canManage: isOwner,
+  }
+}
+
+export interface BranchAccessChange {
+  add?: { users?: CanopyUserId[]; groups?: CanopyGroupId[] }
+  remove?: { users?: CanopyUserId[]; groups?: CanopyGroupId[] }
+  /** true: only listed people may open the branch. false: back to the site default ('allow' only). */
+  restricted?: boolean
+  addBy?: BranchAddBy
+  /** Users whose exclusion to lift. */
+  unexclude?: CanopyUserId[]
+}
+
+/** Why a change was refused; each maps to an `ApiErrorCode` of the same name. */
+export type BranchAccessRefusalCode =
+  | 'ACCESS_CHANGE_INVALID'
+  | 'ACCESS_ADD_FORBIDDEN'
+  | 'ACCESS_MANAGE_FORBIDDEN'
+  | 'USER_EXCLUDED'
+  | 'GROUP_NOT_YOURS'
+  | 'RESERVED_GROUP'
+  | 'OPEN_NOT_ALLOWED'
+
+export interface BranchAccessRefusal {
+  code: BranchAccessRefusalCode
+  message: string
+  ids?: string[]
+}
+
+export interface BranchAccessChangeResult {
+  access: BranchAccessControl
+  /** False when the change was already in effect, so nothing need be written. */
+  changed: boolean
+  added: { users: CanopyUserId[]; groups: CanopyGroupId[] }
+  removed: { users: CanopyUserId[]; groups: CanopyGroupId[] }
+}
+
+export interface ApplyAccessChangeContext {
+  actor: Pick<CanopyUser, 'userId' | 'groups'>
+  rights: BranchSharingRights
+  creator: CanopyUserId
+  defaultAccess: DefaultBranchAccess
+  now: string
+}
+
+const refuse = (
+  code: BranchAccessRefusalCode,
+  message: string,
+  ids?: string[],
+): { refusal: BranchAccessRefusal } => ({ refusal: { code, message, ...(ids && { ids }) } })
+
+const unique = <T>(values: readonly T[] | undefined): T[] => [...new Set(values ?? [])]
+
+/**
+ * `access` with `change` applied by `ctx.actor`, or why it may not be. Applying a change already in
+ * effect reports `changed: false` and keeps each entry's original `addedBy`, so a retried request
+ * is harmless.
+ */
+export function applyAccessChange(
+  access: BranchAccessControl,
+  change: BranchAccessChange,
+  ctx: ApplyAccessChangeContext,
+): BranchAccessChangeResult | { refusal: BranchAccessRefusal } {
+  const { actor, rights } = ctx
+  const actorIsAdmin = isAdmin(actor.groups)
+  const addUsers = unique(change.add?.users)
+  const addGroups = unique(change.add?.groups)
+  const removeUsers = unique(change.remove?.users)
+  const removeGroups = unique(change.remove?.groups)
+  const unexclude = unique(change.unexclude)
+  const adding = addUsers.length > 0 || addGroups.length > 0
+
+  const both = [
+    ...addUsers.filter((id) => removeUsers.includes(id)),
+    ...addGroups.filter((id) => removeGroups.includes(id)),
+  ]
+  if (both.length > 0) {
+    return refuse('ACCESS_CHANGE_INVALID', 'An entry cannot be added and removed at once.', both)
+  }
+  if (change.restricted === false && adding) {
+    return refuse('ACCESS_CHANGE_INVALID', 'Opening a branch and adding people cannot be combined.')
+  }
+
+  if (adding && !rights.canAdd) {
+    return refuse('ACCESS_ADD_FORBIDDEN', "You can't add people to this branch.")
+  }
+  const managing =
+    change.restricted !== undefined || change.addBy !== undefined || unexclude.length > 0
+  if (managing && !rights.canManage) {
+    return refuse('ACCESS_MANAGE_FORBIDDEN', "You can't change who has access to this branch.")
+  }
+  if (change.addBy === 'admins' && !actorIsAdmin) {
+    return refuse('ACCESS_MANAGE_FORBIDDEN', 'Only an admin can change who may add people here.')
+  }
+  const adminExclusions = unexclude.filter((id) => access.excluded?.[id]?.byAdmin)
+  if (!actorIsAdmin && adminExclusions.length > 0) {
+    return refuse(
+      'ACCESS_MANAGE_FORBIDDEN',
+      'Only an admin can allow back someone an admin removed.',
+      adminExclusions,
+    )
+  }
+
+  const meta = access.entryMeta ?? {}
+  const removals = [
+    ...removeUsers.map((id) => entryKey('user', id)),
+    ...removeGroups.map((id) => entryKey('group', id)),
+  ]
+  if (!rights.canManage) {
+    const notTheirs = removals.filter((key) => meta[key]?.addedBy !== actor.userId)
+    if (notTheirs.length > 0) {
+      return refuse(
+        'ACCESS_MANAGE_FORBIDDEN',
+        'You can remove only the people you added.',
+        notTheirs.map((key) => key.slice(key.indexOf(':') + 1)),
+      )
+    }
+  }
+  if (!actorIsAdmin && removeUsers.includes(ctx.creator)) {
+    return refuse('ACCESS_MANAGE_FORBIDDEN', "A branch's owner can't be removed from it.", [
+      ctx.creator,
+    ])
+  }
+
+  const reserved = addGroups.filter((id) => isReservedGroup(id))
+  if (reserved.length > 0) {
+    return refuse('RESERVED_GROUP', 'Admins and reviewers already have access.', reserved)
+  }
+  const actorGroups: readonly string[] = actor.groups ?? []
+  const notYours = actorIsAdmin ? [] : addGroups.filter((id) => !actorGroups.includes(id))
+  if (notYours.length > 0) {
+    return refuse('GROUP_NOT_YOURS', 'You can add only groups you belong to.', notYours)
+  }
+  // An owner adding someone they removed allows them back; a member cannot.
+  const blocked = addUsers.filter((id) => {
+    const exclusion = access.excluded?.[id]
+    if (!exclusion) return false
+    return !(rights.canManage && (actorIsAdmin || !exclusion.byAdmin))
+  })
+  if (blocked.length > 0) {
+    return refuse('USER_EXCLUDED', 'Someone removed from this branch was added again.', blocked)
+  }
+
+  if (change.restricted === false) {
+    if (ctx.defaultAccess !== 'allow') {
+      return refuse('OPEN_NOT_ALLOWED', 'Branches on this site are open only to listed people.')
+    }
+    const wasOpen = !hasAccessList(access)
+    const next: BranchAccessControl = {
+      ...access,
+      allowedUsers: undefined,
+      allowedGroups: undefined,
+      entryMeta: undefined,
+      restricted: undefined,
+    }
+    return {
+      access: next,
+      changed: !wasOpen,
+      added: { users: [], groups: [] },
+      removed: { users: access.allowedUsers ?? [], groups: access.allowedGroups ?? [] },
+    }
+  }
+
+  const users = [...(access.allowedUsers ?? [])]
+  const groups = [...(access.allowedGroups ?? [])]
+  const nextMeta = { ...meta }
+  const excluded = { ...access.excluded }
+  const added = { users: [] as CanopyUserId[], groups: [] as CanopyGroupId[] }
+  const removed = { users: [] as CanopyUserId[], groups: [] as CanopyGroupId[] }
+  let changed = false
+
+  // The first share of an unlisted branch, or restricting it, keeps its owner on the list.
+  const restricting = !hasAccessList(access) && (adding || change.restricted === true)
+  if (restricting && (rights.isOwner || actorIsAdmin)) {
+    if (!isNobody(ctx.creator) && !access.excluded?.[ctx.creator] && !users.includes(ctx.creator)) {
+      users.push(ctx.creator)
+      nextMeta[entryKey('user', ctx.creator)] = { addedBy: actor.userId, addedAt: ctx.now }
+    }
+  }
+
+  for (const id of addUsers) {
+    if (excluded[id]) {
+      delete excluded[id]
+      changed = true
+    }
+    if (users.includes(id)) continue
+    users.push(id)
+    nextMeta[entryKey('user', id)] = { addedBy: actor.userId, addedAt: ctx.now }
+    added.users.push(id)
+  }
+  for (const id of addGroups) {
+    if (groups.includes(id)) continue
+    groups.push(id)
+    nextMeta[entryKey('group', id)] = { addedBy: actor.userId, addedAt: ctx.now }
+    added.groups.push(id)
+  }
+  for (const id of removeUsers) {
+    const at = users.indexOf(id)
+    if (at === -1) continue
+    users.splice(at, 1)
+    delete nextMeta[entryKey('user', id)]
+    removed.users.push(id)
+    // A member undoing their own add leaves no exclusion; an owner's or admin's removal does.
+    if (rights.canManage) excluded[id] = { by: actor.userId, at: ctx.now, byAdmin: actorIsAdmin }
+  }
+  for (const id of removeGroups) {
+    const at = groups.indexOf(id)
+    if (at === -1) continue
+    groups.splice(at, 1)
+    delete nextMeta[entryKey('group', id)]
+    removed.groups.push(id)
+  }
+  for (const id of unexclude) {
+    if (!excluded[id]) continue
+    delete excluded[id]
+    changed = true
+  }
+
+  const restricted = hasAccessList(access) || restricting || undefined
+  const addBy = change.addBy ?? access.addBy
+  changed ||=
+    added.users.length + added.groups.length + removed.users.length + removed.groups.length > 0 ||
+    users.length !== (access.allowedUsers?.length ?? 0) ||
+    restricted !== access.restricted ||
+    addBy !== access.addBy
+
+  return {
+    access: {
+      ...access,
+      allowedUsers: users.length > 0 ? users : undefined,
+      allowedGroups: groups.length > 0 ? groups : undefined,
+      restricted,
+      addBy,
+      excluded: Object.keys(excluded).length > 0 ? excluded : undefined,
+      entryMeta: Object.keys(nextMeta).length > 0 ? nextMeta : undefined,
+    },
+    changed,
+    added,
+    removed,
+  }
+}
+
+/**
+ * The ids of people who already work in this CMS: anyone a path permission names, every internal
+ * group's members, and every branch's creator and saving editors. Being on a branch's list is not
+ * enough, so adding someone never makes them searchable by other sharers.
+ */
+export function collectCmsUserIds(input: {
+  pathPermissions: readonly PathPermission[]
+  internalGroups: readonly { members: readonly CanopyUserId[] }[]
+  branches: readonly Pick<BranchMetadata, 'createdBy' | 'editors'>[]
+}): Set<CanopyUserId> {
+  const ids = new Set<CanopyUserId>()
+  for (const rule of input.pathPermissions) {
+    for (const level of [rule.read, rule.edit, rule.review]) {
+      for (const id of level?.allowedUsers ?? []) ids.add(id)
+    }
+  }
+  for (const group of input.internalGroups) for (const id of group.members) ids.add(id)
+  for (const branch of input.branches) {
+    ids.add(branch.createdBy)
+    for (const id of branch.editors ?? []) ids.add(id)
+  }
+  for (const id of ids) if (isNobody(id)) ids.delete(id)
+  return ids
+}
+
+/** What a viewer who may open the branch sees of its list: owners and admins see everything. */
+export function accessForViewer(
+  access: BranchAccessControl,
+  viewer: Pick<CanopyUser, 'userId' | 'groups'>,
+  rights: BranchSharingRights,
+  privileged: boolean,
+): BranchAccessControl {
+  const seen: BranchAccessControl = {
+    ...(access.allowedUsers && { allowedUsers: access.allowedUsers }),
+    ...(access.allowedGroups && { allowedGroups: access.allowedGroups }),
+    ...(access.managerOrAdminAllowed !== undefined && {
+      managerOrAdminAllowed: access.managerOrAdminAllowed,
+    }),
+    ...(access.restricted !== undefined && { restricted: access.restricted }),
+    ...(access.addBy && { addBy: access.addBy }),
+  }
+  if (privileged || rights.canManage) {
+    return {
+      ...seen,
+      ...(access.excluded && { excluded: access.excluded }),
+      ...(access.entryMeta && { entryMeta: access.entryMeta }),
+    }
+  }
+  const theirs = Object.entries(access.entryMeta ?? {}).filter(
+    ([, meta]) => meta.addedBy === viewer.userId,
+  )
+  return theirs.length > 0 ? { ...seen, entryMeta: Object.fromEntries(theirs) } : seen
+}

@@ -6,32 +6,23 @@ import { personName } from '../../auth/person-name'
 export interface BranchAccessListProps {
   users?: readonly string[]
   groups?: readonly string[]
-  /** ACL entries the server withheld from this viewer (`BranchListItem.withheldAccess`). */
-  withheldUsers?: number
-  withheldGroups?: number
   getUserMetadata: (userId: string) => Promise<UserSearchResult | null>
 }
 
 const count = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`
 
-/** The trailing count, after the names shown or standing alone. */
-const othersLabel = (people: number, groups: number, afterNames: boolean): string => {
-  if (afterNames) return `and ${count(people + groups, 'other', 'others')}`
-  if (groups === 0) return count(people, 'person', 'people')
-  if (people === 0) return count(groups, 'group', 'groups')
-  return `${count(people, 'person', 'people')} and ${count(groups, 'group', 'groups')}`
-}
+/** The trailing count of people the lookup couldn't name, after the names shown or standing alone. */
+const othersLabel = (people: number, afterNames: boolean): string =>
+  afterNames ? `and ${count(people, 'other', 'others')}` : count(people, 'person', 'people')
 
 /**
- * A branch's access list as one line of text: the people the viewer's lookup names, the groups
- * they may see, then "and N others" for the rest (docs/ux-guidelines.md, People). An unnamed
+ * A branch's access list as one line of text: the people the viewer's lookup names, its groups,
+ * then "and N others" for the people it couldn't name (docs/ux-guidelines.md, People). An unnamed
  * person is counted, not shown as "Name unavailable".
  */
 export function BranchAccessList({
   users = [],
   groups = [],
-  withheldUsers = 0,
-  withheldGroups = 0,
   getUserMetadata,
 }: BranchAccessListProps) {
   const usersKey = users.join('\n')
@@ -67,14 +58,11 @@ export function BranchAccessList({
   const named =
     result?.usersKey === usersKey && result.lookup === getUserMetadata ? result.named : null
 
-  if (users.length + groups.length + withheldUsers + withheldGroups === 0) return null
+  if (users.length + groups.length === 0) return null
 
-  const otherPeople = named ? users.length - named.length + withheldUsers : 0
+  const otherPeople = named ? users.length - named.length : 0
   const shown = [...(named ?? []).map((user) => personName(user.id, user.name) ?? ''), ...groups]
-  const others =
-    otherPeople + withheldGroups > 0
-      ? othersLabel(otherPeople, withheldGroups, shown.length > 0)
-      : ''
+  const others = otherPeople > 0 ? othersLabel(otherPeople, shown.length > 0) : ''
   return (
     <Text size="xs" c="dimmed" aria-busy={named === null || undefined}>
       {'Access: '}

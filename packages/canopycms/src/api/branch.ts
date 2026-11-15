@@ -1,11 +1,10 @@
 import path from 'node:path'
 import { z } from 'zod'
 
-import type { BranchAccessControl, BranchContext, BranchHold, BranchMetadata } from '../types'
+import type { BranchAddBy, BranchContext, BranchHold, BranchMetadata } from '../types'
 import { BranchWorkspaceManager, type ProvisionOutcome } from '../branch-workspace'
 import { BranchDirOccupiedError, BranchProvisioningBusyError } from '../branch-provisioning'
 import { deleteBranchWorkspace, type DeleteBranchWorkspaceOptions } from '../branch-delete'
-import { getBranchMetadataFileManager } from '../branch-metadata'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { isCreatorsRecentBranch } from './branch-create-window'
 import { defineEndpoint } from './route-builder'
@@ -89,11 +88,17 @@ export interface BranchListItem extends Omit<
    * archived non-base branch.
    */
   submitBlocked?: boolean
-  /**
-   * How many ACL entries {@link toBranchListItem} left out of `access` for a caller without the
-   * privileged user lookup. Absent for a privileged caller, who gets the whole list.
-   */
-  withheldAccess?: { users: number; groups: number }
+  /** What the viewer may do to the branch's access list (authorization/branch-sharing.ts). */
+  sharing?: {
+    isOwner: boolean
+    canAdd: boolean
+    canManage: boolean
+    /** The list decides who may open the branch, even when empty. */
+    restricted: boolean
+    /** No list is in force and the site default lets everyone who can sign in open it. */
+    openToEveryone: boolean
+    addBy: BranchAddBy
+  }
   /**
    * The commit a branch in review held when it was listed, which Approve and Request changes send
    * back to say what the reviewer saw (api/branch-review.ts). Only on a listing.
@@ -141,30 +146,45 @@ export type BranchDeleteResponse = ApiResponse<{
   cleanupWarning?: string
 }>
 
+/** One change's worth of ids; a list of a few hundred is already more than a person reviews. */
+const MAX_ACCESS_ENTRIES = 200
+const accessIdSchema = z.string().min(1).max(256)
+const accessEntriesSchema = z
+  .object({
+    users: z.array(accessIdSchema).max(MAX_ACCESS_ENTRIES).optional(),
+    groups: z.array(accessIdSchema).max(MAX_ACCESS_ENTRIES).optional(),
+  })
+  .strict()
+
 const createBranchBodySchema = z.object({
   branch: branchNameSchema,
   title: z.string().optional(),
   description: z.string().optional(),
-  access: z
-    .object({
-      allowedUsers: z.array(z.string()).optional(),
-      allowedGroups: z.array(z.string()).optional(),
-    })
-    .optional(),
+  access: z.object({ add: accessEntriesSchema.optional() }).strict().optional(),
 })
 
-const updateBranchAccessBodySchema = z.object({
-  allowedUsers: z.array(z.string()).optional(),
-  allowedGroups: z.array(z.string()).optional(),
-})
+const updateBranchAccessBodySchema = z
+  .object({
+    add: accessEntriesSchema.optional(),
+    remove: accessEntriesSchema.optional(),
+    restricted: z.boolean().optional(),
+    addBy: z.enum(['members', 'owner', 'admins']).optional(),
+    unexclude: z.array(accessIdSchema).max(MAX_ACCESS_ENTRIES).optional(),
+  })
+  .strict()
 
 import {
+  accessForViewer,
+  branchSharingRights,
+  hasAccessList,
   isPrivileged,
   isAdmin,
   loadPathPermissions,
   getBranchProtection,
   getBranchWriteProtection,
+  resolveBranchSharing,
 } from '../authorization'
+import { changeBranchAccess, initialBranchAccess } from './branch-access'
 import type { PathPermission } from '../config'
 import type { CanopyUser } from '../user'
 import { operatingStrategy } from '../operating-mode'
@@ -214,7 +234,8 @@ export interface CreateBranchBody {
   branch: string
   title?: string
   description?: string
-  access?: BranchMetadata['access']
+  /** People to share the new branch with at once, by the same rules as a later share. */
+  access?: { add?: { users?: string[]; groups?: string[] } }
 }
 
 /**
@@ -249,32 +270,6 @@ const resolveReadOnlyMirrorPath = (
 }
 
 /**
- * The ACL as `viewer` may see it. Without the privileged user lookup, a caller gets only the
- * entries naming them or their groups, which is all the editor's membership checks read, and a
- * count of the rest: the other ids name people that lookup keeps from them.
- */
-const accessForViewer = (
-  access: BranchAccessControl,
-  viewer: CanopyUser,
-): Pick<BranchListItem, 'access' | 'withheldAccess'> => {
-  if (isPrivileged(viewer.groups)) return { access }
-  const viewerGroups: readonly string[] = viewer.groups ?? []
-  const allowedUsers = access.allowedUsers?.filter((id) => id === viewer.userId)
-  const allowedGroups = access.allowedGroups?.filter((id) => viewerGroups.includes(id))
-  return {
-    access: {
-      ...access,
-      ...(allowedUsers && { allowedUsers }),
-      ...(allowedGroups && { allowedGroups }),
-    },
-    withheldAccess: {
-      users: (access.allowedUsers?.length ?? 0) - (allowedUsers?.length ?? 0),
-      groups: (access.allowedGroups?.length ?? 0) - (allowedGroups?.length ?? 0),
-    },
-  }
-}
-
-/**
  * A branch as `viewer` may see it, with server-computed protected-base-branch flags. Every
  * branch response outside the admin-only repairs goes through here. Reads config per call so
  * dev-mode refreshActiveBranch() updates are reflected.
@@ -285,6 +280,12 @@ export const toBranchListItem = (
   viewer: CanopyUser,
 ): BranchListItem => {
   const protection = getBranchWriteProtection(config, branch.name, branch.baseBranch, branch.status)
+  const access = branch.access ?? {}
+  const rights = branchSharingRights(viewer, branch, {
+    isProtected: protection.isProtected,
+    whoCanAdd: resolveBranchSharing(config).whoCanAdd,
+  })
+  const restricted = hasAccessList(access)
   // `review` names the reviewer, whom the editor has no use for. `keptOverGitHub` and
   // `rebaseFailure` can name files, which a viewer's path rules can hide; System Health reads
   // failures from the admin endpoint. The others are the worker's.
@@ -322,7 +323,15 @@ export const toBranchListItem = (
     hold,
     approveBlocked: (inReview && branch.submitUnfinished) || undefined,
     shortName: shortNameOf(config, branch.name),
-    ...accessForViewer(branch.access ?? {}, viewer),
+    access: accessForViewer(access, viewer, rights, isPrivileged(viewer.groups)),
+    sharing: {
+      isOwner: rights.isOwner,
+      canAdd: rights.canAdd,
+      canManage: rights.canManage,
+      restricted,
+      openToEveryone: !restricted && config.defaultBranchAccess === 'allow',
+      addBy: access.addBy ?? resolveBranchSharing(config).whoCanAdd,
+    },
     isProtected: protection.isProtected,
     readOnly: protection.readOnly,
     writeBlocked: protection.writeBlocked,
@@ -645,6 +654,16 @@ export const createBranchHandler = async (
       }
     }
 
+    const initialAccess = await initialBranchAccess(ctx, req.user, body.access?.add)
+    if (!initialAccess.ok) {
+      return {
+        ok: false,
+        status: initialAccess.refused.status,
+        error: initialAccess.refused.error,
+        code: initialAccess.refused.code,
+      }
+    }
+
     const manager = new BranchWorkspaceManager(ctx.services.config)
     let outcome: ProvisionOutcome
     try {
@@ -654,7 +673,7 @@ export const createBranchHandler = async (
         createdBy: req.user.userId,
         title: body.title,
         description: body.description,
-        access: body.access,
+        access: initialAccess.access,
       })
     } catch (err: unknown) {
       if (err instanceof BranchProvisioningBusyError) {
@@ -751,9 +770,9 @@ export const listBranchesHandler = async (
 }
 
 /**
- * The listing, with the profile of each listed branch's creator. Looked up only for branches the
- * requester may see, so it names no one they could not; the branch ACL's users stay behind the
- * privileged user lookup. A failed lookup costs the names, never the listing.
+ * The listing, with the profiles of each listed branch's creator and the people on its access
+ * list. Looked up only for branches the requester may open, whose list they may read, so it names
+ * no one they could not; profiles carry no email. A failed lookup costs the names, never the listing.
  */
 const branchListResponse = async (
   ctx: ApiContext,
@@ -766,7 +785,10 @@ const branchListResponse = async (
     try {
       users = await lookupUserProfiles(
         ctx.authPlugin,
-        branches.map((context) => context.branch.createdBy),
+        branches.flatMap((context) => [
+          context.branch.createdBy,
+          ...(context.branch.access?.allowedUsers ?? []),
+        ]),
       )
     } catch (error) {
       console.error('CanopyCMS: Failed to look up branch owners:', getErrorMessage(error))
@@ -955,96 +977,37 @@ const remoteCopiesOf = (
   deleteOnGitHub: () => syncDeleteRemoteBranch(ctx, branchContext),
 })
 
-export interface UpdateBranchAccessBody {
-  allowedUsers?: string[]
-  allowedGroups?: string[]
-}
+/** A change to who may open a branch; see `authorization/branch-sharing.ts` for each rule. */
+export type UpdateBranchAccessBody = z.infer<typeof updateBranchAccessBodySchema>
 
-/** @internal Exported for tests. */
-export const canModifyBranchAccess = (
-  user: CanopyUser,
-  branchContext: BranchContext,
-): { allowed: boolean; reason: string } => {
-  if (isAdmin(user.groups)) {
-    return { allowed: true, reason: 'admin' }
-  }
-
-  if (branchContext.branch.createdBy === user.userId) {
-    return { allowed: true, reason: 'creator' }
-  }
-
-  return { allowed: false, reason: 'not_authorized' }
-}
-
-/** @internal Exported for tests. */
+/**
+ * Applies a change to the branch's access list (api/branch-access.ts). Answers with the branch as
+ * the caller now sees it, whether or not anything had to change.
+ * @internal Exported for tests.
+ */
 export const updateBranchAccessHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
   params: z.infer<typeof branchParamSchema>,
-  body: z.infer<typeof updateBranchAccessBodySchema>,
+  body: UpdateBranchAccessBody,
 ): Promise<BranchListItemResponse> => {
-  const branchName = params.branch
-
-  const branchContext = await ctx.getBranchContext(branchName)
+  const branchContext = await ctx.getBranchContext(params.branch)
   if (!branchContext) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
-
-  // The protected base branch takes no ACL. Its content is read-only in prod and
-  // submit/delete are already blocked, but a base-branch ACL entry still feeds
-  // canPerformWorkflowAction's `allowed_by_acl` grant -- so writing one here
-  // would hand arbitrary users Withdraw rights on the base branch. Reject
-  // outright, consistent with the delete and submit rails.
-  const { isProtected } = getBranchProtection(
-    ctx.services.config,
-    branchContext.branch.name,
-    branchContext.branch.baseBranch,
-  )
-  if (isProtected) {
+  const outcome = await changeBranchAccess(ctx, req.user, branchContext, body)
+  if (!outcome.ok) {
     return {
       ok: false,
-      status: 403,
-      error: 'The base branch does not take an access list. Create a branch to manage access.',
+      status: outcome.refused.status,
+      error: outcome.refused.error,
+      code: outcome.refused.code,
     }
   }
-
-  const canModify = canModifyBranchAccess(req.user, branchContext)
-  if (!canModify.allowed) {
-    return {
-      ok: false,
-      status: 403,
-      error: 'You do not have permission to modify this branch',
-    }
-  }
-
-  // Build the access DELTA from only the keys the caller actually supplied —
-  // never spread branchContext.branch.access (a snapshot resolved before
-  // this handler acquired anything) wholesale. save()'s field-level merge
-  // (branch-metadata.ts) takes the incoming access object's keys over the
-  // freshly-reloaded on-disk ones, so a full stale spread here would
-  // silently revert any key a concurrent request changed via the OTHER key
-  // in the gap between this handler's getBranchContext() and its save()
-  // call. An omitted key must be ABSENT from this object (not merely
-  // undefined-valued) so save()'s spread-merge leaves the on-disk value
-  // untouched; a supplied `[]` still comes through and clears the field.
-  const newAccess: BranchAccessControl = {}
-  if (body.allowedUsers !== undefined) {
-    newAccess.allowedUsers = body.allowedUsers
-  }
-  if (body.allowedGroups !== undefined) {
-    newAccess.allowedGroups = body.allowedGroups
-  }
-
-  // Update metadata (automatically invalidates registry cache)
-  const metadata = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
-  const updated = await metadata.save({
-    branch: { access: newAccess },
-  })
-
   return {
     ok: true,
     status: 200,
-    data: { branch: toBranchListItem(ctx.services.config, updated.branch, req.user) },
+    data: { branch: toBranchListItem(ctx.services.config, outcome.branch, req.user) },
   }
 }
 
@@ -1100,8 +1063,7 @@ const deleteBranch = defineEndpoint({
 /**
  * No 'writableBranch' guard: this rewrites branch.json's ACL, not branch
  * content, so a submitted branch's ACL stays editable during review. The base
- * branch is a different matter and IS refused -- the handler rejects protected
- * branches up front, because a base-branch ACL entry feeds
+ * branch is refused (api/branch-access.ts), because a base-branch ACL entry feeds
  * canPerformWorkflowAction's `allowed_by_acl` grant and would confer Withdraw
  * rights there.
  */

@@ -49,6 +49,7 @@ export type {
   // Editor
   CanopyEditorConfig,
   // Config types
+  BranchSharingConfig,
   DefaultBranchAccess,
   DefaultPathAccess,
   DefaultPathAccessLevel,

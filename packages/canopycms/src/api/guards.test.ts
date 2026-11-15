@@ -151,7 +151,28 @@ describe('executeGuards', () => {
 
       expect(result.ok).toBe(false)
       if (!result.ok) {
-        expect(result.response.status).toBe(403)
+        expect(result.response).toMatchObject({
+          status: 403,
+          code: 'BRANCH_ACCESS_DENIED',
+          error: "You don't have access to this branch.",
+        })
+      }
+    })
+
+    it('says when a lockdown is why the caller is refused', async () => {
+      const bc = createMockBranchContext({
+        branchName: 'locked',
+        access: { managerOrAdminAllowed: true },
+      })
+      const ctx = createMockApiContext({ branchContext: bc, allowBranchAccess: false })
+
+      const result = await executeGuards(['branchAccess'] as const, ctx, makeReq(), {
+        branch: 'locked',
+      })
+
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.response).toMatchObject({ status: 403, code: 'BRANCH_LOCKED_DOWN' })
       }
     })
 

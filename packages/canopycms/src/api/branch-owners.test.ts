@@ -91,7 +91,7 @@ const userIds = (res: Awaited<ReturnType<typeof list>>) =>
   (res.data?.users ?? []).map((u) => u.id).sort()
 
 describe('branch list names the owners of the branches it lists', () => {
-  it("names the owner of each branch the requester can see, but no branch's ACL users", async () => {
+  it('names the owner and access-list users of each branch the requester can open', async () => {
     const res = await list(editor)
 
     expect(res.ok).toBe(true)
@@ -101,7 +101,7 @@ describe('branch list names the owners of the branches it lists', () => {
       'feature/shared-user',
       'main',
     ])
-    expect(userIds(res)).toEqual(['editor1', 'group-sharer', 'user-sharer'])
+    expect(userIds(res)).toEqual(['acl-colleague', 'editor1', 'group-sharer', 'user-sharer'])
     expect(res.data?.users).toContainEqual({
       id: 'editor1',
       name: 'Name of editor1',
@@ -114,7 +114,7 @@ describe('branch list names the owners of the branches it lists', () => {
     const res = await list(editor)
 
     const asked = getUsersMetadata.mock.calls.flatMap(([ids]) => ids)
-    for (const hidden of ['hidden-owner', 'hidden-colleague', 'acl-colleague']) {
+    for (const hidden of ['hidden-owner', 'hidden-colleague']) {
       expect(asked).not.toContain(hidden)
       expect(userIds(res)).not.toContain(hidden)
     }
@@ -123,7 +123,14 @@ describe('branch list names the owners of the branches it lists', () => {
   it('names the owner of every branch for a requester who sees them all', async () => {
     const res = await list(admin)
 
-    expect(userIds(res)).toEqual(['editor1', 'group-sharer', 'hidden-owner', 'user-sharer'])
+    expect(userIds(res)).toEqual([
+      'acl-colleague',
+      'editor1',
+      'group-sharer',
+      'hidden-colleague',
+      'hidden-owner',
+      'user-sharer',
+    ])
   })
 
   it('never carries an email, for any requester', async () => {
@@ -157,7 +164,7 @@ describe('branch list names the owners of the branches it lists', () => {
 
     const res = await list(editor)
 
-    expect(userIds(res)).toEqual(['editor1', 'group-sharer'])
+    expect(userIds(res)).toEqual(['acl-colleague', 'editor1', 'group-sharer'])
   })
 
   it('still lists the branches when the lookup fails', async () => {
@@ -182,26 +189,12 @@ describe('branch list names the owners of the branches it lists', () => {
   })
 })
 
-describe('branch list sends the ACL only to a requester with the privileged user lookup', () => {
+describe('branch list sends each branch its whole access list, and no other', () => {
   const byName = (res: Awaited<ReturnType<typeof list>>, name: string) =>
     res.data?.branches.find((b) => b.name === name)
 
-  it('sends a non-privileged requester only the entries naming it, and a count of the rest', async () => {
+  it('sends anyone who may open a branch every entry on its list, never a hidden branch', async () => {
     const res = await list(editor)
-
-    expect(byName(res, 'feature/shared-user')?.access.allowedUsers).toEqual(['editor1'])
-    expect(byName(res, 'feature/shared-user')?.withheldAccess).toEqual({ users: 1, groups: 0 })
-    expect(byName(res, 'feature/shared-group')?.access.allowedGroups).toEqual(['writers'])
-    expect(byName(res, 'feature/shared-group')?.withheldAccess).toEqual({ users: 0, groups: 1 })
-    const wire = JSON.stringify(res.data)
-    for (const withheld of ['acl-colleague', 'other-team', 'hidden-colleague']) {
-      expect(wire).not.toContain(withheld)
-    }
-    expect(wire).not.toContain('@')
-  })
-
-  it('sends a privileged requester the whole ACL, with nothing withheld', async () => {
-    const res = await list(admin)
 
     expect(byName(res, 'feature/shared-user')?.access.allowedUsers).toEqual([
       'editor1',
@@ -211,7 +204,16 @@ describe('branch list sends the ACL only to a requester with the privileged user
       'writers',
       'other-team',
     ])
+    const wire = JSON.stringify(res.data)
+    for (const hidden of ['hidden-owner', 'hidden-colleague']) {
+      expect(wire).not.toContain(hidden)
+    }
+    expect(wire).not.toContain('@')
+  })
+
+  it('sends a privileged requester the list of every branch', async () => {
+    const res = await list(admin)
+
     expect(byName(res, 'feature/hidden')?.access.allowedUsers).toEqual(['hidden-colleague'])
-    expect(byName(res, 'feature/shared-user')?.withheldAccess).toBeUndefined()
   })
 })

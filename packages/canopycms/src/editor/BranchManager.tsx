@@ -75,9 +75,6 @@ export interface BranchSummary {
     users?: string[]
     groups?: string[]
     managerOrAdminAllowed?: boolean
-    /** Entries the server withheld from this viewer; see `BranchListItem.withheldAccess`. */
-    withheldUsers?: number
-    withheldGroups?: number
   }
   pullRequestUrl?: string
   pullRequestNumber?: number
@@ -611,8 +608,6 @@ const BranchCard: React.FC<BranchCardProps> = ({
             <BranchAccessList
               users={b.access.users}
               groups={b.access.groups}
-              withheldUsers={b.access.withheldUsers}
-              withheldGroups={b.access.withheldGroups}
               getUserMetadata={onGetOwnerMetadata ?? noUserLookup}
             />
           )}

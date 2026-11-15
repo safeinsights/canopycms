@@ -23,6 +23,29 @@ const baseContext: BranchContext = {
 }
 
 describe('branch access', () => {
+  it('lets a restricted empty list admit only admins and reviewers, under either default', () => {
+    const restricted: BranchContext = {
+      ...baseContext,
+      branch: { ...baseContext.branch, access: { restricted: true } },
+    }
+    for (const defaultAccess of ['allow', 'deny'] as const) {
+      expect(
+        checkBranchAccessWithDefault(
+          restricted,
+          { type: 'authenticated', userId: 'user-1', groups: [] },
+          defaultAccess,
+        ),
+      ).toEqual({ allowed: false, reason: 'denied_by_acl' })
+      expect(
+        checkBranchAccessWithDefault(
+          restricted,
+          { type: 'authenticated', userId: 'u', groups: [RESERVED_GROUPS.REVIEWERS] },
+          defaultAccess,
+        ).allowed,
+      ).toBe(true)
+    }
+  })
+
   it('allows Admins', () => {
     const res = checkBranchAccessWithDefault(baseContext, {
       type: 'authenticated',

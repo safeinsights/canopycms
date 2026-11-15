@@ -234,8 +234,8 @@ filled: other badges, icons and indicators take their colour's light variant.
 
 - Show a person's name or a fallback ("Name unavailable"), never a raw user id: an id is an
   internal name.
-- A branch card's access list shows the names the viewer can resolve, then "and N others". A
-  caller without the privileged lookup never receives `access.allowedUsers` ids.
+- A branch card's access list shows the names the viewer can resolve, then "and N others".
+  Anyone who may open a branch receives its whole list; only admins and reviewers see emails.
 - An avatar beside a name has empty `alt`. One showing only initials is hidden from assistive
   tech, with the person's name as visually hidden text.
 
