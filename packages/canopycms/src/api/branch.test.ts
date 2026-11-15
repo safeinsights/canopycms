@@ -515,6 +515,7 @@ describe('branch api', () => {
     const createAgainst = async (
       existing: { createdBy: string; ageMs: number },
       userId: string,
+      mayOpen = true,
     ) => {
       const registry = createMockRegistry([])
       registry.getByKey.mockResolvedValue(
@@ -526,7 +527,10 @@ describe('branch api', () => {
       )
       const ctx = createMockApiContext({
         branchContext: createMockBranchContext({ branchName: 'main', createdBy: 'system' }),
-        services: { registry: registry as unknown as BranchRegistry },
+        services: {
+          registry: registry as unknown as BranchRegistry,
+          checkBranchAccess: vi.fn().mockReturnValue({ allowed: mayOpen, reason: 'denied_by_acl' }),
+        },
       })
       return createBranch(
         ctx,
@@ -541,6 +545,12 @@ describe('branch api', () => {
       expect(res.status).toBe(200)
       expect(res.data?.branch.name).toBe('canopycms/local/feature-test')
       expect(res.data?.branch.createdBy).toBe('u1')
+    })
+
+    it('answers a creator who may no longer open the branch with a 409, not the branch', async () => {
+      const res = await createAgainst({ createdBy: 'u1', ageMs: 60_000 }, 'u1', false)
+      expect(res.status).toBe(409)
+      expect(res.data).toBeUndefined()
     })
 
     it('answers a different user with a 409, however recent the branch', async () => {

@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { AuthPlugin } from '../auth/plugin'
 import { RESERVED_GROUPS } from '../authorization'
@@ -15,7 +15,7 @@ import type { BranchName } from '../paths/types'
 import { SYSTEM_USER_ID } from '../system-users'
 import type { BranchContext, BranchMetadata } from '../types'
 import type { CanopyUser } from '../user'
-import { changeBranchAccess, initialBranchAccess } from './branch-access'
+import { changeBranchAccess, initialBranchAccess, setBranchAccessLogSink } from './branch-access'
 import { updateBranchAccessHandler, type UpdateBranchAccessBody } from './branch'
 import type { ApiContext } from './types'
 
@@ -32,7 +32,7 @@ let baseRoot: string
 let contexts: BranchContext[]
 let config: CanopyConfig
 let knownUsers: Set<string>
-let logSpy: MockInstance<typeof console.log>
+let auditLines: string[]
 
 const addBranch = async (name: string, fields: Partial<BranchMetadata> = {}) => {
   const branchRoot = path.join(baseRoot, sanitizeBranchName(name))
@@ -82,7 +82,8 @@ beforeEach(async () => {
   contexts = []
   config = { mode: 'dev', defaultBaseBranch: 'main', defaultBranchAccess: 'deny' } as CanopyConfig
   knownUsers = new Set(['owner', 'member', 'pal', 'colleague', 'outsider', 'admin'])
-  logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+  auditLines = []
+  setBranchAccessLogSink((line) => auditLines.push(line))
   // 'colleague' works in this CMS: they created a branch. 'outsider' only has an account.
   await addBranch('feature/colleagues-work', { createdBy: 'colleague', editors: ['pal'] })
 })
@@ -109,9 +110,7 @@ describe('PATCH /:branch/access', () => {
     const saved = await onDisk(context)
     expect(saved?.access).toMatchObject({ restricted: true, allowedUsers: ['owner', 'colleague'] })
     expect(saved?.access.entryMeta?.['user:colleague']?.addedBy).toBe('owner')
-    const audit = logSpy.mock.calls
-      .map(([line]) => String(line))
-      .find((l) => l.includes('branch-access'))
+    const audit = auditLines.find((l) => l.includes('branch-access'))
     expect(JSON.parse(audit ?? '{}')).toMatchObject({
       event: 'branch-access',
       branch: 'feature/x',
@@ -230,13 +229,13 @@ describe('PATCH /:branch/access', () => {
     const context = await addBranch('feature/x')
     await patch(owner, 'feature/x', { add: { users: ['colleague'] } })
     const first = await onDisk(context)
-    logSpy.mockClear()
+    auditLines = []
 
     const again = await patch(owner, 'feature/x', { add: { users: ['colleague'] } })
 
     expect(again.ok).toBe(true)
     expect(await onDisk(context)).toEqual(first)
-    expect(logSpy.mock.calls.some(([line]) => String(line).includes('branch-access'))).toBe(false)
+    expect(auditLines).toEqual([])
   })
 
   it('keeps both of two concurrent shares', async () => {
@@ -273,15 +272,44 @@ describe('PATCH /:branch/access', () => {
 })
 
 describe('PATCH /:branch/access, round-one cases', () => {
-  it('scope-checks every requested id, even one the copy it started from already lists', async () => {
-    await addBranch('feature/x', {
+  it('treats re-adding someone already listed as done, whoever first added them', async () => {
+    const context = await addBranch('feature/x', {
       access: { restricted: true, allowedUsers: ['owner', 'outsider'] },
     })
+    const before = await onDisk(context)
 
-    expect(await patch(owner, 'feature/x', { add: { users: ['outsider'] } })).toMatchObject({
-      status: 403,
-      code: 'USER_OUT_OF_SCOPE',
+    expect((await patch(owner, 'feature/x', { add: { users: ['outsider'] } })).ok).toBe(true)
+    expect(await onDisk(context)).toEqual(before)
+  })
+
+  it('refuses an id the request never scope-checked because its copy already listed it', async () => {
+    const context = await addBranch('feature/x', {
+      access: { restricted: true, allowedUsers: ['owner'] },
     })
+    const stale = {
+      ...context,
+      branch: {
+        ...context.branch,
+        access: { restricted: true, allowedUsers: ['owner', 'outsider'] },
+      },
+    }
+
+    const res = await changeBranchAccess(ctx(), owner, stale, { add: { users: ['outsider'] } })
+
+    expect(res).toMatchObject({ ok: false, refused: { code: 'USER_OUT_OF_SCOPE' } })
+    expect((await onDisk(context))?.access.allowedUsers).toEqual(['owner'])
+  })
+
+  it('refuses excluding an id the sign-in provider does not know', async () => {
+    const context = await addBranch('feature/x', {
+      access: { restricted: true, allowedUsers: ['owner'] },
+    })
+
+    expect(await patch(owner, 'feature/x', { remove: { users: ['made-up'] } })).toMatchObject({
+      status: 400,
+      code: 'USER_NOT_FOUND',
+    })
+    expect((await onDisk(context))?.access.excluded).toBeUndefined()
   })
 
   it('shuts out someone an owner removed even when a group on the list holds them', async () => {

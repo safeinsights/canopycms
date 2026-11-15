@@ -83,6 +83,12 @@ const branchMetadataShape = {
           z.object({ by: z.string(), at: z.string(), byAdmin: z.boolean() }).passthrough(),
         )
         .optional(),
+      excludedGroups: z
+        .record(
+          z.string(),
+          z.object({ by: z.string(), at: z.string(), byAdmin: z.boolean() }).passthrough(),
+        )
+        .optional(),
       addBy: enumOf<BranchAddBy>({
         members: 'members',
         owner: 'owner',

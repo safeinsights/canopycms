@@ -277,6 +277,29 @@ describe('applyAccessChange: exclusions and opening', () => {
     expect(rights(groupMember, branch(access))).toMatchObject({ isMember: false, canAdd: false })
   })
 
+  it('keeps a member from adding back a group an owner removed, but lets the owner', () => {
+    const removed = accessOf(apply(owner, shared, { remove: { groups: ['team'] } }))
+    expect(removed.excludedGroups?.team).toMatchObject({ by: 'owner', byAdmin: false })
+    const viaMember = { ...removed, allowedUsers: ['owner', 'gm'] }
+    expect(codeOf(apply(groupMember, viaMember, { add: { groups: ['team'] } }))).toBe(
+      'GROUP_EXCLUDED',
+    )
+    const back = apply(owner, removed, { add: { groups: ['writers'] } })
+    expect('refusal' in back).toBe(false)
+  })
+
+  it('caps how many exclusions one branch holds', () => {
+    const many = Object.fromEntries(
+      Array.from({ length: 500 }, (_, i) => [
+        `gone-${i}`,
+        { by: 'owner', at: 't', byAdmin: false },
+      ]),
+    )
+    expect(
+      codeOf(apply(owner, { ...shared, excluded: many }, { remove: { users: ['member'] } })),
+    ).toBe('ACCESS_CHANGE_INVALID')
+  })
+
   it('refuses opening a branch together with any other change', () => {
     for (const change of [
       { restricted: false, addBy: 'owner' as const },

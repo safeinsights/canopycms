@@ -124,6 +124,7 @@ export type BranchAccessRefusalCode =
   | 'ACCESS_ADD_FORBIDDEN'
   | 'ACCESS_MANAGE_FORBIDDEN'
   | 'USER_EXCLUDED'
+  | 'GROUP_EXCLUDED'
   | 'GROUP_NOT_YOURS'
   | 'RESERVED_GROUP'
   | 'OPEN_NOT_ALLOWED'
@@ -140,10 +141,10 @@ export interface BranchAccessChangeResult {
   changed: boolean
   added: { users: CanopyUserId[]; groups: CanopyGroupId[] }
   removed: { users: CanopyUserId[]; groups: CanopyGroupId[] }
-  /** Exclusions lifted, by an unexclude or by an owner adding the person back. */
-  unexcluded: CanopyUserId[]
-  /** Exclusions this change recorded. */
-  excluded: CanopyUserId[]
+  /** Exclusions lifted, by an unexclude or by an owner adding the person or group back: user ids, and groups as `group:<id>`. */
+  unexcluded: string[]
+  /** Exclusions this change recorded, in the same form. */
+  excluded: string[]
   /** Set only when the change moved who may add people. */
   addBy?: BranchAddBy
 }
@@ -163,6 +164,13 @@ const refuse = (
 ): { refusal: BranchAccessRefusal } => ({ refusal: { code, message, ...(ids && { ids }) } })
 
 const unique = <T>(values: readonly T[] | undefined): T[] => [...new Set(values ?? [])]
+
+/** A map's own entry for `key`, never an inherited property such as `constructor`. */
+const ownEntry = <T>(map: Record<string, T> | undefined, key: string): T | undefined =>
+  map && Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined
+
+/** Exclusions one branch may hold, so its branch.json and every listing of it stay small. */
+const MAX_EXCLUSIONS = 500
 
 /**
  * `access` with `change` applied by `ctx.actor`, or why it may not be. Applying a change already in
@@ -260,6 +268,17 @@ export function applyAccessChange(
   if (notYours.length > 0) {
     return refuse('GROUP_NOT_YOURS', 'You can add only groups you belong to.', notYours)
   }
+  const blockedGroups = addGroups.filter((id) => {
+    const exclusion = ownEntry(access.excludedGroups, id)
+    return !!exclusion && !(rights.canManage && (actorIsAdmin || !exclusion.byAdmin))
+  })
+  if (blockedGroups.length > 0) {
+    return refuse(
+      'GROUP_EXCLUDED',
+      'A group removed from this branch was added again.',
+      blockedGroups,
+    )
+  }
   // An owner adding someone they removed allows them back; a member cannot.
   const blocked = addUsers.filter((id) => {
     const exclusion = exclusionOf(id)
@@ -296,10 +315,11 @@ export function applyAccessChange(
   const groups = [...(access.allowedGroups ?? [])]
   const nextMeta = { ...meta }
   const excluded = { ...access.excluded }
+  const excludedGroups = { ...access.excludedGroups }
   const added = { users: [] as CanopyUserId[], groups: [] as CanopyGroupId[] }
   const removed = { users: [] as CanopyUserId[], groups: [] as CanopyGroupId[] }
-  const unexcluded: CanopyUserId[] = []
-  const newlyExcluded: CanopyUserId[] = []
+  const unexcluded: string[] = []
+  const newlyExcluded: string[] = []
   const isExcluded = (id: CanopyUserId) => Object.prototype.hasOwnProperty.call(excluded, id)
   let changed = false
 
@@ -323,6 +343,10 @@ export function applyAccessChange(
     added.users.push(id)
   }
   for (const id of addGroups) {
+    if (ownEntry(excludedGroups, id)) {
+      delete excludedGroups[id]
+      unexcluded.push(entryKey('group', id))
+    }
     if (groups.includes(id)) continue
     groups.push(id)
     nextMeta[entryKey('group', id)] = { addedBy: actor.userId, addedAt: ctx.now }
@@ -348,6 +372,16 @@ export function applyAccessChange(
     groups.splice(at, 1)
     delete nextMeta[entryKey('group', id)]
     removed.groups.push(id)
+    if (rights.canManage && !ownEntry(excludedGroups, id)) {
+      excludedGroups[id] = { by: actor.userId, at: ctx.now, byAdmin: actorIsAdmin }
+      newlyExcluded.push(entryKey('group', id))
+    }
+  }
+  if (Object.keys(excluded).length + Object.keys(excludedGroups).length > MAX_EXCLUSIONS) {
+    return refuse(
+      'ACCESS_CHANGE_INVALID',
+      'Too many people and groups have been removed from this branch. Ask an admin to tidy its list.',
+    )
   }
   for (const id of unexclude) {
     if (!isExcluded(id)) continue
@@ -372,6 +406,7 @@ export function applyAccessChange(
       restricted,
       addBy,
       excluded: Object.keys(excluded).length > 0 ? excluded : undefined,
+      excludedGroups: Object.keys(excludedGroups).length > 0 ? excludedGroups : undefined,
       entryMeta: Object.keys(nextMeta).length > 0 ? nextMeta : undefined,
     },
     changed,
@@ -428,6 +463,7 @@ export function accessForViewer(
     return {
       ...seen,
       ...(access.excluded && { excluded: access.excluded }),
+      ...(access.excludedGroups && { excludedGroups: access.excludedGroups }),
       ...(access.entryMeta && { entryMeta: access.entryMeta }),
     }
   }

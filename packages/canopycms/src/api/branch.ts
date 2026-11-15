@@ -711,7 +711,10 @@ const existingBranchResponse = (
         `"${shortNameOf(ctx.services.config, existing.branch.name)}". Choose a different name.`,
     )
   }
-  if (isCreatorsRecentBranch(existing.branch, req.user.userId)) {
+  if (
+    isCreatorsRecentBranch(existing.branch, req.user.userId) &&
+    ctx.services.checkBranchAccess(existing, req.user).allowed
+  ) {
     return {
       ok: true,
       status: 200,

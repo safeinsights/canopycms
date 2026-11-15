@@ -52,8 +52,8 @@ const fromRefusal = (refusal: BranchAccessRefusal): AccessRefused =>
 
 /** Thrown inside the branch.json lock to abandon the write; carries the refusal out. */
 class AccessChangeRefusedError extends Error {
-  constructor(readonly refusal: BranchAccessRefusal) {
-    super(refusal.message)
+  constructor(readonly refused: AccessRefused) {
+    super(refused.error)
   }
 }
 
@@ -73,6 +73,16 @@ async function loadCmsUserIds(ctx: ApiContext): Promise<Set<CanopyUserId>> {
   })
 }
 
+/** The ids the sign-in provider does not know; none when no auth plugin can say. */
+async function unknownUsers(
+  ctx: ApiContext,
+  userIds: readonly CanopyUserId[],
+): Promise<CanopyUserId[]> {
+  if (userIds.length === 0 || !ctx.authPlugin) return []
+  const found = await lookupUsersMetadata(ctx.authPlugin, userIds)
+  return userIds.filter((id) => !found.get(id))
+}
+
 /**
  * Refuses users the sign-in provider does not know, and, for anyone but an admin, users outside
  * the people they may find. Checking here, not only in the people finder, stops an id learned
@@ -84,12 +94,9 @@ async function checkUsersToAdd(
   userIds: readonly CanopyUserId[],
 ): Promise<AccessRefused | null> {
   if (userIds.length === 0) return null
-  if (ctx.authPlugin) {
-    const found = await lookupUsersMetadata(ctx.authPlugin, userIds)
-    const unknown = userIds.filter((id) => !found.get(id))
-    if (unknown.length > 0) {
-      return refused(400, 'USER_NOT_FOUND', 'Some of these people could not be found.', unknown)
-    }
+  const unknown = await unknownUsers(ctx, userIds)
+  if (unknown.length > 0) {
+    return refused(400, 'USER_NOT_FOUND', 'Some of these people could not be found.', unknown)
   }
   if (isAdmin(actor.groups)) return null
   const cmsUsers = await loadCmsUserIds(ctx)
@@ -199,11 +206,24 @@ export async function changeBranchAccess(
   // A dry run first, so a change the rules refuse costs no user lookup and no lock.
   const dryRun = apply(context.branch)
   if ('refusal' in dryRun) return { ok: false, refused: fromRefusal(dryRun.refusal) }
-  // Every requested id, not only the dry run's additions: the list on disk may differ from the
-  // copy the dry run read, and an id added there must have passed the same check.
-  const requested = [...new Set(change.add?.users ?? [])].filter((id) => id !== actor.userId)
-  const scope = await checkUsersToAdd(ctx, actor, requested)
+  // Ids already listed are a no-op and skip the check. The list on disk may have dropped one
+  // since; an id added there that this check never saw is refused inside the lock.
+  const listed = new Set(context.branch.access.allowedUsers ?? [])
+  const checked = new Set(
+    (change.add?.users ?? []).filter((id) => id !== actor.userId && !listed.has(id)),
+  )
+  const scope = await checkUsersToAdd(ctx, actor, [...checked])
   if (scope) return { ok: false, refused: scope }
+  // An owner's removal of someone not on the list records an exclusion, so the id must be a real
+  // person, never an arbitrary string.
+  const unlisted = (change.remove?.users ?? []).filter((id) => !listed.has(id))
+  const unknown = await unknownUsers(ctx, unlisted)
+  if (unknown.length > 0) {
+    return {
+      ok: false,
+      refused: refused(400, 'USER_NOT_FOUND', 'Some of these people could not be found.', unknown),
+    }
+  }
 
   const metadata = getBranchMetadataFileManager(context.branchRoot, context.baseRoot)
   // The last attempt's verdict against the list on disk: an OCC retry re-applies the change.
@@ -217,15 +237,24 @@ export async function changeBranchAccess(
       if (!existing) return null
       outcome.current = existing.branch
       const applied = apply(existing.branch)
-      if ('refusal' in applied) throw new AccessChangeRefusedError(applied.refusal)
+      if ('refusal' in applied) throw new AccessChangeRefusedError(fromRefusal(applied.refusal))
+      const unchecked = applied.added.users.filter((id) => id !== actor.userId && !checked.has(id))
+      if (unchecked.length > 0 && !isAdmin(actor.groups)) {
+        throw new AccessChangeRefusedError(
+          refused(
+            403,
+            'USER_OUT_OF_SCOPE',
+            'The list changed while this was being saved. Try again.',
+            unchecked,
+          ),
+        )
+      }
       outcome.applied = applied.changed ? applied : null
       return applied.changed ? { branch: { access: applied.access } } : null
     })
     saved = written?.branch
   } catch (err: unknown) {
-    if (err instanceof AccessChangeRefusedError) {
-      return { ok: false, refused: fromRefusal(err.refusal) }
-    }
+    if (err instanceof AccessChangeRefusedError) return { ok: false, refused: err.refused }
     throw err
   }
 
@@ -262,13 +291,25 @@ export async function initialBranchAccess(
   return { ok: true, access: applied.access }
 }
 
-/** One line per change, for the administrator: who changed which branch's list, and how. */
+const defaultAccessLogSink = (line: string): void => canopyLog(line)
+let accessLogSink = defaultAccessLogSink
+
+/**
+ * Replace where access-change lines go; no argument restores `canopyLog`. The test setup silences
+ * them, as it does provisioning lines.
+ * @internal Exported for tests.
+ */
+export function setBranchAccessLogSink(next?: (line: string) => void): void {
+  accessLogSink = next ?? defaultAccessLogSink
+}
+
+/** One line per change, printed unconditionally: who changed which branch's list, and how. */
 function logAccessChange(
   branch: string,
   actor: CanopyUserId,
   result: BranchAccessChangeResult,
 ): void {
-  canopyLog(
+  accessLogSink(
     JSON.stringify({
       event: 'branch-access',
       branch,
