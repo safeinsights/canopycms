@@ -112,6 +112,10 @@ const row = (name: string) => {
   return found
 }
 const status = () => screen.getByTestId('share-status')
+/** `text` shows in the status line and is what the live region announced, word for word. */
+const said = (text: string) =>
+  within(screen.getByTestId('share-status-line')).queryByText(text) !== null &&
+  status().textContent === text
 const loaded = () => screen.findAllByText(/Ben Ortiz/)
 const footerClose = () =>
   screen.getAllByRole('button', { name: 'Close' }).find((button) => button.textContent === 'Close')!
@@ -737,7 +741,7 @@ describe('ShareBranchDialog: removing and staging', () => {
     expect(within(row('Pat Alvarez')).getByText('Removed by you')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Allow again: Pat Alvarez' }))
 
-    expect(screen.getByText('Pat Alvarez will be added back.')).toBeTruthy()
+    expect(said('Pat Alvarez will be added back.')).toBe(true)
     expect(within(row('Pat Alvarez')).getByText(/Unsaved/)).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Removed (1)' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
@@ -765,9 +769,12 @@ describe('ShareBranchDialog: removing and staging', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Removed (1)' }))
     fireEvent.click(screen.getByRole('button', { name: 'Allow again: Ops' }))
 
-    expect(
-      screen.getByText('Ops will be allowed again, but not added back to the list.'),
-    ).toBeTruthy()
+    expect(said('Ops will be allowed again, but not added back to the list.')).toBe(true)
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(screen.getByTestId('share-status-line')).getByRole('button', { name: 'Undo' }),
+      ),
+    )
     fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
     await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(1))
     expect(api.branches.updateAccess.mock.calls[0][1]).toEqual({ unexclude: { groups: ['ops'] } })
@@ -795,13 +802,13 @@ describe('ShareBranchDialog: removing and staging', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Removed (1)' }))
     fireEvent.click(screen.getByRole('button', { name: 'Allow again: Pat Alvarez' }))
 
-    expect(screen.getByText('Pat Alvarez will be able to open this branch again.')).toBeTruthy()
+    expect(said('Pat Alvarez will be able to open this branch again.')).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
     await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(1))
     expect(api.branches.updateAccess.mock.calls[0][1]).toEqual({ unexclude: { users: ['pat'] } })
   })
 
-  it('focuses the people input once the last removed entry is allowed again', async () => {
+  it("focuses the restored row's Remove once someone is allowed back onto the list", async () => {
     setup({
       data: access({
         excluded: [
@@ -820,7 +827,11 @@ describe('ShareBranchDialog: removing and staging', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Allow again: Pat Alvarez' }))
 
-    await waitFor(() => expect(document.activeElement).toBe(picker()))
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole('button', { name: 'Remove Pat Alvarez' }),
+      ),
+    )
   })
 
   it('hides "Removed (n)" from a member', async () => {
@@ -947,7 +958,7 @@ describe("ShareBranchDialog: general access on an 'allow' site", () => {
     fireEvent.click(screen.getByRole('button', { name: 'Removed (1)' }))
 
     fireEvent.click(screen.getByRole('button', { name: 'Allow again: Pat Alvarez' }))
-    expect(screen.getByText('Pat Alvarez will be added back.')).toBeTruthy()
+    expect(said('Pat Alvarez will be added back.')).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
 
     await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(1))
@@ -1362,10 +1373,13 @@ describe('ShareBranchDialog: states', () => {
 
     const failed = await screen.findByTestId('share-copy-failed')
     expect(failed.textContent).toContain("Couldn't copy the link.")
-    expect(
-      (within(failed).getByRole('textbox', { name: 'Link to this branch' }) as HTMLInputElement)
-        .value,
-    ).toMatch(/\?branch=spring$/)
+    const field = within(failed).getByRole('textbox', {
+      name: 'Link to this branch',
+    }) as HTMLInputElement
+    expect(field.value).toMatch(/\?branch=spring$/)
+    // Focused, with the address selected, ready to copy by hand.
+    await waitFor(() => expect(document.activeElement).toBe(field))
+    expect(field.selectionEnd! - field.selectionStart!).toBe(field.value.length)
   })
 })
 
@@ -1391,7 +1405,7 @@ describe("ShareBranchDialog: a 'deny' site", () => {
     expect(await screen.findByRole('radiogroup', { name: 'Who can add people' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Removed (1)' }))
     fireEvent.click(screen.getByRole('button', { name: 'Allow again: Pat Alvarez' }))
-    expect(screen.getByText('Pat Alvarez will be added back.')).toBeTruthy()
+    expect(said('Pat Alvarez will be added back.')).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
     await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(1))
     expect(api.branches.updateAccess.mock.calls[0][1]).toEqual({ add: { users: ['pat'] } })
@@ -1512,6 +1526,10 @@ describe('ShareBranchDialog: dismissing with edits staged', () => {
     await userEvent.keyboard('{Escape}')
 
     const confirm = await screen.findByTestId('share-discard-confirm')
+    // The question's own Discard changes is the only one while it asks.
+    expect(screen.getAllByRole('button', { name: 'Discard changes' })).toEqual([
+      within(confirm).getByRole('button', { name: 'Discard changes' }),
+    ])
     fireEvent.click(within(confirm).getByRole('button', { name: 'Discard changes' }))
 
     expect(onClose).toHaveBeenCalledTimes(1)

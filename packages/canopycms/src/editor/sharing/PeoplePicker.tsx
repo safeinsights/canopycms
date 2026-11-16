@@ -7,6 +7,7 @@ import { IconMail, IconUsers } from '@tabler/icons-react'
 import type { FindPeopleResponse } from '../../api/branch-people'
 import type { FindPeopleResult } from '../../api/people'
 import type { ApiErrorCode } from '../../api/types'
+import { personInitials } from '../../auth/person-name'
 import { accessRefusalMessage } from '../copy'
 import { useApiClient } from '../context/ApiClientContext'
 import {
@@ -201,7 +202,7 @@ export function PeoplePicker({
   const groupOptions = groups.map((group) => (
     <Combobox.Option key={group.id} value={`group:${group.id}`}>
       <Group gap="xs" wrap="nowrap">
-        <Avatar size={24} radius="xl" aria-hidden>
+        <Avatar size={24} radius="xl" aria-hidden data-canopy-option-badge>
           <IconUsers size={14} />
         </Avatar>
         <div>
@@ -214,8 +215,15 @@ export function PeoplePicker({
   const personOptions = people.map((person) => (
     <Combobox.Option key={person.id} value={`user:${person.id}`}>
       <Group gap="xs" wrap="nowrap">
-        <Avatar src={person.avatarUrl} alt="" size={24} radius="xl" aria-hidden>
-          {person.name.charAt(0)}
+        <Avatar
+          src={person.avatarUrl}
+          alt=""
+          size={24}
+          radius="xl"
+          aria-hidden
+          data-canopy-option-badge
+        >
+          {personInitials(person.name)}
         </Avatar>
         <div>
           <Text size="sm">{person.name}</Text>

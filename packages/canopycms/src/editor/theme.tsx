@@ -469,6 +469,10 @@ const CANOPY_STYLES = `
   background: transparent;
   box-shadow: inset 0 0 0 1px currentColor;
 }
+[data-combobox-selected] [data-canopy-option-badge] .mantine-Avatar-placeholder {
+  color: inherit;
+  background: transparent;
+}
 .mantine-DateTimePicker-day[data-selected],
 .mantine-DateTimePicker-pickerControl[data-selected],
 .mantine-DatePickerInput-day[data-selected],

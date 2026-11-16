@@ -6,8 +6,8 @@ import { Button, Popover, Skeleton, Stack, Text } from '@mantine/core'
 import { accessRefusalMessage } from '../copy'
 import { FOCUS_RETURN_ATTR, focusIfIdle } from '../utils/focus-return'
 import { PersonLabel, type ShareTarget } from './ShareBranchDialog'
-import { LISTED_ONLY_LINE, LOCKDOWN_LINE, OPEN_TO_EVERYONE_LINE } from './share-copy'
-import { entryKey } from './share-staging'
+import { addByLabel, LISTED_ONLY_LINE, LOCKDOWN_LINE, OPEN_TO_EVERYONE_LINE } from './share-copy'
+import { entryKey, type BranchAccess } from './share-staging'
 import { useBranchAccess } from './useBranchAccess'
 
 export interface WhoHasAccessPopoverProps {
@@ -21,6 +21,8 @@ export interface WhoHasAccessPopoverProps {
   withRoles?: boolean
   /** Where focus goes once the list has closed, when its opener is gone, such as a menu item. */
   returnFocusTo?: () => HTMLElement | null
+  /** The person looking, marked "(you)" on the list. */
+  viewerId?: string
 }
 
 /** Who may open a branch, read-only, for someone who may open it but not add people. */
@@ -31,6 +33,7 @@ export function WhoHasAccessPopover({
   children,
   withRoles = true,
   returnFocusTo,
+  viewerId,
 }: WhoHasAccessPopoverProps) {
   const headingId = useId()
   return (
@@ -58,6 +61,7 @@ export function WhoHasAccessPopover({
             owner={branch.createdBy}
             lockedDown={!!branch.access?.managerOrAdminAllowed}
             headingId={headingId}
+            viewerId={viewerId}
           />
         )}
       </Popover.Dropdown>
@@ -70,11 +74,13 @@ function WhoHasAccessBody({
   owner,
   lockedDown,
   headingId,
+  viewerId,
 }: {
   branch: string
   owner?: string
   lockedDown: boolean
   headingId: string
+  viewerId?: string
 }) {
   const { state, reload } = useBranchAccess(branch)
   const headingRef = useRef<HTMLParagraphElement>(null)
@@ -120,6 +126,7 @@ function WhoHasAccessBody({
                     kind={entry.kind}
                     name={entry.name}
                     avatarUrl={entry.avatarUrl}
+                    suffix={entry.kind === 'user' && entry.id === viewerId ? ' (you)' : undefined}
                     detail={
                       entry.kind === 'group' ? 'Group' : entry.id === owner ? 'Owner' : undefined
                     }
@@ -135,8 +142,42 @@ function WhoHasAccessBody({
                 ? OPEN_TO_EVERYONE_LINE
                 : LISTED_ONLY_LINE}
           </Text>
+          {!lockedDown && !data.openToEveryone && (
+            <WhoCanAddLine access={data} owner={owner} viewerId={viewerId} />
+          )}
         </>
       )}
     </Stack>
+  )
+}
+
+/**
+ * Who may add people, for a viewer who may not. "Anyone on this list" is said only to someone not
+ * on it: a member who still can't add (an archived branch) is told nothing they could act on.
+ */
+function WhoCanAddLine({
+  access,
+  owner,
+  viewerId,
+}: {
+  access: BranchAccess
+  owner?: string
+  viewerId?: string
+}) {
+  const listed = access.entries.some((entry) => entry.kind === 'user' && entry.id === viewerId)
+  if (access.addBy === 'members' && listed) return null
+  const ownerName = access.entries.find(
+    (entry) => entry.kind === 'user' && entry.id === owner,
+  )?.name
+  const line =
+    access.addBy === 'owner'
+      ? ownerName
+        ? `Only the owner, ${ownerName}, can add people.`
+        : 'Only the owner can add people.'
+      : `${addByLabel(access.addBy, false)} can add people.`
+  return (
+    <Text size="sm" data-testid="who-can-add">
+      {line}
+    </Text>
   )
 }
