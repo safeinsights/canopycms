@@ -614,7 +614,7 @@ Field components, in `editor/fields/`:
 Components, in `editor/components/`:
 
 - `TooltipDetail.tsx` — tooltip detail keyboards can reach
-- `EditorHeader.tsx` — branch bar: `BranchPill`, status, "N unsaved", `SaveAllButton.tsx`, Submit/Withdraw (split narrow); toast: `SaveAllResult`
+- `EditorHeader.tsx` — branch bar: `BranchPill`, status, "N unsaved", `sharing/BranchShareControl.tsx`, `SaveAllButton.tsx`, Submit/Withdraw (split narrow); toast: `SaveAllResult`
 - `EntryHeader.tsx` — above the panes: `EntryBreadcrumb`, `EntrySaveButton.tsx`
 - `UnsavedMark.tsx` — unsaved dot
 - `EditorRail.tsx` — rail buttons, Settings menu
