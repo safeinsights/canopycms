@@ -322,11 +322,11 @@ function ShareBranchBody({
   useEffect(() => {
     if (!toName) return
     let current = true
-    const ids = toName.split('\n')
-    void Promise.all(ids.map((id) => getUserMetadata(id).catch(() => null))).then((found) => {
-      if (current)
-        setNames((prev) => ({ ...prev, ...Object.fromEntries(ids.map((id, i) => [id, found[i]])) }))
-    })
+    void getUserMetadata(toName)
+      .catch(() => null)
+      .then((found) => {
+        if (current) setNames((prev) => ({ ...prev, [toName]: found }))
+      })
     return () => {
       current = false
     }

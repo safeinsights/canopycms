@@ -410,7 +410,7 @@ describe('PATCH /:branch/access, final-review cases', () => {
     })
   })
 
-  it('lets a member remove whom they added after the owner keeps adding to themselves', async () => {
+  it('lets a member remove whom they added once only the owner may add', async () => {
     const context = await addBranch('feature/x', {
       access: { restricted: true, allowedUsers: ['owner', 'member'] },
     })
