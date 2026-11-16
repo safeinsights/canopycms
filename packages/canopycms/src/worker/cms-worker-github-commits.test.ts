@@ -1352,6 +1352,37 @@ describe('bringing commits made on GitHub into a branch clone', () => {
     })
   })
 
+  describe('a standing rewrite marker with no commit recorded to compare, as repair leaves one', () => {
+    for (const [named, marker] of [
+      ['naming a commit', 'c'.repeat(40)],
+      ['naming no commit', ''],
+    ] as const) {
+      it(`stays, ${named}, while GitHub's tip has diverged, and nothing is pushed`, async () => {
+        await writeMeta(s, { rewrittenOnGitHub: marker, lastGitHubTip: undefined })
+        await s.commit({ 'editor.txt': 'v2\n' }, 'resubmitted')
+        await s.clone.raw(['push', 'origin', `${BRANCH}:${BRANCH}`])
+        await s.forcePushOnGitHub({ 'rewritten.txt': 'rewritten\n' })
+        const before = await s.head()
+
+        await cycle(s)
+
+        expect((await readMeta(s))?.rewrittenOnGitHub).toBe(marker)
+        expect(await s.head()).toBe(before)
+        expect(await queued(s, 'push-branch')).toEqual([])
+      })
+    }
+
+    it("clears, naming no commit, once GitHub's tip holds the clone's and remote.git's heads", async () => {
+      await writeMeta(s, { rewrittenOnGitHub: '', lastGitHubTip: undefined })
+      await s.commitOnGitHub({ 'fix.txt': 'fix\n' })
+
+      await cycle(s)
+
+      expect((await readMeta(s))?.rewrittenOnGitHub).toBeUndefined()
+      expect(await s.file('fix.txt')).toBe('fix\n')
+    })
+  })
+
   describe('a branch reset to an earlier commit on GitHub', () => {
     let removed: string
     let kept: string

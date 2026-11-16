@@ -334,7 +334,9 @@ async function pushedSinceFetch(
  * replaced, since GitHub stays there until that push lands. A tip holding everything the clone and
  * `remote.git` hold has nothing to restore, whatever the record says. A commit in neither was
  * never taken in, so `remote.git`'s head has to be part of that test: the clone can lag it for a
- * cycle, and the fast-forward below would then bring back what GitHub dropped.
+ * cycle, and the fast-forward below would then bring back what GitHub dropped. A standing marker
+ * with nothing recorded to compare, as repair leaves one, stands until that last test passes: its
+ * own value, which may name no commit, is returned.
  */
 async function rewrittenFrom(
   { git, metaFile }: GitHubCommitsArgs,
@@ -342,7 +344,7 @@ async function rewrittenFrom(
   head: string,
   published: string | null,
 ): Promise<string | null> {
-  const { lastGitHubTip, historyRewrittenFrom } = metaFile.branch
+  const { lastGitHubTip, historyRewrittenFrom, rewrittenOnGitHub } = metaFile.branch
   // A branch with no record yet: a `remote.git` head the clone lags, diverged from GitHub, is a
   // commit reconcile took in before a force-push, barring a crash mid-merge on that first cycle.
   const unrecorded =
@@ -358,7 +360,7 @@ async function rewrittenFrom(
   const known = [historyRewrittenFrom, lastGitHubTip ?? unrecorded].filter(
     (sha): sha is string => sha !== undefined && COMMIT_ID.test(sha),
   )
-  if (known.length === 0) return null
+  if (known.length === 0 && rewrittenOnGitHub === undefined) return null
   if (
     (await contains(git, tip, head)) &&
     (published === null || (await contains(git, tip, published)))
@@ -370,7 +372,7 @@ async function rewrittenFrom(
   // tip's history makes "not contained" an answer.
   const walked = await git.raw(['rev-list', '--count', '--end-of-options', tip])
   if (walked.trim() === '') throw new Error(`No answer reading the history of ${tip}`)
-  return known[0]
+  return known[0] ?? rewrittenOnGitHub ?? null
 }
 
 /** Record the rewrite, which refuses pushes (task-runner.ts) for as long as it stands. */
@@ -387,11 +389,15 @@ async function blockAsRewritten(
   }
   return {
     kind: 'blocked',
-    reason:
-      `GitHub's ${branchRef} no longer contains ${lastSeen}, the last commit this deployment saw ` +
-      `there: it was force-pushed or rewritten. Nothing was merged or pushed, so the rewrite ` +
-      `stands, and this branch's changes cannot reach GitHub. To continue, a developer merges ` +
-      `that commit back into the branch on GitHub.`,
+    reason: lastSeen
+      ? `GitHub's ${branchRef} no longer contains ${lastSeen}, the last commit this deployment saw ` +
+        `there: it was force-pushed or rewritten. Nothing was merged or pushed, so the rewrite ` +
+        `stands, and this branch's changes cannot reach GitHub. To continue, a developer merges ` +
+        `that commit back into the branch on GitHub.`
+      : `CanopyCMS can't confirm that GitHub's ${branchRef} holds this branch's commits, as its ` +
+        `record of that branch was lost. Nothing was merged or pushed, and this branch's changes ` +
+        `cannot reach GitHub. To continue, a developer merges this branch's commits into the ` +
+        `branch on GitHub.`,
   }
 }
 
