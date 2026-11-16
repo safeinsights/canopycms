@@ -7,7 +7,7 @@
  * restrict or open the branch and set who may add; listed members add people when the branch's
  * `addBy` allows it, and remove only the entries they added. `addBy: 'admins'` leaves the list to
  * admins alone. An owner's or admin's removal of a user or group records an exclusion, so a member
- * cannot add them back; an excluded user cannot open the branch at all.
+ * cannot add them back; an excluded user can't open the branch unless an admin or reviewer.
  */
 
 import type {
@@ -195,9 +195,13 @@ export function applyAccessChange(
   const both = [
     ...addUsers.filter((id) => removeUsers.includes(id)),
     ...addGroups.filter((id) => removeGroups.includes(id)),
+    ...removeUsers.filter((id) => unexclude.includes(id)),
+    ...removeGroups.filter((id) => unexcludeGroups.includes(id)),
   ]
   if (both.length > 0) {
-    return refuse('ACCESS_CHANGE_INVALID', 'An entry cannot be added and removed at once.', both)
+    return refuse('ACCESS_CHANGE_INVALID', 'An entry cannot be changed two ways at once.', [
+      ...new Set(both),
+    ])
   }
   if (
     change.restricted === false &&

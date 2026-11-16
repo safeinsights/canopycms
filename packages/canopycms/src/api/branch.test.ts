@@ -98,6 +98,7 @@ import * as authorization from '../authorization'
 import { unsafeAsBranchName } from '../paths/test-utils'
 import { BranchWorkspaceManager } from '../branch-workspace'
 import { BranchDirOccupiedError } from '../branch-provisioning'
+import { setBranchAccessLogSink } from '../utils/access-log'
 import type { BranchRegistry } from '../branch-registry'
 import type { CanopyConfig } from '../config'
 import type { GitHubService } from '../github-service'
@@ -455,6 +456,32 @@ describe('branch api', () => {
     expect(provisionBranch.mock.calls[0]?.[0]).toMatchObject({
       access: { restricted: true, allowedUsers: ['u1', 'u2'] },
     })
+  })
+
+  it('logs a share made at create', async () => {
+    const lines: string[] = []
+    setBranchAccessLogSink((line) => lines.push(line))
+    vi.mocked(BranchWorkspaceManager).mockImplementationOnce(function () {
+      return {
+        provisionBranch: async ({ branchName }: { branchName: string }) => ({
+          kind: 'created',
+          context: createMockBranchContext({ branchName, createdBy: 'u1' }),
+        }),
+      }
+    } as unknown as typeof BranchWorkspaceManager)
+
+    await createBranch(baseCtx, asU1, {
+      branch: unsafeAsBranchName('feature-test'),
+      access: { add: { users: ['u2'] } },
+    })
+
+    expect(lines.map((line) => JSON.parse(line))).toEqual([
+      expect.objectContaining({
+        event: 'branch-access',
+        actor: 'u1',
+        added: { users: ['u1', 'u2'], groups: [] },
+      }),
+    ])
   })
 
   it('refuses a share at create by the rules of a later share, before provisioning anything', async () => {
@@ -1767,6 +1794,18 @@ describe('toBranchListItem', () => {
       { ...createMockBranchContext({ branchName: 'x', createdBy: 'u' }).branch, ...branch },
       { type: 'authenticated', userId: 'v', groups: [] },
     )
+
+  it('reports no branch as open to everyone while a lockdown is on', () => {
+    const allow = { ...baseCtx.services.config, defaultBranchAccess: 'allow' as const }
+    const item = (access: BranchMetadata['access']) =>
+      toBranchListItem(
+        allow,
+        { ...createMockBranchContext({ branchName: 'x', createdBy: 'u' }).branch, access },
+        { type: 'authenticated', userId: 'v', groups: [] },
+      )
+    expect(item({}).sharing?.openToEveryone).toBe(true)
+    expect(item({ managerOrAdminAllowed: true }).sharing?.openToEveryone).toBe(false)
+  })
 
   it('says what holds a pull request while the branch is in review', () => {
     const pullRequestHold = { kind: 'retargeted', base: 'release' } as const

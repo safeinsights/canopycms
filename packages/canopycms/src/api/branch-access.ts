@@ -221,6 +221,7 @@ export async function changeBranchAccess(
   const unlisted = (change.remove?.users ?? []).filter(
     (id) => !listed.has(id) && newlyExcluded.has(id),
   )
+  const vouched = new Set([...listed, ...unlisted])
   const unknown = await unknownUsers(ctx, unlisted)
   if (unknown.length > 0) {
     return {
@@ -242,14 +243,21 @@ export async function changeBranchAccess(
       outcome.current = existing.branch
       const applied = apply(existing.branch)
       if ('refusal' in applied) throw new AccessChangeRefusedError(fromRefusal(applied.refusal))
-      const unchecked = applied.added.users.filter((id) => id !== actor.userId && !checked.has(id))
-      if (unchecked.length > 0 && !isAdmin(actor.groups)) {
+      const unchecked = isAdmin(actor.groups)
+        ? []
+        : applied.added.users.filter((id) => id !== actor.userId && !checked.has(id))
+      // A removal the dry run didn't record as an exclusion, but the list on disk does, was never
+      // looked up.
+      const unvouched = applied.excluded.filter(
+        (id) => (change.remove?.users ?? []).includes(id) && !vouched.has(id),
+      )
+      if (unchecked.length + unvouched.length > 0) {
         throw new AccessChangeRefusedError(
           refused(
             403,
             'USER_OUT_OF_SCOPE',
             'The list changed while this was being saved. Try again.',
-            unchecked,
+            [...unchecked, ...unvouched],
           ),
         )
       }

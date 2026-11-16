@@ -315,6 +315,21 @@ describe('PATCH /:branch/access, round-one cases', () => {
     expect(await onDisk(context)).toEqual(before)
   })
 
+  it('refuses an exclusion the list on disk records but the request never looked up', async () => {
+    const context = await addBranch('feature/x', {
+      access: { restricted: true, allowedUsers: ['owner'], addBy: 'members' },
+    })
+    const stale = {
+      ...context,
+      branch: { ...context.branch, access: { ...context.branch.access, addBy: 'admins' as const } },
+    }
+
+    const res = await changeBranchAccess(ctx(), owner, stale, { remove: { users: ['made-up'] } })
+
+    expect(res).toMatchObject({ ok: false, refused: { code: 'USER_OUT_OF_SCOPE' } })
+    expect((await onDisk(context))?.access.excluded).toBeUndefined()
+  })
+
   it('refuses excluding an id the sign-in provider does not know', async () => {
     const context = await addBranch('feature/x', {
       access: { restricted: true, allowedUsers: ['owner'] },

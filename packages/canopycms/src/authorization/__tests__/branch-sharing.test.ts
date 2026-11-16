@@ -216,6 +216,19 @@ describe('applyAccessChange', () => {
     expect(accessOf(apply(admin, shared, { addBy: 'admins' })).addBy).toBe('admins')
   })
 
+  it('refuses one entry both removed and allowed back', () => {
+    expect(
+      codeOf(
+        apply(owner, shared, { remove: { groups: ['team'] }, unexclude: { groups: ['team'] } }),
+      ),
+    ).toBe('ACCESS_CHANGE_INVALID')
+    expect(
+      codeOf(
+        apply(owner, shared, { remove: { users: ['member'] }, unexclude: { users: ['member'] } }),
+      ),
+    ).toBe('ACCESS_CHANGE_INVALID')
+  })
+
   it('refuses one entry both added and removed', () => {
     expect(codeOf(apply(owner, shared, { add: { users: ['x'] }, remove: { users: ['x'] } }))).toBe(
       'ACCESS_CHANGE_INVALID',

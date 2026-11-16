@@ -95,7 +95,10 @@ export interface BranchListItem extends Omit<
     canManage: boolean
     /** The list decides who may open the branch, even when empty. */
     restricted: boolean
-    /** No list is in force and the site default lets everyone who can sign in, bar exclusions, open it. */
+    /**
+     * No list or lockdown is in force, and the site default lets everyone who can sign in open it,
+     * bar anyone excluded.
+     */
     openToEveryone: boolean
     addBy: BranchAddBy
   }
@@ -185,6 +188,7 @@ import {
   resolveBranchSharing,
 } from '../authorization'
 import { changeBranchAccess, initialBranchAccess } from './branch-access'
+import { logBranchAccessChange } from '../utils/access-log'
 import type { PathPermission } from '../config'
 import type { CanopyUser } from '../user'
 import { operatingStrategy } from '../operating-mode'
@@ -329,7 +333,8 @@ export const toBranchListItem = (
       canAdd: rights.canAdd,
       canManage: rights.canManage,
       restricted,
-      openToEveryone: !restricted && config.defaultBranchAccess === 'allow',
+      openToEveryone:
+        !restricted && config.defaultBranchAccess === 'allow' && !access.managerOrAdminAllowed,
       addBy: access.addBy ?? resolveBranchSharing(config).whoCanAdd,
     },
     isProtected: protection.isProtected,
@@ -685,6 +690,18 @@ export const createBranchHandler = async (
     if (outcome.kind === 'exists') return existingBranchResponse(ctx, req, outcome.context, named)
 
     log.debug('api', 'Branch created', { branchName: outcome.context.branch.name })
+    if (initialAccess.access) {
+      logBranchAccessChange({
+        branch: outcome.context.branch.name,
+        actor: req.user.userId,
+        added: {
+          users: initialAccess.access.allowedUsers ?? [],
+          groups: initialAccess.access.allowedGroups ?? [],
+        },
+        removed: { users: [], groups: [] },
+        restricted: true,
+      })
+    }
     return {
       ok: true,
       status: 200,
