@@ -362,8 +362,13 @@ export async function findPeople(
     ...(access.allowedGroups ?? []),
     ...Object.keys(access.excludedGroups ?? {}),
   ])
-  const offered = (user: UserSearchResult) => isPerson(user.id) && !skip.has(user.id)
   const { cmsUsers, internalGroups } = await loadPeopleSources(ctx)
+  // Admins and reviewers open every branch already, so adding them would change nothing.
+  const byRole = new Set(
+    internalGroups.filter((group) => isReservedGroup(group.id)).flatMap((group) => group.members),
+  )
+  const offered = (user: UserSearchResult) =>
+    isPerson(user.id) && !skip.has(user.id) && !byRole.has(user.id)
   const shown = (users: UserSearchResult[]) =>
     users
       .filter(offered)

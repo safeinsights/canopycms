@@ -377,6 +377,31 @@ describe('POST /:branch/access/find', () => {
     ])
   })
 
+  it('offers no one who opens every branch through their role, by name, address or suggestion', async () => {
+    await addBranch('feature/x', { access: { allowedUsers: ['owner', 'member'] } })
+    await fs.writeFile(
+      path.join(settingsRoot, 'groups.json'),
+      JSON.stringify({
+        updatedAt: new Date().toISOString(),
+        updatedBy: 'admin',
+        groups: [
+          { id: 'team', name: 'Marketing team', members: ['member'] },
+          { id: RESERVED_GROUPS.ADMINS, name: 'Admins', members: ['colleague'] },
+          { id: RESERVED_GROUPS.REVIEWERS, name: 'Reviewers', members: ['pal'] },
+        ],
+      }),
+    )
+    await peopleStore.recordShares('owner', ['colleague', 'pal', 'outsider'])
+
+    expect(ids(await find(owner, 'feature/x', 'Cole'))).toEqual([])
+    expect(ids(await find(owner, 'feature/x', 'cole@example.org'))).toEqual([])
+    expect(ids(await find(owner, 'feature/x', ''))).not.toContain('pal')
+    expect(ids(await find(owner, 'feature/x', ''))).not.toContain('colleague')
+    expect(ids(await find(owner, 'feature/x', 'Otto'))).toEqual([])
+    expect(ids(await find(owner, 'feature/x', 'Mia'))).toEqual([])
+    expect(ids(await find(owner, 'feature/x', 'otto@example.org'))).toEqual(['outsider'])
+  })
+
   it('asks for an add by address only where an id would be out of scope', async () => {
     await addBranch('feature/x', { access: { allowedUsers: ['reviewer', 'member'] } })
     const found = async (actor: CanopyUser, email: string) =>
