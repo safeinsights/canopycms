@@ -184,6 +184,50 @@ describe('EditorHeader - sharing control', () => {
     await waitFor(() => expect(document.activeElement).toBe(opener))
   })
 
+  it('says either control opens a dialog', async () => {
+    renderBar({
+      user: { userId: 'ben' },
+      branch: branch({ sharing: rights({ isOwner: false, canAdd: false, canManage: false }) }),
+    })
+
+    expect(control()?.getAttribute('aria-haspopup')).toBe('dialog')
+  })
+
+  it('shows an initial on every avatar, asking the lookup again for each listing', async () => {
+    const lookupAgain = vi.fn(
+      async (id: string): Promise<UserSearchResult | null> =>
+        id === 'ana' ? { id, name: 'Ana Lee', email: '' } : null,
+    )
+    const { rerender } = renderBar({
+      branch: branch({ access: { users: ['ana', 'zed'], groups: [] } }),
+      getUserMetadata: lookupAgain,
+    })
+    await waitFor(() =>
+      expect(
+        [...(control()?.querySelectorAll('.mantine-Avatar-root') ?? [])].map((a) => a.textContent),
+      ).toEqual(['A', 'N']),
+    )
+    const asked = lookupAgain.mock.calls.length
+
+    rerender(
+      <CanopyCMSProvider>
+        <ApiClientProvider client={createMockApiClient() as unknown as ApiClient}>
+          <EditorHeader
+            {...baseProps}
+            sharing={{
+              branch: branch({ access: { users: ['ana', 'zed'], groups: [] } }),
+              loading: false,
+              user: { userId: 'ana' },
+              getUserMetadata: lookupAgain,
+              onShare: vi.fn(),
+            }}
+          />
+        </ApiClientProvider>
+      </CanopyCMSProvider>,
+    )
+    await waitFor(() => expect(lookupAgain.mock.calls.length).toBeGreaterThan(asked))
+  })
+
   it('shows a globe for a branch open to everyone', () => {
     renderBar({
       branch: branch({
@@ -282,6 +326,36 @@ describe('EditorHeader - sharing control', () => {
         expect(screen.queryByRole('dialog', { name: 'Who has access' })).toBeNull(),
       )
       await waitFor(() => expect(document.activeElement).toBe(pill))
+    })
+
+    it('keeps the pill, its menu open, as the control changes between Share… and the list', async () => {
+      stubNarrowWindow()
+      const viewer = branch({
+        sharing: rights({ isOwner: false, canAdd: false, canManage: false }),
+      })
+      const sharing = (b: BranchSummary): BranchBarSharing => ({
+        branch: b,
+        loading: false,
+        user: { userId: 'ben' },
+        getUserMetadata: lookup,
+        onShare: vi.fn(),
+      })
+      const tree = (b: BranchSummary) => (
+        <CanopyCMSProvider>
+          <ApiClientProvider client={createMockApiClient() as unknown as ApiClient}>
+            <EditorHeader {...baseProps} sharing={sharing(b)} />
+          </ApiClientProvider>
+        </CanopyCMSProvider>
+      )
+      const { rerender } = render(tree(branch()))
+      const pill = screen.getByTestId('branch-dropdown-button')
+      await userEvent.click(pill)
+      await screen.findByRole('menuitem', { name: 'Share…' })
+
+      rerender(tree(viewer))
+
+      expect(screen.getByTestId('branch-dropdown-button')).toBe(pill)
+      expect(await screen.findByRole('menuitem', { name: 'Who has access' })).toBeTruthy()
     })
 
     it('leaves the pill menu without it where sharing is hidden', async () => {

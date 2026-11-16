@@ -11,7 +11,8 @@ import { entryKey } from './share-staging'
 import { useBranchAccess } from './useBranchAccess'
 
 export interface WhoHasAccessPopoverProps {
-  branch: ShareTarget
+  /** Absent, the popover is off and only its target renders. */
+  branch?: ShareTarget
   opened: boolean
   onChange: (opened: boolean) => void
   /** The control the popover hangs from; it takes focus back on Esc. */
@@ -40,6 +41,7 @@ export function WhoHasAccessPopover({
       width={320}
       shadow="md"
       withRoles={withRoles}
+      disabled={!branch}
       onExitTransitionEnd={returnFocusTo && (() => focusIfIdle(returnFocusTo()))}
     >
       <Popover.Target>{children}</Popover.Target>
@@ -50,12 +52,14 @@ export function WhoHasAccessPopover({
         data-testid="who-has-access"
         {...(returnFocusTo && { [FOCUS_RETURN_ATTR]: true })}
       >
-        <WhoHasAccessBody
-          branch={branch.name}
-          owner={branch.createdBy}
-          lockedDown={!!branch.access?.managerOrAdminAllowed}
-          headingId={headingId}
-        />
+        {branch && (
+          <WhoHasAccessBody
+            branch={branch.name}
+            owner={branch.createdBy}
+            lockedDown={!!branch.access?.managerOrAdminAllowed}
+            headingId={headingId}
+          />
+        )}
       </Popover.Dropdown>
     </Popover>
   )

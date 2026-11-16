@@ -61,7 +61,8 @@ export function BranchPill({
   const noBranch = branchName ? undefined : 'Open a branch first.'
   const wide = useMediaQuery('(min-width: 48em)')
   const name = branchName || (loading ? 'Loading branches…' : 'No branch open')
-  const [accessOpen, setAccessOpen] = useState(false)
+  // The branch whose list is open, so a list never reopens on its own for another branch.
+  const [accessOpen, setAccessOpen] = useState<string | null>(null)
 
   const menu = (
     <Menu withinPortal shadow="sm" position="bottom-start" {...menuFocus.menu}>
@@ -95,7 +96,9 @@ export function BranchPill({
         {share && (
           <Menu.Item
             onClick={() =>
-              share.mode === 'share' ? share.onShare(() => trigger.current) : setAccessOpen(true)
+              share.mode === 'share'
+                ? share.onShare(() => trigger.current)
+                : setAccessOpen(share.branch.name)
             }
             aria-haspopup="dialog"
             data-testid="share-branch-menu-item"
@@ -137,13 +140,14 @@ export function BranchPill({
     </Menu>
   )
 
-  if (share?.mode !== 'view') return menu
   // The list hangs from a wrapper: inside the menu, a popover target would take the menu's place.
+  // The wrapper renders in every mode, so the pill never remounts as the mode changes.
+  const listed = share?.mode === 'view' ? share.branch : undefined
   return (
     <WhoHasAccessPopover
-      branch={share.branch}
-      opened={accessOpen}
-      onChange={setAccessOpen}
+      branch={listed}
+      opened={!!listed && accessOpen === listed.name}
+      onChange={(open) => setAccessOpen(open && listed ? listed.name : null)}
       withRoles={false}
       returnFocusTo={() => trigger.current}
     >

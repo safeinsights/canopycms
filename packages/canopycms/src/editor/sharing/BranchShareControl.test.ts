@@ -60,3 +60,14 @@ describe('shareControlName', () => {
     expect(shareControlName('view', open, [])).toBe('Who has access: anyone who can sign in')
   })
 })
+
+describe('shareControlName with no one listed', () => {
+  it('says so rather than counting nobody', () => {
+    const empty: SharedSummary = {
+      access: { users: [], groups: [] },
+      sharing: { ...rights, restricted: true, openToEveryone: false },
+    }
+    expect(shareControlName('share', empty, [])).toBe('Share…, no one is listed')
+    expect(shareControlName('view', empty, [])).toBe('Who has access: no one is listed')
+  })
+})
