@@ -125,6 +125,12 @@ const footerClose = () =>
 const modalClose = () =>
   screen.getAllByRole('button', { name: 'Close' }).find((button) => button.textContent !== 'Close')!
 const picker = () => screen.getByRole('textbox', { name: 'Add people or groups' })
+/** A failed add by address closes the list, which would cover the error, leaving focus in the field. */
+const expectListClosedOverError = () => {
+  expect(screen.queryByRole('listbox')).toBeNull()
+  expect(screen.queryByRole('option')).toBeNull()
+  expect(document.activeElement).toBe(picker())
+}
 /** The picker's own error, which names it by `aria-describedby`. */
 const fieldError = () =>
   (picker().getAttribute('aria-describedby') ?? '')
@@ -439,6 +445,7 @@ describe('ShareBranchDialog: adding people', () => {
 
     await waitFor(() => expect(fieldError()).toBe(message))
     expect(status().textContent).toBe(message)
+    expectListClosedOverError()
   })
 
   it('says when email lookups are over their limit', async () => {
@@ -455,6 +462,7 @@ describe('ShareBranchDialog: adding people', () => {
     const message = 'Too many email lookups. Try again in a few minutes.'
     await waitFor(() => expect(fieldError()).toBe(message))
     expect(status().textContent).toBe(message)
+    expectListClosedOverError()
   })
 
   it("asks only for an address where names can't be searched", async () => {

@@ -170,6 +170,12 @@ export function PeoplePicker({
     combobox.closeDropdown()
   }
 
+  /** The list closes, so it no longer covers the error or offers the add that just failed. */
+  const failAdd = (message: string) => {
+    fail(message)
+    combobox.closeDropdown()
+  }
+
   const addByEmail = async (email: string) => {
     lookingUpRef.current = true
     setLookingUp(true)
@@ -178,10 +184,10 @@ export function PeoplePicker({
       if (result.ok && result.data) {
         const person = result.data.people[0]
         if (person) added(personToAdd(person, email))
-        else fail(emailNotFoundMessage(addableByEmail))
+        else failAdd(emailNotFoundMessage(addableByEmail))
         return
       }
-      if (result.code === 'RATE_LIMITED') fail(RATE_LIMITED)
+      if (result.code === 'RATE_LIMITED') failAdd(RATE_LIMITED)
       else if (!isLockout(result.code)) added({ kind: 'user', email, name: email })
     } catch (err: unknown) {
       console.error(err)
