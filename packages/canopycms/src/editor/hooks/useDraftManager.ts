@@ -39,6 +39,9 @@ const saveMayHaveLandedToastId = (contentId: string) => `canopy-save-may-have-la
 
 const saveTimedOutToastId = (contentId: string) => `canopy-save-timed-out:${contentId}`
 
+/** One per branch, so repeated refusals don't stack and a switch away can close it. */
+const branchLockoutToastId = (branch: string) => `canopy-branch-lockout:${branch}`
+
 /** @internal Exported for tests. A save refused because the entry was deleted. */
 export const ENTRY_DELETED_MESSAGE =
   'This entry was deleted since you opened it, so it was not saved. Your changes are still in the form until the content list next refreshes and closes it: choose "Save as new entry" to keep them.'
@@ -486,6 +489,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       timedOutSavesRef.current.clear()
       for (const id of goneEntriesRef.current) notifications.hide(entryGoneToastId(id))
       goneEntriesRef.current.clear()
+      notifications.hide(branchLockoutToastId(prevBranchRef.current))
       // Its entries, and their "Open" and "Save as new entry" buttons, are the old branch's.
       clearSaveAllResult()
       reconciledDraftIdsRef.current = new Set()
@@ -1140,6 +1144,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
           !!err.code &&
           BRANCH_LOCKOUT_CODES.has(err.code)
         notifications.show({
+          ...(lostBranch ? { id: branchLockoutToastId(branch) } : {}),
           ...(isValidation ? { title: 'Save rejected' } : {}),
           ...(isForbidden ? { title: 'Save not allowed' } : {}),
           ...(isUnavailable ? { title: 'Not saved yet' } : {}),

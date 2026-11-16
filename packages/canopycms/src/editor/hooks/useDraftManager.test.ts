@@ -590,6 +590,43 @@ describe('useDraftManager', () => {
       },
     )
 
+    it('shows one lockout toast however often a save is refused, and closes it on a branch switch', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      mockSaveEntry.mockRejectedValue(
+        new SaveApiError(403, 'Refused', undefined, 'BRANCH_ACCESS_DENIED'),
+      )
+      const { result, rerender } = renderHook(
+        (props: { branchName: string }) => useDraftManager({ ...defaultOptions, ...props }),
+        { initialProps: { branchName: 'main' } },
+      )
+      const { notifications } = await import('@mantine/notifications')
+      const lockoutShows = () =>
+        vi
+          .mocked(notifications.show)
+          .mock.calls.map(([shown]) => shown)
+          .filter((shown) => shown.title === 'Save not allowed')
+
+      for (const draft of ['Draft', 'Draft again']) {
+        act(() => {
+          result.current.setDrafts({ abc123def456: { title: draft } })
+        })
+        await act(async () => {
+          await result.current.handleSave()
+        })
+      }
+
+      const ids = lockoutShows().map((shown) => shown.id)
+      expect(ids).toHaveLength(2)
+      expect(ids[0]).toBeTruthy()
+      expect(ids[1]).toBe(ids[0])
+      expect(vi.mocked(notifications.hide)).not.toHaveBeenCalledWith(ids[0])
+
+      rerender({ branchName: 'other' })
+
+      expect(vi.mocked(notifications.hide)).toHaveBeenCalledWith(ids[0])
+      consoleErrorSpy.mockRestore()
+    })
+
     it("closes a path rule's refusal by itself, leaving the branch list alone", async () => {
       const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
       mockSaveEntry.mockRejectedValueOnce(new SaveApiError(403, 'Forbidden'))
