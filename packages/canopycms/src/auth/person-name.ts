@@ -10,6 +10,8 @@ export function personName(id: string, name: string | undefined): string | undef
 /** A person's initials, first and last name's ("UT"), or one for a one-word name. */
 export function personInitials(name: string): string {
   const parts = name.trim().split(/\s+/)
-  if (parts.length === 1) return parts[0].charAt(0).toUpperCase()
-  return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase()
+  // By code point, so an emoji or other astral character is never cut in half.
+  const first = (part: string) => Array.from(part)[0] ?? ''
+  if (parts.length === 1) return first(parts[0]).toUpperCase()
+  return (first(parts[0]) + first(parts[parts.length - 1])).toUpperCase()
 }
