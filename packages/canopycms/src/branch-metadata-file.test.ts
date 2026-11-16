@@ -212,9 +212,14 @@ describe('readBranchMetadataFile', () => {
 })
 
 describe('salvageBranchMetadata', () => {
-  const nothing = { access: { readable: false, narrowing: {} } }
+  const nothing = { access: { readable: false, narrowing: {}, mayRestrict: false } }
   const salvage = (file: unknown) => salvageBranchMetadata(JSON.stringify(file))
   const removal = { by: 'admin', at: '2026-11-01T00:00:00.000Z', byAdmin: true }
+  const damaged = (narrowing: object, mayRestrict = false) => ({
+    readable: false,
+    narrowing,
+    mayRestrict,
+  })
 
   it.each([
     ['text that is not JSON', 'not json {{{'],
@@ -226,15 +231,16 @@ describe('salvageBranchMetadata', () => {
     expect(salvageBranchMetadata(raw)).toEqual(nothing)
   })
 
+  it('reads a missing access as absent, suggesting no restriction', () => {
+    expect(salvage({ branch: { createdBy: 'alice' } })).toEqual({ ...nothing, createdBy: 'alice' })
+  })
+
   it.each([
     ['null', null],
     ['an array', []],
-    ['missing', undefined],
-  ])('reads no narrowing from access that is %s', (_case, access) => {
-    expect(salvage({ branch: { access, createdBy: 'alice' } })).toEqual({
-      ...nothing,
-      createdBy: 'alice',
-    })
+    ['a string', 'restricted'],
+  ])('reads an access that is %s as one that may have restricted', (_case, access) => {
+    expect(salvage({ branch: { access } }).access).toEqual(damaged({}, true))
   })
 
   it('keeps an access that passes whole, unknown keys included', () => {
@@ -242,34 +248,99 @@ describe('salvageBranchMetadata', () => {
     expect(salvage({ branch: { access } }).access).toEqual({ readable: true, access })
   })
 
-  it('reads each field of a damaged access on its own', () => {
+  it('keeps each narrowing field that reads, and notes a list it cannot rebuild', () => {
     const salvaged = salvage({
       branch: {
         access: {
-          restricted: true,
           allowedUsers: 'x',
-          allowedGroups: ['writers'],
-          managerOrAdminAllowed: true,
+          managerOrAdminAllowed: false,
           excluded: { bob: removal },
-          excludedGroups: { readers: 'damaged' },
-          addBy: 'admins',
+          excludedGroups: { readers: removal },
+          addBy: 'owner',
         },
       },
     })
-    expect(salvaged.access).toEqual({
-      readable: false,
-      narrowing: { managerOrAdminAllowed: true, excluded: { bob: removal }, addBy: 'admins' },
+    expect(salvaged.access).toEqual(
+      damaged(
+        {
+          managerOrAdminAllowed: false,
+          excluded: { bob: removal },
+          excludedGroups: { readers: removal },
+          addBy: 'owner',
+        },
+        true,
+      ),
+    )
+  })
+
+  it.each(['restricted', 'allowedUsers', 'allowedGroups'])(
+    'notes a restriction from %s, readable or not',
+    (key) => {
+      const readable = { restricted: true, allowedUsers: ['a'], allowedGroups: ['g'] }[key]
+      for (const value of [readable, 'damaged']) {
+        const salvaged = salvage({ branch: { access: { [key]: value, entryMeta: 1 } } })
+        expect(salvaged.access).toMatchObject({ readable: false, mayRestrict: true })
+      }
+    },
+  )
+
+  it('notes no restriction from narrowing fields that read', () => {
+    const salvaged = salvage({
+      branch: { access: { managerOrAdminAllowed: true, excluded: {}, entryMeta: 1 } },
     })
+    expect(salvaged.access).toEqual(damaged({ managerOrAdminAllowed: true, excluded: {} }))
   })
 
-  it.each(['members', 'owner', 'nobody'])('carries no addBy of %j', (addBy) => {
+  it('takes a lockdown that does not read as a lockdown', () => {
+    const salvaged = salvage({ branch: { access: { managerOrAdminAllowed: 'yes' } } })
+    expect(salvaged.access).toEqual(damaged({ managerOrAdminAllowed: true }, true))
+  })
+
+  it.each(['members', 'owner', 'admins'])('carries addBy %j as it reads', (addBy) => {
     const salvaged = salvage({ branch: { access: { addBy, entryMeta: 1 } } })
-    expect(salvaged.access).toEqual({ readable: false, narrowing: {} })
+    expect(salvaged.access).toEqual(damaged({ addBy }))
   })
 
-  it('carries a lockdown only when it reads as true', () => {
-    const salvaged = salvage({ branch: { access: { managerOrAdminAllowed: false, entryMeta: 1 } } })
-    expect(salvaged.access).toMatchObject({ readable: false, narrowing: {} })
+  it('takes an addBy that does not read as admins only', () => {
+    const salvaged = salvage({ branch: { access: { addBy: 'nobody', entryMeta: 1 } } })
+    expect(salvaged.access).toEqual(damaged({ addBy: 'admins' }))
+  })
+
+  it("keeps every removal entry, a malformed one as an admin's made by no known user", () => {
+    const salvaged = salvage({
+      branch: {
+        access: {
+          excluded: { bob: removal, carol: 'damaged' },
+          excludedGroups: { readers: { by: 1 } },
+          entryMeta: 1,
+        },
+      },
+    })
+    const madeByNobody = { by: 'unknown', at: expect.any(String), byAdmin: true }
+    expect(salvaged.access).toEqual(
+      damaged({
+        excluded: { bob: removal, carol: madeByNobody },
+        excludedGroups: { readers: madeByNobody },
+      }),
+    )
+  })
+
+  it.each([
+    ['a string', 'bob'],
+    ['an array', ['bob']],
+  ])('drops removals that are %s, noting what they may have restricted', (_case, excluded) => {
+    const salvaged = salvage({ branch: { access: { excluded, entryMeta: 1 } } })
+    expect(salvaged.access).toEqual(damaged({}, true))
+  })
+
+  it.each([
+    ['editing', 'editing'],
+    ['archived', 'archived'],
+    ['submitted', undefined],
+    ['approved', undefined],
+    ['bogus', undefined],
+  ])('keeps a status of %j as %j', (status, kept) => {
+    expect(salvage({ branch: { status } }).status).toBe(kept)
   })
 
   it.each([
@@ -291,15 +362,13 @@ describe('salvageBranchMetadata', () => {
   it('takes nothing a __proto__ key carries', () => {
     const raw =
       '{"__proto__": {"branch": {"createdBy": "mallory"}}, "branch": {"__proto__": {"createdBy": "mallory"},' +
-      ' "access": {"__proto__": {"allowedUsers": ["mallory"]}, "restricted": "damaged",' +
+      ' "access": {"__proto__": {"allowedUsers": ["mallory"]}, "entryMeta": 1,' +
       ' "excluded": {"__proto__": {"by": "x", "at": "y", "byAdmin": false}}}}}'
     const salvaged = salvageBranchMetadata(raw)
     expect(salvaged.createdBy).toBeUndefined()
+    expect(salvaged.access).toEqual(damaged({ excluded: {} }))
     if (salvaged.access.readable) throw new Error('expected damaged access')
-    const { narrowing } = salvaged.access
-    expect(narrowing.managerOrAdminAllowed).toBeUndefined()
-    expect(Object.getPrototypeOf(narrowing)).toBe(Object.prototype)
-    const excluded = narrowing.excluded ?? {}
+    const excluded = salvaged.access.narrowing.excluded ?? {}
     expect(Object.getPrototypeOf(excluded)).toBe(Object.prototype)
     expect(Object.keys(excluded)).toEqual([])
     expect(({} as Record<string, unknown>).allowedUsers).toBeUndefined()
