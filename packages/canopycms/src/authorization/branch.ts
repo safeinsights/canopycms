@@ -5,7 +5,7 @@ import { getBranchProtection } from './protected-branch'
 import { hasAccessList } from './branch-sharing'
 import type { CanopyUser } from '../user'
 import type { BranchAccessResult } from './types'
-import { isSystemUserId, SYSTEM_USER_ID } from '../system-users'
+import { isNobody, isSystemUserId, SYSTEM_USER_ID } from '../system-users'
 import { sanitizeBranchName } from '../paths/branch-name'
 import { baseBranchOf } from '../utils/base-branch'
 
@@ -94,7 +94,8 @@ export function checkBranchAccessWithDefault(
     // could not open a branch they had just made. Scoped to the no-ACL case on purpose -- an EXPLICIT
     // allowlist omitting the creator still denies them, which is how an admin
     // locks down a branch someone else created.
-    if (context.branch.createdBy === user.userId) {
+    // A creator id no person holds grants nothing, whoever's id it matches.
+    if (context.branch.createdBy === user.userId && !isNobody(user.userId)) {
       return { allowed: true, reason: 'creator' }
     }
     if (defaultAccess === 'allow') {
@@ -210,7 +211,7 @@ export function canPerformWorkflowAction(
     return false
   }
 
-  const userIsCreator = context.branch.createdBy === user.userId
+  const userIsCreator = context.branch.createdBy === user.userId && !isNobody(user.userId)
 
   const isSystemBranch = !options?.isProtectedBranch && context.branch.createdBy === SYSTEM_USER_ID
 

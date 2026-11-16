@@ -9,6 +9,7 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { isCreatorsRecentBranch } from './branch-create-window'
 import { defineEndpoint } from './route-builder'
 import { branchAccessDenial } from './guards'
+import { isNobody } from '../system-users'
 import { createDebugLogger } from '../utils/debug'
 import { clientOperatingStrategy } from '../operating-mode'
 import { DELETE_NEEDS_ADMIN_REASON } from '../editor/copy'
@@ -882,7 +883,7 @@ export const canDeleteBranch = (
     return { allowed: true, reason: 'admin' }
   }
 
-  if (branchContext.branch.createdBy === user.userId && creatorMayOpen) {
+  if (branchContext.branch.createdBy === user.userId && !isNobody(user.userId) && creatorMayOpen) {
     return { allowed: true, reason: 'creator' }
   }
 

@@ -93,6 +93,7 @@ export function branchSharingRights(
   const isMember = isListedMember(access, user)
   const isOwner =
     branch.createdBy === user.userId &&
+    !isNobody(user.userId) &&
     !isExcludedFrom(access, user.userId) &&
     (!hasAccessList(access) || isMember)
   if (isAdmin(user.groups)) {

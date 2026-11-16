@@ -5,6 +5,7 @@ import {
   canPerformWorkflowAction,
   createCheckBranchAccess,
   opensToEveryone,
+  branchSharingRights,
   RESERVED_GROUPS,
 } from '../'
 import type { CanopyConfig } from '../../config'
@@ -699,4 +700,25 @@ describe('opensToEveryone', () => {
       }
     }
   })
+})
+
+describe('a creator id no person holds', () => {
+  it.each(['unknown', 'canopycms-system'])(
+    'grants a user whose id is literally %s nothing as creator',
+    (id) => {
+      const branch = { ...baseContext.branch, createdBy: id, access: {} }
+      const user = { type: 'authenticated' as const, userId: id, groups: [] }
+      const context = { ...baseContext, branch }
+      expect(checkBranchAccessWithDefault(context, user, 'deny')).toEqual({
+        allowed: false,
+        reason: 'no_acl',
+      })
+      expect(canPerformWorkflowAction(context, user, 'deny')).toBe(false)
+      // On an allow site the access check admits them, so only the creator guard refuses.
+      if (id === 'unknown') expect(canPerformWorkflowAction(context, user, 'allow')).toBe(false)
+      expect(
+        branchSharingRights(user, branch, { isProtected: false, whoCanAdd: 'members' }).isOwner,
+      ).toBe(false)
+    },
+  )
 })
