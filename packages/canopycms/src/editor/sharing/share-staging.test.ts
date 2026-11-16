@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest'
 
 import {
   accessChangeBody,
+  additionsBody,
   changeLanded,
   editorsLosingAccess,
   joinNames,
   narrows,
   NOTHING_STAGED,
+  personToAdd,
   withAddition,
   type BranchAccess,
 } from './share-staging'
@@ -30,6 +32,7 @@ const current = (over: Partial<BranchAccess> = {}): BranchAccess => ({
   openToEveryone: false,
   defaultAccess: 'allow',
   addBy: 'members',
+  whoCanAdd: 'members',
   rights: { isOwner: true, canAdd: true, canManage: true },
   searchable: 'cms-users',
   addableByEmail: 'all-users',
@@ -158,5 +161,33 @@ describe('joinNames', () => {
     expect(joinNames(['Ana'])).toBe('Ana')
     expect(joinNames(['Ana', 'Ben'])).toBe('Ana and Ben')
     expect(joinNames(['Ana', 'Ben', 'Chen'])).toBe('Ana, Ben and Chen')
+  })
+})
+
+describe('personToAdd and additionsBody', () => {
+  it('sends by address only someone the find says must go by it', () => {
+    const insider = personToAdd(
+      { id: 'cole', name: 'Cole', maskedEmail: 'c•••@example.org' },
+      'cole@example.org',
+    )
+    const outsider = personToAdd(
+      { id: 'dana', name: 'Dana', addByAddress: true },
+      'dana@example.org',
+    )
+    // An admin's or reviewer's find shows the full address, never a masked one.
+    const shownInFull = personToAdd(
+      { id: 'finn', name: 'Finn', email: 'finn@example.org' },
+      'finn@example.org',
+    )
+    const byName = personToAdd({ id: 'eve', name: 'Eve' })
+
+    expect(additionsBody([insider, outsider, shownInFull, byName])).toEqual({
+      users: ['cole', 'finn', 'eve'],
+      emails: ['dana@example.org'],
+    })
+  })
+
+  it('is undefined with nothing to add', () => {
+    expect(additionsBody([])).toBeUndefined()
   })
 })

@@ -2,11 +2,11 @@ import { defineCanopyConfig } from 'canopycms'
 
 export default defineCanopyConfig({
   defaultBranchAccess: 'deny',
-  // Public read without opening edit/review -- the posture README.md's "Public read on
-  // server deployments" section recommends. Without this, a non-admin visitor (including
-  // the dev-auth default user) gets "Forbidden: path access denied" on every route, since
-  // `defaultPathAccess` otherwise falls back to fully closed ('deny' on every level).
-  defaultPathAccess: { read: 'allow' },
+  // Every dev user may read and edit, so a non-admin dev user can create and share branches:
+  // creating one needs edit access to some path, and this demo's settings branch starts with
+  // no permission rules. A production site keeps edit closed and grants it by rule; see
+  // README.md's "Public read on server deployments".
+  defaultPathAccess: { read: 'allow', edit: 'allow' },
   mode: 'dev',
   sourceRoot: 'apps/example1',
   gitBotAuthorName: 'CanopyCMS Example Bot',

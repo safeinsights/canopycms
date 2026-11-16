@@ -32,6 +32,7 @@ import {
 import type { UserSearchResult } from '../../auth/types'
 import type { ApiErrorCode } from '../../api/types'
 import type { BranchAddBy } from '../../types'
+import { personInitials } from '../../auth/person-name'
 import { isAdmin } from '../../authorization/helpers'
 import type { BranchSummary, UserContext } from '../BranchManager'
 import { displayBranchName } from '../branch-names'
@@ -40,6 +41,7 @@ import { useApiClient } from '../context/ApiClientContext'
 import { editorBranchLink } from '../editor-utils'
 import { isGatewayFailure, isUnanswered, UnansweredError } from '../unanswered'
 import { focusReturnProps } from '../utils/focus-return'
+import { accessPeople } from './BranchShareControl'
 import { PeoplePicker } from './PeoplePicker'
 import {
   accessChangeBody,
@@ -91,6 +93,7 @@ const NOTHING_TO_UPDATE = 'Nothing has changed yet. Add or remove someone, or ch
 const NOT_LOADED = "Who has access hasn't loaded yet. Retry above."
 const STILL_LOADING = 'Who has access is still loading.'
 const COPIED_FOR_MS = 3000
+const MAX_LOADING_ROWS = 8
 
 interface BodyState {
   dirty: boolean
@@ -133,7 +136,7 @@ export function ShareBranchDialog({
     <Modal
       opened={opened}
       onClose={dismiss}
-      title={`Share ${displayBranchName(body.branch)}`}
+      title={`Share “${displayBranchName(body.branch)}”`}
       size={540}
       closeOnClickOutside={!state.saving && !state.dirty}
       closeButtonProps={{ disabled: state.saving }}
@@ -218,11 +221,12 @@ function ShareBranchBody({
   const headingRef = useRef<HTMLParagraphElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
-  const removedRef = useRef<HTMLDivElement>(null)
   const keepEditingRef = useRef<HTMLButtonElement>(null)
+  const undoRef = useRef<HTMLButtonElement>(null)
+  const copyFieldRef = useRef<HTMLInputElement>(null)
   const beforeAskRef = useRef<HTMLElement | null>(null)
   const [pendingFocus, setPendingFocus] = useState<
-    { remove: number } | { restore: string } | { allow: number }
+    { remove: number } | { restore: string } | { undo: true }
   >()
 
   const userIsAdmin = isAdmin(user.groups)
@@ -234,6 +238,13 @@ function ShareBranchBody({
   const body = data ? accessChangeBody(staged, data) : {}
   const dirty = Object.keys(body).length > 0
   const lockedDown = !!branch.access?.managerOrAdminAllowed
+  // As many placeholder rows as the listing says the list holds (1 to 8), so the footer barely moves
+  // as the list loads.
+  const known = accessPeople(branch)
+  const loadingRows = Math.min(
+    Math.max(known.users.length + known.groups.length, 1),
+    MAX_LOADING_ROWS,
+  )
 
   // A refusal replaces the edits with its notice, so nothing is left to ask about discarding.
   useEffect(
@@ -341,11 +352,14 @@ function ShareBranchBody({
       name: entry.name,
       avatarUrl: entry.avatarUrl,
       shownEmail: entry.email ?? entry.maskedEmail,
-      addedBy: entry.addedBy
-        ? entry.addedBy.id === user.userId
-          ? 'you'
-          : entry.addedBy.name
-        : undefined,
+      // The owner's row says Owner, not who put them on the list: the first share does that
+      // (authorization/branch-sharing.ts `applyAccessChange`).
+      addedBy:
+        entry.addedBy && !isOwner
+          ? entry.addedBy.id === user.userId
+            ? 'you'
+            : entry.addedBy.name
+          : undefined,
       isOwner,
       isYou: entry.kind === 'user' && entry.id === user.userId,
       unsaved: false,
@@ -386,9 +400,8 @@ function ShareBranchBody({
     if ('remove' in pendingFocus) {
       const buttons = listRef.current?.querySelectorAll<HTMLElement>('button[data-share-remove]')
       ;(buttons?.[pendingFocus.remove] ?? fallback)?.focus()
-    } else if ('allow' in pendingFocus) {
-      const buttons = removedRef.current?.querySelectorAll<HTMLElement>('button[data-share-allow]')
-      ;(buttons?.[pendingFocus.allow] ?? buttons?.[buttons.length - 1] ?? fallback)?.focus()
+    } else if ('undo' in pendingFocus) {
+      ;(undoRef.current ?? fallback)?.focus()
     } else {
       const { restore } = pendingFocus
       Array.from(document.querySelectorAll<HTMLElement>('[data-share-row]'))
@@ -435,7 +448,8 @@ function ShareBranchBody({
     setPendingFocus({ restore: row.key })
   }
 
-  const allowAgain = (entry: ExcludedEntry, index: number) => {
+  /** Stages `entry` back: on the list when it is limited to it, focusing that row, else its Undo. */
+  const allowAgain = (entry: ExcludedEntry) => {
     const key = entryKey(entry)
     // The edit below takes back a staged "Anyone who can sign in", so the list will stand.
     const listOnly = staged.restricted === false ? !!data?.restricted : generalValue === 'listed'
@@ -446,14 +460,14 @@ function ShareBranchBody({
         ...prev,
         add: withAddition(prev.add, { kind: entry.kind, id: entry.id, name: entry.name }),
       }))
-      setLastAction({
-        kind: 'allowed',
-        key,
-        name: entry.name,
-        via: 'add',
-        message: `${entry.name} will be added back.`,
-      })
+      const message = `${entry.name} will be added back.`
+      setLastAction({ kind: 'allowed', key, name: entry.name, via: 'add', message })
+      announce(message)
+      setPendingFocus({ restore: key })
     } else {
+      const message = listOnly
+        ? `${entry.name} will be allowed again, but not added back to the list.`
+        : `${entry.name} will be able to open this branch again.`
       edit((prev) => ({
         ...prev,
         unexclude: [...prev.unexclude, { kind: entry.kind, id: entry.id }],
@@ -463,13 +477,11 @@ function ShareBranchBody({
         key,
         name: entry.name,
         via: 'unexclude',
-        message: listOnly
-          ? `${entry.name} will be allowed again, but not added back to the list.`
-          : `${entry.name} will be able to open this branch again.`,
+        message,
       })
+      announce(message)
+      setPendingFocus({ undo: true })
     }
-    announce(`${entry.name} will be allowed again`)
-    setPendingFocus({ allow: index })
   }
 
   const undo = () => {
@@ -618,6 +630,7 @@ function ShareBranchBody({
         () => {
           setCopy('failed')
           announce("Couldn't copy the link")
+          requestAnimationFrame(() => copyFieldRef.current?.focus())
         },
       )
   }
@@ -721,8 +734,8 @@ function ShareBranchBody({
             )}
             {!data && state.status === 'loading' ? (
               <Stack gap="sm" aria-busy data-testid="share-loading">
-                {[0, 1, 2].map((row) => (
-                  <Group key={row} gap="sm" wrap="nowrap">
+                {Array.from({ length: loadingRows }, (_, row) => (
+                  <Group key={row} gap="sm" wrap="nowrap" data-testid="share-loading-row">
                     <Skeleton circle height={32} />
                     <Stack gap={4} style={{ flex: 1 }}>
                       <Skeleton height={10} width="45%" />
@@ -771,7 +784,7 @@ function ShareBranchBody({
                         ? lastAction.message
                         : `Removed ${lastAction.name}.`}
                     </Text>
-                    <Button variant="subtle" size="compact-sm" onClick={undo}>
+                    <Button variant="subtle" size="compact-sm" onClick={undo} ref={undoRef}>
                       Undo
                     </Button>
                   </Group>
@@ -831,7 +844,7 @@ function ShareBranchBody({
               </Alert>
             )}
             {showRemoved && (
-              <div ref={removedRef}>
+              <div>
                 <UnstyledButton
                   onClick={() => setRemovedOpen(!removedOpen)}
                   aria-expanded={removedOpen}
@@ -850,7 +863,7 @@ function ShareBranchBody({
                 </UnstyledButton>
                 {removedOpen && (
                   <Stack component="ul" gap="xs" m={0} mt="xs" p={0} style={{ listStyle: 'none' }}>
-                    {excluded.map((entry, index) => (
+                    {excluded.map((entry) => (
                       <Group
                         component="li"
                         key={entryKey(entry)}
@@ -871,7 +884,7 @@ function ShareBranchBody({
                           <Button
                             variant="default"
                             size="compact-sm"
-                            onClick={() => allowAgain(entry, index)}
+                            onClick={() => allowAgain(entry)}
                             aria-label={`Allow again: ${entry.name}`}
                             data-share-allow
                           >
@@ -908,9 +921,10 @@ function ShareBranchBody({
                     </Group>
                   </Radio.Group>
                 ) : (
-                  addBy && (
-                    <Text size="sm">Who can add people: {addByLabel(addBy, viewerIsOwner)}</Text>
-                  )
+                  // As the server's rules have it now, which can leave it to admins alone.
+                  <Text size="sm">
+                    Who can add people: {addByLabel(data.whoCanAdd, viewerIsOwner)}
+                  </Text>
                 ))}
               {lockedDown && (
                 <Text size="sm" data-testid="share-lockdown">
@@ -987,6 +1001,7 @@ function ShareBranchBody({
             {"Couldn't copy the link. Select it here and copy it yourself."}
           </Text>
           <TextInput
+            ref={copyFieldRef}
             readOnly
             aria-label="Link to this branch"
             value={editorBranchLink(window.location.href, urlName)}
@@ -1009,9 +1024,12 @@ function ShareBranchBody({
           {EDITOR_ACTIONS.copyLink}
         </Button>
         <Group gap="sm">
-          <Button variant="default" onClick={onClose} disabled={saving}>
-            {!canEdit ? 'Close' : dirty ? 'Discard changes' : 'Cancel'}
-          </Button>
+          {/* While the status line asks, its own Discard changes is the one way to discard. */}
+          {!showDiscard && (
+            <Button variant="default" onClick={onClose} disabled={saving}>
+              {!canEdit ? 'Close' : dirty ? 'Discard changes' : 'Cancel'}
+            </Button>
+          )}
           {canEdit && (
             <Tooltip label={updateReason} disabled={!updateReason} multiline maw={260}>
               <Button
@@ -1057,7 +1075,7 @@ export function PersonLabel({
         radius="xl"
         aria-hidden
       >
-        {kind === 'group' ? <IconUsers size={16} /> : name.charAt(0)}
+        {kind === 'group' ? <IconUsers size={16} /> : personInitials(name)}
       </Avatar>
       <Stack gap={0} style={{ minWidth: 0 }}>
         <Text

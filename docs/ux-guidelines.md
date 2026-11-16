@@ -1,6 +1,6 @@
 # Editor UX guidelines
 
-The standard for every change to the CanopyCMS editor (`packages/canopycms/src/editor/`).
+The standard for every change to the editor (`packages/canopycms/src/editor/`).
 [Enforcement](#enforcement) lists what checks it.
 
 ## Vocabulary
@@ -52,7 +52,7 @@ from `packages/canopycms/src/editor/branch-lock.ts`.
 ## Copy
 
 - **Sentence case** for every label, title, menu item, tab, badge, toast and placeholder:
-  "Delete branch", "Open in GitHub".
+  "Delete branch".
 - **Buttons start with a verb** and name the result. A confirm repeats the action's verb
   ("Delete entry"), never "OK" or "Yes"; a form's confirm may add its noun ("Create branch").
 - **`…`, the single character,** marks an in-progress state ("Saving…") or a command that
@@ -88,8 +88,8 @@ from `packages/canopycms/src/editor/branch-lock.ts`.
 | A branch's lasting state: read-only, protected                                               | Branch bar status     |
 | One entry's lasting state, such as a read-only draft                                         | Notice above its form |
 
-Never open a modal from a modal. A popover anchored to a field never covers its input; a short field's opens below it
-(`packages/canopycms/src/editor/comments/popover-placement.ts`). Don't toast what is already visible: a saved entry shows "Saved" inline, a new comment appears in its thread. Toasts go in the corner opposite the rail (`Notifications` in
+Never open a modal from a modal, though one may open over a drawer. A popover anchored to a field never covers its input; a short field's opens below it
+(`packages/canopycms/src/editor/comments/popover-placement.ts`). Don't toast what is already visible, such as an inline "Saved". Toasts sit opposite the rail (`Notifications` in
 `packages/canopycms/src/editor/theme.tsx`); one with an action pauses while hovered or focused
 (`UndoToastMessage`). An error that needs action stays until dismissed.
 
@@ -113,7 +113,7 @@ Never open a modal from a modal. A popover anchored to a field never covers its 
   giving a full-sentence reason with the way forward ("This branch is in review.
   Withdraw it to make changes."). One reason blocking controls with different verbs names the
   condition, not a verb. The Tooltip opens clear of its control and any control stacked beside it.
-  Mantine's `data-disabled` keeps the Tooltip working on focus and touch. A control with text
+  `data-disabled` keeps it working on focus and touch. A control with text
   needs only the Tooltip; an icon-only one adds an `aria-label` for its name and the reason as
   visually hidden text.
 - No reason for a submit disabled only by an empty adjacent input (Reply) or a busy dialog's
@@ -123,10 +123,9 @@ Never open a modal from a modal. A popover anchored to a field never covers its 
 - A disabled menu item stays focusable (`aria-disabled`, not `disabled`) and shows the reason
   inline (`ReasonedMenuItem`). An empty menu shows one such item saying why, so arrow keys reach
   it; an empty section of a non-empty menu is plain text, with no not-allowed cursor.
-- **Hide** a control that can never apply for this user, such as admin items for an editor, and
+- **Hide** a control that can never apply for this user, such as an editor's admin items, and
   a read-only form's row actions ([Fields](#fields)). Where a path rule refuses an action, hide
-  the per-item "…" actions and show one collection-level line saying why ("You can't add entries
-  here").
+  the per-item "…" actions and show one collection-level line saying why.
 - A locked branch keeps each row's "…" slot and draws a lock there on the hovered, focused or
   selected row, by opacity; its Tooltip says why.
 
@@ -148,7 +147,7 @@ Never open a modal from a modal. A popover anchored to a field never covers its 
   "… may have gone through even though the server didn't answer", naming the entry and where
   to check, quoted. Keep the input, unless a retry could duplicate the write (a create): then
   close, saying where to check, and prefill that dialog's next open with what was typed.
-- An inline alert about a list sits above the list, under its heading.
+- An inline alert about a list sits above it, under its heading.
 - A placeholder takes the height of what replaces it, and a wrapping bar reserves its controls'
   widest label width, so nothing shifts.
 
@@ -227,8 +226,7 @@ included:
 - `--canopy-focus-ring` (3:1 on its surface for any brand) for focus rings, focused borders and
   checked controls; white on the primary colour sits on `--canopy-primary-fill`.
 
-Pass a plain colour; the theme brings its text and light variant to 4.5:1, at which dark mode's
-light status badges look alike. Success text is the default colour beside a green icon. Count badges put text colour on a tinted
+Pass a plain colour; the theme brings its text and light variant to 4.5:1. Success text is the default colour beside a green icon. Count badges put text colour on a tinted
 background.
 A light yellow `Alert`'s title, icon and close button take the text colour. Filled destructive
 buttons are `red.8`, filled orange ones `orange.6` with black text. Only the primary is otherwise
@@ -240,8 +238,10 @@ filled: other badges, icons and indicators take their colour's light variant.
   internal name.
 - A branch card's access list shows the names the viewer can resolve, then "and N others".
   Anyone who may open a branch receives its whole list; only admins and reviewers see emails.
-- An avatar beside a name has empty `alt`. One showing only initials is hidden from assistive
-  tech, with the person's name as visually hidden text.
+- An avatar beside a name has empty `alt`. One showing only initials (`personInitials`) is
+  hidden from assistive tech, with the person's name as visually hidden text.
+- Pickers leave out admins, whom their role admits. A read-only stand-in for a control says
+  who may act.
 
 ## Shell regions
 
@@ -251,7 +251,8 @@ branch is open, Media, a divider, the layout toggle; Settings and Account below)
 (content tree: docked, in the stacked form row, or over the form), **main** (entry header, keeping
 Save above a maximized preview; preview and form) and **overlays** (drawers, modals, toasts).
 Regions are layout only. New UI joins an existing region; adding one is a design decision.
-Switch branch… and New branch… open the Branches drawer. Unsaved is one dot (`UnsavedMark`), also
+`trailing` may lead with the branch's sharing control. Switch branch… and a locked branch's New branch…
+open the Branches drawer. Unsaved is one dot (`UnsavedMark`), also
 on Content while its panel is closed.
 
 ## Enforcement

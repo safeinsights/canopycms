@@ -11,6 +11,9 @@ import {
 } from './BranchManager'
 import { HOLD_BADGE, SYNC_FAILED_IN_REVIEW_NOTE, syncFailedFallback } from './branch-status'
 import type { BranchSummary } from './BranchManager'
+import type { CreateRefusal } from './hooks/create-branch-request'
+import { createMockApiClient } from '../api/__test__/mock-client'
+import { ApiClientProvider, type ApiClient } from './context'
 import { CanopyCMSProvider } from './theme'
 import { BranchesDrawer } from './components/BranchesDrawer'
 import { RESERVED_GROUPS } from '../authorization'
@@ -54,11 +57,16 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-const renderBranchManager = (props: React.ComponentProps<typeof BranchManager>) => {
+const renderBranchManager = (
+  props: React.ComponentProps<typeof BranchManager>,
+  api = createMockApiClient(),
+) => {
   return render(
     <SWRConfig value={{ provider: () => new Map() }}>
       <CanopyCMSProvider>
-        <BranchManager {...props} />
+        <ApiClientProvider client={api as unknown as ApiClient}>
+          <BranchManager {...props} />
+        </ApiClientProvider>
       </CanopyCMSProvider>
     </SWRConfig>,
   )
@@ -1063,7 +1071,7 @@ describe('BranchManager', () => {
 
     it("shows the server's refusal under the field, keeping the form as typed, until the name changes", async () => {
       const refusal = '"spring" is already the name of another branch. Choose a different name.'
-      const onCreate = vi.fn(async () => ({ refusal }))
+      const onCreate = vi.fn(async () => ({ refusal, field: 'name' as const }))
       renderBranchManager({ branches: baseBranches, onCreate, mode: 'prod' })
       await userEvent.click(screen.getByRole('button', { name: 'New branch…' }))
       const input = (await screen.findByLabelText(/branch name/i)) as HTMLInputElement
@@ -1085,7 +1093,7 @@ describe('BranchManager', () => {
       const refusal = '"spring" is already the name of another branch. Choose a different name.'
       renderBranchManager({
         branches: baseBranches,
-        onCreate: vi.fn(async () => ({ refusal })),
+        onCreate: vi.fn(async () => ({ refusal, field: 'name' as const })),
         mode: 'prod',
       })
       await userEvent.click(screen.getByRole('button', { name: 'New branch…' }))
@@ -1113,8 +1121,8 @@ describe('BranchManager', () => {
     ])('forgets a refusal after %s', async (_after, leave) => {
       const refusal = '"spring" is already the name of another branch. Choose a different name.'
       const onCreate = vi
-        .fn<() => Promise<boolean | { refusal: string }>>()
-        .mockResolvedValueOnce({ refusal })
+        .fn<() => Promise<boolean | CreateRefusal>>()
+        .mockResolvedValueOnce({ refusal, field: 'name' })
         .mockResolvedValue(true)
       renderBranchManager({ branches: baseBranches, onCreate, mode: 'prod' })
       await userEvent.click(screen.getByRole('button', { name: 'New branch…' }))

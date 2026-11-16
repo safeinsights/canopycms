@@ -14,7 +14,7 @@ import type { UserSearchResult } from '../../auth/types'
 import type { CanopyUserId } from '../../types'
 import { useUserMetadata } from '../hooks/useUserMetadata'
 import { isSystemUserId } from '../../system-users'
-import { personName } from '../../auth/person-name'
+import { personInitials, personName } from '../../auth/person-name'
 
 export interface UserBadgeProps {
   userId: CanopyUserId
@@ -194,12 +194,6 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
     )
   }
 
-  const getInitials = (name: string): string => {
-    const parts = name.trim().split(/\s+/)
-    if (parts.length === 1) return parts[0].charAt(0).toUpperCase()
-    return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase()
-  }
-
   const renderAvatar = () => {
     if (userId === 'anonymous') {
       return (
@@ -240,7 +234,7 @@ export const UserBadge: React.FC<UserBadgeProps> = ({
         color={avatarColor}
         style={avatarStyles}
       >
-        {!record.avatarUrl && getInitials(displayName)}
+        {!record.avatarUrl && personInitials(displayName)}
       </Avatar>
     )
   }

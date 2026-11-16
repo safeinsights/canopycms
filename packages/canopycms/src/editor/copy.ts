@@ -80,8 +80,10 @@ export const DELETE_NEEDS_ADMIN_REASON =
 export const CLOSED_PULL_REQUEST_REASON =
   'The pull request was closed on GitHub. Use "Withdraw from review", then submit it again to open a new one.'
 
-/** What a refusal to open a branch, or to change who may, tells the person refused. */
+/** What a refusal to open a branch, to create one or to change who may open one tells the person refused. */
 const ACCESS_REFUSALS: Partial<Record<ApiErrorCode, string>> = {
+  BRANCH_CREATE_FORBIDDEN:
+    "You can't create branches, because you don't have edit access to any content here. Ask a CanopyCMS admin to grant it.",
   BRANCH_ACCESS_DENIED:
     'You no longer have access to this branch. Choose another branch in "Branches".',
   BRANCH_LOCKED_DOWN: 'An admin has limited this branch to admins and reviewers.',

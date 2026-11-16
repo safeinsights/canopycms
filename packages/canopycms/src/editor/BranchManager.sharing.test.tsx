@@ -61,6 +61,7 @@ function renderManager(b: BranchSummary, user: UserContext = ANA) {
       openToEveryone: false,
       defaultAccess: 'deny',
       addBy: 'members',
+      whoCanAdd: 'members',
       rights: b.sharing ?? NONE,
       searchable: 'cms-users',
       addableByEmail: 'all-users',
@@ -137,7 +138,7 @@ describe('BranchManager sharing', () => {
 
     fireEvent.click(within(await openMenu(b)).getByRole('menuitem', { name: 'Share…' }))
 
-    expect(await screen.findByRole('dialog', { name: 'Share spring' })).toBeTruthy()
+    expect(await screen.findByRole('dialog', { name: 'Share “spring”' })).toBeTruthy()
     expect(onOverlayChange).toHaveBeenLastCalledWith(true)
     await screen.findByRole('button', { name: 'Cancel' })
     await act(async () => {
@@ -156,7 +157,7 @@ describe('BranchManager sharing', () => {
 
     fireEvent.click(line)
 
-    expect(await screen.findByRole('dialog', { name: 'Share spring' })).toBeTruthy()
+    expect(await screen.findByRole('dialog', { name: 'Share “spring”' })).toBeTruthy()
     await screen.findByRole('button', { name: 'Cancel' })
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
@@ -200,6 +201,7 @@ describe('BranchManager sharing inside the Branches drawer', () => {
         openToEveryone: false,
         defaultAccess: 'deny',
         addBy: 'members',
+        whoCanAdd: 'members',
         rights: b.sharing ?? NONE,
         searchable: 'cms-users',
         addableByEmail: 'all-users',
@@ -237,7 +239,7 @@ describe('BranchManager sharing inside the Branches drawer', () => {
 
     await userEvent.keyboard('{Escape}')
 
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Share spring' })).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Share “spring”' })).toBeNull())
     expect(onDrawerClose).not.toHaveBeenCalled()
     expect(screen.getByTestId('branch-manager')).toBeTruthy()
   })
@@ -269,6 +271,7 @@ describe('BranchManager sharing across branches', () => {
         openToEveryone: false,
         defaultAccess: 'deny',
         addBy: 'members',
+        whoCanAdd: 'members',
         rights: { isOwner: true, canAdd: true, canManage: true },
         searchable: 'cms-users',
         addableByEmail: 'all-users',
@@ -295,7 +298,7 @@ describe('BranchManager sharing across branches', () => {
 
     fireEvent.click(lines[1])
 
-    await screen.findByRole('dialog', { name: 'Share autumn' })
+    await screen.findByRole('dialog', { name: 'Share “autumn”' })
     await screen.findByRole('button', { name: 'Remove Ben Ortiz' })
     expect(screen.queryByText('Will be removed')).toBeNull()
   })

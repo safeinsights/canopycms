@@ -42,6 +42,7 @@ const access = (over: Partial<BranchAccess> = {}): BranchAccess => ({
   openToEveryone: false,
   defaultAccess: 'deny',
   addBy: 'members',
+  whoCanAdd: 'members',
   rights: { isOwner: true, canAdd: true, canManage: true },
   searchable: 'cms-users',
   addableByEmail: 'all-users',
@@ -112,6 +113,10 @@ const row = (name: string) => {
   return found
 }
 const status = () => screen.getByTestId('share-status')
+/** `text` shows in the status line and is what the live region announced, word for word. */
+const said = (text: string) =>
+  within(screen.getByTestId('share-status-line')).queryByText(text) !== null &&
+  status().textContent === text
 const loaded = () => screen.findAllByText(/Ben Ortiz/)
 const footerClose = () =>
   screen.getAllByRole('button', { name: 'Close' }).find((button) => button.textContent === 'Close')!
@@ -135,7 +140,7 @@ describe('ShareBranchDialog: rows', () => {
     setup()
     await loaded()
 
-    expect(screen.getByRole('dialog', { name: 'Share spring' })).toBeTruthy()
+    expect(screen.getByRole('dialog', { name: 'Share “spring”' })).toBeTruthy()
     const ana = row('Ana Lee')
     expect(within(ana).getByText('Ana Lee (you)')).toBeTruthy()
     expect(within(ana).getByText('Owner')).toBeTruthy()
@@ -146,6 +151,35 @@ describe('ShareBranchDialog: rows', () => {
     expect(screen.getByRole('button', { name: 'Remove Marketing team' })).toBeTruthy()
     expect(screen.getByText(LISTED_ONLY_LINE)).toBeTruthy()
     expect(screen.getByText(/People on this list can open, submit and withdraw/)).toBeTruthy()
+  })
+
+  it("says only Owner on the owner's row, whoever added them to the list", async () => {
+    const [ana, ...rest] = access().entries
+    setup({
+      data: access({ entries: [{ ...ana, addedBy: { id: 'ana', name: 'Ana Lee' } }, ...rest] }),
+    })
+    await loaded()
+
+    const owner = row('Ana Lee')
+    expect(within(owner).getByText('Owner')).toBeTruthy()
+    expect(within(owner).queryByText(/Added by/)).toBeNull()
+    expect(within(row('Ben Ortiz')).getByText(/Added by you/)).toBeTruthy()
+  })
+
+  it('holds a row in place for each person and group the listing names while loading', async () => {
+    const api = createMockApiClient()
+    api.branches.getAccess.mockReturnValue(new Promise(() => {}))
+    setup({ client: api, branch: { access: { users: ['ana', 'ben'], groups: ['team'] } } })
+
+    expect(await screen.findAllByTestId('share-loading-row')).toHaveLength(3)
+  })
+
+  it('holds one row for an owner the listing names alone', async () => {
+    const api = createMockApiClient()
+    api.branches.getAccess.mockReturnValue(new Promise(() => {}))
+    setup({ client: api, branch: { access: { users: [], groups: [] } } })
+
+    expect(await screen.findAllByTestId('share-loading-row')).toHaveLength(1)
   })
 
   it('gives a member a remove only on what they added, and who can add as text', async () => {
@@ -173,6 +207,20 @@ describe('ShareBranchDialog: rows', () => {
     ).toEqual(['Remove Marketing team'])
     expect(screen.getByText('Who can add people: Anyone on this list')).toBeTruthy()
     expect(screen.queryByRole('radiogroup', { name: 'Who can add people' })).toBeNull()
+  })
+
+  it('tells a member who can add as the server answers it, not the setting alone', async () => {
+    setup({
+      user: { userId: 'ben', groups: [] },
+      data: access({
+        addBy: 'members',
+        whoCanAdd: 'admins',
+        rights: { isOwner: false, canAdd: true, canManage: false },
+      }),
+    })
+    await loaded()
+
+    expect(screen.getByText('Who can add people: Only admins')).toBeTruthy()
   })
 
   it("gives an admin a remove on the owner's row and the Only admins choice", async () => {
@@ -298,6 +346,46 @@ describe('ShareBranchDialog: adding people', () => {
     expect(api.branches.findPeople).toHaveBeenCalledWith(expect.anything(), {
       query: 'dana@example.org',
     })
+    expect(api.branches.updateAccess.mock.calls[0][1]).toEqual({ add: { users: ['dana'] } })
+  })
+
+  it('adds someone found outside the editor by the address that found them', async () => {
+    const { api } = setup()
+    api.branches.findPeople.mockResolvedValue(
+      ok({ people: [{ id: 'dana', name: 'Dana Park', addByAddress: true }], groups: [] }),
+    )
+    await loaded()
+
+    await userEvent.type(
+      screen.getByRole('textbox', { name: 'Add people or groups' }),
+      'dana@example.org',
+    )
+    await userEvent.click(await screen.findByRole('option', { name: 'Add dana@example.org' }))
+    await screen.findByText('Dana Park')
+    fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
+
+    await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(1))
+    expect(api.branches.updateAccess.mock.calls[0][1]).toEqual({
+      add: { emails: ['dana@example.org'] },
+    })
+  })
+
+  it('adds by id someone an admin or reviewer found by address, shown in full', async () => {
+    const { api } = setup()
+    api.branches.findPeople.mockResolvedValue(
+      ok({ people: [{ id: 'dana', name: 'Dana Park', email: 'dana@example.org' }], groups: [] }),
+    )
+    await loaded()
+
+    await userEvent.type(
+      screen.getByRole('textbox', { name: 'Add people or groups' }),
+      'dana@example.org',
+    )
+    await userEvent.click(await screen.findByRole('option', { name: 'Add dana@example.org' }))
+    await screen.findByText('Dana Park')
+    fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
+
+    await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(1))
     expect(api.branches.updateAccess.mock.calls[0][1]).toEqual({ add: { users: ['dana'] } })
   })
 
@@ -668,7 +756,7 @@ describe('ShareBranchDialog: removing and staging', () => {
     expect(within(row('Pat Alvarez')).getByText('Removed by you')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Allow again: Pat Alvarez' }))
 
-    expect(screen.getByText('Pat Alvarez will be added back.')).toBeTruthy()
+    expect(said('Pat Alvarez will be added back.')).toBe(true)
     expect(within(row('Pat Alvarez')).getByText(/Unsaved/)).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Removed (1)' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
@@ -696,9 +784,12 @@ describe('ShareBranchDialog: removing and staging', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Removed (1)' }))
     fireEvent.click(screen.getByRole('button', { name: 'Allow again: Ops' }))
 
-    expect(
-      screen.getByText('Ops will be allowed again, but not added back to the list.'),
-    ).toBeTruthy()
+    expect(said('Ops will be allowed again, but not added back to the list.')).toBe(true)
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(screen.getByTestId('share-status-line')).getByRole('button', { name: 'Undo' }),
+      ),
+    )
     fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
     await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(1))
     expect(api.branches.updateAccess.mock.calls[0][1]).toEqual({ unexclude: { groups: ['ops'] } })
@@ -726,13 +817,13 @@ describe('ShareBranchDialog: removing and staging', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Removed (1)' }))
     fireEvent.click(screen.getByRole('button', { name: 'Allow again: Pat Alvarez' }))
 
-    expect(screen.getByText('Pat Alvarez will be able to open this branch again.')).toBeTruthy()
+    expect(said('Pat Alvarez will be able to open this branch again.')).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
     await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(1))
     expect(api.branches.updateAccess.mock.calls[0][1]).toEqual({ unexclude: { users: ['pat'] } })
   })
 
-  it('focuses the people input once the last removed entry is allowed again', async () => {
+  it("focuses the restored row's Remove once someone is allowed back onto the list", async () => {
     setup({
       data: access({
         excluded: [
@@ -751,7 +842,11 @@ describe('ShareBranchDialog: removing and staging', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Allow again: Pat Alvarez' }))
 
-    await waitFor(() => expect(document.activeElement).toBe(picker()))
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole('button', { name: 'Remove Pat Alvarez' }),
+      ),
+    )
   })
 
   it('hides "Removed (n)" from a member', async () => {
@@ -878,7 +973,7 @@ describe("ShareBranchDialog: general access on an 'allow' site", () => {
     fireEvent.click(screen.getByRole('button', { name: 'Removed (1)' }))
 
     fireEvent.click(screen.getByRole('button', { name: 'Allow again: Pat Alvarez' }))
-    expect(screen.getByText('Pat Alvarez will be added back.')).toBeTruthy()
+    expect(said('Pat Alvarez will be added back.')).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
 
     await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(1))
@@ -1293,10 +1388,13 @@ describe('ShareBranchDialog: states', () => {
 
     const failed = await screen.findByTestId('share-copy-failed')
     expect(failed.textContent).toContain("Couldn't copy the link.")
-    expect(
-      (within(failed).getByRole('textbox', { name: 'Link to this branch' }) as HTMLInputElement)
-        .value,
-    ).toMatch(/\?branch=spring$/)
+    const field = within(failed).getByRole('textbox', {
+      name: 'Link to this branch',
+    }) as HTMLInputElement
+    expect(field.value).toMatch(/\?branch=spring$/)
+    // Focused, with the address selected, ready to copy by hand.
+    await waitFor(() => expect(document.activeElement).toBe(field))
+    expect(field.selectionEnd! - field.selectionStart!).toBe(field.value.length)
   })
 })
 
@@ -1322,7 +1420,7 @@ describe("ShareBranchDialog: a 'deny' site", () => {
     expect(await screen.findByRole('radiogroup', { name: 'Who can add people' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Removed (1)' }))
     fireEvent.click(screen.getByRole('button', { name: 'Allow again: Pat Alvarez' }))
-    expect(screen.getByText('Pat Alvarez will be added back.')).toBeTruthy()
+    expect(said('Pat Alvarez will be added back.')).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
     await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(1))
     expect(api.branches.updateAccess.mock.calls[0][1]).toEqual({ add: { users: ['pat'] } })
@@ -1443,6 +1541,10 @@ describe('ShareBranchDialog: dismissing with edits staged', () => {
     await userEvent.keyboard('{Escape}')
 
     const confirm = await screen.findByTestId('share-discard-confirm')
+    // The question's own Discard changes is the only one while it asks.
+    expect(screen.getAllByRole('button', { name: 'Discard changes' })).toEqual([
+      within(confirm).getByRole('button', { name: 'Discard changes' }),
+    ])
     fireEvent.click(within(confirm).getByRole('button', { name: 'Discard changes' }))
 
     expect(onClose).toHaveBeenCalledTimes(1)

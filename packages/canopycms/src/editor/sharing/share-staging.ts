@@ -15,15 +15,16 @@ export type ExcludedEntry = NonNullable<BranchAccess['excluded']>[number]
 type Kind = AccessEntry['kind']
 
 /**
- * A person to add: by id, else by an address whose find threw, or was refused other than by the
- * rate limit or a lockout (PeoplePicker's `addByEmail`).
+ * A person to add: by id, else by `email`, which the server looks up again. An address goes for one
+ * whose find threw or was refused other than by the rate limit or a lockout (PeoplePicker's
+ * `addByEmail`), and with the id for one found by it, as `personToAdd` decides.
  */
 export type PersonToAdd = {
   kind: 'user'
   name: string
   avatarUrl?: string
   shownEmail?: string
-} & ({ id: string; email?: undefined } | { id?: undefined; email: string })
+} & ({ id: string; email?: string } | { id?: undefined; email: string })
 export type Addition = PersonToAdd | { kind: 'group'; id: string; name: string }
 
 export interface StagedAccess {
@@ -40,12 +41,18 @@ export const NOTHING_STAGED: StagedAccess = { add: [], remove: [], unexclude: []
 export const entryKey = (entry: { kind: Kind; id?: string; email?: string }): string =>
   entry.id !== undefined ? `${entry.kind}:${entry.id}` : `email:${entry.email?.toLowerCase()}`
 
-export const personToAdd = (person: FoundPerson): PersonToAdd => ({
+/**
+ * `person` to add, found by `address` when given. One the server would refuse by id (its
+ * `addByAddress`) goes by that address, which vouches for them; anyone else goes by id, sparing the
+ * email lookup the address would cost again.
+ */
+export const personToAdd = (person: FoundPerson, address?: string): PersonToAdd => ({
   kind: 'user',
   id: person.id,
   name: person.name,
   avatarUrl: person.avatarUrl,
   shownEmail: person.email ?? person.maskedEmail,
+  ...(address && person.addByAddress && { email: address }),
 })
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -53,7 +60,7 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 /** The server's test for a query that finds by exact address (api/people.ts `EMAIL_PATTERN`). */
 export const looksLikeEmail = (query: string): boolean => EMAIL_PATTERN.test(query.trim())
 
-const idsOf = (items: Array<{ kind: Kind; id?: string }>, kind: Kind): string[] =>
+const idsOf = (items: ReadonlyArray<{ kind: Kind; id?: string }>, kind: Kind): string[] =>
   items.flatMap((item) => (item.kind === kind && item.id !== undefined ? [item.id] : []))
 
 const nonEmpty = <T extends Record<string, unknown[]>>(lists: T): Partial<T> | undefined => {
@@ -61,17 +68,25 @@ const nonEmpty = <T extends Record<string, unknown[]>>(lists: T): Partial<T> | u
   return Object.keys(kept).length > 0 ? (kept as Partial<T>) : undefined
 }
 
+/** `add` as a request sends it: people by address where they have one, else by id. */
+export const additionsBody = (
+  add: readonly Addition[],
+): NonNullable<UpdateBranchAccessBody['add']> | undefined =>
+  nonEmpty({
+    users: add.flatMap((item) =>
+      item.kind === 'user' && item.id !== undefined && !item.email ? [item.id] : [],
+    ),
+    groups: idsOf(add, 'group'),
+    emails: add.flatMap((item) => (item.kind === 'user' && item.email ? [item.email] : [])),
+  })
+
 /** The one request that makes every staged change; empty when nothing would change. */
 export function accessChangeBody(
   staged: StagedAccess,
   current: BranchAccess,
 ): UpdateBranchAccessBody {
   if (staged.restricted === false) return current.restricted ? { restricted: false } : {}
-  const add = nonEmpty({
-    users: idsOf(staged.add, 'user'),
-    groups: idsOf(staged.add, 'group'),
-    emails: staged.add.flatMap((item) => (item.kind === 'user' && item.email ? [item.email] : [])),
-  })
+  const add = additionsBody(staged.add)
   const remove = nonEmpty({
     users: idsOf(staged.remove, 'user'),
     groups: idsOf(staged.remove, 'group'),

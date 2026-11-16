@@ -50,7 +50,7 @@ export function createMockApiClient(): MockApiClient {
     create: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"test-branch","status":"editing","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})),
     delete: vi.fn().mockResolvedValue(mockSuccess({"deleted":true})),
     updateAccess: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"test-branch","status":"editing","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})),
-    getAccess: vi.fn().mockResolvedValue(mockSuccess({"entries":[],"restricted":false,"openToEveryone":false,"defaultAccess":"deny","addBy":"members","rights":{"isOwner":false,"canAdd":false,"canManage":false},"searchable":"cms-users","addableByEmail":"all-users"})),
+    getAccess: vi.fn().mockResolvedValue(mockSuccess({"entries":[],"restricted":false,"openToEveryone":false,"defaultAccess":"deny","addBy":"members","whoCanAdd":"members","rights":{"isOwner":false,"canAdd":false,"canManage":false},"searchable":"cms-users","addableByEmail":"all-users"})),
     findPeople: vi.fn().mockResolvedValue(mockSuccess({"people":[],"groups":[]})),
     findPeopleForNewBranch: vi.fn().mockResolvedValue(mockSuccess({"people":[],"groups":[]})),
   },
@@ -185,7 +185,7 @@ export function mockBranchDeleteResponse(): BranchDeleteResponse {
 }
 
 export function mockBranchAccessResponse(): BranchAccessResponse {
-  return mockSuccess({"entries":[],"restricted":false,"openToEveryone":false,"defaultAccess":"deny","addBy":"members","rights":{"isOwner":false,"canAdd":false,"canManage":false},"searchable":"cms-users","addableByEmail":"all-users"})
+  return mockSuccess({"entries":[],"restricted":false,"openToEveryone":false,"defaultAccess":"deny","addBy":"members","whoCanAdd":"members","rights":{"isOwner":false,"canAdd":false,"canManage":false},"searchable":"cms-users","addableByEmail":"all-users"})
 }
 
 export function mockFindPeopleResponse(): FindPeopleResponse {

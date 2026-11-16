@@ -4,17 +4,26 @@ import React, { useEffect, useId, useRef } from 'react'
 import { Button, Popover, Skeleton, Stack, Text } from '@mantine/core'
 
 import { accessRefusalMessage } from '../copy'
+import { FOCUS_RETURN_ATTR, focusIfIdle } from '../utils/focus-return'
+import type { UserContext } from '../BranchManager'
 import { PersonLabel, type ShareTarget } from './ShareBranchDialog'
-import { LISTED_ONLY_LINE, LOCKDOWN_LINE, OPEN_TO_EVERYONE_LINE } from './share-copy'
-import { entryKey } from './share-staging'
+import { addByLabel, LISTED_ONLY_LINE, LOCKDOWN_LINE, OPEN_TO_EVERYONE_LINE } from './share-copy'
+import { entryKey, type BranchAccess } from './share-staging'
 import { useBranchAccess } from './useBranchAccess'
 
 export interface WhoHasAccessPopoverProps {
-  branch: ShareTarget
+  /** Absent, the popover is off and only its target renders. */
+  branch?: ShareTarget
   opened: boolean
   onChange: (opened: boolean) => void
   /** The control the popover hangs from; it takes focus back on Esc. */
   children: React.ReactElement
+  /** False for a target that is no control, such as a wrapper, which takes no popup attributes. */
+  withRoles?: boolean
+  /** Where focus goes once the list has closed, when its opener is gone, such as a menu item. */
+  returnFocusTo?: () => HTMLElement | null
+  /** The person looking: marked "(you)" on the list, and listed through any of their groups too. */
+  viewer?: UserContext
 }
 
 /** Who may open a branch, read-only, for someone who may open it but not add people. */
@@ -23,18 +32,39 @@ export function WhoHasAccessPopover({
   opened,
   onChange,
   children,
+  withRoles = true,
+  returnFocusTo,
+  viewer,
 }: WhoHasAccessPopoverProps) {
   const headingId = useId()
   return (
-    <Popover opened={opened} onChange={onChange} position="bottom-start" width={320} shadow="md">
+    <Popover
+      opened={opened}
+      onChange={onChange}
+      position="bottom-start"
+      width={320}
+      shadow="md"
+      withRoles={withRoles}
+      disabled={!branch}
+      onExitTransitionEnd={returnFocusTo && (() => focusIfIdle(returnFocusTo()))}
+    >
       <Popover.Target>{children}</Popover.Target>
-      <Popover.Dropdown aria-labelledby={headingId} data-testid="who-has-access">
-        <WhoHasAccessBody
-          branch={branch.name}
-          owner={branch.createdBy}
-          lockedDown={!!branch.access?.managerOrAdminAllowed}
-          headingId={headingId}
-        />
+      <Popover.Dropdown
+        role="dialog"
+        aria-labelledby={headingId}
+        tabIndex={-1}
+        data-testid="who-has-access"
+        {...(returnFocusTo && { [FOCUS_RETURN_ATTR]: true })}
+      >
+        {branch && (
+          <WhoHasAccessBody
+            branch={branch.name}
+            owner={branch.createdBy}
+            lockedDown={!!branch.access?.managerOrAdminAllowed}
+            headingId={headingId}
+            viewer={viewer}
+          />
+        )}
       </Popover.Dropdown>
     </Popover>
   )
@@ -45,11 +75,13 @@ function WhoHasAccessBody({
   owner,
   lockedDown,
   headingId,
+  viewer,
 }: {
   branch: string
   owner?: string
   lockedDown: boolean
   headingId: string
+  viewer?: UserContext
 }) {
   const { state, reload } = useBranchAccess(branch)
   const headingRef = useRef<HTMLParagraphElement>(null)
@@ -95,6 +127,9 @@ function WhoHasAccessBody({
                     kind={entry.kind}
                     name={entry.name}
                     avatarUrl={entry.avatarUrl}
+                    suffix={
+                      entry.kind === 'user' && entry.id === viewer?.userId ? ' (you)' : undefined
+                    }
                     detail={
                       entry.kind === 'group' ? 'Group' : entry.id === owner ? 'Owner' : undefined
                     }
@@ -110,8 +145,47 @@ function WhoHasAccessBody({
                 ? OPEN_TO_EVERYONE_LINE
                 : LISTED_ONLY_LINE}
           </Text>
+          {!lockedDown && !data.openToEveryone && (
+            <WhoCanAddLine access={data} owner={owner} viewer={viewer} />
+          )}
         </>
       )}
     </Stack>
+  )
+}
+
+/**
+ * Who may add people, for a viewer who may not. "Anyone on this list" is said only to someone not
+ * on it, by name or through a group: one on it who still can't add (an archived branch) is told
+ * nothing they could act on.
+ */
+function WhoCanAddLine({
+  access,
+  owner,
+  viewer,
+}: {
+  access: BranchAccess
+  owner?: string
+  viewer?: UserContext
+}) {
+  const listed = access.entries.some((entry) =>
+    entry.kind === 'user' ? entry.id === viewer?.userId : !!viewer?.groups?.includes(entry.id),
+  )
+  // The server's rules as they stand, not the setting alone (`whoCanAdd`).
+  const addBy = access.whoCanAdd
+  if (addBy === 'members' && listed) return null
+  const ownerName = access.entries.find(
+    (entry) => entry.kind === 'user' && entry.id === owner,
+  )?.name
+  const line =
+    addBy === 'owner'
+      ? ownerName
+        ? `Only the owner, ${ownerName}, can add people.`
+        : 'Only the owner can add people.'
+      : `${addByLabel(addBy, false)} can add people.`
+  return (
+    <Text size="sm" data-testid="who-can-add">
+      {line}
+    </Text>
   )
 }

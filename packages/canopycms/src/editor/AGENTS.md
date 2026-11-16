@@ -18,7 +18,7 @@ authoritative**. This file is the map.
 | `context/`                                            | `ApiClientContext`, `AssetContext`, `EditorStateContext`, `SWRProvider`, `EditorIdentityContext`.                                                  |
 | `schema-editor/`                                      | The admin schema-editing UI (collections, entry types, ordering).                                                                                  |
 | `permission-manager/`, `group-manager/`               | Admin surfaces, each with its own `hooks/`.                                                                                                        |
-| `comments/`, `media/`, `admin/`, `sharing/`, `utils/` | Review threads, asset library, system health, Share dialog, local helpers.                                                                         |
+| `comments/`, `media/`, `admin/`, `sharing/`, `utils/` | Review threads, asset library, system health, sharing, local helpers.                                                                              |
 
 ## `Editor.tsx` is a composition root, not a god component
 

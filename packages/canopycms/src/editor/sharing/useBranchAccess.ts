@@ -6,7 +6,10 @@ import type { ApiErrorCode } from '../../api/types'
 import { useApiClient } from '../context/ApiClientContext'
 import type { BranchAccess } from './share-staging'
 
-/** Codes after which the viewer can do nothing more with the list, so the dialog offers only Close. */
+/**
+ * Codes after which the viewer can do nothing more with the list, so the dialog offers only Close;
+ * `BRANCH_CREATE_FORBIDDEN` refuses the New branch form's finder.
+ */
 const LOCKOUT_CODES: ReadonlySet<ApiErrorCode> = new Set([
   'BRANCH_ACCESS_DENIED',
   'BRANCH_LOCKED_DOWN',
@@ -14,6 +17,7 @@ const LOCKOUT_CODES: ReadonlySet<ApiErrorCode> = new Set([
   'BRANCH_NOT_SHAREABLE',
   'ACCESS_ADD_FORBIDDEN',
   'ACCESS_MANAGE_FORBIDDEN',
+  'BRANCH_CREATE_FORBIDDEN',
 ])
 
 /** A refusal naming `ids` turns down one change, never the viewer, so it is no lockout. */
