@@ -34,6 +34,7 @@ const emailNotFoundMessage = (scope: BranchAccess['addableByEmail']): string =>
     : 'No one found for that address, or they already have access or were removed. Someone new signs in to the editor once, then can be found about 15 minutes later.'
 
 const NO_NAME_MATCH = 'No one found. Type their full email address to add them.'
+const RATE_LIMITED = accessRefusalMessage('RATE_LIMITED') ?? ''
 
 export interface PeoplePickerProps {
   /** The branch being shared; absent for one not yet created, which has its own finder. */
@@ -119,7 +120,7 @@ export function PeoplePicker({
             if (mine !== seq.current) return
             if (!result.ok || !result.data) {
               setFailedQuery(trimmed)
-              if (result.code === 'RATE_LIMITED') setFieldError(accessRefusalMessage(result.code))
+              if (result.code === 'RATE_LIMITED') fail(RATE_LIMITED)
               return
             }
             setFailedQuery(null)
@@ -155,6 +156,12 @@ export function PeoplePicker({
     [shown, staged],
   )
 
+  /** A lookup's outcome, shown on the field and announced, as name results are. */
+  const fail = (message: string) => {
+    setFieldError(message)
+    announce(message)
+  }
+
   const added = (addition: Addition) => {
     onAdd(addition)
     announce(`Added ${addition.name}`)
@@ -171,10 +178,10 @@ export function PeoplePicker({
       if (result.ok && result.data) {
         const person = result.data.people[0]
         if (person) added(personToAdd(person, email))
-        else setFieldError(emailNotFoundMessage(addableByEmail))
+        else fail(emailNotFoundMessage(addableByEmail))
         return
       }
-      if (result.code === 'RATE_LIMITED') setFieldError(accessRefusalMessage(result.code))
+      if (result.code === 'RATE_LIMITED') fail(RATE_LIMITED)
       else if (!isLockout(result.code)) added({ kind: 'user', email, name: email })
     } catch (err: unknown) {
       console.error(err)

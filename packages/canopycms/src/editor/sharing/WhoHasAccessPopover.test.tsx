@@ -37,6 +37,7 @@ function renderPopover(data: BranchAccess, lockedDown = false, viewer?: UserCont
         branch={{
           name: 'spring',
           createdBy: 'ana',
+          ownerName: 'Ana Lee',
           access: { managerOrAdminAllowed: lockedDown },
         }}
         opened={opened}
@@ -74,6 +75,33 @@ describe('WhoHasAccessPopover', () => {
     await waitFor(() =>
       expect(document.activeElement).toBe(within(popover).getByText('Who has access')),
     )
+  })
+
+  it('shows the owner of an unlisted branch on a closed site, as the Share dialog does', async () => {
+    const { opener } = renderPopover(access({ entries: [], restricted: false }), false, {
+      userId: 'zoe',
+    })
+
+    fireEvent.click(opener)
+
+    const popover = await screen.findByRole('dialog', { name: 'Who has access' })
+    const rows = await within(popover).findAllByRole('listitem')
+    expect(rows).toHaveLength(1)
+    expect(within(rows[0]).getByText('Ana Lee')).toBeTruthy()
+    expect(within(rows[0]).getByText('Owner')).toBeTruthy()
+  })
+
+  it('keeps focus, and so Esc, inside after a Tab', async () => {
+    const { opener } = renderPopover(access())
+    fireEvent.click(opener)
+    const popover = await screen.findByRole('dialog', { name: 'Who has access' })
+    await waitFor(() => expect(popover.contains(document.activeElement)).toBe(true))
+
+    await userEvent.tab()
+
+    expect(popover.contains(document.activeElement)).toBe(true)
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Who has access' })).toBeNull())
   })
 
   it('says an open branch is open to everyone who can sign in', async () => {

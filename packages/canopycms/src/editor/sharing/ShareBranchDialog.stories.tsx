@@ -213,11 +213,34 @@ const OPEN: BranchAccess = {
   restricted: false,
   openToEveryone: true,
   defaultAccess: 'allow',
+  losingAccess: [
+    { id: 'dana', name: 'Dana Park' },
+    { id: 'chen', name: 'Chen Wu' },
+  ],
 }
 
 /** An open branch on a site whose default lets everyone who can sign in open branches. */
-export const AllowSiteOpen: Story = {
-  args: { load: OPEN, branch: { editors: ['ana', 'dana', 'chen'] } },
+export const AllowSiteOpen: Story = { args: { load: OPEN } }
+
+/** Opening a listed branch to everyone, where someone was removed: they stay out, and say so. */
+export const WideningWithRemoved: Story = {
+  args: {
+    load: {
+      ...OWNER_LIST,
+      defaultAccess: 'allow',
+      excluded: [
+        {
+          kind: 'user',
+          id: 'pat',
+          name: 'Pat Alvarez',
+          by: { id: 'ana', name: 'Ana Lee' },
+          at: AT,
+          byAdmin: false,
+        },
+      ],
+    },
+  },
+  play: () => clickLabel('Anyone who can sign in to the editor'),
 }
 
 /** Limiting that branch to its list names the editors who would lose access. */

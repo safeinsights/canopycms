@@ -67,6 +67,7 @@ import { CREATED_BRANCH_GRACE_MS } from './hooks/useBranchManager'
 import type { NewBranchRequest } from './hooks/useBranchActions'
 import { ShareWithField } from './sharing/ShareWithField'
 import { additionsBody, entryKey, joinNames, type Addition } from './sharing/share-staging'
+import type { RemovedCount } from './sharing/share-copy'
 import {
   accessRefusalMessage,
   CLOSED_PULL_REQUEST_REASON,
@@ -95,6 +96,8 @@ export interface BranchSummary {
     users?: string[]
     groups?: string[]
     managerOrAdminAllowed?: boolean
+    /** How many were removed from it, which the listing tells only its owner and admins. */
+    removed?: RemovedCount
   }
   pullRequestUrl?: string
   pullRequestNumber?: number

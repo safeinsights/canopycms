@@ -34,6 +34,7 @@ import { isNonApiResponse } from '../../api/client'
 import { isGatewayFailure, isUnanswered, UnansweredError } from '../unanswered'
 import type { ApiResponse } from '../../api/types'
 import type { UnsavedSummary } from './useDraftManager'
+import type { RemovedCount } from '../sharing/share-copy'
 import type { StampedEntry } from '../../stamp-on-publish'
 import { describeUnsaved } from './useBranchActions'
 import { writeEditorUrl } from './editor-history'
@@ -433,6 +434,7 @@ interface BranchSummary {
     users: string[] | undefined
     groups: string[] | undefined
     managerOrAdminAllowed: boolean | undefined
+    removed: RemovedCount | undefined
   }
   pullRequestUrl?: string
   pullRequestNumber?: number
@@ -700,6 +702,13 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
           users: b.access.allowedUsers,
           groups: b.access.allowedGroups,
           managerOrAdminAllowed: b.access.managerOrAdminAllowed,
+          removed:
+            b.access.excluded || b.access.excludedGroups
+              ? {
+                  users: Object.keys(b.access.excluded ?? {}).length,
+                  groups: Object.keys(b.access.excludedGroups ?? {}).length,
+                }
+              : undefined,
         },
         pullRequestUrl: b.pullRequestUrl,
         pullRequestNumber: b.pullRequestNumber,

@@ -3,12 +3,13 @@ import { describe, expect, it } from 'vitest'
 import {
   accessChangeBody,
   additionsBody,
+  addressesLanded,
   changeLanded,
-  editorsLosingAccess,
   joinNames,
   narrows,
   NOTHING_STAGED,
   personToAdd,
+  showsUnlistedOwner,
   withAddition,
   type BranchAccess,
 } from './share-staging'
@@ -108,6 +109,60 @@ describe('changeLanded', () => {
   })
 })
 
+describe('addressesLanded', () => {
+  const before = current({ entries: [{ kind: 'user', id: 'ana', name: 'Ana' }] })
+  const body = { add: { users: ['cole'], emails: ['dana@example.org'] } }
+
+  it('counts as landed an address that brought in someone the viewer added', () => {
+    const fresh = current({
+      entries: [
+        { kind: 'user', id: 'ana', name: 'Ana' },
+        { kind: 'user', id: 'cole', name: 'Cole', addedBy: { id: 'ana', name: 'Ana' } },
+        { kind: 'user', id: 'dana', name: 'Dana', addedBy: { id: 'ana', name: 'Ana' } },
+      ],
+    })
+    expect(addressesLanded(body, before, fresh, 'ana')).toBe(true)
+    expect(changeLanded(body, fresh, true)).toBe(true)
+  })
+
+  it('does not count someone added by id, by someone else, or listed before', () => {
+    const fresh = current({
+      entries: [
+        { kind: 'user', id: 'ana', name: 'Ana', addedBy: { id: 'ana', name: 'Ana' } },
+        { kind: 'user', id: 'cole', name: 'Cole', addedBy: { id: 'ana', name: 'Ana' } },
+        { kind: 'user', id: 'eve', name: 'Eve', addedBy: { id: 'ben', name: 'Ben' } },
+      ],
+    })
+    expect(addressesLanded(body, before, fresh, 'ana')).toBe(false)
+  })
+})
+
+describe('showsUnlistedOwner', () => {
+  const unlisted = current({ entries: [], excluded: [], restricted: false, defaultAccess: 'deny' })
+
+  it('shows the owner of an unlisted branch on a closed site, or one being limited', () => {
+    expect(showsUnlistedOwner(unlisted, 'ana')).toBe(true)
+    const open = { ...unlisted, defaultAccess: 'allow' as const }
+    expect(showsUnlistedOwner(open, 'ana')).toBe(false)
+    expect(showsUnlistedOwner(open, 'ana', true)).toBe(true)
+  })
+
+  it('never for a listed branch, a listed or removed owner, or no person', () => {
+    expect(showsUnlistedOwner({ ...unlisted, restricted: true }, 'ana')).toBe(false)
+    expect(
+      showsUnlistedOwner(
+        { ...unlisted, entries: [{ kind: 'user', id: 'ana', name: 'Ana' }] },
+        'ana',
+      ),
+    ).toBe(false)
+    expect(showsUnlistedOwner(current({ restricted: false, defaultAccess: 'deny' }), 'pat')).toBe(
+      false,
+    )
+    expect(showsUnlistedOwner(unlisted, 'canopycms-system')).toBe(false)
+    expect(showsUnlistedOwner(unlisted, undefined)).toBe(false)
+  })
+})
+
 describe('narrowing an open branch', () => {
   const open = current({ entries: [], restricted: false, openToEveryone: true })
 
@@ -126,33 +181,11 @@ describe('narrowing an open branch', () => {
     ).toBe(false)
   })
 
-  it('leaves out removed people, system ids and the no-creator placeholder', () => {
-    expect(
-      editorsLosingAccess(
-        ['pat', 'canopycms-system', 'unknown', 'dana'],
-        'owner',
-        NOTHING_STAGED,
-        current({ entries: [] }),
-      ),
-    ).toEqual(['dana'])
-  })
-
   it('stages an addition once, and never one already listed', () => {
     const cole = { kind: 'user' as const, id: 'cole', name: 'Cole' }
     expect(withAddition([cole], cole)).toEqual([cole])
     expect(withAddition([], cole, new Set(['user:cole']))).toEqual([])
     expect(withAddition([], cole)).toEqual([cole])
-  })
-
-  it('names editors not listed, not staged and not the owner', () => {
-    expect(
-      editorsLosingAccess(
-        ['owner', 'ana', 'dana', 'cole', 'dana'],
-        'owner',
-        { ...NOTHING_STAGED, add: [{ kind: 'user', id: 'cole', name: 'Cole' }] },
-        current(),
-      ),
-    ).toEqual(['dana'])
   })
 })
 
