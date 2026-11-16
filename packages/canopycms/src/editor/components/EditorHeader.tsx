@@ -335,7 +335,7 @@ export function EditorHeader({
     shareControl = (
       <WhoHasAccessPopover
         branch={shared}
-        viewerId={sharing.user?.userId}
+        viewer={sharing.user}
         opened={accessOpen === shared.name}
         onChange={(open) => setAccessOpen(open ? shared.name : null)}
       >
@@ -371,7 +371,7 @@ export function EditorHeader({
                     mode: shareMode,
                     branch: shared,
                     onShare: sharing.onShare,
-                    viewerId: sharing.user?.userId,
+                    viewer: sharing.user,
                   }
                 : undefined
             }

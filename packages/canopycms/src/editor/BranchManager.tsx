@@ -661,7 +661,7 @@ const BranchCard: React.FC<BranchCardProps> = ({
             ) : (
               <WhoHasAccessPopover
                 branch={b}
-                viewerId={user?.userId}
+                viewer={user}
                 opened={accessPopoverOpen}
                 onChange={(open) => onAccessPopoverChange?.(open)}
               >

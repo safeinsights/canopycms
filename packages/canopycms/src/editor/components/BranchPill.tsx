@@ -12,6 +12,7 @@ import type { BaseUpdateControl } from '../base-update-wait'
 import { getLatestChangesReason } from './GetLatestChangesButton'
 import { WhoHasAccessPopover } from '../sharing/WhoHasAccessPopover'
 import type { ShareTarget } from '../sharing/ShareBranchDialog'
+import type { UserContext } from '../BranchManager'
 
 export interface BranchPillProps {
   branchName: string
@@ -35,7 +36,7 @@ export interface BranchPillProps {
     branch: ShareTarget
     /** Opens the Share dialog, which returns focus to `returnFocusTo()`. */
     onShare: (returnFocusTo: () => HTMLElement | null) => void
-    viewerId?: string
+    viewer?: UserContext
   }
 }
 
@@ -153,7 +154,7 @@ export function BranchPill({
       onChange={(open) => setAccessOpen(open && listed ? listed.name : null)}
       withRoles={false}
       returnFocusTo={() => trigger.current}
-      viewerId={share?.viewerId}
+      viewer={share?.viewer}
     >
       <Box component="span" display="inline-flex" style={{ flexShrink: 0 }}>
         {menu}

@@ -7,6 +7,7 @@ import { createMockApiClient } from '../../api/__test__/mock-client'
 import { ApiClientProvider, type ApiClient } from '../context'
 import { CanopyCMSProvider } from '../theme'
 import { LISTED_ONLY_LINE, LOCKDOWN_LINE, OPEN_TO_EVERYONE_LINE } from './share-copy'
+import type { UserContext } from '../BranchManager'
 import type { BranchAccess } from './share-staging'
 import { WhoHasAccessPopover } from './WhoHasAccessPopover'
 
@@ -25,7 +26,7 @@ const access = (over: Partial<BranchAccess> = {}): BranchAccess => ({
   ...over,
 })
 
-function renderPopover(data: BranchAccess, lockedDown = false, viewerId?: string) {
+function renderPopover(data: BranchAccess, lockedDown = false, viewer?: UserContext) {
   const api = createMockApiClient()
   api.branches.getAccess.mockResolvedValue({ ok: true, status: 200, data })
   function Harness() {
@@ -39,7 +40,7 @@ function renderPopover(data: BranchAccess, lockedDown = false, viewerId?: string
         }}
         opened={opened}
         onChange={setOpened}
-        viewerId={viewerId}
+        viewer={viewer}
       >
         <button onClick={() => setOpened((o) => !o)}>Access: Ana Lee, Marketing team</button>
       </WhoHasAccessPopover>
@@ -107,7 +108,7 @@ describe('WhoHasAccessPopover', () => {
   })
 
   it('marks the viewer "(you)"', async () => {
-    const { opener } = renderPopover(access(), false, 'ana')
+    const { opener } = renderPopover(access(), false, { userId: 'ana' })
     fireEvent.click(opener)
 
     const popover = await screen.findByRole('dialog', { name: 'Who has access' })
@@ -119,25 +120,48 @@ describe('WhoHasAccessPopover', () => {
     ['admins', 'Only admins can add people.'],
     ['members', 'Anyone on this list can add people.'],
   ] as const)('says who can add people when that is %s', async (addBy, line) => {
-    const { opener } = renderPopover(access({ addBy }), false, 'zoe')
+    const { opener } = renderPopover(access({ addBy }), false, { userId: 'zoe' })
     fireEvent.click(opener)
 
     expect((await screen.findByTestId('who-can-add')).textContent).toBe(line)
   })
 
   it('tells someone on the list who still may not add nothing about who can', async () => {
-    const { opener } = renderPopover(access({ addBy: 'members' }), false, 'ana')
+    const { opener } = renderPopover(access({ addBy: 'members' }), false, { userId: 'ana' })
     fireEvent.click(opener)
 
     await screen.findByText(LISTED_ONLY_LINE)
     expect(screen.queryByTestId('who-can-add')).toBeNull()
   })
 
+  it('counts someone on the list through a group as listed', async () => {
+    const { opener } = renderPopover(access({ addBy: 'members' }), false, {
+      userId: 'zoe',
+      groups: ['team'],
+    })
+    fireEvent.click(opener)
+
+    await screen.findByText(LISTED_ONLY_LINE)
+    expect(screen.queryByTestId('who-can-add')).toBeNull()
+  })
+
+  it('tells someone on the list through a group who else may add, when it is not the list', async () => {
+    const { opener } = renderPopover(access({ addBy: 'owner' }), false, {
+      userId: 'zoe',
+      groups: ['team'],
+    })
+    fireEvent.click(opener)
+
+    expect((await screen.findByTestId('who-can-add')).textContent).toBe(
+      'Only the owner, Ana Lee, can add people.',
+    )
+  })
+
   it('says nothing of who can add on a branch open to everyone', async () => {
     const { opener } = renderPopover(
       access({ entries: [], restricted: false, openToEveryone: true, defaultAccess: 'allow' }),
       false,
-      'zoe',
+      { userId: 'zoe' },
     )
     fireEvent.click(opener)
 
