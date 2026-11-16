@@ -3350,7 +3350,8 @@ const EditorContent: React.FC<EditorProps> = ({
               </BranchesDrawer>
               {barShareBranch && userContext && (
                 <ShareBranchDialog
-                  key={barShareBranch.name}
+                  // Beside CommentsPanel, which the branch's name keys too.
+                  key={`share:${barShareBranch.name}`}
                   opened={!!barShare?.opened}
                   onClose={() => setBarShare((current) => current && { ...current, opened: false })}
                   onChanged={() => void loadBranches().catch(console.error)}
