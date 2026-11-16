@@ -25,13 +25,8 @@ import {
   salvageBranchMetadata,
   type SalvagedAccess,
 } from '../branch-metadata-file'
-import {
-  getBranchProtection,
-  hasAccessList,
-  isExcludedFrom,
-  opensToEveryone,
-} from '../authorization'
-import { isNobody } from '../system-users'
+import { hasAccessList, opensToEveryone, opensWithoutList } from '../authorization'
+import { UNKNOWN_CREATOR_ID } from '../system-users'
 import {
   ORPHAN_YOUTH_THRESHOLD_MS,
   scanBranchHealth,
@@ -389,11 +384,11 @@ const purgeBranchDirHandler = async (
  * Kept where readable, else closed: inside the lock, the corrupt file's text is read and
  * salvaged field by field (salvageBranchMetadata). `access` is kept when it passes its schema
  * whole, `createdBy` and `baseBranch` when each is a non-empty string; every other field is
- * rebuilt from defaults, `status` resetting to `editing`. Unreadable access becomes
- * {@link fallbackAccess}, which admits no one the damaged list kept out, except on the base branch:
- * it takes no list (api/branch-access.ts), so its unreadable access becomes `{}`. The write
+ * rebuilt from defaults, `status` resetting to `editing` and an unreadable `createdBy` to
+ * `'unknown'`, which matches no user. Unreadable access becomes {@link fallbackAccess}. The write
  * applies only over no metadata at all, so a write that recreated the file after the archive is
- * never merged over. The response's `reset` and `kept` say which fields came from where.
+ * never merged over; a write that throws puts the archived file back (restoreArchived). The
+ * response's `reset` and `kept` say which fields came from where.
  */
 const repairBranchDirHandler = async (
   _gc: Record<string, never>,
@@ -483,14 +478,19 @@ const repairBranchDirHandler = async (
 
     const salvaged = salvageBranchMetadata(archived.raw ?? '')
     const config = ctx.services.config
-    const isBase = getBranchProtection(config, branchName, salvaged.baseBranch).isProtected
-    const createdBy = salvaged.createdBy ?? req.user.userId
+    const createdBy = salvaged.createdBy ?? UNKNOWN_CREATOR_ID
     const keptAccess = salvaged.access.readable
     const access: BranchAccessControl = salvaged.access.readable
       ? salvaged.access.access
-      : isBase
-        ? {}
-        : fallbackAccess(salvaged.access, createdBy)
+      : fallbackAccess(
+          salvaged.access.narrowing,
+          {
+            name: branchName,
+            baseBranch: salvaged.baseBranch,
+            createdBy,
+          },
+          config,
+        )
 
     // Lock released above (we're outside the withOccFileLock callback now) --
     // saveIf() takes its own hold on the same lock internally. Its defaults
@@ -498,18 +498,28 @@ const repairBranchDirHandler = async (
     // registry. Still under the provisioning lock acquired above -- see the
     // lock-ordering note in this handler's docstring.
     const manager = getBranchMetadataFileManager(dirPath, baseRoot)
-    const saved = await manager.saveIf(
-      {
-        branch: {
-          name: branchName,
-          status: 'editing',
-          createdBy,
-          ...(salvaged.baseBranch !== undefined && { baseBranch: salvaged.baseBranch }),
-          access,
+    let saved: Awaited<ReturnType<typeof manager.saveIf>>
+    try {
+      saved = await manager.saveIf(
+        {
+          branch: {
+            name: branchName,
+            status: 'editing',
+            createdBy,
+            ...(salvaged.baseBranch !== undefined && { baseBranch: salvaged.baseBranch }),
+            access,
+          },
         },
-      },
-      (existing) => existing === null,
-    )
+        (existing) => existing === null,
+      )
+    } catch (err: unknown) {
+      const restored = await restoreArchived(dirPath, archived.archivedAs)
+      return {
+        ok: false,
+        status: 500,
+        error: `Could not write the repaired metadata: ${getErrorMessage(err)}. ${restored}`,
+      }
+    }
     if (saved === null) {
       return {
         ok: false,
@@ -604,33 +614,44 @@ async function checkedOutBranch(
 }
 
 /**
- * The access a repaired branch gets when its own fails its schema: a restricted list that admits
- * no one the damaged one shows was kept out. It carries every narrowing field that still reads.
- * It lists the creator only when they are a person, `access` was an object, its lockdown and
- * exclusions read and don't keep them out, and no list that reads leaves them off; otherwise only
- * admins and reviewers pass.
+ * The access a repaired branch gets when its own fails its schema: no list, so only admins and
+ * reviewers can open it until an admin shares it again, keeping each narrowing field that still
+ * reads. Nobody is listed, the creator included, since a damaged list can't show who it kept out.
+ * The base branch and dev's active branch take no list ({@link opensWithoutList}): an admin could
+ * not open them again (api/branch-access.ts), so they keep only the narrowing fields.
  */
 function fallbackAccess(
-  damaged: Extract<SalvagedAccess, { readable: false }>,
-  creator: CanopyUserId,
+  narrowing: Extract<SalvagedAccess, { readable: false }>['narrowing'],
+  branch: Pick<BranchMetadata, 'name' | 'baseBranch' | 'createdBy'>,
+  config: ApiContext['services']['config'],
 ): BranchAccessControl {
-  const listed = creatorStays(damaged.creatorAccess, creator)
-  return { restricted: true, ...(listed && { allowedUsers: [creator] }), ...damaged.narrowing }
+  return opensWithoutList(branch, config) ? { ...narrowing } : { restricted: true, ...narrowing }
 }
 
-function creatorStays(
-  creatorAccess: Extract<SalvagedAccess, { readable: false }>['creatorAccess'],
-  creator: CanopyUserId,
-): boolean {
-  if (creatorAccess === null || isNobody(creator)) return false
-  const { fields, unreadable } = creatorAccess
-  if (unreadable.includes('managerOrAdminAllowed') || fields.managerOrAdminAllowed) return false
-  if (unreadable.includes('excluded') || isExcludedFrom(fields, creator)) return false
-  const leftOffList =
-    !unreadable.includes('allowedUsers') &&
-    hasAccessList(fields) &&
-    !fields.allowedUsers?.includes(creator)
-  return !leftOffList
+/**
+ * Puts the archived corrupt file back as `branch.json` after a failed write, under the same lock,
+ * unless something wrote `branch.json` since; says in a sentence where the file now is.
+ */
+async function restoreArchived(dirPath: string, archivedAs: string): Promise<string> {
+  const metaDir = path.join(dirPath, BRANCH_META_DIR)
+  const branchJsonPath = path.join(metaDir, BRANCH_META_FILE)
+  try {
+    return await withOccFileLock(branchJsonPath, async () => {
+      const present = await fs
+        .stat(branchJsonPath)
+        .then(() => true)
+        .catch((err: unknown) => {
+          if (isNotFoundError(err)) return false
+          throw err
+        })
+      if (present)
+        return `The corrupt file stays archived as ${archivedAs}: branch.json exists again.`
+      await fs.rename(path.join(metaDir, archivedAs), branchJsonPath)
+      return 'The corrupt file is back as branch.json.'
+    })
+  } catch (err: unknown) {
+    return `The corrupt file could not be put back, and stays archived as ${archivedAs}: ${getErrorMessage(err)}.`
+  }
 }
 
 /** Classify branch.json's current state for repair's precondition checks. */

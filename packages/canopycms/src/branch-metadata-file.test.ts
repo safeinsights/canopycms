@@ -212,7 +212,7 @@ describe('readBranchMetadataFile', () => {
 })
 
 describe('salvageBranchMetadata', () => {
-  const nothing = { access: { readable: false, narrowing: {}, creatorAccess: null } }
+  const nothing = { access: { readable: false, narrowing: {} } }
   const salvage = (file: unknown) => salvageBranchMetadata(JSON.stringify(file))
   const removal = { by: 'admin', at: '2026-11-01T00:00:00.000Z', byAdmin: true }
 
@@ -230,7 +230,7 @@ describe('salvageBranchMetadata', () => {
     ['null', null],
     ['an array', []],
     ['missing', undefined],
-  ])('reads no creator rule from access that is %s', (_case, access) => {
+  ])('reads no narrowing from access that is %s', (_case, access) => {
     expect(salvage({ branch: { access, createdBy: 'alice' } })).toEqual({
       ...nothing,
       createdBy: 'alice',
@@ -252,22 +252,19 @@ describe('salvageBranchMetadata', () => {
           managerOrAdminAllowed: true,
           excluded: { bob: removal },
           excludedGroups: { readers: 'damaged' },
+          addBy: 'admins',
         },
       },
     })
     expect(salvaged.access).toEqual({
       readable: false,
-      narrowing: { managerOrAdminAllowed: true, excluded: { bob: removal } },
-      creatorAccess: {
-        fields: {
-          restricted: true,
-          allowedGroups: ['writers'],
-          managerOrAdminAllowed: true,
-          excluded: { bob: removal },
-        },
-        unreadable: ['allowedUsers'],
-      },
+      narrowing: { managerOrAdminAllowed: true, excluded: { bob: removal }, addBy: 'admins' },
     })
+  })
+
+  it.each(['members', 'owner', 'nobody'])('carries no addBy of %j', (addBy) => {
+    const salvaged = salvage({ branch: { access: { addBy, entryMeta: 1 } } })
+    expect(salvaged.access).toEqual({ readable: false, narrowing: {} })
   })
 
   it('carries a lockdown only when it reads as true', () => {
@@ -299,9 +296,9 @@ describe('salvageBranchMetadata', () => {
     const salvaged = salvageBranchMetadata(raw)
     expect(salvaged.createdBy).toBeUndefined()
     if (salvaged.access.readable) throw new Error('expected damaged access')
-    const { creatorAccess, narrowing } = salvaged.access
-    expect(creatorAccess?.fields.allowedUsers).toBeUndefined()
-    expect(Object.getPrototypeOf(creatorAccess?.fields)).toBe(Object.prototype)
+    const { narrowing } = salvaged.access
+    expect(narrowing.managerOrAdminAllowed).toBeUndefined()
+    expect(Object.getPrototypeOf(narrowing)).toBe(Object.prototype)
     const excluded = narrowing.excluded ?? {}
     expect(Object.getPrototypeOf(excluded)).toBe(Object.prototype)
     expect(Object.keys(excluded)).toEqual([])
