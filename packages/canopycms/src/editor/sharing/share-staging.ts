@@ -14,7 +14,10 @@ export type AccessEntry = BranchAccess['entries'][number]
 export type ExcludedEntry = NonNullable<BranchAccess['excluded']>[number]
 type Kind = AccessEntry['kind']
 
-/** A person to add: by id, else by an address no find has answered. */
+/**
+ * A person to add: by id, else by an address whose find threw, or was refused other than by the
+ * rate limit or a lockout (PeoplePicker's `addByEmail`).
+ */
 export type PersonToAdd = {
   kind: 'user'
   name: string

@@ -228,8 +228,9 @@ export async function recordRecentShares(
 
 /**
  * `refusal` without the ids an address in the request resolved to: the caller typed the address,
- * and the id behind it is no business of theirs. To a caller who can't see who was removed, an
- * address that finds someone removed answers as one that finds no one, as find skips them.
+ * and the id behind it is no business of theirs. For a caller who can't see the list's removals,
+ * a USER_EXCLUDED naming such an id becomes the unknown-address refusal. That covers someone
+ * removed while the request waited; {@link changeBranchAccess} answers the rest before any rule.
  */
 function hidingEmailIds(
   refusal: AccessRefused,
