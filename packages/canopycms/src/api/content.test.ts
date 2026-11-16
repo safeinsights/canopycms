@@ -239,9 +239,10 @@ describe('content api', () => {
           branch: { ...branchContextWithSchema.branch, access },
         }),
       })
+    // Listed, so only the removal keeps ben out.
     const removed = {
       restricted: true,
-      allowedUsers: ['u1'],
+      allowedUsers: ['u1', 'ben'],
       excluded: { ben: { by: 'u1', at: 'now', byAdmin: false } },
     }
     const params = {
@@ -273,7 +274,12 @@ describe('content api', () => {
         await writeContent(listed, { user: ben }, params, { format: 'json', data: {} }),
       ).toMatchObject({ status: 403, code: 'BRANCH_LOCKED_DOWN' })
 
-      const unlisted = shutOut({ ...removed, managerOrAdminAllowed: true })
+      const unlisted = shutOut({
+        restricted: true,
+        allowedUsers: ['u1'],
+        excluded: { ben: { by: 'u1', at: 'now', byAdmin: false } },
+        managerOrAdminAllowed: true,
+      })
       expect(
         await writeContent(unlisted, { user: ben }, params, { format: 'json', data: {} }),
       ).toMatchObject({ status: 403, code: 'BRANCH_ACCESS_DENIED' })

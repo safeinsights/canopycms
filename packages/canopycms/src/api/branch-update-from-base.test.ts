@@ -348,8 +348,9 @@ describe('POST /:branch/update-from-base', () => {
         branch: {
           ...context.branch,
           access: {
+            // Listed, so only the removal keeps u2 out.
             restricted: true,
-            allowedUsers: ['u1'],
+            allowedUsers: ['u1', 'u2'],
             excluded: { u2: { by: 'u1', at: 'now', byAdmin: false } },
           },
         },
