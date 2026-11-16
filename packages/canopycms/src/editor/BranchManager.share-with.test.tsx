@@ -134,6 +134,8 @@ describe('New branch: Share with', () => {
     await userEvent.click(screen.getByRole('option', { name: /Bob Diaz/ }))
 
     expect(screen.getByText(NEW_BRANCH_PRIVATE_LINE)).toBeTruthy()
+    // As the Share dialog says: admins and reviewers open every branch.
+    expect(NEW_BRANCH_PRIVATE_LINE).toMatch(/, plus admins and reviewers\.$/)
   })
 
   it('says nothing of the kind on a site whose branches are private already', async () => {
