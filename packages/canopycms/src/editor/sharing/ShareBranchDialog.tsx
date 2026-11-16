@@ -176,8 +176,9 @@ interface SaveProblem {
   tone: 'error' | 'warning'
   message: string
   /**
-   * A request that threw other than by timing out, an API answer with no code, a rate limit, or a
-   * list changed meanwhile. A timeout or a gateway's 5xx takes the unanswered path instead.
+   * A request that threw other than by timing out, an answer with no code (a non-API one included,
+   * below 500), a rate limit, or a list changed meanwhile. A timeout or a gateway's 5xx takes the
+   * unanswered path instead.
    */
   retryable: boolean
   ids?: string[]
@@ -531,8 +532,9 @@ function ShareBranchBody({
 
   /**
    * Whether a scope refusal names only people staged for removal. The server checks a removal's
-   * scope only when a non-admin removes someone its list no longer holds who doesn't work in this
-   * CMS, so someone took them off first.
+   * scope only when someone who manages the list, not an admin, removes a person it no longer
+   * holds and hasn't removed already, who doesn't work in this CMS (api/branch-access.ts
+   * `unlisted`); so someone took them off first.
    */
   const goneFromList = (code: ApiErrorCode | undefined, ids: string[] | undefined): boolean =>
     code === 'USER_OUT_OF_SCOPE' &&
