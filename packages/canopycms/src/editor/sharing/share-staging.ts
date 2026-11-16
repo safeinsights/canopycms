@@ -8,6 +8,7 @@ import type { BranchAccessResponse } from '../../api/branch-people'
 import type { FoundPerson } from '../../api/people'
 import type { BranchAddBy } from '../../types'
 import { isSystemUserId } from '../../system-users'
+import { isEmailAddress } from '../../utils/email-address'
 
 export type BranchAccess = NonNullable<BranchAccessResponse['data']>
 export type AccessEntry = BranchAccess['entries'][number]
@@ -55,10 +56,8 @@ export const personToAdd = (person: FoundPerson, address?: string): PersonToAdd 
   ...(address && person.addByAddress && { email: address }),
 })
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-
-/** The server's test for a query that finds by exact address (api/people.ts `EMAIL_PATTERN`). */
-export const looksLikeEmail = (query: string): boolean => EMAIL_PATTERN.test(query.trim())
+/** Whether a query finds by exact address, as the server tests it (utils/email-address.ts). */
+export const looksLikeEmail = isEmailAddress
 
 const idsOf = (items: ReadonlyArray<{ kind: Kind; id?: string }>, kind: Kind): string[] =>
   items.flatMap((item) => (item.kind === kind && item.id !== undefined ? [item.id] : []))

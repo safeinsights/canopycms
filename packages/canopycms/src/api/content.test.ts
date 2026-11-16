@@ -5,6 +5,7 @@ import { ENTRY_CHANGED_MESSAGE, ENTRY_GONE_MESSAGE } from './entries-constants'
 import type { ApiContext } from './types'
 import { unsafeAsBranchName, unsafeAsLogicalPath, unsafeAsSlug } from '../paths/test-utils'
 import { createMockApiContext } from '../test-utils'
+import { createCheckBranchAccess } from '../authorization/branch'
 import { SchemaUnavailableError } from '../schema/schema-unavailable-error'
 
 // Extract handlers for testing
@@ -227,6 +228,56 @@ describe('content api', () => {
   // unrecognized error (ENOSPC, EACCES, a bug) is a genuine server fault,
   // not the client's mistake, and must surface as a 500 - not get flattened
   // to a 400 alongside real client faults (ContentStoreError).
+  describe('someone the branch shuts out', () => {
+    const ben = { type: 'authenticated' as const, userId: 'ben', groups: [] }
+    const shutOut = (access: Record<string, unknown>) =>
+      createMockApiContext({
+        services: { checkBranchAccess: createCheckBranchAccess('deny') },
+        getBranchContext: vi.fn().mockResolvedValue({
+          ...branchContextWithSchema,
+          branch: { ...branchContextWithSchema.branch, access },
+        }),
+      })
+    const removed = {
+      restricted: true,
+      allowedUsers: ['u1'],
+      excluded: { ben: { by: 'u1', at: 'now', byAdmin: false } },
+    }
+    const params = {
+      branch: unsafeAsBranchName('feature/x'),
+      path: unsafeAsLogicalPath('posts/hello'),
+    }
+
+    it("answers a removed person's save, read and rename with BRANCH_ACCESS_DENIED", async () => {
+      const ctx = shutOut(removed)
+      const responses = [
+        await writeContent(ctx, { user: ben }, params, { format: 'json', data: { title: 'hi' } }),
+        await readContent(ctx, { user: ben }, params),
+        await renameEntry(ctx, { user: ben }, params, { newSlug: unsafeAsSlug('new-slug') }),
+      ]
+      for (const res of responses) {
+        expect(res).toMatchObject({ ok: false, status: 403, code: 'BRANCH_ACCESS_DENIED' })
+      }
+      expect(ctx.services.checkContentAccess).not.toHaveBeenCalled()
+    })
+
+    it('names a lockdown only to someone the list would otherwise admit', async () => {
+      const listed = shutOut({
+        restricted: true,
+        allowedUsers: ['u1', 'ben'],
+        managerOrAdminAllowed: true,
+      })
+      expect(
+        await writeContent(listed, { user: ben }, params, { format: 'json', data: {} }),
+      ).toMatchObject({ status: 403, code: 'BRANCH_LOCKED_DOWN' })
+
+      const unlisted = shutOut({ ...removed, managerOrAdminAllowed: true })
+      expect(
+        await writeContent(unlisted, { user: ben }, params, { format: 'json', data: {} }),
+      ).toMatchObject({ status: 403, code: 'BRANCH_ACCESS_DENIED' })
+    })
+  })
+
   describe('C2: write error classification', () => {
     it('returns 500 (not 400) when store.write throws an error that is not a known ContentStoreError', async () => {
       const ctx = allowedCtx()

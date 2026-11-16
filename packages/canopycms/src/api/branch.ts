@@ -8,10 +8,12 @@ import { deleteBranchWorkspace, type DeleteBranchWorkspaceOptions } from '../bra
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { isCreatorsRecentBranch } from './branch-create-window'
 import { defineEndpoint } from './route-builder'
+import { branchAccessDenial } from './guards'
 import { createDebugLogger } from '../utils/debug'
 import { clientOperatingStrategy } from '../operating-mode'
 import { DELETE_NEEDS_ADMIN_REASON } from '../editor/copy'
 import { getErrorMessage } from '../utils/error'
+import { isEmailAddress } from '../utils/email-address'
 import { filePathExists } from '../utils/fs'
 import { isNetworkRemoteUrl, readHeadCommitFromFiles } from '../utils/git'
 import { parseCreatedBranchName, sanitizeBranchName, isSettingsBranchName } from '../paths'
@@ -165,7 +167,10 @@ const accessAddSchema = z
   .object({
     users: z.array(accessIdSchema).max(MAX_ACCESS_ENTRIES).optional(),
     groups: z.array(accessIdSchema).max(MAX_ACCESS_ENTRIES).optional(),
-    emails: z.array(z.string().trim().email().max(320)).max(MAX_ACCESS_EMAILS).optional(),
+    emails: z
+      .array(z.string().trim().max(320).refine(isEmailAddress, 'Invalid email address'))
+      .max(MAX_ACCESS_EMAILS)
+      .optional(),
   })
   .strict()
 
@@ -925,6 +930,8 @@ export const deleteBranchHandler = async (
     ctx.services.checkBranchAccess(branchContext, req.user).allowed,
   )
   if (!canDelete.allowed) {
+    const denied = branchAccessDenial(ctx, branchContext, req.user)
+    if (denied) return { ok: false, ...denied }
     return {
       ok: false,
       status: 403,

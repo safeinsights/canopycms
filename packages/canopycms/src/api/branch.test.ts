@@ -1538,6 +1538,24 @@ describe('deleteBranch api', () => {
     expect(res.error).toBe('You do not have permission to delete this branch')
   })
 
+  it('answers a creator the list no longer admits with BRANCH_ACCESS_DENIED', async () => {
+    const context = makeBranchContext('u1')
+    const ctx = {
+      ...deleteCtx,
+      services: { ...deleteCtx.services, checkBranchAccess: createCheckBranchAccess('deny') },
+      getBranchContext: vi.fn().mockResolvedValue({
+        ...context,
+        branch: { ...context.branch, access: { restricted: true, allowedUsers: ['other'] } },
+      }),
+    }
+    const res = await deleteBranch(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: unsafeAsBranchName('feature/x') },
+    )
+    expect(res).toMatchObject({ ok: false, status: 403, code: 'BRANCH_ACCESS_DENIED' })
+  })
+
   it('returns 400 if branch has submitted status', async () => {
     const ctx = {
       ...deleteCtx,

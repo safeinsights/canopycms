@@ -26,6 +26,7 @@ import { lookupUsersMetadata } from '../auth/user-metadata-lookup'
 import { isSystemUserId } from '../system-users'
 import { ANONYMOUS_USER } from '../user'
 import { logEmailLookup } from '../utils/access-log'
+import { isEmailAddress } from '../utils/email-address'
 import { getErrorMessage } from '../utils/error'
 import { canopyLogWarn } from '../utils/logger'
 
@@ -130,10 +131,13 @@ export async function enrolSeenUser(ctx: ApiContext, user: CanopyUser): Promise<
   }
 }
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-
-/** Whether a query reads as one whole email address, which finds by exact match only. */
-const looksLikeEmail = (query: string): boolean => EMAIL_PATTERN.test(query.trim())
+/**
+ * Whether `actor` may add, by id, any account the sign-in provider knows: an admin, or anyone on a
+ * site whose name search finds all of them (`branchSharing.searchable: 'all-users'`), so every
+ * name result can be added. Anyone else may add only people who work in this CMS.
+ */
+export const addsAnyKnownAccount = (ctx: ApiContext, actor: CanopyUser): boolean =>
+  isAdmin(actor.groups) || resolveBranchSharing(ctx.services.config).searchable === 'all-users'
 
 /**
  * `b•••@example.org` for `ben@example.org`: enough to tell two people of one name apart, never
@@ -225,8 +229,9 @@ export interface FoundPerson {
   maskedEmail?: string
   /**
    * Found by exact address for a finder whose add of this person by id would be refused as out of
-   * scope (api/branch-access.ts `checkUsersToAdd`): not an admin, and they don't work in this CMS.
-   * Only that address, sent with the add, vouches for them.
+   * scope (api/branch-access.ts `checkUsersToAdd`): they don't work in this CMS, and the finder may
+   * not add any known account ({@link addsAnyKnownAccount}). Only that address, sent with the add,
+   * vouches for them.
    */
   addByAddress?: true
 }
@@ -348,7 +353,8 @@ export async function findPeople(
 ): Promise<FindPeopleOutcome> {
   const trimmed = query.trim()
   const empty: FindPeopleResult = { people: [], groups: [] }
-  const isEmail = looksLikeEmail(trimmed)
+  // A whole email address finds by exact match only.
+  const isEmail = isEmailAddress(trimmed)
   if (trimmed !== '' && !isEmail && trimmed.length < MIN_NAME_QUERY_LENGTH) {
     return { ok: true, result: empty }
   }
@@ -382,7 +388,7 @@ export async function findPeople(
   if (isEmail) {
     const found = await lookupEmails(ctx, actor, [trimmed], cmsUsers)
     if (found === false) return { ok: false }
-    const vouches = !isAdmin(actor.groups)
+    const vouches = !addsAnyKnownAccount(ctx, actor)
     const people = shown(found.flatMap((user) => (user ? [user] : []))).map((person) =>
       vouches && !cmsUsers.has(person.id) ? { ...person, addByAddress: true as const } : person,
     )

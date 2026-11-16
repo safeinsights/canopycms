@@ -7,16 +7,30 @@
 import { z } from 'zod'
 
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
-import type { BranchAddBy, BranchContext, CanopyGroupId, CanopyUserId } from '../types'
+import type {
+  BranchAddBy,
+  BranchContext,
+  BranchMetadata,
+  CanopyGroupId,
+  CanopyUserId,
+} from '../types'
 import type { BranchSharingConfig, DefaultBranchAccess } from '../config'
 import type { UserSearchResult } from '../auth/types'
-import { accessForViewer, hasAccessList, isAdmin, resolveBranchSharing } from '../authorization'
+import {
+  accessForViewer,
+  hasAccessList,
+  isAdmin,
+  isReservedGroup,
+  resolveBranchSharing,
+  type InternalGroup,
+} from '../authorization'
+import { isSystemUserId } from '../system-users'
 import { lookupUsersMetadata } from '../auth/user-metadata-lookup'
 import { getErrorMessage } from '../utils/error'
 import { canopyLogWarn } from '../utils/logger'
 import { defineEndpoint } from './route-builder'
 import { branchParamSchema } from './validators'
-import { addByFor, rightsFor } from './branch-access'
+import { addByFor, refuseOutright, rightsFor } from './branch-access'
 import { branchCreatePermission } from './branch'
 import {
   externalGroupName,
@@ -75,6 +89,11 @@ interface BranchAccessData {
   searchable: NonNullable<BranchSharingConfig['searchable']>
   /** Whom an exact email address finds for the viewer: `'all-users'` for an admin. */
   addableByEmail: NonNullable<BranchSharingConfig['addableByEmail']>
+  /**
+   * Owners and admins, on a branch open to everyone: its editors that limiting it to its list
+   * would shut out ({@link editorsLosingAccess}).
+   */
+  losingAccess?: Array<{ id: CanopyUserId; name: string; avatarUrl?: string }>
 }
 
 export type BranchAccessResponse = ApiResponse<BranchAccessData>
@@ -113,6 +132,31 @@ async function usersById(
 }
 
 /**
+ * The editors of `branch` that limiting it to its list would shut out: not admins or reviewers,
+ * whom their role admits, nor `viewer`, its owner (whom limiting keeps), anyone listed or anyone
+ * removed.
+ */
+function editorsLosingAccess(
+  branch: BranchMetadata,
+  viewer: CanopyUserId,
+  internalGroups: readonly InternalGroup[],
+): CanopyUserId[] {
+  const access = branch.access ?? {}
+  const kept = new Set<CanopyUserId>([
+    viewer,
+    branch.createdBy,
+    ...(access.allowedUsers ?? []),
+    ...Object.keys(access.excluded ?? {}),
+    ...internalGroups
+      .filter((group) => isReservedGroup(group.id))
+      .flatMap((group) => group.members),
+  ])
+  return [...new Set(branch.editors ?? [])].filter(
+    (id) => !kept.has(id) && !isSystemUserId(id) && id !== 'unknown',
+  )
+}
+
+/**
  * The branch's list as `req.user` may see it (`accessForViewer`), with names. Anyone who may open
  * the branch sees who is on it; owners and admins also see who added each entry and who was
  * removed. Full emails reach only admins and reviewers.
@@ -133,7 +177,15 @@ const getBranchAccessHandler = async (
   const excludedGroups = Object.entries(visible.excludedGroups ?? {})
 
   const { cmsUsers, internalGroups } = await loadPeopleSources(ctx, { seenMayFail: true })
+  const restricted = hasAccessList(access)
+  const openToEveryone =
+    !restricted && config.defaultBranchAccess === 'allow' && !access.managerOrAdminAllowed
+  const losing =
+    openToEveryone && rights.canManage
+      ? editorsLosingAccess(branch, viewer.userId, internalGroups)
+      : undefined
   const users = await usersById(ctx, [
+    ...(losing ?? []),
     ...(visible.allowedUsers ?? []),
     ...Object.values(meta).map((entry) => entry.addedBy),
     ...excludedUsers.flatMap(([id, exclusion]) => [id, exclusion.by]),
@@ -210,7 +262,6 @@ const getBranchAccessHandler = async (
         ]
       : undefined
 
-  const restricted = hasAccessList(access)
   const sharing = resolveBranchSharing(config)
   return {
     ok: true,
@@ -219,14 +270,23 @@ const getBranchAccessHandler = async (
       entries,
       ...(excluded && { excluded }),
       restricted,
-      openToEveryone:
-        !restricted && config.defaultBranchAccess === 'allow' && !access.managerOrAdminAllowed,
+      openToEveryone,
       defaultAccess: config.defaultBranchAccess ?? 'deny',
       addBy: access.addBy ?? sharing.whoCanAdd,
       whoCanAdd: addByFor(ctx, branch),
       rights: { isOwner: rights.isOwner, canAdd: rights.canAdd, canManage: rights.canManage },
       searchable: sharing.searchable,
       addableByEmail: isAdmin(viewer.groups) ? 'all-users' : sharing.addableByEmail,
+      ...(losing && {
+        losingAccess: losing.map((id) => {
+          const user = users.get(id)
+          return {
+            id,
+            name: userName(id),
+            ...(user?.avatarUrl && { avatarUrl: user.avatarUrl }),
+          }
+        }),
+      }),
     },
   }
 }
@@ -243,7 +303,10 @@ const findResponse = async (
     : { ok: false, status: 429, error: RATE_LIMITED_MESSAGE, code: 'RATE_LIMITED' }
 }
 
-/** People to add to a branch, for someone who may add people to it. */
+/**
+ * People to add to a branch, for someone who may add people to it. A branch no change may touch
+ * answers as the change itself would (`refuseOutright`).
+ */
 const findPeopleHandler = async (
   gc: { branchContext: BranchContext },
   ctx: ApiContext,
@@ -251,6 +314,8 @@ const findPeopleHandler = async (
   _params: z.infer<typeof branchParamSchema>,
   body: FindPeopleBody,
 ): Promise<FindPeopleResponse> => {
+  const outright = refuseOutright(ctx, req.user, gc.branchContext)
+  if (outright) return { ok: false, ...outright }
   if (!rightsFor(ctx, req.user, gc.branchContext.branch).canAdd) {
     return {
       ok: false,
