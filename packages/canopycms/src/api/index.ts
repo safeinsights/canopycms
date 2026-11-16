@@ -73,8 +73,8 @@ export type {
   WorkerLiveness,
 } from './admin'
 
-// No route table is exported here: each reaches server-only code. Server code imports them
-// from api/routes.ts.
+// No route table is exported here: this barrel is in the client bundle, and route modules reach
+// server-only code (`pnpm lint:bundle`). Server code imports them through api/routes.ts.
 
 // Export client
 export { CanopyApiClient, createApiClient } from './client'

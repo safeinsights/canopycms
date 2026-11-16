@@ -99,8 +99,9 @@ export async function loadCmsUserIds(ctx: ApiContext): Promise<Set<CanopyUserId>
 
 /**
  * Records `user` in the seen set when they hold an internal group other than Admins and
- * Reviewers, or a provider group some path permission names: someone who reaches content through
- * a group before they have saved anything. Best effort, and one fs attempt per user per process.
+ * Reviewers, or a provider group some path permission names, so they can be found before they
+ * have saved anything. Best effort. Until this process has recorded them, each visit by someone
+ * with groups reads the settings files; once it has, a visit costs no fs call.
  */
 export async function enrolSeenUser(ctx: ApiContext, user: CanopyUser): Promise<void> {
   const store = ctx.services.peopleStore
@@ -269,7 +270,10 @@ async function usersFor(
   })
 }
 
-/** Names matching `query` across everyone the sign-in provider knows; never an email match. */
+/**
+ * Names matching `query` among the people the sign-in provider knows: a caching plugin's whole
+ * list, else the first 50 its search returns. Never an email match.
+ */
 async function searchAllUsers(ctx: ApiContext, query: string): Promise<UserSearchResult[]> {
   const plugin = ctx.authPlugin
   if (!plugin) return []

@@ -429,8 +429,9 @@ export type AdminRemoveSeenResponse = ApiResponse<{ removed: boolean }>
 const removeSeenParamsSchema = z.object({ userId: z.string().min(1).max(256) })
 
 /**
- * Takes someone out of the people who have opened the editor (people-store.ts), so a non-admin no
- * longer finds them by name. `removed` is false when they were not recorded.
+ * Takes someone out of the people who have opened the editor (people-store.ts), so that no longer
+ * makes them a CMS user; other grounds still do (`collectCmsUserIds`). `removed` is false when they
+ * were not recorded.
  */
 const removeSeenHandler = async (
   _gc: Record<string, never>,
@@ -516,7 +517,10 @@ const deleteTask = defineEndpoint({
   handler: deleteTaskHandler,
 })
 
-/** They are recorded again on their next visit while they still hold a group that reaches content. */
+/**
+ * They are recorded again on a later visit, while they still hold a qualifying group, to a process
+ * that has not recorded them since it started (api/people.ts `enrolSeenUser`).
+ */
 const removeSeen = defineEndpoint({
   namespace: 'admin',
   name: 'removeSeen',

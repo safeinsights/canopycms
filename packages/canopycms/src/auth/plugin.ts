@@ -42,7 +42,7 @@ export interface AuthPlugin {
    * The user whose email address is exactly `email`, ignoring case, or null when none is. Core
    * passes it trimmed and lower-cased, and never with a partial address. Reject on a provider
    * failure rather than answering null, which the person searching reads as "nobody". Without
-   * it, core looks for an exact match in `searchUsers(email, 50)`.
+   * it, core takes the one exact match in `searchUsers(email, 50)`, and none when two share it.
    */
   findUserByEmail?(email: string): Promise<UserSearchResult | null>
 

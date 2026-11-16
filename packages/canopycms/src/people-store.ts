@@ -3,15 +3,16 @@
  * branch clone, so no branch scan reads it, and the same in dev and prod.
  *
  * - `seen/<hex(userId)>`: a write-once empty marker for someone who opened the editor while
- *   holding a group that reaches content (api/people.ts `enrolSeenUser`). The name is the id, so
- *   one `readdir` lists the set. Created by temp + `link()`, so it needs no lock: `EEXIST` means
+ *   holding a non-reserved internal group, or a provider group a path permission names
+ *   (api/people.ts `enrolSeenUser`). The name is the id, so one `readdir` lists the set. Created by temp + `link()`, so it needs no lock: `EEXIST` means
  *   another request recorded them first.
  * - `shares/<sha256(sharerId)>.json`: whom one person shared branches with, and when. Written only
  *   by that person's own requests, under the mutable-JSON recipe of docs/concurrency.md, but taking
  *   the file lock try-once: a busy lock skips the record rather than delaying the share.
  *
- * Losing either is harmless: people are enrolled again on their next visit, and suggestions start
- * over. Nothing here is memoized across requests but the ids this process has already recorded.
+ * Losing either costs only reach: people are enrolled again on a later visit to a process that has
+ * not recorded them since it started, and suggestions start over. No data read here is memoized
+ * across requests; a process remembers only the ids it recorded and what it has logged.
  */
 
 import { createHash, randomBytes } from 'node:crypto'
@@ -117,9 +118,9 @@ export class PeopleStore {
   }
 
   /**
-   * Records `userId` as seen; a no-op when anyone already has. An empty id is never recorded. An
-   * id over 100 bytes is not recorded either, and is logged once: such a person is found only as
-   * any other CMS user is.
+   * Records `userId` as seen; a no-op when anyone already has. An empty id is never recorded, and
+   * never logged. An id over 100 UTF-8 bytes is not recorded either, and is logged once per
+   * process: such a person counts as a CMS user only on the other grounds (`collectCmsUserIds`).
    */
   async recordSeen(userId: CanopyUserId): Promise<void> {
     if (this.recorded.has(userId) || userId === '') return
@@ -127,7 +128,8 @@ export class PeopleStore {
     if (!name) {
       if (!reportedTooLong.has(userId)) {
         reportedTooLong.add(userId)
-        canopyLogWarn(`[canopy] A user id is too long to record as seen (${userId.length} chars)`)
+        const bytes = Buffer.byteLength(userId, 'utf8')
+        canopyLogWarn(`[canopy] A user id is too long to record as seen (${bytes} bytes, over 100)`)
       }
       return
     }

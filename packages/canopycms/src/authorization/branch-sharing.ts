@@ -443,8 +443,8 @@ export function applyAccessChange(
 
 /**
  * The ids of people who already work in this CMS: anyone a path permission names, every internal
- * group's members, every branch's creator and saving editors, and everyone `seen` opening the
- * editor while holding a group that reaches content. Being on a branch's list is not enough, so
+ * group's members, every branch's creator and saving editors, and everyone `seen` (people-store.ts).
+ * Being on a branch's list is not enough, so
  * adding someone never makes them searchable by other sharers.
  */
 export function collectCmsUserIds(input: {

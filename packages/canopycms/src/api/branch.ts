@@ -206,10 +206,13 @@ import type { CanopyUser } from '../user'
 import { operatingStrategy } from '../operating-mode'
 
 /**
- * Whether `user` may create branches: whether they may edit at least one path, by the rules and
- * default content access applies (authorization/path.ts). So a privileged user may; anyone may
- * when the default lets everyone edit a path no rule covers; otherwise only someone a rule's edit
- * target admits. A site with no rules and a `'deny'` default leaves it to admins and reviewers.
+ * Whether `user` may create branches: admins and reviewers always; anyone else when the edit
+ * default (`defaultPathAccess`) is `'allow'`, or when some rule's edit target admits them by the
+ * test content access uses (`isAllowedByTarget`, authorization/path.ts). That approximates "may
+ * edit at least one path" from above: content access applies the first rule a path matches, so an
+ * earlier rule can shadow an admitting one, or cover every path the default would allow, and this
+ * still answers yes. A site with no rules and a `'deny'` edit default leaves it to admins and
+ * reviewers.
  * @internal Exported for tests.
  */
 export const canCreateBranch = (
@@ -229,7 +232,8 @@ export const canCreateBranch = (
 
 /**
  * {@link canCreateBranch} over the site's path permissions, read from the settings workspace as
- * content access reads them (authorization/content.ts), and its `defaultPathAccess`.
+ * content access reads them (authorization/content.ts `createContentAccessChecker`), and its
+ * `defaultPathAccess`.
  */
 export const branchCreatePermission = async (
   ctx: ApiContext,

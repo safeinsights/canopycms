@@ -13,8 +13,9 @@ export type UserInfoResponse = ApiResponse<{
 }>
 
 /**
- * This is a PUBLIC endpoint - no special permissions required. The editor calls it on opening,
- * which is when someone reaching content through a group joins the people others can find.
+ * This is a PUBLIC endpoint - no special permissions required. The editor calls it before it
+ * mounts (editor/EditorAuthGate.tsx), which is when someone holding a qualifying group joins the
+ * people others can find (api/people.ts `enrolSeenUser`).
  */
 const getUserInfoHandler = async (ctx: ApiContext, req: ApiRequest): Promise<UserInfoResponse> => {
   await enrolSeenUser(ctx, req.user)
