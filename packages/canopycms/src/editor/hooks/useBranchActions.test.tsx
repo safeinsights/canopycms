@@ -269,7 +269,7 @@ describe('useBranchActions', () => {
       created = await result.current.handleCreateBranch({ name: 'new-branch' })
     })
 
-    expect(created).toEqual({ created: 'new-branch' })
+    expect(created).toMatchObject({ created: 'new-branch', branch: { name: 'new-branch' } })
     expect(mockOnReloadBranches).toHaveBeenCalledTimes(1)
     expect(mockOnBranchCreated).toHaveBeenCalledWith(createdBranch)
     expect(mockSetBranchName).toHaveBeenCalledWith('new-branch')
@@ -552,7 +552,7 @@ describe('useBranchActions', () => {
       created = await result.current.handleCreateBranch({ name: 'new-branch' })
     })
 
-    expect(created).toEqual({ created: 'new-branch' })
+    expect(created).toMatchObject({ created: 'new-branch', branch: { name: 'new-branch' } })
     expect(modals.openConfirmModal).not.toHaveBeenCalled()
     expect(mockClient.branches.create).toHaveBeenCalledTimes(1)
   })

@@ -12,7 +12,7 @@ import { entryKey, withAddition, type Addition } from './share-staging'
 
 /** @internal Exported for tests. */
 export const NEW_BRANCH_PRIVATE_LINE =
-  'Only you and the people you add will be able to open this branch.'
+  'Only you and the people you add will be able to open this branch, plus admins and reviewers.'
 
 export interface ShareWithFieldProps {
   value: Addition[]

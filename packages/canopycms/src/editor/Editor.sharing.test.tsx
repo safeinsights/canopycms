@@ -83,7 +83,8 @@ const listed = (name: string) => ({
 const urlOf = (input: RequestInfo | URL) =>
   typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
 
-const stubApi = (holdCreate?: Promise<void>) => {
+const stubApi = (holdCreate?: Promise<void>, listingAfterCreate?: Promise<void>) => {
+  let createdOnce = false
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = urlOf(input)
     const method = init?.method ?? 'GET'
@@ -91,9 +92,11 @@ const stubApi = (holdCreate?: Promise<void>) => {
     if (url.endsWith('/comments')) return okJson({ threads: [], users: [] })
     if (url.endsWith('/api/canopycms/branches') && method === 'POST') {
       await holdCreate
+      createdOnce = true
       return okJson({ branch: listed(SUMMER) })
     }
     if (url.endsWith('/api/canopycms/branches')) {
+      if (createdOnce) await listingAfterCreate
       return okJson({
         branches: [listed(SPRING)],
         defaultBranch: SPRING,
@@ -149,10 +152,10 @@ describe('sharing from the editor', () => {
     control.focus()
     fireEvent.click(control)
 
-    const dialog = await screen.findByRole('dialog', { name: 'Share spring' })
+    const dialog = await screen.findByRole('dialog', { name: 'Share “spring”' })
     expect(await within(dialog).findByText('Ana Lee (you)')).toBeTruthy()
     await userEvent.keyboard('{Escape}')
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Share spring' })).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Share “spring”' })).toBeNull())
     await waitFor(() => expect(document.activeElement).toBe(control))
   })
 
@@ -182,7 +185,44 @@ describe('sharing from the editor', () => {
     expect(screen.getByText('Branch “summer” created')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Share…' }))
 
-    expect(await screen.findByRole('dialog', { name: 'Share summer' })).toBeTruthy()
+    expect(await screen.findByRole('dialog', { name: 'Share “summer”' })).toBeTruthy()
+    expect(notifications.hide).toHaveBeenCalledWith(toast.id)
+  })
+
+  it("opens the toast's Share… from the create's own answer once listings no longer hold the branch", async () => {
+    window.history.replaceState({}, '', '/?branch=spring')
+    let release = () => {}
+    let releaseListing = () => {}
+    stubApi(
+      new Promise<void>((resolve) => (release = resolve)),
+      new Promise<void>((resolve) => (releaseListing = resolve)),
+    )
+    renderEditor()
+    await screen.findByTestId('branch-share-control')
+    fireEvent.click(screen.getByTestId('branch-dropdown-button'))
+    fireEvent.click(await screen.findByTestId('manage-branches-menu-item'))
+    fireEvent.click(await screen.findByTestId('create-branch-button'))
+    fireEvent.change(await screen.findByTestId('branch-name-input'), {
+      target: { value: 'summer' },
+    })
+    fireEvent.click(screen.getByTestId('create-branch-submit'))
+    const drawer = screen.getByRole('dialog', { name: /Branches/ })
+    fireEvent.click(within(drawer).getAllByRole('button', { name: /close/i })[0])
+    await waitFor(() => expect(screen.queryByTestId('branch-manager')).toBeNull())
+    release()
+    await waitFor(() => expect(notifications.show).toHaveBeenCalled())
+    // A listing that arrives past the created branch's grace, still without it, drops it.
+    const now = Date.now()
+    vi.spyOn(Date, 'now').mockReturnValue(now + 60 * 60 * 1000)
+    releaseListing()
+    // With the open branch unlisted, the top bar has no sharing control for it.
+    await waitFor(() => expect(screen.queryByTestId('branch-share-control')).toBeNull())
+
+    const toast = vi.mocked(notifications.show).mock.calls[0][0]
+    render(<CanopyCMSProvider>{toast.message}</CanopyCMSProvider>)
+    fireEvent.click(screen.getByRole('button', { name: 'Share…' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Share “summer”' })).toBeTruthy()
     expect(notifications.hide).toHaveBeenCalledWith(toast.id)
   })
 })

@@ -25,9 +25,10 @@ export interface CreateRefusal {
   field: 'name' | 'shareWith' | 'form'
 }
 
-/** The full name of the branch a create made, which is now open. */
+/** The full name of the branch a create made, which is now open, and the server's answer for it. */
 export interface CreatedBranch {
   created: string
+  branch?: BranchListItem
 }
 
 export type CreateBranchOutcome =

@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { SWRConfig } from 'swr'
 
 import { createMockApiClient } from '../api/__test__/mock-client'
+import type { BranchListItem } from '../api/branch'
 import type { FindPeopleResponse } from '../api/branch-people'
 import type { FoundPerson } from '../api/people'
 import { BranchManager, type BranchSummary } from './BranchManager'
@@ -234,10 +235,12 @@ describe('New branch: Share with', () => {
     const status = await screen.findByTestId('branch-created-status')
     await waitFor(() => expect(status.textContent).toContain('Branch “spring” created'))
     const share = within(status).getByRole('button', { name: 'Share…' })
+    // The form that held the focus has gone, so the offer takes it.
+    await waitFor(() => expect(document.activeElement).toBe(share))
     await userEvent.click(share)
-    expect(await screen.findByRole('dialog', { name: 'Share spring' })).toBeTruthy()
+    expect(await screen.findByRole('dialog', { name: 'Share “spring”' })).toBeTruthy()
     await userEvent.keyboard('{Escape}')
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Share spring' })).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Share “spring”' })).toBeNull())
     await waitFor(() => expect(document.activeElement).toBe(share))
   })
 
@@ -256,6 +259,46 @@ describe('New branch: Share with', () => {
 
     const status = await screen.findByTestId('branch-created-status')
     await waitFor(() => expect(status.textContent).toContain('Branch “spring” created'))
+    expect(within(status).queryByRole('button')).toBeNull()
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'New branch…' })),
+    )
+  })
+
+  it("says so and offers Share… from the create's own answer before any listing has the branch", async () => {
+    const answer = {
+      name: created.name,
+      shortName: 'spring',
+      status: 'editing',
+      createdBy: 'ana',
+      access: {},
+      sharing: created.sharing,
+    } as unknown as BranchListItem
+    setup(
+      vi.fn(async () => ({ created: created.name, branch: answer })),
+      { branches: [] },
+    )
+    await userEvent.type(nameField(), 'spring')
+
+    await userEvent.click(screen.getByTestId('create-branch-submit'))
+
+    const status = await screen.findByTestId('branch-created-status')
+    await waitFor(() => expect(status.textContent).toContain('Branch “spring” created'))
+    await userEvent.click(within(status).getByRole('button', { name: 'Share…' }))
+    expect(await screen.findByRole('dialog', { name: 'Share “spring”' })).toBeTruthy()
+  })
+
+  it('still says a branch was created when neither a listing nor the answer has it', async () => {
+    setup(
+      vi.fn(async () => ({ created: 'canopycms/prod/spring' })),
+      { branches: [] },
+    )
+    await userEvent.type(nameField(), 'spring')
+
+    await userEvent.click(screen.getByTestId('create-branch-submit'))
+
+    const status = await screen.findByTestId('branch-created-status')
+    await waitFor(() => expect(status.textContent).toContain('created'))
     expect(within(status).queryByRole('button')).toBeNull()
   })
 })

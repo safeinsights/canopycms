@@ -48,10 +48,11 @@ import { EditorShell } from './shell/EditorShell'
 import { FORM_PANE_ID, PaneLayout } from './shell/PaneLayout'
 import { SidePanelHost } from './shell/SidePanelHost'
 import { CanopyCMSProvider, type CanopyThemeOptions } from './theme'
-import { BranchManager, getBranchPermissions } from './BranchManager'
+import { BranchManager, getBranchPermissions, type BranchSummary } from './BranchManager'
 import { ShareBranchDialog } from './sharing/ShareBranchDialog'
 import { BranchCreatedToast } from './sharing/BranchCreatedToast'
 import { canShareBranch } from './sharing/sharing-mode'
+import { createdSummary } from './sharing/created-branch'
 import { useBaseUpdate } from './hooks/useBaseUpdate'
 import { BaseUpdateNotice } from './components/BaseUpdateNotice'
 import {
@@ -350,7 +351,8 @@ const EditorContent: React.FC<EditorProps> = ({
   branchManagerOpenRef.current = branchManagerOpen
   // The Share dialog opened from the top bar or a create's toast, kept after closing so it can exit.
   const [barShare, setBarShare] = useState<{
-    name: string
+    /** The branch as it was when opened; the listing's copy stands in once it has one. */
+    target: BranchSummary
     opened: boolean
     returnFocusTo: () => HTMLElement | null
   } | null>(null)
@@ -541,12 +543,13 @@ const EditorContent: React.FC<EditorProps> = ({
   // without this branch, the lock says which.
   const branchPending = !currentBranch && !branchesLoaded && !branchesLoadFailed
   const currentSummary = branchSummaries.find((b) => b.name === currentBranch?.name)
-  const barShareBranch = barShare && branchSummaries.find((b) => b.name === barShare.name)
+  const barShareBranch =
+    barShare && (branchSummaries.find((b) => b.name === barShare.target.name) ?? barShare.target)
   const openBarShare = (
-    name: string,
+    target: BranchSummary,
     returnFocusTo: () => HTMLElement | null = () =>
       shareControlRef.current?.isConnected ? shareControlRef.current : branchToggleRef.current,
-  ) => setBarShare({ name, opened: true, returnFocusTo })
+  ) => setBarShare({ target, opened: true, returnFocusTo })
 
   // Conflicts a merge left on the open branch (api/merge-conflicts.ts): read while its listing
   // names any, and the choices made on their cards that no save has sent yet.
@@ -888,8 +891,9 @@ const EditorContent: React.FC<EditorProps> = ({
       const share =
         created && canShareBranch(created, userContext)
           ? () => {
+              // From the create's own answer, so it opens even before a listing includes the branch.
+              openBarShare(createdSummary(created))
               notifications.hide(id)
-              openBarShare(created.name)
             }
           : undefined
       const toast = {
@@ -2974,7 +2978,7 @@ const EditorContent: React.FC<EditorProps> = ({
                 user: userContext,
                 getUserMetadata: getCommentUserMetadata,
                 onShare: (returnFocusTo) =>
-                  currentSummary && openBarShare(currentSummary.name, returnFocusTo),
+                  currentSummary && openBarShare(currentSummary, returnFocusTo),
               }}
               shareControlRef={shareControlRef}
               onBranchReloadData={() => {

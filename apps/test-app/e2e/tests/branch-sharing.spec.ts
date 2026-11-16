@@ -26,7 +26,7 @@ const shareControl = (page: Page, name: RegExp = /^Share…/) =>
 /** Opens the Share dialog from the top bar, adds `email`, and sends the change. */
 async function addByEmail(page: Page, short: string, email: string, name: string) {
   await shareControl(page).click()
-  const dialog = page.getByRole('dialog', { name: `Share ${short}` })
+  const dialog = page.getByRole('dialog', { name: `Share “${short}”` })
   await dialog.getByRole('textbox', { name: 'Add people or groups' }).fill(email)
   await dialog.getByRole('option', { name: `Add ${email}` }).click()
   await expect(dialog.getByText(name, { exact: true })).toBeVisible()
@@ -103,7 +103,7 @@ test.describe('Branch sharing', () => {
       await page.goto(`/edit?branch=${short}`)
       await editorPage.waitForReady()
       await shareControl(page, /^Share…, 3 people have access$/).click()
-      const dialog = page.getByRole('dialog', { name: `Share ${short}` })
+      const dialog = page.getByRole('dialog', { name: `Share “${short}”` })
       await dialog.getByRole('button', { name: 'Remove User Two' }).click()
       await dialog.getByRole('button', { name: 'Update access' }).click()
       await expect(dialog).toBeHidden({ timeout: STANDARD_TIMEOUT })

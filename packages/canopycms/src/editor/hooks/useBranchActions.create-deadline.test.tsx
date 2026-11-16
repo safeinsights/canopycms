@@ -100,7 +100,10 @@ describe('useBranchActions create past the deadline', () => {
       data: { branches: [listedBranch], users: [] },
     })
 
-    expect(await createAfterDeadline()).toEqual({ created: listedBranch.name })
+    expect(await createAfterDeadline()).toMatchObject({
+      created: listedBranch.name,
+      branch: { name: listedBranch.name },
+    })
     expect(options.onBranchCreated).toHaveBeenCalledWith(listedBranch)
     expect(options.setBranchName).toHaveBeenCalledWith('canopycms/local/feature-x')
     expect(options.onBranchSwitch).toHaveBeenCalledWith('canopycms/local/feature-x')
@@ -160,7 +163,10 @@ describe('useBranchActions create past the deadline', () => {
       data: { branches: [listedBranch], users: [] },
     })
 
-    expect(await createAfterDeadline()).toEqual({ created: listedBranch.name })
+    expect(await createAfterDeadline()).toMatchObject({
+      created: listedBranch.name,
+      branch: { name: listedBranch.name },
+    })
     expect(mockClient.branches.list).toHaveBeenCalledTimes(1)
     expect(options.setBranchName).toHaveBeenCalledWith('canopycms/local/feature-x')
   })

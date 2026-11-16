@@ -40,6 +40,7 @@ import { useApiClient } from '../context/ApiClientContext'
 import { editorBranchLink } from '../editor-utils'
 import { isGatewayFailure, isUnanswered, UnansweredError } from '../unanswered'
 import { focusReturnProps } from '../utils/focus-return'
+import { accessPeople } from './BranchShareControl'
 import { PeoplePicker } from './PeoplePicker'
 import {
   accessChangeBody,
@@ -91,6 +92,7 @@ const NOTHING_TO_UPDATE = 'Nothing has changed yet. Add or remove someone, or ch
 const NOT_LOADED = "Who has access hasn't loaded yet. Retry above."
 const STILL_LOADING = 'Who has access is still loading.'
 const COPIED_FOR_MS = 3000
+const MAX_LOADING_ROWS = 8
 
 interface BodyState {
   dirty: boolean
@@ -133,7 +135,7 @@ export function ShareBranchDialog({
     <Modal
       opened={opened}
       onClose={dismiss}
-      title={`Share ${displayBranchName(body.branch)}`}
+      title={`Share “${displayBranchName(body.branch)}”`}
       size={540}
       closeOnClickOutside={!state.saving && !state.dirty}
       closeButtonProps={{ disabled: state.saving }}
@@ -234,6 +236,12 @@ function ShareBranchBody({
   const body = data ? accessChangeBody(staged, data) : {}
   const dirty = Object.keys(body).length > 0
   const lockedDown = !!branch.access?.managerOrAdminAllowed
+  // As many placeholder rows as the listing says the list holds, so the dialog keeps its height.
+  const known = accessPeople(branch)
+  const loadingRows = Math.min(
+    Math.max(known.users.length + known.groups.length, 1),
+    MAX_LOADING_ROWS,
+  )
 
   // A refusal replaces the edits with its notice, so nothing is left to ask about discarding.
   useEffect(
@@ -341,11 +349,13 @@ function ShareBranchBody({
       name: entry.name,
       avatarUrl: entry.avatarUrl,
       shownEmail: entry.email ?? entry.maskedEmail,
-      addedBy: entry.addedBy
-        ? entry.addedBy.id === user.userId
-          ? 'you'
-          : entry.addedBy.name
-        : undefined,
+      // The owner row says Owner; who added the owner back into the list says nothing more.
+      addedBy:
+        entry.addedBy && !isOwner
+          ? entry.addedBy.id === user.userId
+            ? 'you'
+            : entry.addedBy.name
+          : undefined,
       isOwner,
       isYou: entry.kind === 'user' && entry.id === user.userId,
       unsaved: false,
@@ -721,8 +731,8 @@ function ShareBranchBody({
             )}
             {!data && state.status === 'loading' ? (
               <Stack gap="sm" aria-busy data-testid="share-loading">
-                {[0, 1, 2].map((row) => (
-                  <Group key={row} gap="sm" wrap="nowrap">
+                {Array.from({ length: loadingRows }, (_, row) => (
+                  <Group key={row} gap="sm" wrap="nowrap" data-testid="share-loading-row">
                     <Skeleton circle height={32} />
                     <Stack gap={4} style={{ flex: 1 }}>
                       <Skeleton height={10} width="45%" />

@@ -135,7 +135,7 @@ describe('ShareBranchDialog: rows', () => {
     setup()
     await loaded()
 
-    expect(screen.getByRole('dialog', { name: 'Share spring' })).toBeTruthy()
+    expect(screen.getByRole('dialog', { name: 'Share “spring”' })).toBeTruthy()
     const ana = row('Ana Lee')
     expect(within(ana).getByText('Ana Lee (you)')).toBeTruthy()
     expect(within(ana).getByText('Owner')).toBeTruthy()
@@ -146,6 +146,35 @@ describe('ShareBranchDialog: rows', () => {
     expect(screen.getByRole('button', { name: 'Remove Marketing team' })).toBeTruthy()
     expect(screen.getByText(LISTED_ONLY_LINE)).toBeTruthy()
     expect(screen.getByText(/People on this list can open, submit and withdraw/)).toBeTruthy()
+  })
+
+  it("says only Owner on the owner's row, whoever added them to the list", async () => {
+    const [ana, ...rest] = access().entries
+    setup({
+      data: access({ entries: [{ ...ana, addedBy: { id: 'ana', name: 'Ana Lee' } }, ...rest] }),
+    })
+    await loaded()
+
+    const owner = row('Ana Lee')
+    expect(within(owner).getByText('Owner')).toBeTruthy()
+    expect(within(owner).queryByText(/Added by/)).toBeNull()
+    expect(within(row('Ben Ortiz')).getByText(/Added by you/)).toBeTruthy()
+  })
+
+  it('holds a row in place for each person and group the listing names while loading', async () => {
+    const api = createMockApiClient()
+    api.branches.getAccess.mockReturnValue(new Promise(() => {}))
+    setup({ client: api, branch: { access: { users: ['ana', 'ben'], groups: ['team'] } } })
+
+    expect(await screen.findAllByTestId('share-loading-row')).toHaveLength(3)
+  })
+
+  it('holds one row for an owner the listing names alone', async () => {
+    const api = createMockApiClient()
+    api.branches.getAccess.mockReturnValue(new Promise(() => {}))
+    setup({ client: api, branch: { access: { users: [], groups: [] } } })
+
+    expect(await screen.findAllByTestId('share-loading-row')).toHaveLength(1)
   })
 
   it('gives a member a remove only on what they added, and who can add as text', async () => {

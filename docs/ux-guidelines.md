@@ -88,8 +88,8 @@ from `packages/canopycms/src/editor/branch-lock.ts`.
 | A branch's lasting state: read-only, protected                                               | Branch bar status     |
 | One entry's lasting state, such as a read-only draft                                         | Notice above its form |
 
-Never open a modal from a modal. A popover anchored to a field never covers its input; a short field's opens below it
-(`packages/canopycms/src/editor/comments/popover-placement.ts`). Don't toast what is already visible: a saved entry shows "Saved" inline, a new comment appears in its thread. Toasts go in the corner opposite the rail (`Notifications` in
+Never open a modal from a modal, though one may open over a drawer. A popover anchored to a field never covers its input; a short field's opens below it
+(`packages/canopycms/src/editor/comments/popover-placement.ts`). Don't toast what is already visible: a saved entry shows "Saved" inline, a new comment appears in its thread. Toasts sit opposite the rail (`Notifications` in
 `packages/canopycms/src/editor/theme.tsx`); one with an action pauses while hovered or focused
 (`UndoToastMessage`). An error that needs action stays until dismissed.
 
@@ -113,7 +113,7 @@ Never open a modal from a modal. A popover anchored to a field never covers its 
   giving a full-sentence reason with the way forward ("This branch is in review.
   Withdraw it to make changes."). One reason blocking controls with different verbs names the
   condition, not a verb. The Tooltip opens clear of its control and any control stacked beside it.
-  Mantine's `data-disabled` keeps the Tooltip working on focus and touch. A control with text
+  `data-disabled` keeps it working on focus and touch. A control with text
   needs only the Tooltip; an icon-only one adds an `aria-label` for its name and the reason as
   visually hidden text.
 - No reason for a submit disabled only by an empty adjacent input (Reply) or a busy dialog's
@@ -123,10 +123,9 @@ Never open a modal from a modal. A popover anchored to a field never covers its 
 - A disabled menu item stays focusable (`aria-disabled`, not `disabled`) and shows the reason
   inline (`ReasonedMenuItem`). An empty menu shows one such item saying why, so arrow keys reach
   it; an empty section of a non-empty menu is plain text, with no not-allowed cursor.
-- **Hide** a control that can never apply for this user, such as admin items for an editor, and
+- **Hide** a control that can never apply for this user, such as an editor's admin items, and
   a read-only form's row actions ([Fields](#fields)). Where a path rule refuses an action, hide
-  the per-item "…" actions and show one collection-level line saying why ("You can't add entries
-  here").
+  the per-item "…" actions and show one collection-level line saying why.
 - A locked branch keeps each row's "…" slot and draws a lock there on the hovered, focused or
   selected row, by opacity; its Tooltip says why.
 
@@ -251,8 +250,8 @@ branch is open, Media, a divider, the layout toggle; Settings and Account below)
 (content tree: docked, in the stacked form row, or over the form), **main** (entry header, keeping
 Save above a maximized preview; preview and form) and **overlays** (drawers, modals, toasts).
 Regions are layout only. New UI joins an existing region; adding one is a design decision.
-`trailing` may lead with the branch's sharing control. Switch branch… and New branch… open the
-Branches drawer. Unsaved is one dot (`UnsavedMark`), also
+`trailing` may lead with the branch's sharing control. Switch branch… and a locked branch's New branch…
+open the Branches drawer. Unsaved is one dot (`UnsavedMark`), also
 on Content while its panel is closed.
 
 ## Enforcement

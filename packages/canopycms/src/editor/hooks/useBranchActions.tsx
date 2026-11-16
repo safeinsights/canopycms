@@ -196,7 +196,7 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
       // Not awaited: a listing can lag the create, and the switch must not wait
       // on it. loadBranches reports its own failures and never rejects.
       void options.onReloadBranches()
-      return { created: createdName }
+      return { created: createdName, ...(created && { branch: created }) }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to create branch'
       notifications.show({ message, color: 'red' })

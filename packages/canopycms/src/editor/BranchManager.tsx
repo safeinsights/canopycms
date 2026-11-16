@@ -62,6 +62,7 @@ import { WhoHasAccessPopover } from './sharing/WhoHasAccessPopover'
 import { canShareBranch } from './sharing/sharing-mode'
 import { returnTarget } from './utils/focus-return'
 import type { CreatedBranch, CreateRefusal } from './hooks/create-branch-request'
+import { createdSummary } from './sharing/created-branch'
 import type { NewBranchRequest } from './hooks/useBranchActions'
 import { ShareWithField } from './sharing/ShareWithField'
 import { additionsBody, entryKey, type Addition } from './sharing/share-staging'
@@ -927,7 +928,10 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   const [shareWith, setShareWith] = useState<Addition[]>([])
   const shareWithKey = shareWith.map(entryKey).join('\n')
   // The branch the last create made, which the drawer says, offering to share it.
-  const [created, setCreated] = useState<string | null>(null)
+  const [created, setCreated] = useState<CreatedBranch | null>(null)
+  // Set by a create that passed: the created line's Share… takes focus, else New branch…, as the
+  // form that held it has gone.
+  const focusCreatedRef = useRef(false)
   const createdShareRef = useRef<HTMLButtonElement>(null)
   const newBranchButtonRef = useRef<HTMLButtonElement>(null)
 
@@ -948,6 +952,11 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
     focusNameRef.current = false
     nameInputRef.current?.focus()
   }, [creating, refused])
+  useEffect(() => {
+    if (creating || !focusCreatedRef.current) return
+    focusCreatedRef.current = false
+    ;(createdShareRef.current ?? newBranchButtonRef.current)?.focus()
+  }, [creating, created])
   // Read synchronously: state would not yet show a first click to a second one in the same tick.
   const creatingRef = useRef(false)
 
@@ -994,7 +1003,8 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
       setNewBranchDescription('')
       setShareWith([])
       setShowCreateForm(false)
-      setCreated(typeof outcome === 'object' ? outcome.created : null)
+      focusCreatedRef.current = true
+      setCreated(typeof outcome === 'object' ? outcome : null)
     } finally {
       creatingRef.current = false
       setCreating(false)
@@ -1031,10 +1041,16 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
     onOverlayChange?.(overlayOpen)
     return () => onOverlayChange?.(false)
   }, [overlayOpen, onOverlayChange])
-  const sharedBranch = sharing && branches.find((b) => b.name === sharing.name)
+  // The listing's copy once it has one; until then, or if it fails, the create's own answer.
   const createdBranch = created
-    ? (branches.find((b) => b.name === created) ?? branches.find((b) => b.shortName === created))
+    ? (branches.find((b) => b.name === created.created) ??
+      branches.find((b) => b.shortName === created.created) ??
+      (created.branch && createdSummary(created.branch)))
     : undefined
+  const sharedBranch =
+    sharing &&
+    (branches.find((b) => b.name === sharing.name) ??
+      (createdBranch?.name === sharing.name ? createdBranch : undefined))
 
   const renderCard = (b: BranchSummary) => {
     // The editor resolves a shadowed outside branch's full name to the namespace branch whose
@@ -1194,8 +1210,8 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
             </Paper>
           </Collapse>
           <div role="status" data-testid="branch-created-status">
-            {createdBranch && !showCreateForm && (
-              <Group gap="xs" wrap="nowrap">
+            {created && !showCreateForm && (
+              <Group gap="xs" wrap="nowrap" pb="sm">
                 <IconCheck
                   size={16}
                   color="var(--mantine-color-green-filled)"
@@ -1203,9 +1219,9 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                   style={{ flexShrink: 0 }}
                 />
                 <Text size="sm" style={{ ...WRAP_ANYWHERE, flex: 1 }}>
-                  {`Branch “${displayBranchName(createdBranch)}” created`}
+                  {`Branch “${createdBranch ? displayBranchName(createdBranch) : created.created}” created`}
                 </Text>
-                {canShareBranch(createdBranch, user) && (
+                {createdBranch && canShareBranch(createdBranch, user) && (
                   <Button
                     ref={createdShareRef}
                     variant="default"
