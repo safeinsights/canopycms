@@ -22,5 +22,9 @@ export const isSystemUserId = (userId: string): boolean =>
   userId === CONTEXT_USER_ID ||
   userId === AI_USER_ID
 
-/** A creator id no person holds: a system user's, or the placeholder of a branch.json without one. */
-export const isNobody = (userId: string): boolean => isSystemUserId(userId) || userId === 'unknown'
+/** The creator a branch.json without a readable one records: it matches no user. */
+export const UNKNOWN_CREATOR_ID = 'unknown'
+
+/** A creator id no person holds: a system user's, or {@link UNKNOWN_CREATOR_ID}. */
+export const isNobody = (userId: string): boolean =>
+  isSystemUserId(userId) || userId === UNKNOWN_CREATOR_ID

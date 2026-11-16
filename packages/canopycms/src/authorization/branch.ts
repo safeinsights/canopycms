@@ -154,8 +154,18 @@ export function opensToEveryone(
 ): boolean {
   const { access } = branch
   if (access.managerOrAdminAllowed || hasAccessList(access)) return false
+  return (config.defaultBranchAccess ?? 'deny') === 'allow' || opensWithoutList(branch, config)
+}
+
+/**
+ * Whether `branch` is the base branch or dev's active branch: those every signed-in user may open,
+ * on either site default, while no list or lockdown is in force.
+ */
+export function opensWithoutList(
+  branch: Pick<BranchMetadata, 'name' | 'baseBranch' | 'createdBy'>,
+  config: Pick<CanopyConfig, 'mode' | 'defaultBaseBranch' | 'defaultActiveBranch'>,
+): boolean {
   return (
-    (config.defaultBranchAccess ?? 'deny') === 'allow' ||
     getBranchProtection(config, branch.name, branch.baseBranch).isProtected ||
     isDevActiveBranch(config, { branch })
   )
