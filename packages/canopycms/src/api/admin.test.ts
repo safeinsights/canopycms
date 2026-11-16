@@ -409,6 +409,7 @@ describe('admin api', () => {
         dirName: 'x',
         olderThanDays: 1,
         branches: [],
+        userId: 'x',
       }
 
       for (const route of Object.values(ADMIN_ROUTES)) {

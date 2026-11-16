@@ -35,6 +35,8 @@ export function resolveBranchSharing(
 ): ResolvedBranchSharing {
   return {
     whoCanAdd: config.branchSharing?.whoCanAdd ?? 'members',
+    searchable: config.branchSharing?.searchable ?? 'cms-users',
+    addableByEmail: config.branchSharing?.addableByEmail ?? 'all-users',
   }
 }
 
@@ -441,13 +443,15 @@ export function applyAccessChange(
 
 /**
  * The ids of people who already work in this CMS: anyone a path permission names, every internal
- * group's members, and every branch's creator and saving editors. Being on a branch's list is not
- * enough, so adding someone never makes them searchable by other sharers.
+ * group's members, every branch's creator and saving editors, and everyone `seen` (people-store.ts).
+ * Being on a branch's list is not enough, so
+ * adding someone never makes them searchable by other sharers.
  */
 export function collectCmsUserIds(input: {
   pathPermissions: readonly PathPermission[]
   internalGroups: readonly { members: readonly CanopyUserId[] }[]
   branches: readonly Pick<BranchMetadata, 'createdBy' | 'editors'>[]
+  seen?: Iterable<CanopyUserId>
 }): Set<CanopyUserId> {
   const ids = new Set<CanopyUserId>()
   for (const rule of input.pathPermissions) {
@@ -460,6 +464,7 @@ export function collectCmsUserIds(input: {
     ids.add(branch.createdBy)
     for (const id of branch.editors ?? []) ids.add(id)
   }
+  for (const id of input.seen ?? []) ids.add(id)
   for (const id of ids) if (isNobody(id)) ids.delete(id)
   return ids
 }

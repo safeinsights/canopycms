@@ -9,7 +9,8 @@ export interface ClerkUserData {
   imageUrl?: string | null
   image_url?: string | null
   primaryEmailAddress?: { emailAddress: string } | null
-  email_addresses?: Array<{ email_address: string }> | null
+  email_addresses?: Array<{ id?: string; email_address: string }> | null
+  primary_email_address_id?: string | null
 }
 
 /** The first non-blank name, else undefined: never the id (an internal name) or any email part. */
@@ -21,11 +22,19 @@ export function clerkDisplayName(user: ClerkUserData): string | undefined {
   return undefined
 }
 
+/** The snake_case shape's primary address; its first only when it names no primary at all. */
+function snakeCasePrimaryEmail(user: ClerkUserData): string | undefined {
+  const addresses = user.email_addresses ?? []
+  const primaryId = user.primary_email_address_id
+  if (!primaryId) return addresses[0]?.email_address
+  return addresses.find((address) => address.id === primaryId)?.email_address
+}
+
 export function toUserSearchResult(user: ClerkUserData): UserSearchResult {
   return {
     id: user.id,
     name: clerkDisplayName(user) ?? '',
-    email: user.primaryEmailAddress?.emailAddress ?? user.email_addresses?.[0]?.email_address ?? '',
+    email: user.primaryEmailAddress?.emailAddress ?? snakeCasePrimaryEmail(user) ?? '',
     avatarUrl: user.imageUrl ?? user.image_url ?? undefined,
   }
 }

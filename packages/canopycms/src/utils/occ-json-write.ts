@@ -204,7 +204,17 @@ export async function withOccRetry<T>(
  * settings, which are sized for build-time git clone/push operations that can
  * legitimately take many seconds.
  */
-export async function withOccFileLock<T>(filePath: string, fn: () => Promise<T>): Promise<T> {
+export async function withOccFileLock<T>(
+  filePath: string,
+  fn: () => Promise<T>,
+  options?: {
+    /**
+     * One acquisition attempt, failing at once on contention: for a best-effort write that must
+     * not hold up its request behind a live or not-yet-stale holder.
+     */
+    tryOnce?: boolean
+  },
+): Promise<T> {
   // The lock's own directory only, never its ancestors: a waiter must not recreate a branch root
   // that a delete removed under it (the same rule as the ENOENT case in the loop below).
   try {
@@ -228,7 +238,7 @@ export async function withOccFileLock<T>(filePath: string, fn: () => Promise<T>)
   // waiters that give up sooner turn every crashed holder into ~10s of hard
   // failures. Base delays 50ms * 1.6^n capped at 2s over 13 retries sum to
   // ~13.5s, comfortably past one stale takeover; jitter only adds to that.
-  const MAX_ATTEMPTS = 14
+  const MAX_ATTEMPTS = options?.tryOnce ? 1 : 14
   let release: (() => Promise<void>) | null = null
   for (let attempt = 1; release === null; attempt++) {
     try {

@@ -73,10 +73,8 @@ export type {
   WorkerLiveness,
 } from './admin'
 
-// Export route definitions
-export { USER_ROUTES } from './user'
-// Note: SCHEMA_ROUTES is not exported here because it imports server-only code (fs module).
-// Import it directly from './schema' in server-side code when needed.
+// No route table is exported here: this barrel is in the client bundle, and route modules reach
+// server-only code (`pnpm lint:bundle`). Server code imports them through api/routes.ts.
 
 // Export client
 export { CanopyApiClient, createApiClient } from './client'

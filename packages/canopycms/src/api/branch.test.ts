@@ -104,6 +104,7 @@ import type { CanopyConfig } from '../config'
 import type { GitHubService } from '../github-service'
 import { createCheckBranchAccess } from '../authorization/branch'
 import type { BranchMetadata } from '../types'
+import type { PeopleStore } from '../people-store'
 import type { ApiContext, ApiRequest } from './types'
 
 /**
@@ -168,8 +169,10 @@ const baseCtx = createMockApiContext({
 })
 
 beforeEach(() => {
-  // Default: no path permissions (open access)
-  vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue([])
+  // Default: a rule that lets anyone edit, so anyone may create branches.
+  vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue([
+    { path: unsafeAsPermissionPath('content/**'), edit: {} },
+  ])
   mockReadWorkerStatus.mockResolvedValue({ workerStatus: null })
 })
 
@@ -183,6 +186,7 @@ describe('canCreateBranch', () => {
           edit: { allowedUsers: ['other'] },
         },
       ],
+      'deny',
     )
     expect(result.allowed).toBe(true)
     expect(result.reason).toBe('privileged_user')
@@ -201,80 +205,119 @@ describe('canCreateBranch', () => {
           edit: { allowedUsers: ['other'] },
         },
       ],
+      'deny',
     )
     expect(result.allowed).toBe(true)
     expect(result.reason).toBe('privileged_user')
   })
 
-  it('allows anyone when no path permissions defined', () => {
-    const result = canCreateBranch({ type: 'authenticated', userId: 'u1', groups: [] }, [])
+  it("refuses a non-privileged user when there are no rules and edit defaults to 'deny'", () => {
+    const result = canCreateBranch({ type: 'authenticated', userId: 'u1', groups: [] }, [], 'deny')
+    expect(result.allowed).toBe(false)
+    expect(result.reason).toBe('no_path_access')
+  })
+
+  it("allows anyone when edit defaults to 'allow', even beside a narrower rule", () => {
+    const result = canCreateBranch(
+      { type: 'authenticated', userId: 'u1', groups: [] },
+      [{ path: unsafeAsPermissionPath('content/legal/**'), edit: { allowedUsers: ['other'] } }],
+      'allow',
+    )
     expect(result.allowed).toBe(true)
-    expect(result.reason).toBe('no_restrictions')
+    expect(result.reason).toBe('default_allows_edit')
+  })
+
+  it('reads the edit level of a per-level default, which an absent level makes deny', () => {
+    const user = { type: 'authenticated' as const, userId: 'u1', groups: [] }
+    expect(canCreateBranch(user, [], { read: 'allow' }).allowed).toBe(false)
+    expect(canCreateBranch(user, [], { read: 'allow', edit: 'allow' }).allowed).toBe(true)
   })
 
   it('allows user with matching userId in path rule', () => {
-    const result = canCreateBranch({ type: 'authenticated', userId: 'u1', groups: [] }, [
-      {
-        path: unsafeAsPermissionPath('content/**'),
-        edit: { allowedUsers: ['u1', 'u2'] },
-      },
-    ])
+    const result = canCreateBranch(
+      { type: 'authenticated', userId: 'u1', groups: [] },
+      [
+        {
+          path: unsafeAsPermissionPath('content/**'),
+          edit: { allowedUsers: ['u1', 'u2'] },
+        },
+      ],
+      'deny',
+    )
     expect(result.allowed).toBe(true)
     expect(result.reason).toBe('path_access')
   })
 
   it('allows user with matching group in path rule', () => {
-    const result = canCreateBranch({ type: 'authenticated', userId: 'u1', groups: ['editors'] }, [
-      {
-        path: unsafeAsPermissionPath('content/**'),
-        edit: { allowedGroups: ['editors'] },
-      },
-    ])
+    const result = canCreateBranch(
+      { type: 'authenticated', userId: 'u1', groups: ['editors'] },
+      [
+        {
+          path: unsafeAsPermissionPath('content/**'),
+          edit: { allowedGroups: ['editors'] },
+        },
+      ],
+      'deny',
+    )
     expect(result.allowed).toBe(true)
     expect(result.reason).toBe('path_access')
   })
 
   it('allows anyone for open path rules (no user/group constraints)', () => {
-    const result = canCreateBranch({ type: 'authenticated', userId: 'u1', groups: [] }, [
-      { path: unsafeAsPermissionPath('content/**'), edit: {} },
-    ])
+    const result = canCreateBranch(
+      { type: 'authenticated', userId: 'u1', groups: [] },
+      [{ path: unsafeAsPermissionPath('content/**'), edit: {} }],
+      'deny',
+    )
     expect(result.allowed).toBe(true)
-    expect(result.reason).toBe('open_path_rule')
+    expect(result.reason).toBe('path_access')
   })
 
   it('denies user with no matching path access', () => {
-    const result = canCreateBranch({ type: 'authenticated', userId: 'u1', groups: [] }, [
-      {
-        path: unsafeAsPermissionPath('content/**'),
-        edit: { allowedUsers: ['other'] },
-      },
-    ])
+    const result = canCreateBranch(
+      { type: 'authenticated', userId: 'u1', groups: [] },
+      [
+        {
+          path: unsafeAsPermissionPath('content/**'),
+          edit: { allowedUsers: ['other'] },
+        },
+      ],
+      'deny',
+    )
     expect(result.allowed).toBe(false)
     expect(result.reason).toBe('no_path_access')
   })
 
   it('allows user with matching userId in path rule with edit permissions', () => {
-    const result = canCreateBranch({ type: 'authenticated', userId: 'u1', groups: [] }, [
-      {
-        path: unsafeAsPermissionPath('admin/**'),
-        edit: { allowedUsers: ['admin-only'] },
-      },
-      {
-        path: unsafeAsPermissionPath('content/**'),
-        edit: { allowedUsers: ['u1'] },
-      },
-    ])
+    const result = canCreateBranch(
+      { type: 'authenticated', userId: 'u1', groups: [] },
+      [
+        {
+          path: unsafeAsPermissionPath('admin/**'),
+          edit: { allowedUsers: ['admin-only'] },
+        },
+        {
+          path: unsafeAsPermissionPath('content/**'),
+          edit: { allowedUsers: ['u1'] },
+        },
+      ],
+      'deny',
+    )
     expect(result.allowed).toBe(true)
     expect(result.reason).toBe('path_access')
   })
 
   it('denies when all rules restrict to other users', () => {
-    const result = canCreateBranch({ type: 'authenticated', userId: 'u1', groups: [] }, [
-      {
-        path: unsafeAsPermissionPath('admin/**'),
-        edit: { allowedUsers: ['admin-only'] },
-      },
-    ])
+    const result = canCreateBranch(
+      { type: 'authenticated', userId: 'u1', groups: [] },
+      [
+        {
+          path: unsafeAsPermissionPath('admin/**'),
+          edit: { allowedUsers: ['admin-only'] },
+        },
+      ],
+      'deny',
+    )
     expect(result.allowed).toBe(false)
     expect(result.reason).toBe('no_path_access')
   })
@@ -482,6 +525,35 @@ describe('branch api', () => {
         added: { users: ['u1', 'u2'], groups: [] },
       }),
     ])
+  })
+
+  it('remembers whom the creator shared with, once the branch exists', async () => {
+    const recordShares = vi.fn(async () => {})
+    vi.mocked(BranchWorkspaceManager).mockImplementationOnce(function () {
+      return {
+        provisionBranch: async ({ branchName }: { branchName: string }) => ({
+          kind: 'created',
+          context: createMockBranchContext({ branchName, createdBy: 'u1' }),
+        }),
+      }
+    } as unknown as typeof BranchWorkspaceManager)
+    const ctx = {
+      ...baseCtx,
+      services: {
+        ...baseCtx.services,
+        peopleStore: {
+          recordShares,
+          listSeen: async () => new Set<string>(),
+        } as unknown as PeopleStore,
+      },
+    }
+
+    await createBranch(ctx, asU1, {
+      branch: unsafeAsBranchName('feature-test'),
+      access: { add: { users: ['u2'] } },
+    })
+
+    expect(recordShares).toHaveBeenCalledWith('u1', ['u2'])
   })
 
   it('refuses a share at create by the rules of a later share, before provisioning anything', async () => {

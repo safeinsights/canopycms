@@ -190,6 +190,26 @@ describe('DevAuthPlugin', () => {
     })
   })
 
+  describe('findUserByEmail', () => {
+    it('finds the user with exactly that address, ignoring case', async () => {
+      const plugin = new DevAuthPlugin({})
+
+      expect(await plugin.findUserByEmail('USER1@localhost.dev')).toEqual({
+        id: 'dev_user1_2nK8mP4xL9',
+        name: 'User One',
+        email: 'user1@localhost.dev',
+        avatarUrl: undefined,
+      })
+    })
+
+    it('finds no one for part of an address', async () => {
+      const plugin = new DevAuthPlugin({})
+
+      expect(await plugin.findUserByEmail('user1@localhost')).toBeNull()
+      expect(await plugin.findUserByEmail('ser1@localhost.dev')).toBeNull()
+    })
+  })
+
   describe('getUserMetadata', () => {
     it('returns user metadata for valid user', async () => {
       const plugin = new DevAuthPlugin({})

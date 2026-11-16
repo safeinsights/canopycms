@@ -159,16 +159,26 @@ const accessEntriesSchema = z
   })
   .strict()
 
+/** Addresses one request may look up; each counts against the email limit (api/people.ts). */
+const MAX_ACCESS_EMAILS = 20
+const accessAddSchema = z
+  .object({
+    users: z.array(accessIdSchema).max(MAX_ACCESS_ENTRIES).optional(),
+    groups: z.array(accessIdSchema).max(MAX_ACCESS_ENTRIES).optional(),
+    emails: z.array(z.string().trim().email().max(320)).max(MAX_ACCESS_EMAILS).optional(),
+  })
+  .strict()
+
 const createBranchBodySchema = z.object({
   branch: branchNameSchema,
   title: z.string().optional(),
   description: z.string().optional(),
-  access: z.object({ add: accessEntriesSchema.optional() }).strict().optional(),
+  access: z.object({ add: accessAddSchema.optional() }).strict().optional(),
 })
 
 const updateBranchAccessBodySchema = z
   .object({
-    add: accessEntriesSchema.optional(),
+    add: accessAddSchema.optional(),
     remove: accessEntriesSchema.optional(),
     restricted: z.boolean().optional(),
     addBy: z.enum(['members', 'owner', 'admins']).optional(),
@@ -180,58 +190,62 @@ import {
   accessForViewer,
   branchSharingRights,
   hasAccessList,
+  isAllowedByTarget,
   isPrivileged,
   isAdmin,
   loadPathPermissions,
+  resolveDefaultPathAccess,
   getBranchProtection,
   getBranchWriteProtection,
   resolveBranchSharing,
 } from '../authorization'
-import { changeBranchAccess, initialBranchAccess } from './branch-access'
+import { changeBranchAccess, initialBranchAccess, recordRecentShares } from './branch-access'
 import { logBranchAccessChange } from '../utils/access-log'
-import type { PathPermission } from '../config'
+import type { DefaultPathAccess, PathPermission } from '../config'
 import type { CanopyUser } from '../user'
 import { operatingStrategy } from '../operating-mode'
 
 /**
- * Returns true if:
- * - User is Admin or Reviewer (privileged)
- * - User has edit access to at least one path via pathPermissions rules
- * - No path permissions are defined (open access)
+ * Whether `user` may create branches: admins and reviewers always; anyone else when the edit
+ * default (`defaultPathAccess`) is `'allow'`, or when some rule's edit target admits them by the
+ * test content access uses (`isAllowedByTarget`, authorization/path.ts). That approximates "may
+ * edit at least one path" from above: content access applies the first rule a path matches, so an
+ * earlier rule can shadow an admitting one, or cover every path the default would allow, and this
+ * still answers yes. A site with no rules and a `'deny'` edit default leaves it to admins and
+ * reviewers.
  * @internal Exported for tests.
  */
 export const canCreateBranch = (
   user: CanopyUser,
   pathPermissions: PathPermission[],
+  defaultPathAccess: DefaultPathAccess,
 ): { allowed: boolean; reason: string } => {
-  if (isPrivileged(user.groups)) {
-    return { allowed: true, reason: 'privileged_user' }
+  if (isPrivileged(user.groups)) return { allowed: true, reason: 'privileged_user' }
+  if (resolveDefaultPathAccess(defaultPathAccess, 'edit') === 'allow') {
+    return { allowed: true, reason: 'default_allows_edit' }
   }
-
-  if (pathPermissions.length === 0) {
-    return { allowed: true, reason: 'no_restrictions' }
+  if (pathPermissions.some((rule) => rule.edit && isAllowedByTarget(rule.edit, user))) {
+    return { allowed: true, reason: 'path_access' }
   }
-
-  for (const rule of pathPermissions) {
-    const editTarget = rule.edit
-    if (!editTarget) continue
-
-    const hasUserConstraint = !!editTarget.allowedUsers?.length
-    const hasGroupConstraint = !!editTarget.allowedGroups?.length
-    if (!hasUserConstraint && !hasGroupConstraint) {
-      return { allowed: true, reason: 'open_path_rule' }
-    }
-
-    const matchesUser = hasUserConstraint && editTarget.allowedUsers?.includes(user.userId)
-    const matchesGroup =
-      hasGroupConstraint && user.groups?.some((gid) => editTarget.allowedGroups?.includes(gid))
-
-    if (matchesUser || matchesGroup) {
-      return { allowed: true, reason: 'path_access' }
-    }
-  }
-
   return { allowed: false, reason: 'no_path_access' }
+}
+
+/**
+ * {@link canCreateBranch} over the site's path permissions, read from the settings workspace as
+ * content access reads them (authorization/content.ts `createContentAccessChecker`), and its
+ * `defaultPathAccess`.
+ */
+export const branchCreatePermission = async (
+  ctx: ApiContext,
+  user: CanopyUser,
+): Promise<{ allowed: boolean; reason: string }> => {
+  const { config } = ctx.services
+  const settingsRoot = await ctx.services.getSettingsBranchRoot()
+  return canCreateBranch(
+    user,
+    await loadPathPermissions(settingsRoot, config.mode),
+    config.defaultPathAccess ?? 'deny',
+  )
 }
 
 export interface CreateBranchBody {
@@ -239,7 +253,7 @@ export interface CreateBranchBody {
   title?: string
   description?: string
   /** People to share the new branch with at once, by the same rules as a later share. */
-  access?: { add?: { users?: string[]; groups?: string[] } }
+  access?: { add?: { users?: string[]; groups?: string[]; emails?: string[] } }
 }
 
 /**
@@ -637,19 +651,7 @@ export const createBranchHandler = async (
       }
     }
 
-    // Load path permissions from the base branch's JSON file (the resolved
-    // fork point — baked into config at service creation; dev-mode git HEAD
-    // when not explicitly configured)
-    const baseBranch = baseBranchOf(config)
-    const baseBranchContext = await ctx.getBranchContext(baseBranch)
-
-    let pathPermissions: PathPermission[] = []
-    if (baseBranchContext) {
-      const operatingMode = config.mode
-      pathPermissions = await loadPathPermissions(baseBranchContext.branchRoot, operatingMode)
-    }
-
-    const canCreate = canCreateBranch(req.user, pathPermissions)
+    const canCreate = await branchCreatePermission(ctx, req.user)
     if (!canCreate.allowed) {
       log.debug('api', 'Permission denied', { reason: canCreate.reason })
       return {
@@ -701,6 +703,7 @@ export const createBranchHandler = async (
         removed: { users: [], groups: [] },
         restricted: true,
       })
+      await recordRecentShares(ctx, req.user, initialAccess.added)
     }
     return {
       ok: true,

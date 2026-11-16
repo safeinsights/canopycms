@@ -15,11 +15,12 @@ import { EDITOR_MODE_HEADER, EDITOR_MODE_MISMATCH_STATUS } from '../operating-mo
 import type { OperatingMode } from '../operating-mode/types'
 
 import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, CreateBranchBody, UpdateBranchAccessBody } from './branch'
+import type { BranchAccessResponse, FindPeopleBody, FindPeopleResponse } from './branch-people'
 import type { BranchChangesResponse } from './branch-changes'
 import type { BranchEntryChangeResponse, RestoreEntryBody, RestoreEntryResponse } from './branch-entry-changes'
 import type { EntryConflictResponse, MergeConflictsResponse, ReleaseConflictsHoldResponse, ResolveEntryConflictBody, ResolveEntryConflictResponse } from './merge-conflicts'
 import type { ApproveBody, BranchMergeResponse, RequestChangesBody, SubmitBranchBody, SubmitBranchResponse, UpdateFromBaseResponse } from './branch-status'
-import type { AdminDeleteTaskResponse, AdminRetryTaskResponse, AdminStatusResponse, AdminTasksResponse, BranchHealthResponse, DeleteArchivedBranchesBody, DeleteArchivedBranchesResponse, DismissUnpublishedResponse, PurgeBranchDirResponse, RepairBranchDirResponse, RepairContentDuplicatesResponse } from './admin'
+import type { AdminDeleteTaskResponse, AdminRemoveSeenResponse, AdminRetryTaskResponse, AdminStatusResponse, AdminTasksResponse, BranchHealthResponse, DeleteArchivedBranchesBody, DeleteArchivedBranchesResponse, DismissUnpublishedResponse, PurgeBranchDirResponse, RepairBranchDirResponse, RepairContentDuplicatesResponse } from './admin'
 import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from './comments'
 import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse, RenameEntryBody, RenameEntryResponse, ValidateReferencesBody, WriteContentBody } from './content'
 import type { ReferenceOptionsResponse } from './reference-options'
@@ -110,6 +111,21 @@ export class CanopyApiClient {
     /** PATCH /:branch/access */
     updateAccess: (params: Record<string, string>, body: UpdateBranchAccessBody, options?: RequestOptions): Promise<BranchListItemResponse> => {
       return this.request('PATCH', this.buildPath('/:branch/access', params), body, 'standard', options)
+    },
+
+    /** GET /:branch/access */
+    getAccess: (params: Record<string, string>, options?: RequestOptions): Promise<BranchAccessResponse> => {
+      return this.request('GET', this.buildPath('/:branch/access', params), undefined, 'standard', options)
+    },
+
+    /** POST /:branch/access/find */
+    findPeople: (params: Record<string, string>, body: FindPeopleBody, options?: RequestOptions): Promise<FindPeopleResponse> => {
+      return this.request('POST', this.buildPath('/:branch/access/find', params), body, 'standard', options, true)
+    },
+
+    /** POST /branches/access/find */
+    findPeopleForNewBranch: (body: FindPeopleBody, options?: RequestOptions): Promise<FindPeopleResponse> => {
+      return this.request('POST', '/branches/access/find', body, 'standard', options, true)
     },
   }
 
@@ -243,6 +259,11 @@ export class CanopyApiClient {
     /** DELETE /admin/tasks/:status/:fileName */
     deleteTask: (params: Record<string, string>, options?: RequestOptions): Promise<AdminDeleteTaskResponse> => {
       return this.request('DELETE', this.buildPath('/admin/tasks/:status/:fileName', params), undefined, 'standard', options)
+    },
+
+    /** DELETE /admin/people/:userId/seen */
+    removeSeen: (params: Record<string, string>, options?: RequestOptions): Promise<AdminRemoveSeenResponse> => {
+      return this.request('DELETE', this.buildPath('/admin/people/:userId/seen', params), undefined, 'standard', options)
     },
   }
 
