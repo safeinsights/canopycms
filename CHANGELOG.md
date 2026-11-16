@@ -54,6 +54,82 @@ entries under **Released**.
 
 ## Released
 
+### 0.14.0
+
+#### Branch creators and the people they share with manage a branch's access list — **security fix, behaviour change**
+
+<!-- changeset: branch-sharing-access-model -->
+
+_First in 0.14.0._
+
+**What changed.** A branch's access list now follows one set of sharing rules, enforced by the server:
+
+- **Who changes it.** The branch's creator manages the list while they still have access. People on the list can add others but remove only the people they added. Admins can do everything, and can leave a list to admins alone.
+- **Removals stick.** A person the creator or an admin removes can't open the branch, even through a group, unless they're an admin or reviewer. The creator can let back the people and groups they removed; an admin can let back anyone. Other people on the list can't add a removed person or group back. A creator an admin locked out or left off the list can no longer change it, add themselves back, or delete the branch.
+- **Lists never reopen.** A shared branch stays restricted to its list even when the list is emptied.
+- **Who can be added.** Non-admins can add only people who already work in this CMS, or anyone with an account where `branchSharing.searchable` is `'all-users'`, and only groups they belong to.
+- **Who sees the list.** Anyone who may open a branch now sees its whole list.
+- **Errors.** A refused change, or a refused branch request, carries a `code` such as `BRANCH_ACCESS_DENIED` or `USER_EXCLUDED`.
+- **Request shape.** `PATCH /:branch/access` takes the change (people to add and remove) instead of the whole list, and so does the `access` field of a branch create.
+
+**To adopt.** Nothing is required. To let only a branch's creator add people, set `branchSharing: { whoCanAdd: 'owner' }`; see [the configuration reference](README.md#configuration-reference).
+
+#### Branch sharing: coded refusals everywhere, and fixes from its final review — **behaviour change**
+
+<!-- changeset: branch-sharing-final-review -->
+
+_First in 0.14.0._
+
+**What changed.**
+
+- **Codes for API callers.** Content and entry routes (read, save, validate references, rename, list, delete, restore, resolve a conflict), and Withdraw, Submit, Get latest changes and Delete, now refuse someone the branch's access check turns away with `code: 'BRANCH_ACCESS_DENIED'`, or `'BRANCH_LOCKED_DOWN'` for someone a lockdown alone keeps out, still as a 403. The content and entry routes check branch access first, so such a caller gets that 403 even for a path they couldn't otherwise use.
+- **`'all-users'` search.** Where `branchSharing.searchable` is `'all-users'`, non-admins can add by name anyone the search finds, as they share or create a branch.
+- **Rules.** An admin's removal of someone the owner already removed makes it an admin's, which only an admin can lift. People on a list can remove the people they added while only the owner may add.
+- **Find and change agree.** Both take addresses with non-ASCII letters, and refuse an archived or base branch with the same code.
+- **The Share dialog.** Opening a branch to everyone says that the people removed from it stay out. The warning about limiting a branch names, from `GET /:branch/access`'s new `losingAccess`, only people who would really lose access. "Who has access" lists an unlisted branch's owner on closed sites and keeps Esc working after Tab. Refusals, lookups and warnings reach screen readers.
+- **`canopycms init`.** The config template says an admin must add an edit rule before editors can create branches.
+
+#### Find people to share a branch with, by name or exact email address — **security fix**
+
+<!-- changeset: branch-sharing-finding-people -->
+
+_First in 0.14.0._
+
+**What changed.** The API can now find people to share a branch with, for the share dialog to come:
+
+- **Who has access.** `GET /:branch/access` names everyone on a branch's list. Admins and reviewers see full email addresses; everyone else sees masked ones (`b•••@example.org`), and only for people who work in this CMS.
+- **Finding people.** Names match from the start of a word; an email address needs an exact match. `POST /:branch/access/find` and, for a branch not yet created, `POST /branches/access/find` take the query in the body. Each person gets 20 email lookups per 10 minutes on each server, and each lookup is logged without the address.
+- **Adding by email.** `PATCH /:branch/access` and a branch create accept `add.emails`, which, under the default `addableByEmail`, can add someone who has never opened the editor.
+- **Who counts as working in this CMS** now includes anyone who opened the editor while in a non-reserved internal group, or a provider group a path permission names. An admin can remove that record with `DELETE /admin/people/:userId/seen`.
+- **Creating branches** follows the path permissions (read from the settings branch) and `defaultPathAccess`: admins, reviewers, anyone the edit default allows, and anyone some rule's edit target admits. Before, anyone signed in could create branches wherever the base branch held no path rules.
+- **Auth plugins** may implement `findUserByEmail`; the Clerk and dev plugins do.
+
+**To adopt.** If your site has no `edit` rule and its edit default isn't `'allow'` (for example `defaultPathAccess: { read: 'allow' }`), only admins and reviewers can now create branches: as an admin, add an `edit` rule for your editors in the Permission Manager. Other sites need nothing. `branchSharing.searchable` (default `'cms-users'`) and `branchSharing.addableByEmail` (default `'all-users'`; `'cms-users'` is stricter) choose whom people can find; see [the configuration reference](README.md#configuration-reference).
+
+#### Branch sharing: repairing a branch's metadata keeps who can open it — **security fix, behaviour change**
+
+<!-- changeset: branch-sharing-repair-keeps-access -->
+
+_First in 0.14.0._
+
+**What changed.** System health's "Repair" used to reset a corrupt branch's access, opening a private branch to everyone where `defaultBranchAccess` is `'allow'` and letting removed people back in. Repair now rebuilds the file field by field, keeping every field that still reads, the status, pull request, creator and the markers that hold a delete or a push included. An unreadable field takes its most restrictive value where it holds something back, and is otherwise dropped: an unreadable or missing status becomes `archived` when the file records an archive or merge time, and otherwise `submitted`, which Withdraw undoes; the merge and GitHub markers hold the delete and the push; an archive time becomes the repair time; an unreadable or missing creator becomes unknown, which grants nothing. Unknown fields carry over. Nothing that decides who can open, edit or delete the branch widens; review and merge rights can, in four cases, and the worker's GitHub sync loses any record it can't read. When the access can't be read, or the file isn't JSON, only admins and reviewers can open the branch, keeping readable removals and any lockdown, and unreadable removals leave re-adding to admins. The base branch, which takes no list, and in development the active branch while its creator reads stay open unless the file may have limited them, which locks them. The response to `POST /admin/branch-dirs/:dirName/repair-metadata` reports what it kept and reset, answers 409 when another write created the metadata mid-repair, and restores the corrupt file when its own write fails to land; System health says what an admin must check.
+
+#### Share a branch from its card
+
+<!-- changeset: branch-sharing-share-dialog -->
+
+_First in 0.14.0._
+
+**What changed.** A branch card's "…" menu offers "Share…" to anyone who may add people to the branch, and its "Access" line is now a button. Both open the Share dialog: find people by name or exact email address, add groups you belong to, remove people with Undo, and send every change at once with "Update access". Owners and admins also choose who can add people and, where branches are open by default, whether only listed people may open this one. Anyone else who may open the branch gets a read-only "Who has access" list. A save refused because the branch is no longer open to you now says so, and points to "Branches". A refused change to the list names the people it concerns (`ids`), never one found only by an address; the exclusion cap and a list changed meanwhile get their own codes, `EXCLUSION_CAP` and `LIST_CHANGED`; and someone removed can be allowed back by id, even from outside this CMS, by an admin or, unless an admin removed them, by the owner.
+
+#### Share the open branch from the top bar, and a new branch as you create it
+
+<!-- changeset: branch-sharing-top-bar -->
+
+_First in 0.14.0._
+
+**What changed.** The top bar leads its actions with the open branch's sharing control: who has access as avatars (a globe when everyone who can sign in may open it) and "Share…", or "Who has access" for someone who may open the branch but not add people. Below the `md` breakpoint it moves into the branch menu. The New branch form has an optional "Share with" field, and once the branch exists the Branches drawer, or the toast if the drawer has closed, offers "Share…" for it. A create refused because you may not create branches, or because of someone you chose, now says why in the form and keeps what you typed; the refusal carries the new code `BRANCH_CREATE_FORBIDDEN`. Someone found by their full email address who doesn't work in this CMS is now added in a form the server accepts, rather than refused as out of scope. The people picker no longer offers admins, who open every branch already, and "Who has access" says who may add people as the server's rules stand.
+
 ### 0.13.0
 
 #### Focus stays in "Show changes" after an entry-level conflict choice

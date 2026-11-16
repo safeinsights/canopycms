@@ -1,6 +1,6 @@
 {
   "name": "canopycms-auth-dev",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "Development authentication provider for CanopyCMS",
   "license": "MIT",
   "repository": {
