@@ -190,70 +190,58 @@ import {
   accessForViewer,
   branchSharingRights,
   hasAccessList,
+  isAllowedByTarget,
   isPrivileged,
   isAdmin,
   loadPathPermissions,
+  resolveDefaultPathAccess,
   getBranchProtection,
   getBranchWriteProtection,
   resolveBranchSharing,
 } from '../authorization'
 import { changeBranchAccess, initialBranchAccess, recordRecentShares } from './branch-access'
 import { logBranchAccessChange } from '../utils/access-log'
-import type { PathPermission } from '../config'
+import type { DefaultPathAccess, PathPermission } from '../config'
 import type { CanopyUser } from '../user'
 import { operatingStrategy } from '../operating-mode'
 
 /**
- * Returns true if:
- * - User is Admin or Reviewer (privileged)
- * - User has edit access to at least one path via pathPermissions rules
- * - No path permissions are defined (open access)
+ * Whether `user` may create branches: whether they may edit at least one path, by the rules and
+ * default content access applies (authorization/path.ts). So a privileged user may; anyone may
+ * when the default lets everyone edit a path no rule covers; otherwise only someone a rule's edit
+ * target admits. A site with no rules and a `'deny'` default leaves it to admins and reviewers.
  * @internal Exported for tests.
  */
 export const canCreateBranch = (
   user: CanopyUser,
   pathPermissions: PathPermission[],
+  defaultPathAccess: DefaultPathAccess,
 ): { allowed: boolean; reason: string } => {
-  if (isPrivileged(user.groups)) {
-    return { allowed: true, reason: 'privileged_user' }
+  if (isPrivileged(user.groups)) return { allowed: true, reason: 'privileged_user' }
+  if (resolveDefaultPathAccess(defaultPathAccess, 'edit') === 'allow') {
+    return { allowed: true, reason: 'default_allows_edit' }
   }
-
-  if (pathPermissions.length === 0) {
-    return { allowed: true, reason: 'no_restrictions' }
+  if (pathPermissions.some((rule) => rule.edit && isAllowedByTarget(rule.edit, user))) {
+    return { allowed: true, reason: 'path_access' }
   }
-
-  for (const rule of pathPermissions) {
-    const editTarget = rule.edit
-    if (!editTarget) continue
-
-    const hasUserConstraint = !!editTarget.allowedUsers?.length
-    const hasGroupConstraint = !!editTarget.allowedGroups?.length
-    if (!hasUserConstraint && !hasGroupConstraint) {
-      return { allowed: true, reason: 'open_path_rule' }
-    }
-
-    const matchesUser = hasUserConstraint && editTarget.allowedUsers?.includes(user.userId)
-    const matchesGroup =
-      hasGroupConstraint && user.groups?.some((gid) => editTarget.allowedGroups?.includes(gid))
-
-    if (matchesUser || matchesGroup) {
-      return { allowed: true, reason: 'path_access' }
-    }
-  }
-
   return { allowed: false, reason: 'no_path_access' }
 }
 
 /**
  * {@link canCreateBranch} over the site's path permissions, read from the settings workspace as
- * content access reads them (authorization/content.ts).
+ * content access reads them (authorization/content.ts), and its `defaultPathAccess`.
  */
 export const branchCreatePermission = async (
   ctx: ApiContext,
   user: CanopyUser,
 ): Promise<{ allowed: boolean; reason: string }> => {
+  const { config } = ctx.services
   const settingsRoot = await ctx.services.getSettingsBranchRoot()
-  return canCreateBranch(user, await loadPathPermissions(settingsRoot, ctx.services.config.mode))
+  return canCreateBranch(
+    user,
+    await loadPathPermissions(settingsRoot, config.mode),
+    config.defaultPathAccess ?? 'deny',
+  )
 }
 
 export interface CreateBranchBody {

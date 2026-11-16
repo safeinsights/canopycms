@@ -46,25 +46,47 @@ interface PeopleSources {
   internalGroups: InternalGroup[]
 }
 
+/** Whether this process has logged an unreadable seen set while reading a branch's list. */
+let reportedUnreadableSeen = false
+
 /**
  * {@link collectCmsUserIds} over the settings files, the branch registry and the seen set, plus
- * the internal groups read on the way. Rejects when any of them can't be read.
+ * the internal groups read on the way. Rejects when any of them can't be read, so finding and
+ * adding people fail closed. `seenMayFail` is for a read where the set only decides which emails
+ * are masked: there an unreadable seen set counts as empty, logged once per process, which shows
+ * fewer masked emails and never more.
  */
-export async function loadPeopleSources(ctx: ApiContext): Promise<PeopleSources> {
+export async function loadPeopleSources(
+  ctx: ApiContext,
+  options?: { seenMayFail?: boolean },
+): Promise<PeopleSources> {
   const { config, bootstrapAdminIds, registry, peopleStore } = ctx.services
   const settingsRoot = await ctx.services.getSettingsBranchRoot()
-  const [pathPermissions, internalGroups, branches, seen] = await Promise.all([
+  const seen = async (): Promise<Set<CanopyUserId>> => {
+    if (!peopleStore) return new Set()
+    if (!options?.seenMayFail) return peopleStore.listSeen()
+    try {
+      return await peopleStore.listSeen()
+    } catch (err: unknown) {
+      if (!reportedUnreadableSeen) {
+        reportedUnreadableSeen = true
+        canopyLogWarn('[canopy] Could not read who has opened the editor:', getErrorMessage(err))
+      }
+      return new Set()
+    }
+  }
+  const [pathPermissions, internalGroups, branches, seenIds] = await Promise.all([
     loadPathPermissions(settingsRoot, config.mode),
     loadInternalGroups(settingsRoot, config.mode, bootstrapAdminIds),
     registry ? registry.list() : Promise.resolve([]),
-    peopleStore ? peopleStore.listSeen() : Promise.resolve(new Set<CanopyUserId>()),
+    seen(),
   ])
   return {
     cmsUsers: collectCmsUserIds({
       pathPermissions,
       internalGroups,
       branches: branches.map((context) => context.branch),
-      seen,
+      seen: seenIds,
     }),
     internalGroups,
   }

@@ -2,7 +2,7 @@
  * What finding people remembers between requests, under `{workspaceRoot}/.people/`: outside every
  * branch clone, so no branch scan reads it, and the same in dev and prod.
  *
- * - `seen/<base64url(userId)>`: a write-once empty marker for someone who opened the editor while
+ * - `seen/<hex(userId)>`: a write-once empty marker for someone who opened the editor while
  *   holding a group that reaches content (api/people.ts `enrolSeenUser`). The name is the id, so
  *   one `readdir` lists the set. Created by temp + `link()`, so it needs no lock: `EEXIST` means
  *   another request recorded them first.
@@ -29,23 +29,23 @@ export const PEOPLE_DIR = '.people'
 
 const hashId = (id: string): string => createHash('sha256').update(id, 'utf8').digest('hex')
 
-/**
- * The longest marker name: well under the 255 bytes a filename may take, leaving room for the
- * temp file's prefix and suffix. It holds an id of up to 150 bytes.
- */
-const MAX_MARKER_NAME = 200
-const MARKER_NAME = /^[A-Za-z0-9_-]+$/
+/** The longest id recorded as seen, in UTF-8 bytes, so its name stays at 200 characters. */
+const MAX_SEEN_ID_BYTES = 100
+const MARKER_NAME = /^[0-9a-f]+$/
 
-/** `userId` as a marker name: base64url, so no `/`, `.` or `..`; undefined when it won't fit. */
+/**
+ * `userId` as a marker name: lowercase hex, so no `/`, `.` or `..`, and no two ids differing only
+ * in case collide on a case-insensitive filesystem. Undefined for an empty or too-long id.
+ */
 function markerName(userId: CanopyUserId): string | undefined {
-  const name = Buffer.from(userId, 'utf8').toString('base64url')
-  return name.length > 0 && name.length <= MAX_MARKER_NAME ? name : undefined
+  const bytes = Buffer.from(userId, 'utf8')
+  return bytes.length > 0 && bytes.length <= MAX_SEEN_ID_BYTES ? bytes.toString('hex') : undefined
 }
 
 /** The id a marker name holds, or undefined for a name no marker of this store would have. */
 function idOfMarker(name: string): CanopyUserId | undefined {
-  if (name.length > MAX_MARKER_NAME || !MARKER_NAME.test(name)) return undefined
-  const id = Buffer.from(name, 'base64url').toString('utf8')
+  if (name.length > MAX_SEEN_ID_BYTES * 2 || !MARKER_NAME.test(name)) return undefined
+  const id = Buffer.from(name, 'hex').toString('utf8')
   return markerName(id) === name ? id : undefined
 }
 
@@ -117,11 +117,12 @@ export class PeopleStore {
   }
 
   /**
-   * Records `userId` as seen; a no-op when anyone already has. An id too long for a marker name is
-   * not recorded, and logged once: such a person is found only as any other CMS user is.
+   * Records `userId` as seen; a no-op when anyone already has. An empty id is never recorded. An
+   * id over 100 bytes is not recorded either, and is logged once: such a person is found only as
+   * any other CMS user is.
    */
   async recordSeen(userId: CanopyUserId): Promise<void> {
-    if (this.recorded.has(userId)) return
+    if (this.recorded.has(userId) || userId === '') return
     const name = markerName(userId)
     if (!name) {
       if (!reportedTooLong.has(userId)) {

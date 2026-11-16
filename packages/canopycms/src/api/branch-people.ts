@@ -116,7 +116,7 @@ const getBranchAccessHandler = async (
   const excludedUsers = Object.entries(visible.excluded ?? {})
   const excludedGroups = Object.entries(visible.excludedGroups ?? {})
 
-  const { cmsUsers, internalGroups } = await loadPeopleSources(ctx)
+  const { cmsUsers, internalGroups } = await loadPeopleSources(ctx, { seenMayFail: true })
   const users = await usersById(ctx, [
     ...(visible.allowedUsers ?? []),
     ...Object.values(meta).map((entry) => entry.addedBy),

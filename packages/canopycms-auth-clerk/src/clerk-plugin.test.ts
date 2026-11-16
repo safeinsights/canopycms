@@ -470,6 +470,25 @@ describe('ClerkAuthPlugin', () => {
       expect((await plugin.findUserByEmail('ben@example.org'))?.id).toBe('user_ben')
     })
 
+    it("takes the snake_case shape's primary address by its id, not the first one", async () => {
+      const plugin = new ClerkAuthPlugin()
+      const cy = {
+        id: 'user_cy',
+        full_name: 'Cy Park',
+        primary_email_address_id: 'idn_2',
+        email_addresses: [
+          { id: 'idn_1', email_address: 'old@example.org' },
+          { id: 'idn_2', email_address: 'cy@example.org' },
+        ],
+      }
+      mockGetUserList.mockResolvedValue([cy])
+
+      expect((await plugin.findUserByEmail('cy@example.org'))?.email).toBe('cy@example.org')
+      expect(await plugin.findUserByEmail('old@example.org')).toBeNull()
+      mockGetUserList.mockResolvedValue([{ ...cy, primary_email_address_id: 'idn_gone' }])
+      expect(await plugin.findUserByEmail('old@example.org')).toBeNull()
+    })
+
     it('rejects on a Clerk failure, so it never reads as "nobody uses that address"', async () => {
       const plugin = new ClerkAuthPlugin()
       mockGetUserList.mockRejectedValue(new Error('Too Many Requests'))

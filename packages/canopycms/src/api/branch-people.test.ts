@@ -450,6 +450,24 @@ describe('POST /branches/access/find', () => {
     expect(await findForNewBranch(user('pal'), 'Cole')).toMatchObject({ ok: false, status: 403 })
   })
 
+  it("lets anyone use it when edit defaults to 'allow', beside a narrower rule", async () => {
+    config = { ...config, defaultPathAccess: 'allow' }
+    await writeSettings(settingsRoot, [
+      { path: 'content/legal/**', edit: { allowedUsers: ['colleague'] } },
+    ])
+
+    expect(ids(await findForNewBranch(user('pal'), 'Cole'))).toEqual(['colleague'])
+  })
+
+  it('leaves it to admins and reviewers when there are no rules and edit defaults to deny', async () => {
+    await writeSettings(settingsRoot, [])
+
+    expect(await findForNewBranch(user('pal'), 'Cole')).toMatchObject({ ok: false, status: 403 })
+    config = { ...config, defaultPathAccess: { read: 'allow' } }
+    expect(await findForNewBranch(user('pal'), 'Cole')).toMatchObject({ ok: false, status: 403 })
+    expect((await findForNewBranch(reviewer, 'Cole')).ok).toBe(true)
+  })
+
   it('suggests recent shares with no branch to draw editors from', async () => {
     await peopleStore.recordShares('owner', ['pal'])
 
@@ -547,6 +565,29 @@ describe('GET /:branch/access', () => {
       { id: 'outsider', email: 'otto@example.org' },
     ])
     expect(JSON.stringify(res)).not.toContain('maskedEmail')
+  })
+
+  it('still answers when the seen set cannot be read, masking fewer emails, while find fails', async () => {
+    await addBranch('feature/x', {
+      access: { restricted: true, allowedUsers: ['owner', 'colleague', 'orgie'] },
+    })
+    await fs.mkdir(path.join(workspace, '.people'), { recursive: true })
+    await fs.writeFile(path.join(workspace, '.people', 'seen'), 'not a folder')
+    const console = mockConsole()
+    try {
+      const res = await getAccess(owner, 'feature/x')
+      await getAccess(owner, 'feature/x')
+
+      expect(res.data?.entries.map((entry) => [entry.id, entry.maskedEmail])).toEqual([
+        ['owner', 'o•••@example.org'],
+        ['colleague', 'c•••@example.org'],
+        ['orgie', undefined],
+      ])
+      expect(console.all().warn).toHaveLength(1)
+    } finally {
+      console.restore()
+    }
+    await expect(find(owner, 'feature/x', 'Ora')).rejects.toThrow()
   })
 
   it('answers only someone who may open the branch', async () => {

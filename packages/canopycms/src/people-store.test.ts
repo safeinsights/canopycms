@@ -50,7 +50,7 @@ afterEach(async () => {
   await fs.rm(path.dirname(root), { recursive: true, force: true })
 })
 
-const b64 = (id: string) => Buffer.from(id).toString('base64url')
+const hex = (id: string) => Buffer.from(id).toString('hex')
 const seenDir = () => path.join(root, 'seen')
 
 describe('seen markers', () => {
@@ -58,7 +58,7 @@ describe('seen markers', () => {
     // Separate stores, as on separate servers: none can skip the write on its in-process set.
     await Promise.all(Array.from({ length: 12 }, () => store().recordSeen('ana')))
 
-    expect(await fs.readdir(seenDir())).toEqual([b64('ana')])
+    expect(await fs.readdir(seenDir())).toEqual([hex('ana')])
     expect(locks).toEqual({ withLock: 0, withOccFileLock: 0 })
   })
 
@@ -78,10 +78,10 @@ describe('seen markers', () => {
     await store().recordSeen('user_2abc/../x')
     await store().recordSeen('ben@example.org')
     await fs.writeFile(path.join(seenDir(), 'notes.txt'), '')
-    await fs.writeFile(path.join(seenDir(), `${b64('cy')}=`), '')
-    // Decodes to 'cy', but is not how this store spells it.
-    await fs.writeFile(path.join(seenDir(), 'Y3l'), '')
-    await fs.writeFile(path.join(seenDir(), `.${b64('dee')}.abc.tmp`), '')
+    // Not how this store spells any id: upper case, and an odd length.
+    await fs.writeFile(path.join(seenDir(), hex('zed').toUpperCase()), '')
+    await fs.writeFile(path.join(seenDir(), '637'), '')
+    await fs.writeFile(path.join(seenDir(), `.${hex('dee')}.abc.tmp`), '')
     const read = vi.spyOn(fs, 'readFile')
 
     expect(await store().listSeen()).toEqual(new Set(['user_2abc/../x', 'ben@example.org']))
@@ -95,21 +95,31 @@ describe('seen markers', () => {
     await expect(store().listSeen()).rejects.toThrow()
   })
 
-  it('records no id too long for a marker name, logging it once', async () => {
-    const long = 'x'.repeat(151)
+  it('keeps apart ids that differ only in case', async () => {
+    await store().recordSeen('Ana')
+    await store().recordSeen('ana')
+
+    expect(await store().listSeen()).toEqual(new Set(['Ana', 'ana']))
+  })
+
+  it('records no id over 100 bytes, logging it once, and no empty id, silently', async () => {
+    const long = 'x'.repeat(101)
     const console = mockConsole()
     try {
       await store().recordSeen(long)
       await store().recordSeen(long)
-      expect(console.all().warn).toHaveLength(1)
+      await store().recordSeen('é'.repeat(51))
+      await store().recordSeen('')
+      expect(console.all().warn).toHaveLength(2)
     } finally {
       console.restore()
     }
 
     expect(await store().listSeen()).toEqual(new Set())
     expect(await store().removeSeen(long)).toBe(false)
-    await store().recordSeen('x'.repeat(150))
-    expect(await store().listSeen()).toEqual(new Set(['x'.repeat(150)]))
+    await store().recordSeen('x'.repeat(100))
+    await store().recordSeen('é'.repeat(50))
+    expect(await store().listSeen()).toEqual(new Set(['x'.repeat(100), 'é'.repeat(50)]))
   })
 
   it('leaves no temp file behind when writing it fails', async () => {

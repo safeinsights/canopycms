@@ -34,7 +34,12 @@ export {
   type BranchWriteProtection,
 } from './protected-branch'
 
-export { checkPathAccess, createCheckPathAccess, resolveDefaultPathAccess } from './path'
+export {
+  checkPathAccess,
+  createCheckPathAccess,
+  isAllowedByTarget,
+  resolveDefaultPathAccess,
+} from './path'
 
 export {
   accessForViewer,
