@@ -36,6 +36,7 @@ const OWNER_LIST: BranchAccess = {
   openToEveryone: false,
   defaultAccess: 'deny',
   addBy: 'members',
+  whoCanAdd: 'members',
   rights: { isOwner: true, canAdd: true, canManage: true },
   searchable: 'cms-users',
   addableByEmail: 'all-users',

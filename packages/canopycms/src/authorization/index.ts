@@ -46,6 +46,7 @@ export {
   applyAccessChange,
   branchSharingRights,
   collectCmsUserIds,
+  effectiveAddBy,
   hasAccessList,
   resolveBranchSharing,
   type BranchAccessChange,

@@ -15,6 +15,7 @@ import {
   isPrivileged,
   isReservedGroup,
   loadInternalGroups,
+  RESERVED_GROUPS,
   loadPathPermissions,
   resolveBranchSharing,
 } from '../authorization'
@@ -363,13 +364,15 @@ export async function findPeople(
     ...Object.keys(access.excludedGroups ?? {}),
   ])
   const { cmsUsers, internalGroups } = await loadPeopleSources(ctx)
-  // Members of the Admins and Reviewers groups, bootstrap admins included, open every branch
-  // already, so adding them would change nothing. A provider group's admins can't be told apart.
-  const byRole = new Set(
-    internalGroups.filter((group) => isReservedGroup(group.id)).flatMap((group) => group.members),
+  // Admins, bootstrap admins included, open and manage every branch, so listing one changes
+  // nothing. A reviewer listed becomes a member, who may add people where members can.
+  const admins = new Set(
+    internalGroups
+      .filter((group) => group.id === RESERVED_GROUPS.ADMINS)
+      .flatMap((group) => group.members),
   )
   const offered = (user: UserSearchResult) =>
-    isPerson(user.id) && !skip.has(user.id) && !byRole.has(user.id)
+    isPerson(user.id) && !skip.has(user.id) && !admins.has(user.id)
   const shown = (users: UserSearchResult[]) =>
     users
       .filter(offered)

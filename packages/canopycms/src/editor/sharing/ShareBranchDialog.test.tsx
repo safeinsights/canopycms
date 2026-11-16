@@ -42,6 +42,7 @@ const access = (over: Partial<BranchAccess> = {}): BranchAccess => ({
   openToEveryone: false,
   defaultAccess: 'deny',
   addBy: 'members',
+  whoCanAdd: 'members',
   rights: { isOwner: true, canAdd: true, canManage: true },
   searchable: 'cms-users',
   addableByEmail: 'all-users',
@@ -206,6 +207,20 @@ describe('ShareBranchDialog: rows', () => {
     ).toEqual(['Remove Marketing team'])
     expect(screen.getByText('Who can add people: Anyone on this list')).toBeTruthy()
     expect(screen.queryByRole('radiogroup', { name: 'Who can add people' })).toBeNull()
+  })
+
+  it('tells a member who can add as the server answers it, not the setting alone', async () => {
+    setup({
+      user: { userId: 'ben', groups: [] },
+      data: access({
+        addBy: 'members',
+        whoCanAdd: 'admins',
+        rights: { isOwner: false, canAdd: true, canManage: false },
+      }),
+    })
+    await loaded()
+
+    expect(screen.getByText('Who can add people: Only admins')).toBeTruthy()
   })
 
   it("gives an admin a remove on the owner's row and the Only admins choice", async () => {

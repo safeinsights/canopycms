@@ -921,9 +921,10 @@ function ShareBranchBody({
                     </Group>
                   </Radio.Group>
                 ) : (
-                  addBy && (
-                    <Text size="sm">Who can add people: {addByLabel(addBy, viewerIsOwner)}</Text>
-                  )
+                  // As the server's rules have it now, which can leave it to admins alone.
+                  <Text size="sm">
+                    Who can add people: {addByLabel(data.whoCanAdd, viewerIsOwner)}
+                  </Text>
                 ))}
               {lockedDown && (
                 <Text size="sm" data-testid="share-lockdown">

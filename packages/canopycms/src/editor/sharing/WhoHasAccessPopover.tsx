@@ -171,16 +171,18 @@ function WhoCanAddLine({
   const listed = access.entries.some((entry) =>
     entry.kind === 'user' ? entry.id === viewer?.userId : !!viewer?.groups?.includes(entry.id),
   )
-  if (access.addBy === 'members' && listed) return null
+  // The server's rules as they stand, not the setting alone (`whoCanAdd`).
+  const addBy = access.whoCanAdd
+  if (addBy === 'members' && listed) return null
   const ownerName = access.entries.find(
     (entry) => entry.kind === 'user' && entry.id === owner,
   )?.name
   const line =
-    access.addBy === 'owner'
+    addBy === 'owner'
       ? ownerName
         ? `Only the owner, ${ownerName}, can add people.`
         : 'Only the owner can add people.'
-      : `${addByLabel(access.addBy, false)} can add people.`
+      : `${addByLabel(addBy, false)} can add people.`
   return (
     <Text size="sm" data-testid="who-can-add">
       {line}

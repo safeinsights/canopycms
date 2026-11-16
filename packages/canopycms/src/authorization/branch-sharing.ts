@@ -110,6 +110,33 @@ export function branchSharingRights(
   }
 }
 
+/**
+ * Who, besides admins, may add people to `branch` as {@link branchSharingRights} decides it:
+ * `'admins'` wherever it leaves no one else (a lockdown, an archived or unowned branch, `addBy:
+ * 'admins'`, or `'owner'` with no owner standing), else the branch's own `addBy`. The creator
+ * stands as owner unless excluded, and only listed by id once the branch has a list.
+ */
+export function effectiveAddBy(
+  branch: Pick<BranchMetadata, 'access' | 'createdBy' | 'status'>,
+  options: { isProtected: boolean; whoCanAdd: ResolvedBranchSharing['whoCanAdd'] },
+): BranchAddBy {
+  const access = branch.access
+  if (
+    options.isProtected ||
+    access.managerOrAdminAllowed ||
+    isNobody(branch.createdBy) ||
+    branch.status === 'archived'
+  ) {
+    return 'admins'
+  }
+  const addBy = access.addBy ?? options.whoCanAdd
+  if (addBy !== 'owner') return addBy
+  const ownerStands =
+    !isExcludedFrom(access, branch.createdBy) &&
+    (!hasAccessList(access) || !!access.allowedUsers?.includes(branch.createdBy))
+  return ownerStands ? 'owner' : 'admins'
+}
+
 export interface BranchAccessChange {
   add?: { users?: CanopyUserId[]; groups?: CanopyGroupId[] }
   remove?: { users?: CanopyUserId[]; groups?: CanopyGroupId[] }

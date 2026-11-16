@@ -16,7 +16,7 @@ import { getErrorMessage } from '../utils/error'
 import { canopyLogWarn } from '../utils/logger'
 import { defineEndpoint } from './route-builder'
 import { branchParamSchema } from './validators'
-import { rightsFor } from './branch-access'
+import { addByFor, rightsFor } from './branch-access'
 import { branchCreatePermission } from './branch'
 import {
   externalGroupName,
@@ -65,6 +65,11 @@ interface BranchAccessData {
   openToEveryone: boolean
   defaultAccess: DefaultBranchAccess
   addBy: BranchAddBy
+  /**
+   * Who besides admins may add people now: `addBy`, unless the server's rules leave it to admins
+   * alone (authorization/branch-sharing.ts `effectiveAddBy`).
+   */
+  whoCanAdd: BranchAddBy
   rights: { isOwner: boolean; canAdd: boolean; canManage: boolean }
   /** Whose names the viewer's search finds (`branchSharing.searchable`). */
   searchable: NonNullable<BranchSharingConfig['searchable']>
@@ -218,6 +223,7 @@ const getBranchAccessHandler = async (
         !restricted && config.defaultBranchAccess === 'allow' && !access.managerOrAdminAllowed,
       defaultAccess: config.defaultBranchAccess ?? 'deny',
       addBy: access.addBy ?? sharing.whoCanAdd,
+      whoCanAdd: addByFor(ctx, branch),
       rights: { isOwner: rights.isOwner, canAdd: rights.canAdd, canManage: rights.canManage },
       searchable: sharing.searchable,
       addableByEmail: isAdmin(viewer.groups) ? 'all-users' : sharing.addableByEmail,
@@ -301,6 +307,7 @@ const getBranchAccess = defineEndpoint({
     openToEveryone: false,
     defaultAccess: 'deny',
     addBy: 'members',
+    whoCanAdd: 'members',
     rights: { isOwner: false, canAdd: false, canManage: false },
     searchable: 'cms-users',
     addableByEmail: 'all-users',

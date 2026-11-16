@@ -20,6 +20,7 @@ const access = (over: Partial<BranchAccess> = {}): BranchAccess => ({
   openToEveryone: false,
   defaultAccess: 'deny',
   addBy: 'members',
+  whoCanAdd: 'members',
   rights: { isOwner: false, canAdd: false, canManage: false },
   searchable: 'cms-users',
   addableByEmail: 'all-users',
@@ -120,7 +121,7 @@ describe('WhoHasAccessPopover', () => {
     ['admins', 'Only admins can add people.'],
     ['members', 'Anyone on this list can add people.'],
   ] as const)('says who can add people when that is %s', async (addBy, line) => {
-    const { opener } = renderPopover(access({ addBy }), false, { userId: 'zoe' })
+    const { opener } = renderPopover(access({ addBy, whoCanAdd: addBy }), false, { userId: 'zoe' })
     fireEvent.click(opener)
 
     expect((await screen.findByTestId('who-can-add')).textContent).toBe(line)
@@ -146,7 +147,7 @@ describe('WhoHasAccessPopover', () => {
   })
 
   it('tells someone on the list through a group who else may add, when it is not the list', async () => {
-    const { opener } = renderPopover(access({ addBy: 'owner' }), false, {
+    const { opener } = renderPopover(access({ addBy: 'owner', whoCanAdd: 'owner' }), false, {
       userId: 'zoe',
       groups: ['team'],
     })
@@ -156,6 +157,24 @@ describe('WhoHasAccessPopover', () => {
       'Only the owner, Ana Lee, can add people.',
     )
   })
+
+  it.each([
+    ['an archived branch', 'members'],
+    ['a system-owned or unowned branch', 'members'],
+    ['a branch whose owner is off its list', 'owner'],
+  ] as const)(
+    'says only admins can add on %s, as the server answers, whatever the setting',
+    async (_what, addBy) => {
+      const { opener } = renderPopover(access({ addBy, whoCanAdd: 'admins' }), false, {
+        userId: 'zoe',
+      })
+      fireEvent.click(opener)
+
+      expect((await screen.findByTestId('who-can-add')).textContent).toBe(
+        'Only admins can add people.',
+      )
+    },
+  )
 
   it('says nothing of who can add on a branch open to everyone', async () => {
     const { opener } = renderPopover(

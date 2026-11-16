@@ -110,6 +110,7 @@ const stubApi = (holdCreate?: Promise<void>, listingAfterCreate?: Promise<void>)
         openToEveryone: false,
         defaultAccess: 'deny',
         addBy: 'members',
+        whoCanAdd: 'members',
         rights: { isOwner: true, canAdd: true, canManage: true },
         searchable: 'cms-users',
         addableByEmail: 'all-users',

@@ -31,6 +31,7 @@ import {
 import { EMAIL_LOOKUP_LIMIT, resetEmailLookupLimits, type FindPeopleResult } from './people'
 import type { ApiContext, ApiResponse } from './types'
 import { USER_ROUTES } from './user'
+import { SYSTEM_USER_ID } from '../system-users'
 
 const user = (userId: string, groups: string[] = []): CanopyUser => ({
   type: 'authenticated',
@@ -377,7 +378,7 @@ describe('POST /:branch/access/find', () => {
     ])
   })
 
-  it('offers no one who opens every branch through their role, by name, address or suggestion', async () => {
+  it('offers no admin for adding, by name, address or suggestion, but does offer a reviewer', async () => {
     await addBranch('feature/x', { access: { allowedUsers: ['owner', 'member'] } })
     await fs.writeFile(
       path.join(settingsRoot, 'groups.json'),
@@ -391,15 +392,12 @@ describe('POST /:branch/access/find', () => {
         ],
       }),
     )
-    await peopleStore.recordShares('owner', ['colleague', 'pal', 'outsider'])
+    await peopleStore.recordShares('owner', ['colleague', 'pal'])
 
     expect(ids(await find(owner, 'feature/x', 'Cole'))).toEqual([])
     expect(ids(await find(owner, 'feature/x', 'cole@example.org'))).toEqual([])
-    expect(ids(await find(owner, 'feature/x', ''))).not.toContain('pal')
-    expect(ids(await find(owner, 'feature/x', ''))).not.toContain('colleague')
-    expect(ids(await find(owner, 'feature/x', 'Otto'))).toEqual([])
-    expect(ids(await find(owner, 'feature/x', 'Mia'))).toEqual([])
-    expect(ids(await find(owner, 'feature/x', 'otto@example.org'))).toEqual(['outsider'])
+    expect(ids(await find(owner, 'feature/x', ''))).toEqual(['pal'])
+    expect(ids(await find(owner, 'feature/x', 'Pat'))).toEqual(['pal'])
   })
 
   it('asks for an add by address only where an id would be out of scope', async () => {
@@ -538,6 +536,36 @@ describe('POST /branches/access/find', () => {
   })
 })
 
+describe('GET /:branch/access: who can add people now', () => {
+  const whoCanAdd = async (fields: Partial<BranchMetadata>) => {
+    await addBranch('feature/y', fields)
+    return (await getAccess(admin, 'feature/y')).data?.whoCanAdd
+  }
+
+  it("is the branch's own setting while the rules leave it standing", async () => {
+    expect(await whoCanAdd({ access: { addBy: 'owner' } })).toBe('owner')
+    expect(await whoCanAdd({ access: { addBy: 'members' }, status: 'submitted' })).toBe('members')
+  })
+
+  it.each([
+    ['an archived branch', { status: 'archived' as const, access: { addBy: 'members' as const } }],
+    ['a system-owned branch', { createdBy: SYSTEM_USER_ID, access: { addBy: 'members' as const } }],
+    ['an unowned branch', { createdBy: 'unknown', access: { addBy: 'members' as const } }],
+    [
+      'an owner left off its list',
+      { access: { restricted: true, allowedUsers: ['member'], addBy: 'owner' as const } },
+    ],
+  ])('is admins alone on %s', async (_what, fields) => {
+    expect(await whoCanAdd(fields)).toBe('admins')
+  })
+
+  it('keeps members adding when the owner is off the list', async () => {
+    expect(
+      await whoCanAdd({ access: { restricted: true, allowedUsers: ['member'], addBy: 'members' } }),
+    ).toBe('members')
+  })
+})
+
 describe('GET /:branch/access', () => {
   const shared = () =>
     addBranch('feature/x', {
@@ -600,6 +628,7 @@ describe('GET /:branch/access', () => {
       openToEveryone: false,
       defaultAccess: 'deny',
       addBy: 'members',
+      whoCanAdd: 'members',
       rights: { isOwner: true, canAdd: true, canManage: true },
       searchable: 'cms-users',
       addableByEmail: 'all-users',

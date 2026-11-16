@@ -6,11 +6,18 @@
  */
 
 import type { ApiContext, ApiErrorCode } from './types'
-import type { BranchAccessControl, BranchContext, BranchMetadata, CanopyUserId } from '../types'
+import type {
+  BranchAccessControl,
+  BranchAddBy,
+  BranchContext,
+  BranchMetadata,
+  CanopyUserId,
+} from '../types'
 import type { CanopyUser } from '../user'
 import {
   applyAccessChange,
   branchSharingRights,
+  effectiveAddBy,
   getBranchProtection,
   hasAccessList,
   isAdmin,
@@ -99,6 +106,17 @@ async function checkUsersToAdd(
 }
 
 /** What `actor` may do to `branch`'s list (authorization/branch-sharing.ts). */
+/** Who besides admins may add people to `branch` ({@link effectiveAddBy}). */
+export const addByFor = (
+  ctx: ApiContext,
+  branch: Pick<BranchMetadata, 'access' | 'createdBy' | 'status' | 'name' | 'baseBranch'>,
+): BranchAddBy =>
+  effectiveAddBy(branch, {
+    isProtected: getBranchProtection(ctx.services.config, branch.name, branch.baseBranch)
+      .isProtected,
+    whoCanAdd: resolveBranchSharing(ctx.services.config).whoCanAdd,
+  })
+
 export const rightsFor = (
   ctx: ApiContext,
   actor: CanopyUser,

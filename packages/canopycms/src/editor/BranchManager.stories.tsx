@@ -574,6 +574,7 @@ const sharingClient = {
         openToEveryone: branch === 'canopycms/prod/faq',
         defaultAccess: branch === 'canopycms/prod/faq' ? 'allow' : 'deny',
         addBy: 'members',
+        whoCanAdd: 'members',
         rights:
           branch === 'canopycms/prod/landing'
             ? { isOwner: true, canAdd: true, canManage: true }

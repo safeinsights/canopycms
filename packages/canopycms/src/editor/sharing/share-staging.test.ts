@@ -32,6 +32,7 @@ const current = (over: Partial<BranchAccess> = {}): BranchAccess => ({
   openToEveryone: false,
   defaultAccess: 'allow',
   addBy: 'members',
+  whoCanAdd: 'members',
   rights: { isOwner: true, canAdd: true, canManage: true },
   searchable: 'cms-users',
   addableByEmail: 'all-users',
