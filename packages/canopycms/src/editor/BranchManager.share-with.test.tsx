@@ -1,6 +1,6 @@
 import React from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { SWRConfig } from 'swr'
 
@@ -61,6 +61,7 @@ function setup(
       openToEveryone: false,
       defaultAccess: 'deny',
       addBy: 'members',
+      whoCanAdd: 'members',
       rights: { isOwner: true, canAdd: true, canManage: true },
       searchable: 'cms-users',
       addableByEmail: 'all-users',
@@ -372,7 +373,7 @@ describe('New branch: Share with', () => {
     expect(await screen.findByRole('dialog', { name: 'Share “spring”' })).toBeTruthy()
   })
 
-  it("lets the create's answer stand in for no longer than a new branch's grace", async () => {
+  it("lets the create's answer stand in for a new branch's grace, but keeps an open dialog", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
       const answer = {
@@ -391,13 +392,19 @@ describe('New branch: Share with', () => {
       await userEvent.click(screen.getByTestId('create-branch-submit'))
       const status = await screen.findByTestId('branch-created-status')
       await userEvent.click(await within(status).findByRole('button', { name: 'Share…' }))
-      await screen.findByRole('dialog', { name: 'Share “spring”' })
+      const dialog = await screen.findByRole('dialog', { name: 'Share “spring”' })
+      const picker = within(dialog).getByRole('textbox', { name: 'Add people or groups' })
+      await userEvent.type(picker, 'Dan')
 
       act(() => {
         vi.advanceTimersByTime(CREATED_BRANCH_GRACE_MS)
       })
 
+      // The line goes, but the open dialog stays as it was until it is closed.
       await waitFor(() => expect(status.textContent).toBe(''))
+      expect(screen.getByRole('dialog', { name: 'Share “spring”' })).toBe(dialog)
+      expect((picker as HTMLInputElement).value).toBe('Dan')
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
       await waitFor(() =>
         expect(screen.queryByRole('dialog', { name: 'Share “spring”' })).toBeNull(),
       )

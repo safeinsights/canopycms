@@ -561,7 +561,10 @@ const EditorContent: React.FC<EditorProps> = ({
   const barShareBranch =
     barShare &&
     (branchSummaries.find((b) => b.name === barShare.target.name) ??
-      (barShare.answerUntil && !barShare.expired ? barShare.target : undefined))
+      // Past the grace nothing new opens, but an open dialog stays until it is closed.
+      (barShare.answerUntil && (!barShare.expired || barShare.opened)
+        ? barShare.target
+        : undefined))
   const summariesRef = useRef(branchSummaries)
   summariesRef.current = branchSummaries
   const openBarShare = (

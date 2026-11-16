@@ -1070,6 +1070,8 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
     name: string
     opened: boolean
     returnFocusTo: () => HTMLElement | null
+    /** The branch as it was opened, which stands in while the dialog is open and no listing has it. */
+    target?: BranchSummary
   } | null>(null)
   const [accessPopoverFor, setAccessPopoverFor] = useState<string | null>(null)
   const overlayOpen = !!sharing?.opened || accessPopoverFor !== null
@@ -1083,10 +1085,15 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
       branches.find((b) => b.shortName === created.created) ??
       (created.branch && !created.expired ? createdSummary(created.branch) : undefined))
     : undefined
+  // An open dialog stays until it is closed, even once the grace has passed: closing it is the user's.
   const sharedBranch =
     sharing &&
     (branches.find((b) => b.name === sharing.name) ??
-      (createdBranch?.name === sharing.name ? createdBranch : undefined))
+      (createdBranch?.name === sharing.name
+        ? createdBranch
+        : sharing.opened
+          ? sharing.target
+          : undefined))
 
   const renderCard = (b: BranchSummary) => {
     // The editor resolves a shadowed outside branch's full name to the namespace branch whose
@@ -1275,6 +1282,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                     onClick={() =>
                       setSharing({
                         name: createdBranch.name,
+                        target: createdBranch,
                         opened: true,
                         returnFocusTo: () =>
                           returnTarget(createdShareRef.current, () => newBranchButtonRef.current),
