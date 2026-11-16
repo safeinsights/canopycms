@@ -253,3 +253,50 @@ describe('BranchManager sharing inside the Branches drawer', () => {
     expect(onDrawerClose).not.toHaveBeenCalled()
   })
 })
+
+describe('BranchManager sharing across branches', () => {
+  it("never carries one branch's staged edits into another's dialog", async () => {
+    const api = createMockApiClient()
+    api.branches.getAccess.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        entries: [
+          { kind: 'user', id: 'ana', name: 'Ana Lee' },
+          { kind: 'user', id: 'ben', name: 'Ben Ortiz' },
+        ],
+        restricted: true,
+        openToEveryone: false,
+        defaultAccess: 'deny',
+        addBy: 'members',
+        rights: { isOwner: true, canAdd: true, canManage: true },
+        searchable: 'cms-users',
+        addableByEmail: 'all-users',
+      },
+    })
+    const spring = branch()
+    const autumn = branch({ name: 'canopycms/prod/autumn', shortName: 'autumn' })
+    render(
+      <CanopyCMSProvider>
+        <ApiClientProvider client={api as unknown as ApiClient}>
+          <BranchManager
+            branches={[spring, autumn]}
+            mode="prod"
+            user={ANA}
+            onGetOwnerMetadata={lookup}
+          />
+        </ApiClientProvider>
+      </CanopyCMSProvider>,
+    )
+    const lines = await screen.findAllByRole('button', { name: 'Access: Ana Lee, Ben Ortiz' })
+    fireEvent.click(lines[0])
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove Ben Ortiz' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }))
+
+    fireEvent.click(lines[1])
+
+    await screen.findByRole('dialog', { name: 'Share autumn' })
+    await screen.findByRole('button', { name: 'Remove Ben Ortiz' })
+    expect(screen.queryByText('Will be removed')).toBeNull()
+  })
+})

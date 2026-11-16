@@ -89,7 +89,11 @@ const ACCESS_REFUSALS: Partial<Record<ApiErrorCode, string>> = {
   BRANCH_NOT_SHAREABLE: 'Only an admin can share this branch.',
   ACCESS_ADD_FORBIDDEN: 'You can no longer add people to this branch.',
   ACCESS_MANAGE_FORBIDDEN: "Only this branch's owner or an admin can make that change.",
-  ACCESS_CHANGE_INVALID: "These changes can't be made together. Discard them and start again.",
+  ACCESS_CHANGE_INVALID:
+    'These changes can\'t be made together. Choose "Discard changes" and start again.',
+  EXCLUSION_CAP:
+    'Too many people and groups have been removed from this branch. Allow some back first.',
+  LIST_CHANGED: 'The list changed while this was being saved. Try again.',
   USER_NOT_FOUND: "Some of the people you added couldn't be found. Remove them and try again.",
   USER_OUT_OF_SCOPE:
     "Some of the people you added don't work in this editor. Add them by their full email address instead.",

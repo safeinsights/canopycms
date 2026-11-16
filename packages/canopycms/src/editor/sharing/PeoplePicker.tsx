@@ -279,7 +279,7 @@ export function PeoplePicker({
           disabled={!!disabledReason}
           description={disabledReason}
           inputWrapperOrder={['label', 'input', 'description', 'error']}
-          data-autofocus
+          data-autofocus={!disabledReason || undefined}
           data-testid="share-people-input"
         />
       </Combobox.Target>

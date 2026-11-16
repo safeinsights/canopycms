@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   ActionIcon,
   Alert,
@@ -102,7 +102,8 @@ interface BodyState {
  * Who may open a branch, for someone who may add people to it: a list whose adds, removals and
  * settings are staged, then sent as one change by "Update access". A viewer the server says can't
  * add sees the list read-only. Esc and ✕ follow the dismiss button: with edits staged they ask
- * before discarding them, and once a refusal showed they read the branch list again too.
+ * before discarding them; once a refusal has replaced the dialog, they close it and read the
+ * branch list again, as its Close does.
  */
 export function ShareBranchDialog({
   opened,
@@ -113,6 +114,11 @@ export function ShareBranchDialog({
 }: ShareBranchDialogProps) {
   const [state, setState] = useState<BodyState>({ dirty: false, saving: false, refused: false })
   const [discardAsked, setDiscardAsked] = useState(0)
+  // Once nothing is staged, a later Esc asks afresh rather than reopening an old question.
+  const report = useCallback((next: BodyState) => {
+    setState(next)
+    if (!next.dirty) setDiscardAsked(0)
+  }, [])
   const close = () => {
     setDiscardAsked(0)
     if (state.refused) onChanged()
@@ -137,7 +143,7 @@ export function ShareBranchDialog({
         {...body}
         onClose={close}
         onChanged={onChanged}
-        onState={setState}
+        onState={report}
         discardAsked={discardAsked}
         onKeepEditing={() => setDiscardAsked(0)}
       />
@@ -169,7 +175,7 @@ type LastAction =
 interface SaveProblem {
   tone: 'error' | 'warning'
   message: string
-  /** A network failure or a rate limit, which a later try can pass. */
+  /** A network failure, a rate limit or a list changed meanwhile: a later try can pass. */
   retryable: boolean
   ids?: string[]
 }
@@ -206,6 +212,7 @@ function ShareBranchBody({
   const [copy, setCopy] = useState<'idle' | 'copied' | 'failed'>('idle')
   const inputRef = useRef<HTMLInputElement>(null)
   const headingRef = useRef<HTMLParagraphElement>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const removedRef = useRef<HTMLDivElement>(null)
   const keepEditingRef = useRef<HTMLButtonElement>(null)
@@ -224,8 +231,9 @@ function ShareBranchBody({
   const dirty = Object.keys(body).length > 0
   const lockedDown = !!branch.access?.managerOrAdminAllowed
 
+  // A refusal replaces the edits with its notice, so nothing is left to ask about discarding.
   useEffect(
-    () => onState({ dirty, saving, refused: !!refusalCode }),
+    () => onState({ dirty: dirty && !refusalCode, saving, refused: !!refusalCode }),
     [dirty, saving, refusalCode, onState],
   )
 
@@ -234,11 +242,13 @@ function ShareBranchBody({
     if (!data || !firstLoad.current) return
     firstLoad.current = false
     const active = document.activeElement
+    const dialog = rootRef.current?.closest('[role="dialog"]')
     if (
       canEdit &&
       (!active ||
-        active === document.body ||
-        active.getAttribute('role') === 'dialog' ||
+        !dialog?.contains(active) ||
+        active === dialog ||
+        active === headingRef.current ||
         !!active.closest('.mantine-Modal-close'))
     ) {
       inputRef.current?.focus()
@@ -265,7 +275,10 @@ function ShareBranchBody({
   const generalValue =
     staged.restricted === false
       ? 'open'
-      : staged.restricted || staged.add.length > 0 || data?.restricted
+      : staged.restricted ||
+          staged.add.length > 0 ||
+          data?.restricted ||
+          (data && data.defaultAccess !== 'allow')
         ? 'listed'
         : 'open'
   const narrowing = !!data && narrows(staged, data)
@@ -420,7 +433,8 @@ function ShareBranchBody({
 
   const allowAgain = (entry: ExcludedEntry, index: number) => {
     const key = entryKey(entry)
-    const listOnly = generalValue === 'listed'
+    // The edit below takes back a staged "Anyone who can sign in", so the list will stand.
+    const listOnly = staged.restricted === false ? !!data?.restricted : generalValue === 'listed'
     const canAddBack =
       entry.kind === 'user' || userIsAdmin || (user.groups ?? []).includes(entry.id)
     if (listOnly && canAddBack) {
@@ -482,7 +496,7 @@ function ShareBranchBody({
       setStaged(
         data.restricted
           ? { ...NOTHING_STAGED, restricted: false }
-          : (prev) => ({ ...prev, add: [], restricted: undefined }),
+          : (prev) => ({ ...prev, add: [], addBy: undefined, restricted: undefined }),
       )
     } else {
       setStaged((prev) => ({ ...prev, restricted: data.restricted ? undefined : true }))
@@ -504,13 +518,6 @@ function ShareBranchBody({
       ),
     }))
     announce(`Added ${joinNames(losing.map(nameOf))}`)
-  }
-
-  const discardStaged = () => {
-    setStaged(NOTHING_STAGED)
-    setLastAction(undefined)
-    setSaveProblem(undefined)
-    ;(inputRef.current ?? headingRef.current)?.focus()
   }
 
   const finish = (sent: StagedAccess) => {
@@ -536,7 +543,8 @@ function ShareBranchBody({
         setSaveProblem({
           tone: 'error',
           message: accessRefusalMessage(result.code) ?? (result.error || UPDATE_FAILED),
-          retryable: !result.code || result.code === 'RATE_LIMITED',
+          retryable:
+            !result.code || result.code === 'RATE_LIMITED' || result.code === 'LIST_CHANGED',
           ids: result.ids,
         })
       }
@@ -620,7 +628,7 @@ function ShareBranchBody({
   const warningIcon = <IconAlertTriangle size={16} color="var(--mantine-color-text)" aria-hidden />
 
   return (
-    <Stack gap="md" data-testid="share-dialog">
+    <Stack gap="md" ref={rootRef} data-testid="share-dialog">
       <VisuallyHidden role="status" data-testid="share-status">
         {announcement}
       </VisuallyHidden>
@@ -646,7 +654,14 @@ function ShareBranchBody({
             />
           )}
           <Stack gap="xs">
-            <Text size="sm" fw={600} id="share-people-heading" ref={headingRef} tabIndex={-1}>
+            <Text
+              size="sm"
+              fw={600}
+              id="share-people-heading"
+              ref={headingRef}
+              tabIndex={-1}
+              data-autofocus={!(canEdit && data) || undefined}
+            >
               People with access
             </Text>
             {state.status === 'failed' && !data && (
@@ -904,26 +919,22 @@ function ShareBranchBody({
             {problemNames.length > 0 && (
               <Text size="sm">{`Applies to ${joinNames(problemNames)}.`}</Text>
             )}
-            {saveProblem.tone === 'error' && (
-              <Group gap="xs">
-                {saveProblem.retryable ? (
-                  <Button variant="default" size="xs" onClick={() => void update()}>
-                    Retry
-                  </Button>
-                ) : (
-                  <>
+            {saveProblem.tone === 'error' &&
+              (saveProblem.retryable ? (
+                <Button variant="default" size="xs" onClick={() => void update()}>
+                  Retry
+                </Button>
+              ) : (
+                problemRows.length > 0 && (
+                  <Group gap="xs">
                     {problemRows.map((row) => (
                       <Button key={row.key} variant="default" size="xs" onClick={() => remove(row)}>
                         {`Remove ${row.name}`}
                       </Button>
                     ))}
-                    <Button variant="default" size="xs" onClick={discardStaged}>
-                      Discard changes
-                    </Button>
-                  </>
-                )}
-              </Group>
-            )}
+                  </Group>
+                )
+              ))}
           </Stack>
         </Alert>
       )}

@@ -130,6 +130,7 @@ export type BranchAccessRefusalCode =
   | 'GROUP_NOT_YOURS'
   | 'RESERVED_GROUP'
   | 'OPEN_NOT_ALLOWED'
+  | 'EXCLUSION_CAP'
 
 export interface BranchAccessRefusal {
   code: BranchAccessRefusalCode
@@ -407,7 +408,7 @@ export function applyAccessChange(
     Object.keys(excluded).length + Object.keys(excludedGroups).length > MAX_EXCLUSIONS
   ) {
     return refuse(
-      'ACCESS_CHANGE_INVALID',
+      'EXCLUSION_CAP',
       'Too many people and groups have been removed from this branch. Allow some back first.',
     )
   }

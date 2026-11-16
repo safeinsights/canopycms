@@ -878,10 +878,11 @@ describe("ShareBranchDialog: general access on an 'allow' site", () => {
     fireEvent.click(screen.getByRole('button', { name: 'Removed (1)' }))
 
     fireEvent.click(screen.getByRole('button', { name: 'Allow again: Pat Alvarez' }))
+    expect(screen.getByText('Pat Alvarez will be added back.')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
 
     await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(1))
-    expect(api.branches.updateAccess.mock.calls[0][1]).not.toHaveProperty('restricted')
+    expect(api.branches.updateAccess.mock.calls[0][1]).toEqual({ add: { users: ['pat'] } })
   })
 
   it('hides who can add people while the branch is open to everyone', async () => {
@@ -934,6 +935,20 @@ describe("ShareBranchDialog: general access on an 'allow' site", () => {
         'Dana Park is working on this branch and may lose access.',
       ),
     )
+  })
+
+  it('drops a staged "Who can add people" on going back to "Anyone who can sign in"', async () => {
+    const { api } = setup({ data: open })
+    fireEvent.click(await screen.findByRole('radio', { name: 'Only people listed here' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Only me' }))
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Anyone who can sign in to the editor' }))
+
+    expect(
+      screen.getByRole('button', { name: 'Update access' }).getAttribute('aria-disabled'),
+    ).toBe('true')
+    fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
+    expect(api.branches.updateAccess).not.toHaveBeenCalled()
   })
 
   it("shows a locked, unlisted branch's general access as unlisted to an admin", async () => {
@@ -1091,7 +1106,7 @@ describe('ShareBranchDialog: states', () => {
     expect(api.branches.updateAccess.mock.calls[1][1]).toEqual({ remove: { users: ['ben'] } })
   })
 
-  it('offers Discard changes for a refusal no retry can pass', async () => {
+  it('leaves Discard changes to the footer, which closes, for a refusal no retry can pass', async () => {
     const { api, onClose } = setup()
     api.branches.updateAccess.mockResolvedValueOnce(refusal(400, 'ACCESS_CHANGE_INVALID'))
     await loaded()
@@ -1099,11 +1114,11 @@ describe('ShareBranchDialog: states', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
 
     const problem = await screen.findByTestId('share-save-problem')
-    fireEvent.click(within(problem).getByRole('button', { name: 'Discard changes' }))
+    expect(within(problem).queryByRole('button')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }))
 
-    expect(within(row('Ben Ortiz')).queryByText('Will be removed')).toBeNull()
-    expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy()
-    expect(onClose).not.toHaveBeenCalled()
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(api.branches.updateAccess).toHaveBeenCalledTimes(1)
   })
 
   it('offers Retry after a failure that never reached the server, and sends the edits again', async () => {
@@ -1119,6 +1134,22 @@ describe('ShareBranchDialog: states', () => {
 
     await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(2))
     expect(api.branches.updateAccess.mock.calls[1][1]).toEqual({ remove: { users: ['ben'] } })
+  })
+
+  it('offers Retry when the list changed while the update was saved', async () => {
+    const { api } = setup()
+    api.branches.updateAccess.mockResolvedValueOnce({
+      ...refusal(409, 'LIST_CHANGED'),
+      ids: ['ben'],
+    })
+    await loaded()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Ben Ortiz' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
+
+    const problem = await screen.findByTestId('share-save-problem')
+    expect(problem.textContent).toContain('The list changed while this was being saved.')
+    fireEvent.click(within(problem).getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(2))
   })
 
   it('shows a refusal that names one change as a problem with that change, not a lockout', async () => {
@@ -1222,6 +1253,35 @@ describe('ShareBranchDialog: states', () => {
   })
 })
 
+describe("ShareBranchDialog: a 'deny' site", () => {
+  it('treats an unlisted branch as list-only: who can add shows, and Allow again adds back', async () => {
+    const { api } = setup({
+      data: access({
+        entries: [],
+        restricted: false,
+        excluded: [
+          {
+            kind: 'user',
+            id: 'pat',
+            name: 'Pat Alvarez',
+            by: { id: 'ana', name: 'Ana Lee' },
+            at: AT,
+            byAdmin: false,
+          },
+        ],
+      }),
+    })
+
+    expect(await screen.findByRole('radiogroup', { name: 'Who can add people' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Removed (1)' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Allow again: Pat Alvarez' }))
+    expect(screen.getByText('Pat Alvarez will be added back.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
+    await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(1))
+    expect(api.branches.updateAccess.mock.calls[0][1]).toEqual({ add: { users: ['pat'] } })
+  })
+})
+
 describe('ShareBranchDialog: lockdown and owner', () => {
   it('says a locked branch keeps out the people listed, in place of the listed-only line', async () => {
     setup({
@@ -1273,6 +1333,40 @@ describe('ShareBranchDialog: lockdown and owner', () => {
 
 describe('ShareBranchDialog: dismissing with edits staged', () => {
   it.each([
+    ['✕', () => fireEvent.click(modalClose())],
+    ['Esc', () => userEvent.keyboard('{Escape}')],
+  ])(
+    '%s closes a refusal shown over staged edits, and reads the branch list again',
+    async (_how, dismiss) => {
+      const { api, onClose, onChanged } = setup()
+      api.branches.updateAccess.mockResolvedValue(refusal(403, 'BRANCH_LOCKED_DOWN'))
+      await loaded()
+      fireEvent.click(screen.getByRole('button', { name: 'Remove Ben Ortiz' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
+      await screen.findByTestId('share-refused')
+
+      await dismiss()
+
+      await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
+      expect(onChanged).toHaveBeenCalledTimes(1)
+    },
+  )
+
+  it('asks again only when asked, once the edits it asked about are gone', async () => {
+    setup()
+    await loaded()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Ben Ortiz' }))
+    await userEvent.keyboard('{Escape}')
+    await screen.findByTestId('share-discard-confirm')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Undo removing Ben Ortiz' }))
+    expect(screen.queryByTestId('share-discard-confirm')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Marketing team' }))
+
+    expect(screen.queryByTestId('share-discard-confirm')).toBeNull()
+  })
+
+  it.each([
     ['Esc', () => userEvent.keyboard('{Escape}')],
     ['✕', () => fireEvent.click(modalClose())],
   ])('%s asks before discarding, and Keep editing keeps the edits', async (_how, dismiss) => {
@@ -1318,6 +1412,70 @@ describe('ShareBranchDialog: dismissing with edits staged', () => {
 })
 
 describe('ShareBranchDialog: focus', () => {
+  it('takes focus from a keyboard opener into the dialog, then to the input once the list loads', async () => {
+    const api = createMockApiClient()
+    const answer = deferred<ReturnType<typeof ok<BranchAccess>>>()
+    api.branches.getAccess.mockReturnValue(answer.promise)
+    function Harness() {
+      const [opened, setOpened] = useState(false)
+      return (
+        <>
+          <button onClick={() => setOpened(true)}>Opener</button>
+          <ShareBranchDialog
+            opened={opened}
+            onClose={() => setOpened(false)}
+            onChanged={() => {}}
+            branch={{ name: 'spring', createdBy: 'ana', sharing: OWNER_SHARING }}
+            urlName="spring"
+            user={OWNER}
+            getUserMetadata={lookup}
+          />
+        </>
+      )
+    }
+    render(
+      <CanopyCMSProvider>
+        <ApiClientProvider client={api as unknown as ApiClient}>
+          <Harness />
+        </ApiClientProvider>
+      </CanopyCMSProvider>,
+    )
+    screen.getByRole('button', { name: 'Opener' }).focus()
+    await userEvent.keyboard('{Enter}')
+
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByText('People with access')))
+    answer.resolve(ok(access()))
+    await waitFor(() => expect(document.activeElement).toBe(picker()))
+  })
+
+  it('pulls focus left behind the dialog into its input once the list loads', async () => {
+    const api = createMockApiClient()
+    const answer = deferred<ReturnType<typeof ok<BranchAccess>>>()
+    api.branches.getAccess.mockReturnValue(answer.promise)
+    render(
+      <CanopyCMSProvider>
+        <button>Behind</button>
+        <ApiClientProvider client={api as unknown as ApiClient}>
+          <ShareBranchDialog
+            opened
+            onClose={() => {}}
+            onChanged={() => {}}
+            branch={{ name: 'spring', createdBy: 'ana', sharing: OWNER_SHARING }}
+            urlName="spring"
+            user={OWNER}
+            getUserMetadata={lookup}
+          />
+        </ApiClientProvider>
+      </CanopyCMSProvider>,
+    )
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByText('People with access')))
+    screen.getByText('Behind').focus()
+
+    answer.resolve(ok(access()))
+
+    await waitFor(() => expect(document.activeElement).toBe(picker()))
+  })
+
   it('returns focus to its opener on close', async () => {
     const api = createMockApiClient()
     api.branches.getAccess.mockResolvedValue(ok(access()))

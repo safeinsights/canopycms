@@ -1173,6 +1173,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
 
       {sharedBranch && user && (
         <ShareBranchDialog
+          key={sharedBranch.name}
           opened={!!sharing?.opened}
           onClose={() => setSharing((current) => current && { ...current, opened: false })}
           onChanged={() => onAccessChanged?.()}

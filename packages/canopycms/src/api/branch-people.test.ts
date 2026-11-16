@@ -694,6 +694,35 @@ describe('PATCH /:branch/access adding by email', () => {
     ).toMatchObject({ ok: false, status: 429, code: 'RATE_LIMITED' })
   })
 
+  it('lets an owner allow back by id an outsider they added by email and then removed', async () => {
+    const context = await addBranch('feature/x')
+    expect((await patch(owner, 'feature/x', { add: { emails: ['otto@example.org'] } })).ok).toBe(
+      true,
+    )
+    expect((await patch(owner, 'feature/x', { remove: { users: ['outsider'] } })).ok).toBe(true)
+    expect((await onDisk(context))?.access.excluded).toHaveProperty('outsider')
+
+    expect((await patch(owner, 'feature/x', { add: { users: ['outsider'] } })).ok).toBe(true)
+    const saved = (await onDisk(context))?.access
+    expect(saved?.allowedUsers).toEqual(['owner', 'outsider'])
+    expect(saved?.excluded).toBeUndefined()
+  })
+
+  it('never names the account an address found when refusing it', async () => {
+    await addBranch('feature/x', {
+      access: {
+        restricted: true,
+        allowedUsers: ['owner', 'member'],
+        excluded: { outsider: { by: 'owner', at: 't', byAdmin: false } },
+      },
+    })
+
+    const res = await patch(member, 'feature/x', { add: { emails: ['otto@example.org'] } })
+
+    expect(res).toMatchObject({ ok: false, code: 'USER_EXCLUDED' })
+    expect(JSON.stringify(res)).not.toContain('outsider')
+  })
+
   it('still refuses someone outside this CMS by id', async () => {
     await addBranch('feature/x')
 
