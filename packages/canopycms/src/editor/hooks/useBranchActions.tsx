@@ -171,6 +171,8 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
           return {
             refusal: reason,
             field: outcome.code === 'BRANCH_CREATE_FORBIDDEN' ? 'form' : 'shareWith',
+            code: outcome.code,
+            ...(outcome.ids && { ids: outcome.ids }),
           }
         }
         throw new Error(outcome.message)

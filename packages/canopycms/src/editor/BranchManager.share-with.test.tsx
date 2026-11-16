@@ -1,6 +1,6 @@
 import React from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { SWRConfig } from 'swr'
 
@@ -9,6 +9,7 @@ import type { BranchListItem } from '../api/branch'
 import type { FindPeopleResponse } from '../api/branch-people'
 import type { FoundPerson } from '../api/people'
 import { BranchManager, type BranchSummary } from './BranchManager'
+import { CREATED_BRANCH_GRACE_MS } from './hooks/useBranchManager'
 import { accessRefusalMessage } from './copy'
 import { ApiClientProvider, type ApiClient } from './context'
 import { NEW_BRANCH_PRIVATE_LINE } from './sharing/ShareWithField'
@@ -210,6 +211,87 @@ describe('New branch: Share with', () => {
     expect(within(screen.getByTestId('share-with-chips')).getByText('Bob Diaz')).toBeTruthy()
   })
 
+  it('holds Create branch, saying why, while a refusal of the user stands, until the form reopens', async () => {
+    const reason = accessRefusalMessage('BRANCH_CREATE_FORBIDDEN') as string
+    const onCreate = vi.fn(async () => ({ refusal: reason, field: 'form' as const }))
+    setup(onCreate)
+    await userEvent.type(nameField(), 'spring')
+    await userEvent.click(screen.getByTestId('create-branch-submit'))
+    await screen.findByRole('alert')
+
+    const submit = screen.getByTestId('create-branch-submit')
+    expect(submit.getAttribute('aria-disabled')).toBe('true')
+    await userEvent.click(submit)
+    expect(onCreate).toHaveBeenCalledTimes(1)
+    submit.focus()
+    expect((await screen.findByRole('tooltip')).textContent).toBe(reason)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await userEvent.click(screen.getByRole('button', { name: 'New branch…' }))
+    expect(screen.getByTestId('create-branch-submit').getAttribute('aria-disabled')).toBeNull()
+  })
+
+  it.each([
+    [
+      ['bob'],
+      "Bob Diaz doesn't work in this editor yet. Remove them, or add them by their full email address.",
+    ],
+    [
+      ['bob', 'cara'],
+      "Bob Diaz and Cara Ito don't work in this editor yet. Remove them, or add them by their full email address.",
+    ],
+  ])(
+    'names whom an out-of-scope refusal names (%s) and marks their chips',
+    async (refusedIds, message) => {
+      const { api } = setup(
+        vi.fn(async () => ({
+          refusal: accessRefusalMessage('USER_OUT_OF_SCOPE') as string,
+          field: 'shareWith' as const,
+          code: 'USER_OUT_OF_SCOPE' as const,
+          ids: refusedIds,
+        })),
+      )
+      api.branches.findPeopleForNewBranch.mockResolvedValue(
+        found('allow', [
+          { id: 'bob', name: 'Bob Diaz', maskedEmail: 'b•••@example.org' },
+          { id: 'cara', name: 'Cara Ito', maskedEmail: 'c•••@example.org' },
+        ]),
+      )
+      await userEvent.type(nameField(), 'spring')
+      await choose(/Bob Diaz/)
+      await choose(/Cara Ito/)
+
+      await userEvent.click(screen.getByTestId('create-branch-submit'))
+
+      await waitFor(() => expect(fieldError()).toBe(message))
+      const chips = within(screen.getByTestId('share-with-chips'))
+      const marked = chips
+        .getAllByText(/can't be added/)
+        .map((hidden) => hidden.closest('[data-refused]')?.textContent)
+      expect(marked).toEqual(
+        refusedIds.map((id) => `${id === 'bob' ? 'Bob Diaz' : 'Cara Ito'}, can't be added`),
+      )
+    },
+  )
+
+  it('says whom any other refusal of the people chosen applies to', async () => {
+    const reason = accessRefusalMessage('USER_NOT_FOUND') as string
+    setup(
+      vi.fn(async () => ({
+        refusal: reason,
+        field: 'shareWith' as const,
+        code: 'USER_NOT_FOUND' as const,
+        ids: ['bob'],
+      })),
+    )
+    await userEvent.type(nameField(), 'spring')
+    await choose(/Bob Diaz/)
+
+    await userEvent.click(screen.getByTestId('create-branch-submit'))
+
+    await waitFor(() => expect(fieldError()).toBe(`${reason} Applies to Bob Diaz.`))
+  })
+
   it('shows why the people chosen were refused under "Share with", until the choice changes', async () => {
     const reason = accessRefusalMessage('USER_OUT_OF_SCOPE') as string
     setup(vi.fn(async () => ({ refusal: reason, field: 'shareWith' as const })))
@@ -288,6 +370,40 @@ describe('New branch: Share with', () => {
     await waitFor(() => expect(status.textContent).toContain('Branch “spring” created'))
     await userEvent.click(within(status).getByRole('button', { name: 'Share…' }))
     expect(await screen.findByRole('dialog', { name: 'Share “spring”' })).toBeTruthy()
+  })
+
+  it("lets the create's answer stand in for no longer than a new branch's grace", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const answer = {
+        name: created.name,
+        shortName: 'spring',
+        status: 'editing',
+        createdBy: 'ana',
+        access: {},
+        sharing: created.sharing,
+      } as unknown as BranchListItem
+      setup(
+        vi.fn(async () => ({ created: created.name, branch: answer })),
+        { branches: [] },
+      )
+      await userEvent.type(nameField(), 'spring')
+      await userEvent.click(screen.getByTestId('create-branch-submit'))
+      const status = await screen.findByTestId('branch-created-status')
+      await userEvent.click(await within(status).findByRole('button', { name: 'Share…' }))
+      await screen.findByRole('dialog', { name: 'Share “spring”' })
+
+      act(() => {
+        vi.advanceTimersByTime(CREATED_BRANCH_GRACE_MS)
+      })
+
+      await waitFor(() => expect(status.textContent).toBe(''))
+      await waitFor(() =>
+        expect(screen.queryByRole('dialog', { name: 'Share “spring”' })).toBeNull(),
+      )
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('still says a branch was created when neither a listing nor the answer has it', async () => {

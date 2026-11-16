@@ -63,9 +63,10 @@ import { canShareBranch } from './sharing/sharing-mode'
 import { returnTarget } from './utils/focus-return'
 import type { CreatedBranch, CreateRefusal } from './hooks/create-branch-request'
 import { createdSummary } from './sharing/created-branch'
+import { CREATED_BRANCH_GRACE_MS } from './hooks/useBranchManager'
 import type { NewBranchRequest } from './hooks/useBranchActions'
 import { ShareWithField } from './sharing/ShareWithField'
-import { additionsBody, entryKey, type Addition } from './sharing/share-staging'
+import { additionsBody, entryKey, joinNames, type Addition } from './sharing/share-staging'
 import {
   accessRefusalMessage,
   CLOSED_PULL_REQUEST_REASON,
@@ -660,6 +661,7 @@ const BranchCard: React.FC<BranchCardProps> = ({
             ) : (
               <WhoHasAccessPopover
                 branch={b}
+                viewerId={user?.userId}
                 opened={accessPopoverOpen}
                 onChange={(open) => onAccessPopoverChange?.(open)}
               >
@@ -890,6 +892,22 @@ const ArchivedSection: React.FC<{
   )
 }
 
+/**
+ * Why a create refused the people chosen, naming those of `named` it refused: an outsider is told
+ * how to add them, any other refusal says whom it applies to.
+ */
+function chosenRefusal(
+  refused: { reason: string; code?: CreateRefusal['code'] },
+  named: readonly Addition[],
+): string {
+  if (named.length === 0) return refused.reason
+  const names = joinNames(named.map((chip) => chip.name))
+  if (refused.code === 'USER_OUT_OF_SCOPE') {
+    return `${names} ${named.length === 1 ? "doesn't" : "don't"} work in this editor yet. Remove them, or add them by their full email address.`
+  }
+  return `${refused.reason} Applies to ${names}.`
+}
+
 export const BranchManager: React.FC<BranchManagerProps> = ({
   branches,
   mode,
@@ -928,7 +946,17 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   const [shareWith, setShareWith] = useState<Addition[]>([])
   const shareWithKey = shareWith.map(entryKey).join('\n')
   // The branch the last create made, which the drawer says, offering to share it.
-  const [created, setCreated] = useState<CreatedBranch | null>(null)
+  // `expired` once the grace a listing gives a new branch has passed: from then on only a
+  // listing's copy stands for it, and a branch no listing holds is no longer offered.
+  const [created, setCreated] = useState<(CreatedBranch & { expired?: true }) | null>(null)
+  useEffect(() => {
+    if (!created || created.expired) return
+    const timer = setTimeout(
+      () => setCreated((now) => (now === created ? { ...now, expired: true } : now)),
+      CREATED_BRANCH_GRACE_MS,
+    )
+    return () => clearTimeout(timer)
+  }, [created])
   // Set by a create that passed: the created line's Share… takes focus, else New branch…, as the
   // form that held it has gone.
   const focusCreatedRef = useRef(false)
@@ -943,6 +971,8 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
     typed: string
     chosen: string
     reason: string
+    code?: CreateRefusal['code']
+    ids?: string[]
   } | null>(null)
   const nameInputRef = useRef<HTMLInputElement>(null)
   // Set by a refusal: the name field takes focus once it is enabled again, so its error is read.
@@ -969,8 +999,12 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
       : refused?.field === 'name' && refused.typed === typedBranchName
         ? refused.reason
         : undefined
-  const shareWithError =
-    refused?.field === 'shareWith' && refused.chosen === shareWithKey ? refused.reason : undefined
+  const shareWithRefused =
+    refused?.field === 'shareWith' && refused.chosen === shareWithKey ? refused : undefined
+  const refusedChips = shareWith.filter(
+    (chip) => chip.id !== undefined && !!shareWithRefused?.ids?.includes(chip.id),
+  )
+  const shareWithError = shareWithRefused && chosenRefusal(shareWithRefused, refusedChips)
   const formRefusal = refused?.field === 'form' ? refused.reason : undefined
 
   const handleCreate = async () => {
@@ -994,6 +1028,8 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
           typed: typedBranchName,
           chosen: shareWithKey,
           reason: outcome.refusal,
+          code: outcome.code,
+          ids: outcome.ids,
         })
         return
       }
@@ -1041,11 +1077,11 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
     onOverlayChange?.(overlayOpen)
     return () => onOverlayChange?.(false)
   }, [overlayOpen, onOverlayChange])
-  // The listing's copy once it has one; until then, or if it fails, the create's own answer.
+  // The listing's copy once it has one; until then, within the grace, the create's own answer.
   const createdBranch = created
     ? (branches.find((b) => b.name === created.created) ??
       branches.find((b) => b.shortName === created.created) ??
-      (created.branch && createdSummary(created.branch)))
+      (created.branch && !created.expired ? createdSummary(created.branch) : undefined))
     : undefined
   const sharedBranch =
     sharing &&
@@ -1174,6 +1210,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                     value={shareWith}
                     onChange={setShareWith}
                     error={shareWithError}
+                    refusedKeys={new Set(refusedChips.map(entryKey))}
                     disabled={creating}
                     onRefused={(code) =>
                       setRefused({
@@ -1196,25 +1233,32 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                     {formRefusal}
                   </Alert>
                 )}
-                <Button
-                  size="sm"
-                  onClick={handleCreate}
-                  disabled={!createdBranchName?.ok}
-                  loading={creating}
-                  fullWidth
-                  data-testid="create-branch-submit"
-                >
-                  Create branch
-                </Button>
+                {/* Refused for the user, no retry can pass, so it waits, saying why; Cancel leaves. */}
+                <Tooltip label={formRefusal} disabled={!formRefusal} multiline maw={300}>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      if (!formRefusal) void handleCreate()
+                    }}
+                    disabled={!createdBranchName?.ok}
+                    data-disabled={formRefusal ? true : undefined}
+                    aria-disabled={formRefusal ? true : undefined}
+                    loading={creating}
+                    fullWidth
+                    data-testid="create-branch-submit"
+                  >
+                    Create branch
+                  </Button>
+                </Tooltip>
               </Stack>
             </Paper>
           </Collapse>
           <div role="status" data-testid="branch-created-status">
-            {created && !showCreateForm && (
+            {created && (createdBranch || !created.expired) && !showCreateForm && (
               <Group gap="xs" wrap="nowrap" pb="sm">
                 <IconCheck
                   size={16}
-                  color="var(--mantine-color-green-filled)"
+                  color="var(--mantine-color-green-text)"
                   aria-hidden
                   style={{ flexShrink: 0 }}
                 />

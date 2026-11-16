@@ -2,7 +2,7 @@
 
 import React, { useMemo, useRef, useState } from 'react'
 import { ActionIcon, Badge, Group, Stack, Text, Tooltip, VisuallyHidden } from '@mantine/core'
-import { IconUsers, IconX } from '@tabler/icons-react'
+import { IconAlertTriangle, IconUsers, IconX } from '@tabler/icons-react'
 
 import type { NewBranchSharing } from '../../api/branch-people'
 import type { ApiErrorCode } from '../../api/types'
@@ -19,6 +19,8 @@ export interface ShareWithFieldProps {
   onChange: (next: Addition[]) => void
   /** Why the create refused the people chosen. */
   error?: string
+  /** Keys (`entryKey`) of the chips that refusal names, marked as refused. */
+  refusedKeys?: ReadonlySet<string>
   disabled?: boolean
   /** A refusal of the user rather than of whom they chose, such as not being able to create branches. */
   onRefused: (code: ApiErrorCode) => void
@@ -34,6 +36,7 @@ export function ShareWithField({
   value,
   onChange,
   error,
+  refusedKeys,
   disabled,
   onRefused,
 }: ShareWithFieldProps) {
@@ -73,13 +76,21 @@ export function ShareWithField({
         <Group gap="xs" ref={listRef} data-testid="share-with-chips">
           {value.map((addition, index) => {
             const label = `Remove ${addition.name}`
+            const refused = !!refusedKeys?.has(entryKey(addition))
             return (
               <Badge
                 key={entryKey(addition)}
                 variant="light"
-                color="gray"
+                color={refused ? 'red' : 'gray'}
                 pr={3}
-                leftSection={addition.kind === 'group' && <IconUsers size={12} aria-hidden />}
+                data-refused={refused || undefined}
+                leftSection={
+                  refused ? (
+                    <IconAlertTriangle size={12} aria-hidden />
+                  ) : (
+                    addition.kind === 'group' && <IconUsers size={12} aria-hidden />
+                  )
+                }
                 rightSection={
                   <Tooltip label={label}>
                     <ActionIcon
@@ -103,6 +114,7 @@ export function ShareWithField({
               >
                 {addition.name}
                 {addition.kind === 'group' && <VisuallyHidden>, group</VisuallyHidden>}
+                {refused && <VisuallyHidden>{", can't be added"}</VisuallyHidden>}
               </Badge>
             )
           })}

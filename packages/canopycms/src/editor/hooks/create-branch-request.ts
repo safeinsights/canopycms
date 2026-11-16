@@ -23,6 +23,9 @@ export const CREATE_TIMED_OUT_MESSAGE =
 export interface CreateRefusal {
   refusal: string
   field: 'name' | 'shareWith' | 'form'
+  code?: ApiErrorCode
+  /** The people or groups chosen that the refusal names. */
+  ids?: string[]
 }
 
 /** The full name of the branch a create made, which is now open, and the server's answer for it. */
@@ -37,7 +40,7 @@ export type CreateBranchOutcome =
    * `refused`: the server refused this name (`BRANCH_NAME_REFUSED`), or the listing a busy or
    * unanswered create settles on holds another user's branch of it. Retrying it cannot pass.
    */
-  | { kind: 'failed'; message: string; refused?: true; code?: ApiErrorCode }
+  | { kind: 'failed'; message: string; refused?: true; code?: ApiErrorCode; ids?: string[] }
 
 /**
  * Create a branch. Past the deadline, after an error page from in front of the API, or after a
@@ -69,7 +72,7 @@ export async function requestBranchCreate(
   // Only a refusal of the name carries this code; any other failure is the toast's to report.
   return result.code === 'BRANCH_NAME_REFUSED'
     ? { kind: 'failed', message, refused: true }
-    : { kind: 'failed', message, code: result.code }
+    : { kind: 'failed', message, code: result.code, ...(result.ids && { ids: result.ids }) }
 }
 
 /** A same-named branch the server would not answer this create with is a name conflict. */

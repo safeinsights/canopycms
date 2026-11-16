@@ -346,7 +346,7 @@ describe('useBranchActions', () => {
         created = await result.current.handleCreateBranch({ name: 'new-branch' })
       })
 
-      expect(created).toEqual({ refusal: accessRefusalMessage(code), field })
+      expect(created).toEqual({ refusal: accessRefusalMessage(code), field, code })
       expect(notifications.show).not.toHaveBeenCalled()
       expect(mockSetBranchName).not.toHaveBeenCalled()
     },

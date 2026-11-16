@@ -53,6 +53,7 @@ import { ShareBranchDialog } from './sharing/ShareBranchDialog'
 import { BranchCreatedToast } from './sharing/BranchCreatedToast'
 import { canShareBranch } from './sharing/sharing-mode'
 import { createdSummary } from './sharing/created-branch'
+import { CREATED_BRANCH_GRACE_MS } from './hooks/useBranchManager'
 import { useBaseUpdate } from './hooks/useBaseUpdate'
 import { BaseUpdateNotice } from './components/BaseUpdateNotice'
 import {
@@ -353,9 +354,23 @@ const EditorContent: React.FC<EditorProps> = ({
   const [barShare, setBarShare] = useState<{
     /** The branch as it was when opened; the listing's copy stands in once it has one. */
     target: BranchSummary
+    /**
+     * When `target` is a create's own answer, the time until which it may stand in for a listing's
+     * copy: a new branch's grace. Past it, a branch no listing holds is gone, and so is the dialog.
+     */
+    answerUntil?: number
+    expired?: true
     opened: boolean
     returnFocusTo: () => HTMLElement | null
   } | null>(null)
+  useEffect(() => {
+    if (!barShare?.answerUntil || barShare.expired) return
+    const timer = setTimeout(
+      () => setBarShare((now) => (now === barShare ? { ...now, expired: true } : now)),
+      Math.max(barShare.answerUntil - Date.now(), 0),
+    )
+    return () => clearTimeout(timer)
+  }, [barShare])
   const shareControlRef = useRef<HTMLButtonElement>(null)
   // Each opening remounts Branches; one from New branch… starts on its new-branch form.
   const [branchManagerOpening, setBranchManagerOpening] = useState({ seq: 0, create: false })
@@ -544,12 +559,17 @@ const EditorContent: React.FC<EditorProps> = ({
   const branchPending = !currentBranch && !branchesLoaded && !branchesLoadFailed
   const currentSummary = branchSummaries.find((b) => b.name === currentBranch?.name)
   const barShareBranch =
-    barShare && (branchSummaries.find((b) => b.name === barShare.target.name) ?? barShare.target)
+    barShare &&
+    (branchSummaries.find((b) => b.name === barShare.target.name) ??
+      (barShare.answerUntil && !barShare.expired ? barShare.target : undefined))
+  const summariesRef = useRef(branchSummaries)
+  summariesRef.current = branchSummaries
   const openBarShare = (
     target: BranchSummary,
     returnFocusTo: () => HTMLElement | null = () =>
       shareControlRef.current?.isConnected ? shareControlRef.current : branchToggleRef.current,
-  ) => setBarShare({ target, opened: true, returnFocusTo })
+    answerUntil?: number,
+  ) => setBarShare({ target, answerUntil, opened: true, returnFocusTo })
 
   // Conflicts a merge left on the open branch (api/merge-conflicts.ts): read while its listing
   // names any, and the choices made on their cards that no save has sent yet.
@@ -888,11 +908,17 @@ const EditorContent: React.FC<EditorProps> = ({
     announceCreated: (label, created) => {
       if (branchManagerOpenRef.current) return
       const id = `branch-created-${created?.name ?? label}`
+      const answerUntil = Date.now() + CREATED_BRANCH_GRACE_MS
       const share =
         created && canShareBranch(created, userContext)
           ? () => {
-              // From the create's own answer, so it opens even before a listing includes the branch.
-              openBarShare(createdSummary(created))
+              const listed = summariesRef.current.find((b) => b.name === created.name)
+              // The create's own answer stands in until a listing holds the branch, within its
+              // grace; past that a branch no listing holds is gone, and nothing opens.
+              if (listed) openBarShare(listed)
+              else if (Date.now() < answerUntil) {
+                openBarShare(createdSummary(created), undefined, answerUntil)
+              }
               notifications.hide(id)
             }
           : undefined

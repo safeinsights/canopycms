@@ -189,7 +189,7 @@ describe('sharing from the editor', () => {
     expect(notifications.hide).toHaveBeenCalledWith(toast.id)
   })
 
-  it("opens the toast's Share… from the create's own answer once listings no longer hold the branch", async () => {
+  it("opens nothing from the toast's Share… once the branch's grace has passed with no listing holding it", async () => {
     window.history.replaceState({}, '', '/?branch=spring')
     let release = () => {}
     let releaseListing = () => {}
@@ -222,7 +222,8 @@ describe('sharing from the editor', () => {
     render(<CanopyCMSProvider>{toast.message}</CanopyCMSProvider>)
     fireEvent.click(screen.getByRole('button', { name: 'Share…' }))
 
-    expect(await screen.findByRole('dialog', { name: 'Share “summer”' })).toBeTruthy()
     expect(notifications.hide).toHaveBeenCalledWith(toast.id)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(screen.queryByRole('dialog', { name: 'Share “summer”' })).toBeNull()
   })
 })
