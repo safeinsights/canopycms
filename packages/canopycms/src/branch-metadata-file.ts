@@ -14,9 +14,11 @@ import { z } from 'zod'
 
 import type { ContentId } from './paths/types'
 import type {
+  BranchAccessControl,
   BranchAddBy,
   BranchMetadata,
   BranchStatus,
+  CanopyUserId,
   ConflictStatus,
   PullRequestState,
   SyncStatus,
@@ -46,6 +48,36 @@ const UNKNOWN_TIME = new Date(0).toISOString()
 /** A zod enum of every member of `T`: the mapped type refuses to compile if one is left out. */
 const enumOf = <T extends string>(values: { [K in T]: K }) => z.nativeEnum(values)
 
+/** A branch's `access`, as {@link branchMetadataSchema} checks it. */
+const branchAccessSchema = z
+  .object({
+    allowedUsers: z.array(z.string()).optional(),
+    allowedGroups: z.array(z.string()).optional(),
+    managerOrAdminAllowed: z.boolean().optional(),
+    restricted: z.boolean().optional(),
+    excluded: z
+      .record(
+        z.string(),
+        z.object({ by: z.string(), at: z.string(), byAdmin: z.boolean() }).passthrough(),
+      )
+      .optional(),
+    excludedGroups: z
+      .record(
+        z.string(),
+        z.object({ by: z.string(), at: z.string(), byAdmin: z.boolean() }).passthrough(),
+      )
+      .optional(),
+    addBy: enumOf<BranchAddBy>({
+      members: 'members',
+      owner: 'owner',
+      admins: 'admins',
+    }).optional(),
+    entryMeta: z
+      .record(z.string(), z.object({ addedBy: z.string(), addedAt: z.string() }).passthrough())
+      .optional(),
+  })
+  .passthrough()
+
 /**
  * `branch.json`'s shape, checked on every read.
  *
@@ -71,34 +103,7 @@ const branchMetadataShape = {
     approved: 'approved',
     archived: 'archived',
   }),
-  access: z
-    .object({
-      allowedUsers: z.array(z.string()).optional(),
-      allowedGroups: z.array(z.string()).optional(),
-      managerOrAdminAllowed: z.boolean().optional(),
-      restricted: z.boolean().optional(),
-      excluded: z
-        .record(
-          z.string(),
-          z.object({ by: z.string(), at: z.string(), byAdmin: z.boolean() }).passthrough(),
-        )
-        .optional(),
-      excludedGroups: z
-        .record(
-          z.string(),
-          z.object({ by: z.string(), at: z.string(), byAdmin: z.boolean() }).passthrough(),
-        )
-        .optional(),
-      addBy: enumOf<BranchAddBy>({
-        members: 'members',
-        owner: 'owner',
-        admins: 'admins',
-      }).optional(),
-      entryMeta: z
-        .record(z.string(), z.object({ addedBy: z.string(), addedAt: z.string() }).passthrough())
-        .optional(),
-    })
-    .passthrough(),
+  access: branchAccessSchema,
   createdBy: z.string().default('unknown'),
   createdAt: z.string().default(UNKNOWN_TIME),
   updatedAt: z.string().default(UNKNOWN_TIME),
@@ -241,4 +246,33 @@ function parseBranchMetadataFile(branchRoot: string, raw: string): BranchMetadat
   }
   const file: BranchMetadataFile = result.data
   return file
+}
+
+/** Each field is dropped, not failed, when it doesn't pass on its own. */
+const salvageableFieldsSchema = z.object({
+  branch: z.object({
+    access: branchAccessSchema.optional().catch(undefined),
+    createdBy: z.string().min(1).optional().catch(undefined),
+  }),
+})
+
+/**
+ * Who may open the branch, as far as `branch.json` text that fails {@link readBranchMetadataFile}
+ * still says: its `access` when that passes its own schema, and a non-empty `createdBy`. Either is
+ * absent when it can't be read, and both are when the text is not JSON or holds no `branch` object.
+ */
+export function salvageBranchAccess(raw: string): {
+  access?: BranchAccessControl
+  createdBy?: CanopyUserId
+} {
+  let json: unknown
+  try {
+    json = JSON.parse(raw)
+  } catch {
+    return {}
+  }
+  const result = salvageableFieldsSchema.safeParse(json)
+  if (!result.success) return {}
+  const { access, createdBy } = result.data.branch
+  return { ...(access && { access }), ...(createdBy !== undefined && { createdBy }) }
 }
