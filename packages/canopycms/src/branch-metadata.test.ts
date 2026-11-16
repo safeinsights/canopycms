@@ -146,6 +146,22 @@ describe('BranchMetadataFileManager', () => {
       linkSpy.mockRestore()
     })
 
+    it('takes a createdAt passed at creation, and ignores one passed once the branch exists', async () => {
+      const root = await tmpDir()
+      const meta = createMeta(root, await tmpDir())
+      const created = await meta.save({
+        branch: { name: 'feature/when', status: 'editing', createdBy: 'u1' },
+        createdAt: '2026-01-01T00:00:00.000Z',
+      })
+      expect(created.branch.createdAt).toBe('2026-01-01T00:00:00.000Z')
+
+      const again = await meta.save({
+        branch: { name: 'feature/when' },
+        createdAt: '2001-01-01T00:00:00.000Z',
+      })
+      expect(again.branch.createdAt).toBe('2026-01-01T00:00:00.000Z')
+    })
+
     it('updates existing metadata and stamps updatedAt', async () => {
       const root = await tmpDir()
       const registryDir = await tmpDir()
@@ -177,12 +193,6 @@ describe('BranchMetadataFileManager', () => {
       expect(updated.branch.pullRequestNumber).toBe(10)
       expect(updated.branch.access.managerOrAdminAllowed).toBe(true)
       expect(updated.branch.createdAt).toBe(created.branch.createdAt) // createdAt unchanged
-      // A createdAt passed to a save of an existing branch is ignored, as createdBy is.
-      const again = await meta.save({
-        branch: { name: 'feature/y' },
-        createdAt: '2001-01-01T00:00:00.000Z',
-      })
-      expect(again.branch.createdAt).toBe(created.branch.createdAt)
       // Strictly greater: updatedAt must ADVANCE on save, not stay frozen at
       // the creation timestamp (regression guard for the spread-order bug)
       expect(new Date(updated.branch.updatedAt).getTime()).toBeGreaterThan(

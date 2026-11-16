@@ -266,6 +266,11 @@ export type SalvagedAccess =
       mayRestrict: boolean
       /** The lockdown in `narrowing` stands in for one that didn't read. */
       lockdownUnreadable: boolean
+      /**
+       * Removals may have been lost: `access` isn't an object, or `excluded` or `excludedGroups`
+       * isn't one. `narrowing` then has `addBy: 'admins'`, so no one but an admin re-adds anyone.
+       */
+      removalsUnreadable: boolean
     }
 
 /** The fields repair writes besides `name`, `access` and the timestamps save() manages. */
@@ -279,6 +284,8 @@ interface SalvagedBranch {
    * `createdBy` and `baseBranch` must also be non-empty.
    */
   fields: SalvagedFields
+  /** The fields as they read, before any restrictive value: what repair kept. */
+  read: SalvagedFields
   /** The keys the schema doesn't know, verbatim, as a read passes them through. */
   unknownFields: Record<string, unknown>
   /** `createdAt` as the file had it, when it reads. */
@@ -289,22 +296,28 @@ interface SalvagedBranch {
 
 /**
  * The value a present field that doesn't read takes, for the fields that hold something back:
- * - `status` `submitted` locks writes, and Withdraw recovers the branch;
- * - `unpublishedAtMerge` true holds a delete for an admin;
+ * - `status` `submitted` locks writes, and Withdraw recovers the branch. A missing status, or
+ *   text that isn't JSON, takes it too: it is as unknown;
+ * - `unpublishedAtMerge` true holds a delete for an admin. A status unknown beside a rewrite
+ *   marker takes it too, since the archived status that made the marker hold the delete is lost;
  * - `rewrittenOnGitHub` naming no commit refuses pushes, and on an archived branch holds a delete
- *   for an admin. A sync clears it when GitHub has no branch of that name; with one, only a
- *   published branch's sync clears it, once GitHub's branch holds every commit recorded;
+ *   for an admin. A sync clears a marker when GitHub has no branch of that name, or, on a
+ *   published branch, once GitHub's branch holds the clone's and `remote.git`'s heads or a commit
+ *   it recorded there. A readable marker naming a commit is kept, with `lastGitHubTip` set to that
+ *   commit when unknown, so the sync has it to compare;
  * - `archivedAt` the repair time keeps deletion by age from counting from an older merge.
  *
  * Any other unreadable field is left out, as save()'s defaults leave it. Nothing that decides who
  * can open, edit or delete the branch widens. Review and merge rights can, in four cases: a
  * `submitUnfinished` left out no longer blocks Approve; a `syncStatus` left out no longer marks a
  * later merge as possibly unpublished; a `pullRequestState` left out, if `closed`, no longer
- * blocks Approve, Request changes and Mark merged; and a status read as `submitted` lets reviewers
- * Approve or Request changes on what may have been an editing branch. And the worker's GitHub sync
- * loses any record it can't read: an unreadable `lastGitHubTip` or `historyRewrittenFrom` leaves it
- * less to detect a rewrite by, an unreadable `keptOverGitHub` drops paths from the PR body, and a
- * `syncStatus` left out no longer holds back, as `sync-failed` did, a retried push or base update.
+ * blocks Approve, Request changes and Mark merged; and an unknown status taken as `submitted` lets
+ * reviewers Approve or Request changes on what may have been an editing branch. And the worker's GitHub sync
+ * loses any record it can't read: an unreadable `historyRewrittenFrom`, or `lastGitHubTip` with no
+ * marker naming a commit, leaves it less to detect a new rewrite by, though a standing marker
+ * stays until GitHub's branch holds all of this branch's; an unreadable `keptOverGitHub` drops
+ * paths from the PR body; and a `syncStatus` left out no longer holds back, as `sync-failed` did, a
+ * retried push or base update.
  */
 const restrictiveValues = (now: string): SalvagedFields => ({
   status: 'submitted',
@@ -328,6 +341,9 @@ function readField<T>(schema: z.ZodType<T>, value: unknown): T | typeof unreadab
 }
 
 const nonEmptyString = z.string().min(1).optional()
+
+/** A full commit id, the form worker/github-commits.ts's `COMMIT_ID` checks. */
+const COMMIT_ID = /^[0-9a-f]{40}([0-9a-f]{24})?$/
 
 const {
   name: _name,
@@ -353,8 +369,15 @@ const isSalvagedKey = (key: string): key is SalvagedKey => has(salvagedFieldShap
  */
 export function salvageBranchMetadata(raw: string, now: Date = new Date()): SalvagedBranch {
   const nothing: SalvagedBranch = {
-    access: { readable: false, narrowing: {}, mayRestrict: false, lockdownUnreadable: false },
-    fields: {},
+    access: {
+      readable: false,
+      narrowing: {},
+      mayRestrict: false,
+      lockdownUnreadable: false,
+      removalsUnreadable: false,
+    },
+    fields: { status: 'submitted' },
+    read: {},
     unknownFields: {},
     unreadable: [],
   }
@@ -373,13 +396,27 @@ export function salvageBranchMetadata(raw: string, now: Date = new Date()): Salv
   const unreadableKeys: (keyof BranchMetadata)[] = []
   for (const key of Object.keys(branch).filter(isSalvagedKey)) {
     const value = readField(salvagedFieldShape[key], branch[key])
-    if (value !== unreadable && value !== undefined) {
-      read[key] = value
-      continue
-    }
-    unreadableKeys.push(key)
-    if (has(restrictive, key)) read[key] = restrictive[key]
+    if (value !== unreadable && value !== undefined) read[key] = value
+    else unreadableKeys.push(key)
   }
+  // Every value was read through these same schemas, so these parses only give them their type.
+  const kept = salvagedFieldsSchema.parse(read)
+  const held: SalvagedFields = { ...kept }
+  for (const key of unreadableKeys) {
+    if (has(restrictive, key)) Object.assign(held, { [key]: restrictive[key as SalvagedKey] })
+  }
+  if (kept.status === undefined) {
+    held.status = restrictive.status
+    if (has(branch, 'rewrittenOnGitHub')) held.unpublishedAtMerge = true
+  }
+  if (
+    kept.rewrittenOnGitHub !== undefined &&
+    COMMIT_ID.test(kept.rewrittenOnGitHub) &&
+    kept.lastGitHubTip === undefined
+  ) {
+    held.lastGitHubTip = kept.rewrittenOnGitHub
+  }
+
   const unknownFields = Object.fromEntries(
     Object.keys(branch)
       .filter((key) => key !== '__proto__' && !has(branchMetadataShape, key))
@@ -391,8 +428,8 @@ export function salvageBranchMetadata(raw: string, now: Date = new Date()): Salv
   if (createdAt === unreadable) unreadableKeys.push('createdAt')
   return {
     access: has(branch, 'access') ? salvageAccess(branch.access) : nothing.access,
-    // Every value was read through these same schemas, so this parse only gives it its type.
-    fields: salvagedFieldsSchema.parse(read),
+    fields: salvagedFieldsSchema.parse(held),
+    read: kept,
     unknownFields,
     ...(typeof createdAt === 'string' && { createdAt }),
     unreadable: unreadableKeys,
@@ -404,7 +441,13 @@ function salvageAccess(rawAccess: unknown): SalvagedAccess {
   const whole = branchAccessSchema.safeParse(rawAccess)
   if (whole.success) return { readable: true, access: whole.data }
   if (!isPlainObject(rawAccess)) {
-    return { readable: false, narrowing: {}, mayRestrict: true, lockdownUnreadable: false }
+    return {
+      readable: false,
+      narrowing: { addBy: 'admins' },
+      mayRestrict: true,
+      lockdownUnreadable: false,
+      removalsUnreadable: true,
+    }
   }
 
   const { shape } = branchAccessSchema
@@ -414,6 +457,7 @@ function salvageAccess(rawAccess: unknown): SalvagedAccess {
   const addBy = has(rawAccess, 'addBy') ? readField(shape.addBy, rawAccess.addBy) : undefined
   const excluded = salvageExclusions(rawAccess, 'excluded')
   const excludedGroups = salvageExclusions(rawAccess, 'excludedGroups')
+  const removalsUnreadable = excluded === unreadable || excludedGroups === unreadable
   return {
     readable: false,
     narrowing: {
@@ -421,14 +465,16 @@ function salvageAccess(rawAccess: unknown): SalvagedAccess {
         managerOrAdminAllowed: lockdown === unreadable ? true : lockdown,
       }),
       ...(addBy !== undefined && { addBy: addBy === unreadable ? 'admins' : addBy }),
+      ...(removalsUnreadable && { addBy: 'admins' }),
       ...(excluded !== undefined && excluded !== unreadable && { excluded }),
       ...(excludedGroups !== undefined && excludedGroups !== unreadable && { excludedGroups }),
     },
     mayRestrict:
       ['restricted', 'allowedUsers', 'allowedGroups'].some((key) => has(rawAccess, key)) ||
       lockdown === unreadable ||
-      excluded === unreadable,
+      removalsUnreadable,
     lockdownUnreadable: lockdown === unreadable,
+    removalsUnreadable,
   }
 }
 

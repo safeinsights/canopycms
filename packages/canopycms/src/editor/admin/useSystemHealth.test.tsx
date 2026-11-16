@@ -159,6 +159,8 @@ describe('useSystemHealth', () => {
         kept: { access: {}, createdBy: 'admin' },
         otherFields: { kept: [], dropped: [] },
         lockedByRepair: false,
+        isBase: false,
+        removalsUnreadable: false,
         restricted: false,
         openToEveryone: false,
       },
@@ -212,9 +214,15 @@ describe('useSystemHealth', () => {
     const repairWith = async (
       access: BranchAccessControl,
       fields: Pick<RepairData, 'reset' | 'kept' | 'restricted' | 'openToEveryone'> &
-        Partial<Pick<RepairData, 'warning' | 'lockedByRepair' | 'otherFields'>>,
+        Partial<
+          Pick<
+            RepairData,
+            'warning' | 'lockedByRepair' | 'otherFields' | 'isBase' | 'removalsUnreadable'
+          >
+        >,
       createdBy = 'alice',
       status: BranchStatus = 'editing',
+      branchFields: Partial<RepairData['branch']> = {},
     ) => {
       mockClient.admin.repairBranchDir.mockResolvedValueOnce(
         mockSuccess({
@@ -225,10 +233,13 @@ describe('useSystemHealth', () => {
             createdBy,
             createdAt: '2026-01-01',
             updatedAt: '2026-01-01',
+            ...branchFields,
           },
           archivedAs: 'branch.json.corrupt-x',
           otherFields: { kept: [], dropped: [] },
           lockedByRepair: false,
+          isBase: false,
+          removalsUnreadable: false,
           ...fields,
         }),
       )
@@ -240,7 +251,7 @@ describe('useSystemHealth', () => {
       return vi.mocked(notifications.show).mock.calls.at(-1)?.[0]
     }
 
-    it('says a kept list still decides, and that the people removed stay out', async () => {
+    it('says a kept list still decides, that the person removed stays out, and who re-adds groups', async () => {
       const access = {
         restricted: true,
         allowedUsers: ['alice'],
@@ -256,7 +267,7 @@ describe('useSystemHealth', () => {
       expect(shown).toMatchObject({
         title: 'Metadata repaired',
         message:
-          'Kept its access: only the people listed can open it. The 1 person and 2 groups removed from it stay out.' +
+          'Kept its access: only the people and groups listed, admins and reviewers can open it. The 1 person removed from it stays out. The 2 groups removed from it can be added back only by its owner or an admin.' +
           ARCHIVED,
         color: 'green',
       })
@@ -294,7 +305,7 @@ describe('useSystemHealth', () => {
       )
     })
 
-    it('says one removed group stays out', async () => {
+    it('says a removed group can be added back only by its owner or an admin', async () => {
       const access = { restricted: true, excludedGroups: { readers: removal } }
       const shown = await repairWith(access, {
         reset: { status: 'editing' },
@@ -303,7 +314,7 @@ describe('useSystemHealth', () => {
         openToEveryone: false,
       })
       expect(shown?.message).toBe(
-        'Kept its access: only the people listed can open it. The 1 group removed from it stays out.' +
+        'Kept its access: only the people and groups listed, admins and reviewers can open it. The 1 group removed from it can be added back only by its owner or an admin.' +
           ARCHIVED,
       )
     })
@@ -363,25 +374,36 @@ describe('useSystemHealth', () => {
       })
     })
 
-    it('says a branch that takes no list, its access unreadable, opens to anyone who can sign in', async () => {
-      const access = { excluded: { bob: removal } }
-      const shown = await repairWith(
-        access,
-        {
-          reset: { status: 'editing', access },
-          kept: { createdBy: 'canopycms-system' },
-          restricted: false,
-          openToEveryone: true,
-        },
-        'canopycms-system',
-      )
-      expect(shown).toMatchObject({
-        message:
-          "Access couldn't be read. This branch takes no access list, so anyone who can sign in can open this branch. The 1 person removed from it stays out." +
-          ARCHIVED,
-        color: 'green',
-      })
-    })
+    it.each([
+      [
+        true,
+        "Access couldn't be read. The base branch takes no access list, so anyone who can sign in can open this branch.",
+      ],
+      [
+        false,
+        "Access couldn't be read. This is the branch a development server edits, so it is kept open to anyone who can sign in.",
+      ],
+    ])(
+      'says a branch kept open (base %j), its access unreadable, opens to anyone who can sign in',
+      async (isBase, sentence) => {
+        const access = { excluded: { bob: removal } }
+        const shown = await repairWith(
+          access,
+          {
+            reset: { status: 'editing', access },
+            kept: { createdBy: 'canopycms-system' },
+            restricted: false,
+            openToEveryone: true,
+            isBase,
+          },
+          'canopycms-system',
+        )
+        expect(shown).toMatchObject({
+          message: sentence + ' The 1 person removed from it stays out.' + ARCHIVED,
+          color: 'green',
+        })
+      },
+    )
 
     it('says a branch locked because its access could not be read needs branch.json edited', async () => {
       for (const restricted of [false, true]) {
@@ -440,7 +462,7 @@ describe('useSystemHealth', () => {
       )
       expect(shown).toMatchObject({
         message:
-          "Kept its access: only the people listed can open it. Its status couldn't be read, so it is locked as submitted until it is withdrawn. The corrupt file is archived as branch.json.corrupt-x.",
+          "Kept its access: only the people and groups listed, admins and reviewers can open it. Its status couldn't be read or was missing, so it is locked as submitted until it is withdrawn. The corrupt file is archived as branch.json.corrupt-x.",
         color: 'yellow',
         autoClose: false,
       })
@@ -477,7 +499,7 @@ describe('useSystemHealth', () => {
       )
       expect(shown).toMatchObject({
         message:
-          'Kept its access: only the people listed can open it. Its creator couldn\'t be read or was missing, so only an admin can share it again from "Branches".' +
+          'Kept its access: only the people and groups listed, admins and reviewers can open it. Its creator couldn\'t be read or was missing, so only an admin can share it again from "Branches".' +
           ARCHIVED,
         color: 'yellow',
         autoClose: false,
@@ -512,7 +534,7 @@ describe('useSystemHealth', () => {
         },
       )
       expect(shown?.message).toBe(
-        "Kept its access: anyone who can sign in can open it. Its record of GitHub's branch couldn't be read, so nothing is pushed to GitHub until a sync clears it: once GitHub has no branch of this name, or once this branch is published and GitHub's holds every commit CanopyCMS recorded." +
+        "Kept its access: anyone who can sign in can open it. Its record of GitHub's branch couldn't be read, so nothing is pushed to GitHub until a sync clears it: once GitHub has no branch of this name, or, with this branch published, once GitHub's holds every commit of this branch's." +
           ARCHIVED,
       )
     })
@@ -528,10 +550,123 @@ describe('useSystemHealth', () => {
         },
         'alice',
         'archived',
+        { unpublishedAtMerge: true, rewrittenOnGitHub: '', archivedAt: '2026-11-16' },
       )
+      // A held delete makes the archive time moot, so it isn't mentioned.
       expect(shown).toMatchObject({
         message:
-          "Kept its access: anyone who can sign in can open it. Its merge record couldn't be read, so only an admin can delete it. Its record of GitHub's branch couldn't be read, so only an admin can delete it. Its archive time couldn't be read, so deletion by age counts from this repair. It stays archived. The corrupt file is archived as branch.json.corrupt-x.",
+          "Kept its access: anyone who can sign in can open it. What held its delete for an admin couldn't be read, so only an admin can delete it. Its record of GitHub's branch couldn't be read, so only an admin can delete it. It stays archived. The corrupt file is archived as branch.json.corrupt-x.",
+        color: 'yellow',
+        autoClose: false,
+      })
+    })
+
+    it('says deletion by age counts from the repair when nothing holds the delete', async () => {
+      const shown = await repairWith(
+        {},
+        {
+          reset: { archivedAt: '2026-11-16' },
+          kept: { status: 'archived', access: {}, createdBy: 'alice' },
+          restricted: false,
+          openToEveryone: true,
+        },
+        'alice',
+        'archived',
+        { archivedAt: '2026-11-16' },
+      )
+      expect(shown?.message).toBe(
+        "Kept its access: anyone who can sign in can open it. Its archive time couldn't be read, so deletion by age counts from this repair. It stays archived. The corrupt file is archived as branch.json.corrupt-x.",
+      )
+    })
+
+    it.each([
+      [[true], 'an admin'],
+      [[true, false], 'its owner or an admin, and only an admin where an admin removed it'],
+    ])('says who can add back removed groups removed by an admin: %j', async (byAdmins, who) => {
+      const excludedGroups = Object.fromEntries(
+        byAdmins.map((byAdmin, i) => [`g${i}`, { by: 'x', at: 'y', byAdmin }]),
+      )
+      const access = { restricted: true, excludedGroups }
+      const shown = await repairWith(access, {
+        reset: {},
+        kept: { status: 'editing', access, createdBy: 'alice' },
+        restricted: true,
+        openToEveryone: false,
+      })
+      expect(shown?.message).toContain(`removed from it can be added back only by ${who}.`)
+    })
+
+    it('says to check who was removed when removals could not be read, except on the base branch', async () => {
+      const access = { restricted: true, addBy: 'admins' as const }
+      const shown = await repairWith(access, {
+        reset: { access },
+        kept: { status: 'editing', createdBy: 'alice' },
+        restricted: true,
+        openToEveryone: false,
+        removalsUnreadable: true,
+      })
+      expect(shown).toMatchObject({
+        message:
+          'Access couldn\'t be read, so only admins and reviewers can open it. Share it again from "Branches". Its removals couldn\'t be read, so check who was removed before sharing it again.' +
+          ARCHIVED,
+        color: 'yellow',
+      })
+      const locked = { managerOrAdminAllowed: true }
+      const onBase = await repairWith(locked, {
+        reset: { access: locked },
+        kept: { status: 'editing', createdBy: 'alice' },
+        restricted: false,
+        openToEveryone: false,
+        removalsUnreadable: true,
+        isBase: true,
+        lockedByRepair: true,
+      })
+      expect(onBase?.message).not.toContain('Its removals')
+    })
+
+    it('names no share action for the base branch whose creator it could not read', async () => {
+      const access = { managerOrAdminAllowed: true }
+      const shown = await repairWith(
+        access,
+        {
+          reset: { access, createdBy: 'unknown' },
+          kept: { status: 'editing' },
+          restricted: false,
+          openToEveryone: false,
+          isBase: true,
+          lockedByRepair: true,
+        },
+        'unknown',
+      )
+      expect(shown?.message).not.toContain('share it again')
+    })
+
+    it.each([
+      [
+        'submitUnfinished',
+        "Whether its last submit finished couldn't be read, so Approve isn't held back for it.",
+      ],
+      [
+        'syncStatus',
+        "Its sync state couldn't be read, so a later merge isn't flagged as possibly missing changes, and a push or base update a failed sync held back may go ahead.",
+      ],
+      [
+        'pullRequestState',
+        "Its pull request state couldn't be read, so Approve, Request changes and Mark merged aren't held back for a closed pull request.",
+      ],
+    ] as const)('says what a dropped %s no longer holds back', async (field, sentence) => {
+      const shown = await repairWith(
+        {},
+        {
+          reset: {},
+          kept: { status: 'editing', access: {}, createdBy: 'alice' },
+          restricted: false,
+          openToEveryone: true,
+          otherFields: { kept: [], dropped: [field] },
+        },
+      )
+      expect(shown).toMatchObject({
+        message: 'Kept its access: anyone who can sign in can open it. ' + sentence + ARCHIVED,
         color: 'yellow',
         autoClose: false,
       })
@@ -565,7 +700,7 @@ describe('useSystemHealth', () => {
         'archived',
       )
       expect(shown?.message).toBe(
-        'Kept its access: only the people listed can open it. It stays archived. The corrupt file is archived as branch.json.corrupt-x.',
+        'Kept its access: only the people and groups listed, admins and reviewers can open it. It stays archived. The corrupt file is archived as branch.json.corrupt-x.',
       )
     })
 
@@ -598,7 +733,7 @@ describe('useSystemHealth', () => {
       })
       expect(shown).toMatchObject({
         message:
-          'Kept its access: only the people listed can open it.' +
+          'Kept its access: only the people and groups listed, admins and reviewers can open it.' +
           ARCHIVED +
           ' The list may show the branch late.',
         color: 'yellow',

@@ -366,7 +366,7 @@ describe('admin branch-health api', () => {
 
       expect(result.ok).toBe(true)
       expect(result.data?.archivedAs).toMatch(/^branch\.json\.corrupt-\d{8}T\d{6}Z$/)
-      expect(result.data?.branch.status).toBe('editing')
+      expect(result.data?.branch.status).toBe('submitted')
       expect(result.data?.branch.createdBy).toBe('unknown')
       expect(result.data?.branch.name).toBe('repair-me')
 
@@ -401,14 +401,14 @@ describe('admin branch-health api', () => {
       const result = await repairHandler(ctx, req, { dirName: 'shape-broken' })
 
       expect(result.ok).toBe(true)
-      expect(result.data?.branch.status).toBe('editing')
+      expect(result.data?.branch.status).toBe('submitted')
       expect(await fs.readFile(path.join(metaDir, result.data!.archivedAs), 'utf-8')).toBe(
         shapeBroken,
       )
       const repaired = await BranchMetadataFileManager.loadOnly(
         path.join(branchesRoot, 'shape-broken'),
       )
-      expect(repaired?.branch).toMatchObject({ name: 'shape-broken', status: 'editing' })
+      expect(repaired?.branch).toMatchObject({ name: 'shape-broken', status: 'submitted' })
       expect((await registry.list()).map((b) => b.branch.name)).toContain('shape-broken')
     })
 
@@ -436,11 +436,11 @@ describe('admin branch-health api', () => {
       expect(result.ok).toBe(true)
       const access = { restricted: true }
       expect(result.data?.branch).toMatchObject({
-        status: 'editing',
+        status: 'submitted',
         access,
         createdBy: 'unknown',
       })
-      expect(result.data?.reset).toEqual({ status: 'editing', access, createdBy: 'unknown' })
+      expect(result.data?.reset).toEqual({ status: 'submitted', access, createdBy: 'unknown' })
       expect(result.data?.kept).toEqual({})
     })
 
@@ -497,6 +497,36 @@ describe('admin branch-health api', () => {
         }
       }
 
+      it('refuses, archiving nothing, when the corrupt file cannot be read', async () => {
+        await createCorruptBranchWithGit('unreadable-file')
+        const file = path.join(branchesRoot, 'unreadable-file', '.canopy-meta', 'branch.json')
+        const realReadFile = fs.readFile
+        let reads = 0
+        const readFile = vi.spyOn(fs, 'readFile').mockImplementation(async (...args) => {
+          // The prechecks read it twice; the third read is the text repair salvages.
+          if (args[0] === file && ++reads === 3) {
+            throw Object.assign(new Error('permission denied'), { code: 'EACCES' })
+          }
+          return realReadFile(...(args as Parameters<typeof realReadFile>))
+        })
+        try {
+          const result = await repairHandler(ctx, req, { dirName: 'unreadable-file' })
+
+          expect(result).toMatchObject({
+            ok: false,
+            status: 500,
+            error:
+              'Could not read the corrupt branch.json, so nothing was archived: permission denied',
+          })
+        } finally {
+          readFile.mockRestore()
+        }
+        expect(await fs.readFile(file, 'utf-8')).toBe(corruptText)
+        expect(
+          (await fs.readdir(path.dirname(file))).filter((f) => f.includes('.corrupt-')),
+        ).toEqual([])
+      })
+
       it('puts the corrupt file back as branch.json, so the directory reads as corrupt again', async () => {
         const result = await repairWithFailingWrite()
 
@@ -520,7 +550,7 @@ describe('admin branch-health api', () => {
         )
 
         expect(result.error).toMatch(
-          /^Could not write the repaired metadata: disk full\. The corrupt file stays archived as branch\.json\.corrupt-\d{8}T\d{6}Z: branch\.json exists again\.$/,
+          /^Could not write the repaired metadata: disk full\. The corrupt file stays archived as branch\.json\.corrupt-\d{8}T\d{6}Z: another write created this branch's metadata, so its access may be open\. Check who can open it, in "Branches"\.$/,
         )
         expect(await fs.readFile(path.join(metaDir(), 'branch.json'), 'utf-8')).toBe(theirs)
       })
@@ -538,7 +568,7 @@ describe('admin branch-health api', () => {
             'The repair was written, but refreshing the branch list failed (registry down), so the list may show the branch late.',
           )
           expect(result.data?.branch).toMatchObject({
-            status: 'editing',
+            status: 'submitted',
             access: { restricted: true },
             createdBy: 'unknown',
           })
@@ -561,14 +591,16 @@ describe('admin branch-health api', () => {
           const theirs = {
             schemaVersion: 1,
             version: 1,
-            branch: { status: 'editing', createdBy: 'unknown', ...differs },
+            branch: { status: 'submitted', createdBy: 'unknown', ...differs },
           }
           const result = await repairWithFailingWrite(() =>
             fs.writeFile(path.join(metaDir(), 'branch.json'), JSON.stringify(theirs), 'utf-8'),
           )
 
           expect(result.ok).toBe(false)
-          expect(result.error).toMatch(/branch\.json exists again\.$/)
+          expect(result.error).toMatch(
+            /another write created this branch's metadata, so its access may be open/,
+          )
         },
       )
 
@@ -639,7 +671,9 @@ describe('admin branch-health api', () => {
           const result = await repairWhoseRefreshFails(change)
 
           expect(result.ok).toBe(false)
-          expect(result.error).toMatch(/branch\.json exists again\.$/)
+          expect(result.error).toMatch(
+            /another write created this branch's metadata, so its access may be open/,
+          )
         },
       )
 
@@ -909,7 +943,7 @@ describe('admin branch-health api', () => {
         const access = { restricted: true }
         expect(result.ok).toBe(true)
         expect(result.data?.branch).toMatchObject({ access, createdBy: 'unknown' })
-        expect(result.data?.reset).toEqual({ status: 'editing', access, createdBy: 'unknown' })
+        expect(result.data?.reset).toEqual({ status: 'submitted', access, createdBy: 'unknown' })
         expect(result.data?.kept).toEqual({})
         expect(result.data?.restricted).toBe(true)
         expect(result.data?.openToEveryone).toBe(false)
@@ -1046,6 +1080,69 @@ describe('admin branch-health api', () => {
         const withdrawn = await withdrawAsCreator('bad-status', written)
         expect(withdrawn.error).toBeUndefined()
         expect(withdrawn.data?.branch.status).toBe('editing')
+      })
+
+      it.each([
+        ['unreadable', { status: 'bogus' }],
+        ['missing', { status: undefined }],
+      ])(
+        'holds the delete of an archived, rewritten branch whose status is %s, through Withdraw',
+        async (_c, status) => {
+          await createDamaged(
+            'lost-status',
+            damagedJson({
+              name: 'lost-status',
+              ...status,
+              access: {},
+              createdBy: 'alice',
+              rewrittenOnGitHub: 'a'.repeat(40),
+              mergedAt: '2026-01-01T00:00:00.000Z',
+            }),
+          )
+
+          const result = await repairHandler(ctx, req, { dirName: 'lost-status' })
+
+          expect(result.data?.branch).toMatchObject({
+            status: 'submitted',
+            unpublishedAtMerge: true,
+          })
+          expect(result.data?.reset).toMatchObject({
+            status: 'submitted',
+            unpublishedAtMerge: true,
+          })
+          const withdrawn = await withdrawAsCreator('lost-status', result.data!.branch)
+          expect(withdrawn.data?.branch.status).toBe('editing')
+          const onDisk = await BranchMetadataFileManager.loadOnly(
+            path.join(branchesRoot, 'lost-status'),
+          )
+          const deleted = await deleteAsCreator('lost-status', onDisk!.branch)
+          expect(deleted).toMatchObject({
+            ok: false,
+            status: 409,
+            error: DELETE_NEEDS_ADMIN_REASON,
+          })
+        },
+      )
+
+      it('records a rewrite marker as the last GitHub tip when the tip is unknown', async () => {
+        const marker = 'a'.repeat(40)
+        await createDamaged(
+          'tip-lost',
+          damagedJson({
+            name: 'tip-lost',
+            access: {},
+            createdBy: 'alice',
+            rewrittenOnGitHub: marker,
+            lastGitHubTip: 7,
+          }),
+        )
+
+        const result = await repairHandler(ctx, req, { dirName: 'tip-lost' })
+
+        expect(result.data?.branch).toMatchObject({
+          rewrittenOnGitHub: marker,
+          lastGitHubTip: marker,
+        })
       })
 
       it('takes an archive time it cannot read as the repair time, so age deletion does not come early', async () => {
@@ -1225,7 +1322,7 @@ describe('admin branch-health api', () => {
         expect(await canOpen('entries', carol)).toBe(false)
       })
 
-      it('drops a removals value that is no object, listing no one', async () => {
+      it('drops a removals value that is no object, listing no one and leaving re-adding to admins', async () => {
         await createDamaged(
           'no-object',
           damagedJson({ name: 'no-object', access: { excluded: 'carol' }, createdBy: 'alice' }),
@@ -1233,7 +1330,25 @@ describe('admin branch-health api', () => {
 
         const noObject = await repairHandler(ctx, req, { dirName: 'no-object' })
 
-        expect(noObject.data?.branch.access).toEqual({ restricted: true })
+        expect(noObject.data?.branch.access).toEqual({ restricted: true, addBy: 'admins' })
+        expect(noObject.data?.removalsUnreadable).toBe(true)
+      })
+
+      it('leaves re-adding to admins when the removed groups cannot be read', async () => {
+        await createDamaged(
+          'no-groups',
+          damagedJson({
+            name: 'no-groups',
+            access: { excludedGroups: ['readers'], addBy: 'members' },
+            createdBy: 'alice',
+          }),
+        )
+
+        const result = await repairHandler(ctx, req, { dirName: 'no-groups' })
+
+        expect(result.data?.branch.access).toEqual({ restricted: true, addBy: 'admins' })
+        expect(result.data?.removalsUnreadable).toBe(true)
+        expect(result.data?.isBase).toBe(false)
       })
 
       it.each([
@@ -1362,7 +1477,11 @@ describe('admin branch-health api', () => {
 
         expect(result.ok).toBe(true)
         expect(result.data?.branch.access).toEqual({})
-        expect(result.data?.reset).toEqual({ status: 'editing', access: {}, createdBy: 'unknown' })
+        expect(result.data?.reset).toEqual({
+          status: 'submitted',
+          access: {},
+          createdBy: 'unknown',
+        })
         expect(result.data?.restricted).toBe(false)
         expect(result.data?.openToEveryone).toBe(true)
         expect(await canOpen('main', dave)).toBe(true)
@@ -1408,6 +1527,7 @@ describe('admin branch-health api', () => {
         ['a lockdown that does not read', { managerOrAdminAllowed: 'true' }],
         ['a list beside unreadable fields', { allowedUsers: 'x', excluded: { bob: removal } }],
         ['removals that are no object', { excluded: 'bob' }],
+        ['removed groups that are no object', { excludedGroups: 'readers' }],
       ])(
         'locks the base branch to admins and reviewers when its access had %s',
         async (_c, access) => {
@@ -1420,6 +1540,7 @@ describe('admin branch-health api', () => {
 
           expect(result.data?.branch.access).toMatchObject({ managerOrAdminAllowed: true })
           expect(result.data?.lockedByRepair).toBe(true)
+          expect(result.data?.isBase).toBe(true)
           expect(hasAccessList(result.data!.branch.access)).toBe(false)
           expect(result.data?.restricted).toBe(false)
           expect(result.data?.openToEveryone).toBe(false)

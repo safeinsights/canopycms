@@ -49,18 +49,29 @@ type RepairedBranch = NonNullable<RepairBranchDirResponse['data']>
 const plural = (count: number, one: string, many: string): string =>
   `${count} ${count === 1 ? one : many}`
 
-/** The people and groups `access` removed, who stay out, in a sentence; '' when there are none. */
+/**
+ * What `access`'s removals enforce, in sentences, '' when there are none. A removed person stays
+ * out; a removed group keeps no one out, but only a manager of the list re-adds it, and only an
+ * admin one an admin removed (authorization/branch-sharing.ts).
+ */
 function stayOutSentence(access: BranchAccessControl): string {
   const people = Object.keys(access.excluded ?? {}).length
-  const groups = Object.keys(access.excludedGroups ?? {}).length
-  if (people + groups === 0) return ''
-  const removed = [
-    people > 0 ? plural(people, 'person', 'people') : '',
-    groups > 0 ? plural(groups, 'group', 'groups') : '',
-  ]
-    .filter(Boolean)
-    .join(' and ')
-  return ` The ${removed} removed from it ${people + groups === 1 ? 'stays' : 'stay'} out.`
+  const groups = Object.values(access.excludedGroups ?? {})
+  const byAdmin = groups.filter((removal) => removal.byAdmin).length
+  const reAdders =
+    byAdmin === groups.length
+      ? 'an admin'
+      : byAdmin === 0
+        ? 'its owner or an admin'
+        : 'its owner or an admin, and only an admin where an admin removed it'
+  return [
+    people > 0
+      ? ` The ${plural(people, 'person', 'people')} removed from it ${people === 1 ? 'stays' : 'stay'} out.`
+      : '',
+    groups.length > 0
+      ? ` The ${plural(groups.length, 'group', 'groups')} removed from it can be added back only by ${reAdders}.`
+      : '',
+  ].join('')
 }
 
 /** Who can open a repaired branch now, and whether an admin has to act on it. */
@@ -85,14 +96,16 @@ function repairedAccess(repaired: RepairedBranch): { text: string; mustAct: bool
     }
     // Only the base branch and dev's active branch fall back to no list.
     return {
-      text: `Access couldn't be read. This branch takes no access list, so anyone who can sign in can open this branch.${stayOut}`,
+      text: repaired.isBase
+        ? `Access couldn't be read. The base branch takes no access list, so anyone who can sign in can open this branch.${stayOut}`
+        : `Access couldn't be read. This is the branch a development server edits, so it is kept open to anyone who can sign in.${stayOut}`,
       mustAct: false,
     }
   }
   const who = access.managerOrAdminAllowed
     ? 'only admins and reviewers can open it'
     : repaired.restricted
-      ? 'only the people listed can open it'
+      ? 'only the people and groups listed, admins and reviewers can open it'
       : repaired.openToEveryone
         ? 'anyone who can sign in can open it'
         : isNobody(createdBy) || isExcludedFrom(access, createdBy)
@@ -101,28 +114,46 @@ function repairedAccess(repaired: RepairedBranch): { text: string; mustAct: bool
   return { text: `Kept its access: ${who}.${stayOut}`, mustAct: false }
 }
 
-/** What else a repair could not read and held back, each needing an admin; in sentences. */
+/** What dropping each of these fields stops holding back, for an admin to check. */
+const DROPPED_HOLDS: Partial<Record<string, string>> = {
+  submitUnfinished:
+    "Whether its last submit finished couldn't be read, so Approve isn't held back for it.",
+  syncStatus:
+    "Its sync state couldn't be read, so a later merge isn't flagged as possibly missing changes, and a push or base update a failed sync held back may go ahead.",
+  pullRequestState:
+    "Its pull request state couldn't be read, so Approve, Request changes and Mark merged aren't held back for a closed pull request.",
+}
+
+/**
+ * What else repair could not read, and what that holds back or no longer holds back, in sentences
+ * for the admin to check; Withdraw, not an admin, lifts the submitted lock.
+ */
 function repairedHolds(repaired: RepairedBranch): string[] {
   const { reset, branch } = repaired
   const archived = branch.status === 'archived'
+  const deleteHeld = branch.unpublishedAtMerge === true || branch.rewrittenOnGitHub !== undefined
   return [
     reset.status === 'submitted'
-      ? "Its status couldn't be read, so it is locked as submitted until it is withdrawn."
+      ? "Its status couldn't be read or was missing, so it is locked as submitted until it is withdrawn."
       : '',
-    reset.createdBy !== undefined && !repaired.openToEveryone
+    reset.createdBy !== undefined && !repaired.openToEveryone && !repaired.isBase
       ? 'Its creator couldn\'t be read or was missing, so only an admin can share it again from "Branches".'
       : '',
     reset.unpublishedAtMerge
-      ? "Its merge record couldn't be read, so only an admin can delete it."
+      ? "What held its delete for an admin couldn't be read, so only an admin can delete it."
       : '',
     reset.rewrittenOnGitHub !== undefined
       ? archived
         ? "Its record of GitHub's branch couldn't be read, so only an admin can delete it."
-        : "Its record of GitHub's branch couldn't be read, so nothing is pushed to GitHub until a sync clears it: once GitHub has no branch of this name, or once this branch is published and GitHub's holds every commit CanopyCMS recorded."
+        : "Its record of GitHub's branch couldn't be read, so nothing is pushed to GitHub until a sync clears it: once GitHub has no branch of this name, or, with this branch published, once GitHub's holds every commit of this branch's."
       : '',
-    reset.archivedAt !== undefined && archived
+    reset.archivedAt !== undefined && archived && !deleteHeld
       ? "Its archive time couldn't be read, so deletion by age counts from this repair."
       : '',
+    repaired.removalsUnreadable && !repaired.isBase
+      ? "Its removals couldn't be read, so check who was removed before sharing it again."
+      : '',
+    ...repaired.otherFields.dropped.map((field) => DROPPED_HOLDS[field] ?? ''),
   ].filter(Boolean)
 }
 

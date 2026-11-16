@@ -27,7 +27,12 @@ import {
   salvageBranchMetadata,
   type SalvagedAccess,
 } from '../branch-metadata-file'
-import { hasAccessList, opensToEveryone, opensWithoutList } from '../authorization'
+import {
+  getBranchProtection,
+  hasAccessList,
+  opensToEveryone,
+  opensWithoutList,
+} from '../authorization'
 import { UNKNOWN_CREATOR_ID } from '../system-users'
 import {
   ORPHAN_YOUTH_THRESHOLD_MS,
@@ -101,8 +106,12 @@ interface RepairBranchDirData {
    * those present but unreadable, left out.
    */
   otherFields: { kept: string[]; dropped: (keyof BranchMetadata)[] }
+  /** The protected base branch, which takes no access list. */
+  isBase: boolean
   /** Repair itself turned the lockdown on, rather than keeping one the file held. */
   lockedByRepair: boolean
+  /** Removals may have been lost, so `addBy` is `'admins'`: check who was removed. */
+  removalsUnreadable: boolean
   /** The list decides who may open the branch, even when empty. */
   restricted: boolean
   /**
@@ -411,10 +420,11 @@ const purgeBranchDirHandler = async (
  * Rebuilt field by field: inside the lock, the corrupt file's text is read and every field is
  * salvaged on its own by the rules salvageBranchMetadata states; nothing that decides who can open,
  * edit or delete the branch widens. `name` comes from the clone, an absent field gets save()'s
- * default (`status` `editing`), a `createdBy` that doesn't read or is missing becomes `'unknown'`,
- * and unreadable access becomes {@link fallbackAccess}. Text that isn't JSON salvages nothing, so
- * it comes back `editing`, by `'unknown'`, open only to admins and reviewers unless it is the base
- * branch.
+ * default but for `status`, which an absent one leaves `submitted`, a `createdBy` that doesn't
+ * read or is missing becomes `'unknown'`, and unreadable access becomes {@link fallbackAccess}.
+ * Text that isn't JSON salvages nothing, so it comes back `submitted`, by `'unknown'`, open only
+ * to admins and reviewers unless it is the base branch. Text that can't be read at all is refused,
+ * archiving nothing.
  *
  * The write applies only over no metadata at all, so a write that created the file after the
  * archive is never merged over. A write that throws is checked on disk: if what repair decided
@@ -476,7 +486,7 @@ const repairBranchDirHandler = async (
   }
 
   try {
-    let archived: { archivedAs: string; raw: string | null }
+    let archived: { archivedAs: string; raw: string }
     try {
       archived = await withOccFileLock(branchJsonPath, async () => {
         // Re-verify still-corrupt under the lock (a concurrent repair could
@@ -490,8 +500,19 @@ const repairBranchDirHandler = async (
           throw new RepairPreconditionError('No metadata file -- use purge for orphans', 409)
         }
 
-        // Text that can't be read salvages nothing, so its access falls back closed.
-        const raw = await fs.readFile(branchJsonPath, 'utf8').catch(() => null)
+        // The text is all repair salvages from, so a file it can't read is refused, not archived.
+        let raw: string
+        try {
+          raw = await fs.readFile(branchJsonPath, 'utf8')
+        } catch (err: unknown) {
+          if (isNotFoundError(err)) {
+            throw new RepairPreconditionError('No metadata file -- use purge for orphans', 409)
+          }
+          throw new RepairPreconditionError(
+            `Could not read the corrupt branch.json, so nothing was archived: ${getErrorMessage(err)}`,
+            500,
+          )
+        }
         const archivedName = `${BRANCH_META_FILE}.corrupt-${formatDirStamp(new Date())}`
         await fs.rename(branchJsonPath, path.join(dirPath, BRANCH_META_DIR, archivedName))
         return { archivedAs: archivedName, raw }
@@ -507,7 +528,7 @@ const repairBranchDirHandler = async (
       }
     }
 
-    const salvaged = salvageBranchMetadata(archived.raw ?? '')
+    const salvaged = salvageBranchMetadata(archived.raw)
     const config = ctx.services.config
     const { fields } = salvaged
     const createdBy = fields.createdBy ?? UNKNOWN_CREATOR_ID
@@ -652,11 +673,11 @@ function repairedData(
     warning?: string
   },
 ): RepairBranchDirData {
-  const { fields, unreadable } = salvaged
+  const { fields, read, unreadable } = salvaged
   const wasKept = (key: RightsField | 'baseBranch'): boolean =>
     key === 'access'
       ? salvaged.access.readable
-      : fields[key] !== undefined && !unreadable.includes(key)
+      : read[key] !== undefined && isDeepStrictEqual(read[key], written[key])
   const reset: Partial<Pick<BranchMetadata, RightsField>> = {}
   const kept: Partial<Pick<BranchMetadata, RightsField | 'baseBranch'>> = {}
   for (const key of [...RIGHTS_FIELDS, 'baseBranch'] as const) {
@@ -673,9 +694,7 @@ function repairedData(
     kept,
     otherFields: {
       kept: [
-        ...(Object.keys(fields) as (keyof BranchMetadata)[]).filter(
-          (key) => !reported.has(key) && !unreadable.includes(key),
-        ),
+        ...(Object.keys(read) as (keyof BranchMetadata)[]).filter((key) => !reported.has(key)),
         ...Object.keys(salvaged.unknownFields),
       ],
       dropped: unreadable.filter(
@@ -684,7 +703,9 @@ function repairedData(
     },
     restricted: hasAccessList(written.access),
     openToEveryone: opensToEveryone(written, options.config),
+    isBase: getBranchProtection(options.config, written.name, written.baseBranch).isProtected,
     lockedByRepair: options.lockedByRepair,
+    removalsUnreadable: !salvaged.access.readable && salvaged.access.removalsUnreadable,
     ...(options.warning !== undefined && { warning: options.warning }),
   }
 }
@@ -763,8 +784,9 @@ async function restoreArchived(dirPath: string, archivedAs: string): Promise<str
           if (isNotFoundError(err)) return false
           throw err
         })
-      if (present)
-        return `The corrupt file stays archived as ${archivedAs}: branch.json exists again.`
+      if (present) {
+        return `The corrupt file stays archived as ${archivedAs}: another write created this branch's metadata, so its access may be open. Check who can open it, in "Branches".`
+      }
       await fs.rename(path.join(metaDir, archivedAs), branchJsonPath)
       return 'The corrupt file is back as branch.json.'
     })
@@ -968,7 +990,9 @@ const repairBranchDir = defineEndpoint({
     otherFields: { kept: [], dropped: [] },
     restricted: false,
     openToEveryone: false,
+    isBase: false,
     lockedByRepair: false,
+    removalsUnreadable: false,
   },
   guards: ['admin'] as const,
   handler: repairBranchDirHandler,

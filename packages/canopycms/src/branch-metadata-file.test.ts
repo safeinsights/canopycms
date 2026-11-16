@@ -213,18 +213,32 @@ describe('readBranchMetadataFile', () => {
 
 describe('salvageBranchMetadata', () => {
   const nothing = {
-    access: { readable: false, narrowing: {}, mayRestrict: false, lockdownUnreadable: false },
-    fields: {},
+    access: {
+      readable: false,
+      narrowing: {},
+      mayRestrict: false,
+      lockdownUnreadable: false,
+      removalsUnreadable: false,
+    },
+    // A status nothing says is as unknown as one that doesn't read.
+    fields: { status: 'submitted' },
+    read: {},
     unknownFields: {},
     unreadable: [],
   }
   const salvage = (file: unknown) => salvageBranchMetadata(JSON.stringify(file))
   const removal = { by: 'admin', at: '2026-11-01T00:00:00.000Z', byAdmin: true }
-  const damaged = (narrowing: object, mayRestrict = false, lockdownUnreadable = false) => ({
+  const damaged = (
+    narrowing: object,
+    mayRestrict = false,
+    lockdownUnreadable = false,
+    removalsUnreadable = false,
+  ) => ({
     readable: false,
     narrowing,
     mayRestrict,
     lockdownUnreadable,
+    removalsUnreadable,
   })
 
   it.each([
@@ -240,7 +254,8 @@ describe('salvageBranchMetadata', () => {
   it('reads a missing access as absent, suggesting no restriction', () => {
     expect(salvage({ branch: { createdBy: 'alice' } })).toEqual({
       ...nothing,
-      fields: { createdBy: 'alice' },
+      fields: { status: 'submitted', createdBy: 'alice' },
+      read: { createdBy: 'alice' },
     })
   })
 
@@ -249,7 +264,9 @@ describe('salvageBranchMetadata', () => {
     ['an array', []],
     ['a string', 'restricted'],
   ])('reads an access that is %s as one that may have restricted', (_case, access) => {
-    expect(salvage({ branch: { access } }).access).toEqual(damaged({}, true))
+    expect(salvage({ branch: { access } }).access).toEqual(
+      damaged({ addBy: 'admins' }, true, false, true),
+    )
   })
 
   it('keeps an access that passes whole, unknown keys included', () => {
@@ -337,17 +354,17 @@ describe('salvageBranchMetadata', () => {
   it.each([
     ['a string', 'readers'],
     ['an array', ['readers']],
-  ])('drops removed groups that are %s, which restrict no access', (_case, excludedGroups) => {
+  ])('drops removed groups that are %s, leaving re-adding to admins', (_case, excludedGroups) => {
     const salvaged = salvage({ branch: { access: { excludedGroups, entryMeta: 1 } } })
-    expect(salvaged.access).toEqual(damaged({}))
+    expect(salvaged.access).toEqual(damaged({ addBy: 'admins' }, true, false, true))
   })
 
   it.each([
     ['a string', 'bob'],
     ['an array', ['bob']],
-  ])('drops removals that are %s, noting what they may have restricted', (_case, excluded) => {
-    const salvaged = salvage({ branch: { access: { excluded, entryMeta: 1 } } })
-    expect(salvaged.access).toEqual(damaged({}, true))
+  ])('drops removals that are %s, leaving re-adding to admins', (_case, excluded) => {
+    const salvaged = salvage({ branch: { access: { excluded, entryMeta: 1, addBy: 'owner' } } })
+    expect(salvaged.access).toEqual(damaged({ addBy: 'admins' }, true, false, true))
   })
 
   it.each(['editing', 'submitted', 'approved', 'archived'])('keeps a status of %j', (status) => {
@@ -361,11 +378,36 @@ describe('salvageBranchMetadata', () => {
     ['archivedAt', 7, '2026-11-16T12:00:00.000Z'],
   ])('takes an unreadable %s at its most restrictive', (key, value, restrictive) => {
     const salvaged = salvageBranchMetadata(
-      JSON.stringify({ branch: { [key]: value } }),
+      JSON.stringify({ branch: { status: 'archived', [key]: value } }),
       new Date('2026-11-16T12:00:00.000Z'),
     )
-    expect(salvaged.fields).toEqual({ [key]: restrictive })
+    expect(salvaged.fields).toMatchObject({ [key]: restrictive })
+    expect(salvaged.read).not.toHaveProperty(key)
     expect(salvaged.unreadable).toEqual([key])
+  })
+
+  it.each([
+    ['unreadable', { status: 'bogus' }],
+    ['missing', {}],
+  ])('holds the delete for an admin when a status is %s beside a rewrite marker', (_c, status) => {
+    const salvaged = salvage({ branch: { ...status, rewrittenOnGitHub: 'a'.repeat(40) } })
+    expect(salvaged.fields).toMatchObject({ status: 'submitted', unpublishedAtMerge: true })
+  })
+
+  it('records a marker naming a commit as the last GitHub tip when the tip is unknown', () => {
+    const marker = 'a'.repeat(40)
+    for (const lastGitHubTip of [undefined, 7]) {
+      const salvaged = salvage({
+        branch: { status: 'editing', rewrittenOnGitHub: marker, lastGitHubTip },
+      })
+      expect(salvaged.fields.lastGitHubTip).toBe(marker)
+    }
+    const empty = salvage({ branch: { status: 'editing', rewrittenOnGitHub: '' } })
+    expect(empty.fields.lastGitHubTip).toBeUndefined()
+    const recorded = salvage({
+      branch: { status: 'editing', rewrittenOnGitHub: marker, lastGitHubTip: 'b'.repeat(40) },
+    })
+    expect(recorded.fields.lastGitHubTip).toBe('b'.repeat(40))
   })
 
   it('keeps every other field that reads, and leaves out one that does not', () => {
@@ -381,6 +423,7 @@ describe('salvageBranchMetadata', () => {
       },
     })
     expect(salvaged.fields).toEqual({
+      status: 'submitted',
       pullRequestNumber: 42,
       lastGitHubTip: 'a'.repeat(40),
       historyRewrittenFrom: 'b'.repeat(40),
@@ -418,7 +461,8 @@ describe('salvageBranchMetadata', () => {
   it('keeps a non-empty createdBy and baseBranch', () => {
     expect(salvage({ branch: { createdBy: 'alice', baseBranch: 'main' } })).toEqual({
       ...nothing,
-      fields: { createdBy: 'alice', baseBranch: 'main' },
+      fields: { status: 'submitted', createdBy: 'alice', baseBranch: 'main' },
+      read: { createdBy: 'alice', baseBranch: 'main' },
     })
   })
 
@@ -428,7 +472,7 @@ describe('salvageBranchMetadata', () => {
       ' "access": {"__proto__": {"allowedUsers": ["mallory"]}, "entryMeta": 1,' +
       ' "excluded": {"__proto__": {"by": "x", "at": "y", "byAdmin": false}}}}}'
     const salvaged = salvageBranchMetadata(raw)
-    expect(salvaged.fields).toEqual({})
+    expect(salvaged.fields).toEqual({ status: 'submitted' })
     expect(salvaged.access).toEqual(damaged({ excluded: {} }))
     if (salvaged.access.readable) throw new Error('expected damaged access')
     const excluded = salvaged.access.narrowing.excluded ?? {}

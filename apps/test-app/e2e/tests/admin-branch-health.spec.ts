@@ -110,7 +110,7 @@ test.describe('Admin Branch Health', () => {
     await expect(branchRow).toContainText('Editing')
   })
 
-  test('corrupt metadata repairs to editing, closed to admins and reviewers; registry quarantines it in the meantime (B9)', async ({
+  test('corrupt metadata repairs to submitted, closed to admins and reviewers; registry quarantines it in the meantime (B9)', async ({
     page,
   }) => {
     const dirName = `broken-${Date.now()}`
@@ -143,14 +143,15 @@ test.describe('Admin Branch Health', () => {
     // Between the rename and that write, branch.json does not exist -- a single
     // readBranchMetadata here can land in the window and throw ENOENT.
     //
-    // The seeded file isn't JSON, so neither its creator nor its access can be
-    // read: the creator is recorded as 'unknown' and the branch lists no one.
+    // The seeded file isn't JSON, so neither its status, creator nor access can
+    // be read: it is submitted until withdrawn, its creator is recorded as
+    // 'unknown', and it lists no one.
     await expect
       .poll(async () => {
         const meta = await readBranchMetadata(dirName).catch(() => null)
         return meta ? { status: meta.status, createdBy: meta.createdBy, access: meta.access } : null
       })
-      .toEqual({ status: 'editing', createdBy: 'unknown', access: { restricted: true } })
+      .toEqual({ status: 'submitted', createdBy: 'unknown', access: { restricted: true } })
   })
 
   test('orphan directory purges to trash; retention is keyed off the NAME stamp, not mtime', async ({
