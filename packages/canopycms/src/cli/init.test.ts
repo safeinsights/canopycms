@@ -104,6 +104,10 @@ describe('canopycms init', () => {
     // dev` must not 403 the scaffolding developer (including the dev-auth default user) on
     // every route before they have touched a line of config.
     expect(config).toContain("defaultPathAccess: { read: 'allow' }")
+    // Edit stays closed, so the comment says who can create a branch until an admin opens it.
+    expect(config).toMatch(
+      /admin\s+\/\/\s+must add an edit rule for your editors[^]*before editors can create branches/,
+    )
   })
 
   it('generates API route with correct handler pattern', async () => {
