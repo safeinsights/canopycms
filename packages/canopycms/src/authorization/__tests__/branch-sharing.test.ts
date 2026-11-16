@@ -47,6 +47,7 @@ describe('branchSharingRights', () => {
       isOwner: true,
       isMember: false,
       canAdd: true,
+      canRemoveOwn: true,
       canManage: true,
     })
   })
@@ -369,6 +370,55 @@ describe('applyAccessChange: exclusions and opening', () => {
     const access = accessOf(apply(admin, legacy, { remove: { users: ['owner', 'member'] } }))
     expect(access.restricted).toBe(true)
     expect(access.allowedUsers).toBeUndefined()
+  })
+
+  it('lets a member take back their own additions once only the owner may add', () => {
+    const withAdd = accessOf(apply(member, shared, { add: { users: ['pal'] } }))
+    const ownerOnly = { ...withAdd, addBy: 'owner' as const }
+    const undone = accessOf(apply(member, ownerOnly, { remove: { users: ['pal'] } }))
+    expect(undone.allowedUsers).toEqual(['owner', 'member'])
+    expect(undone.excluded).toBeUndefined()
+    expect(codeOf(apply(member, ownerOnly, { add: { users: ['other'] } }))).toBe(
+      'ACCESS_ADD_FORBIDDEN',
+    )
+    expect(codeOf(apply(member, ownerOnly, { remove: { groups: ['team'] } }))).toBe(
+      'ACCESS_MANAGE_FORBIDDEN',
+    )
+  })
+
+  it('refuses a member their own additions on a locked-down or archived branch', () => {
+    const withAdd = accessOf(apply(member, shared, { add: { users: ['pal'] } }))
+    const locked = { ...withAdd, managerOrAdminAllowed: true }
+    expect(codeOf(apply(member, locked, { remove: { users: ['pal'] } }))).toBe(
+      'ACCESS_MANAGE_FORBIDDEN',
+    )
+    const archived = applyAccessChange(
+      withAdd,
+      { remove: { users: ['pal'] } },
+      {
+        actor: member,
+        rights: rights(member, branch(withAdd, { status: 'archived' })),
+        creator: 'owner',
+        defaultAccess: 'deny',
+        now: 't1',
+      },
+    )
+    expect(codeOf(archived)).toBe('ACCESS_MANAGE_FORBIDDEN')
+  })
+
+  it("makes an owner's exclusion an admin's when an admin removes the person too", () => {
+    const byOwner = accessOf(apply(owner, shared, { remove: { users: ['member'] } }))
+    const result = apply(admin, byOwner, { remove: { users: ['member'] } })
+    if ('refusal' in result) throw new Error(`refused: ${result.refusal.code}`)
+    expect(result.changed).toBe(true)
+    expect(result.excluded).toEqual(['member'])
+    expect(result.access.excluded?.member).toEqual({ by: 'admin', at: 't1', byAdmin: true })
+    expect(codeOf(apply(owner, result.access, { add: { users: ['member'] } }))).toBe(
+      'USER_EXCLUDED',
+    )
+    const again = apply(admin, result.access, { remove: { users: ['member'] } })
+    if ('refusal' in again) throw new Error(`refused: ${again.refusal.code}`)
+    expect(again.changed).toBe(false)
   })
 
   it("refuses a member removing their own additions once the list is the admins'", () => {

@@ -66,6 +66,8 @@ export interface BranchSharingRights {
   isMember: boolean
   /** May add people. */
   canAdd: boolean
+  /** May remove the entries they added. */
+  canRemoveOwn: boolean
   /** May remove anyone, restrict or open the branch, set who may add, and lift exclusions. */
   canManage: boolean
 }
@@ -74,6 +76,7 @@ const NO_RIGHTS: BranchSharingRights = {
   isOwner: false,
   isMember: false,
   canAdd: false,
+  canRemoveOwn: false,
   canManage: false,
 }
 
@@ -95,17 +98,21 @@ export function branchSharingRights(
     branch.createdBy === user.userId &&
     !isExcludedFrom(access, user.userId) &&
     (!hasAccessList(access) || isMember)
-  if (isAdmin(user.groups)) return { isOwner, isMember, canAdd: true, canManage: true }
+  if (isAdmin(user.groups)) {
+    return { isOwner, isMember, canAdd: true, canRemoveOwn: true, canManage: true }
+  }
   if (access.managerOrAdminAllowed || isNobody(branch.createdBy) || branch.status === 'archived') {
     return { ...NO_RIGHTS, isOwner, isMember }
   }
-  // 'admins' hands the whole list to admins, its owner included.
+  // 'admins' hands the whole list to admins, its owner included. Under 'owner' a member still
+  // takes back what they added.
   const addBy = access.addBy ?? options.whoCanAdd
   if (addBy === 'admins') return { ...NO_RIGHTS, isOwner, isMember }
   return {
     isOwner,
     isMember,
     canAdd: isOwner || (isMember && addBy === 'members'),
+    canRemoveOwn: isOwner || isMember,
     canManage: isOwner,
   }
 }
@@ -283,7 +290,7 @@ export function applyAccessChange(
       .map((id) => entryKey('group', id)),
   ]
   if (!rights.canManage && removals.length > 0) {
-    if (!rights.canAdd) {
+    if (!rights.canRemoveOwn) {
       return refuse('ACCESS_MANAGE_FORBIDDEN', "You can't change who has access to this branch.")
     }
     const notTheirs = removals.filter((key) => meta[key]?.addedBy !== actor.userId)
@@ -402,8 +409,10 @@ export function applyAccessChange(
       removed.users.push(id)
     }
     // An owner's or admin's removal excludes the person, even one reaching the branch through a
-    // group; a member undoing their own add leaves no exclusion.
-    if (rights.canManage && !isExcluded(id)) {
+    // group; a member undoing their own add leaves no exclusion. An admin's removal of someone an
+    // owner excluded makes it an admin's, which the owner can't lift.
+    const asAdmin = actorIsAdmin && isExcluded(id) && !excluded[id].byAdmin
+    if (rights.canManage && (!isExcluded(id) || asAdmin)) {
       excluded[id] = { by: actor.userId, at: ctx.now, byAdmin: actorIsAdmin }
       newlyExcluded.push(id)
     }

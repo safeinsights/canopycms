@@ -427,7 +427,7 @@ export async function initialBranchAccess(
   })
   const applied = applyAccessChange({}, resolved.change, {
     actor,
-    rights: { isOwner: true, isMember: false, canAdd: true, canManage: true },
+    rights: { isOwner: true, isMember: false, canAdd: true, canRemoveOwn: true, canManage: true },
     creator: actor.userId,
     defaultAccess: ctx.services.config.defaultBranchAccess ?? 'deny',
     now: new Date().toISOString(),
