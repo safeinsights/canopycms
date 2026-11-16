@@ -22,7 +22,7 @@ import type { CanopyUser } from '../user'
 import { setBranchAccessLogSink } from '../utils/access-log'
 import { ADMIN_ROUTES } from './admin'
 import { updateBranchAccessHandler, type UpdateBranchAccessBody } from './branch'
-import { initialBranchAccess } from './branch-access'
+import { changeBranchAccess, initialBranchAccess } from './branch-access'
 import { BRANCH_PEOPLE_ROUTES, type BranchAccessResponse } from './branch-people'
 import { EMAIL_LOOKUP_LIMIT, resetEmailLookupLimits, type FindPeopleResult } from './people'
 import type { ApiContext, ApiResponse } from './types'
@@ -538,6 +538,8 @@ describe('GET /:branch/access', () => {
       defaultAccess: 'deny',
       addBy: 'members',
       rights: { isOwner: true, canAdd: true, canManage: true },
+      searchable: 'cms-users',
+      addableByEmail: 'all-users',
     })
   })
 
@@ -594,6 +596,20 @@ describe('GET /:branch/access', () => {
     await shared()
 
     expect(await getAccess(user('pal'), 'feature/x')).toMatchObject({ ok: false, status: 403 })
+  })
+
+  it('says whom search and email find for the viewer, an admin finding anyone by email', async () => {
+    await shared()
+    sharing({ searchable: 'nobody', addableByEmail: 'cms-users' })
+
+    expect((await getAccess(owner, 'feature/x')).data).toMatchObject({
+      searchable: 'nobody',
+      addableByEmail: 'cms-users',
+    })
+    expect((await getAccess(admin, 'feature/x')).data).toMatchObject({
+      searchable: 'nobody',
+      addableByEmail: 'all-users',
+    })
   })
 })
 
@@ -676,6 +692,105 @@ describe('PATCH /:branch/access adding by email', () => {
     expect(
       await patch(owner, 'feature/x', { add: { emails: ['otto@example.org'] } }),
     ).toMatchObject({ ok: false, status: 429, code: 'RATE_LIMITED' })
+  })
+
+  it('lets an owner allow back by id an outsider they added by email and then removed', async () => {
+    const context = await addBranch('feature/x')
+    expect((await patch(owner, 'feature/x', { add: { emails: ['otto@example.org'] } })).ok).toBe(
+      true,
+    )
+    expect((await patch(owner, 'feature/x', { remove: { users: ['outsider'] } })).ok).toBe(true)
+    expect((await onDisk(context))?.access.excluded).toHaveProperty('outsider')
+
+    expect((await patch(owner, 'feature/x', { add: { users: ['outsider'] } })).ok).toBe(true)
+    const saved = (await onDisk(context))?.access
+    expect(saved?.allowedUsers).toEqual(['owner', 'outsider'])
+    expect(saved?.excluded).toBeUndefined()
+  })
+
+  it('never names the account an address found when refusing it', async () => {
+    await addBranch('feature/x', {
+      access: {
+        restricted: true,
+        allowedUsers: ['owner'],
+        excluded: { outsider: { by: 'admin', at: 't', byAdmin: true } },
+      },
+    })
+
+    const res = await patch(owner, 'feature/x', { add: { emails: ['otto@example.org'] } })
+
+    expect(res).toMatchObject({ ok: false, code: 'USER_EXCLUDED' })
+    expect(JSON.stringify(res)).not.toContain('outsider')
+  })
+
+  it.each([
+    ['a reserved group', { groups: [RESERVED_GROUPS.ADMINS] }],
+    ['an unknown id', { users: ['bogus'] }],
+  ])(
+    'answers a member a removed address beside %s as it answers an unknown one',
+    async (_label, more) => {
+      await addBranch('feature/x', {
+        access: {
+          restricted: true,
+          allowedUsers: ['owner', 'member'],
+          excluded: { outsider: { by: 'owner', at: 't', byAdmin: false } },
+        },
+      })
+
+      const removed = await patch(member, 'feature/x', {
+        add: { emails: ['otto@example.org'], ...more },
+      })
+      const nobody = await patch(member, 'feature/x', {
+        add: { emails: ['ghost@example.org'], ...more },
+      })
+
+      expect(removed).toEqual(nobody)
+      expect(nobody).toMatchObject({ status: 400, code: 'USER_NOT_FOUND' })
+    },
+  )
+
+  it('answers a member a removed address as an unknown one when only the list on disk removed it', async () => {
+    const context = await addBranch('feature/x', {
+      access: {
+        restricted: true,
+        allowedUsers: ['owner', 'member'],
+        excluded: { outsider: { by: 'owner', at: 't', byAdmin: false } },
+        excludedGroups: { team: { by: 'owner', at: 't', byAdmin: false } },
+      },
+    })
+    const stale = {
+      ...context,
+      branch: {
+        ...context.branch,
+        access: { restricted: true, allowedUsers: ['owner', 'member'] },
+      },
+    }
+
+    const removed = await changeBranchAccess(ctx(), member, stale, {
+      add: { emails: ['otto@example.org'], groups: ['team'] },
+    })
+    const nobody = await changeBranchAccess(ctx(), member, stale, {
+      add: { emails: ['ghost@example.org'], groups: ['team'] },
+    })
+
+    expect(removed).toEqual(nobody)
+    expect(nobody).toMatchObject({ ok: false, refused: { status: 400, code: 'USER_NOT_FOUND' } })
+  })
+
+  it('answers a member an address that finds someone removed as one that finds no one', async () => {
+    await addBranch('feature/x', {
+      access: {
+        restricted: true,
+        allowedUsers: ['owner', 'member'],
+        excluded: { outsider: { by: 'owner', at: 't', byAdmin: false } },
+      },
+    })
+
+    const removed = await patch(member, 'feature/x', { add: { emails: ['otto@example.org'] } })
+    const nobody = await patch(member, 'feature/x', { add: { emails: ['ghost@example.org'] } })
+
+    expect(removed).toEqual(nobody)
+    expect(nobody).toMatchObject({ ok: false, status: 400, code: 'USER_NOT_FOUND' })
   })
 
   it('still refuses someone outside this CMS by id', async () => {

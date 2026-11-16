@@ -168,6 +168,7 @@ describe('PATCH /:branch/access', () => {
     expect(await patch(member, 'feature/x', { add: { users: ['owner'] } })).toMatchObject({
       status: 403,
       code: 'USER_EXCLUDED',
+      ids: ['owner'],
     })
     expect((await onDisk(context))?.access.allowedUsers).toEqual(['member'])
   })
@@ -180,6 +181,7 @@ describe('PATCH /:branch/access', () => {
     expect((await patch(member, 'feature/x', { add: { users: ['pal'] } })).ok).toBe(true)
     expect(await patch(member, 'feature/x', { remove: { users: ['owner'] } })).toMatchObject({
       code: 'ACCESS_MANAGE_FORBIDDEN',
+      ids: ['owner'],
     })
     expect((await patch(member, 'feature/x', { remove: { users: ['pal'] } })).ok).toBe(true)
     const saved = await onDisk(context)
@@ -297,7 +299,7 @@ describe('PATCH /:branch/access, round-one cases', () => {
 
     const res = await changeBranchAccess(ctx(), owner, stale, { add: { users: ['outsider'] } })
 
-    expect(res).toMatchObject({ ok: false, refused: { code: 'USER_OUT_OF_SCOPE' } })
+    expect(res).toMatchObject({ ok: false, refused: { status: 409, code: 'LIST_CHANGED' } })
     expect((await onDisk(context))?.access.allowedUsers).toEqual(['owner'])
   })
 
@@ -326,7 +328,7 @@ describe('PATCH /:branch/access, round-one cases', () => {
 
     const res = await changeBranchAccess(ctx(), owner, stale, { remove: { users: ['made-up'] } })
 
-    expect(res).toMatchObject({ ok: false, refused: { code: 'USER_OUT_OF_SCOPE' } })
+    expect(res).toMatchObject({ ok: false, refused: { status: 409, code: 'LIST_CHANGED' } })
     expect((await onDisk(context))?.access.excluded).toBeUndefined()
   })
 
@@ -340,6 +342,22 @@ describe('PATCH /:branch/access, round-one cases', () => {
       code: 'USER_NOT_FOUND',
     })
     expect((await onDisk(context))?.access.excluded).toBeUndefined()
+  })
+
+  it('records no exclusion of someone outside this CMS, so allowing back by id adds no one new', async () => {
+    const context = await addBranch('feature/x', {
+      access: { restricted: true, allowedUsers: ['owner'] },
+    })
+
+    expect(await patch(owner, 'feature/x', { remove: { users: ['outsider'] } })).toMatchObject({
+      status: 403,
+      code: 'USER_OUT_OF_SCOPE',
+      ids: ['outsider'],
+    })
+    expect((await onDisk(context))?.access.excluded).toBeUndefined()
+    expect(await patch(owner, 'feature/x', { add: { users: ['outsider'] } })).toMatchObject({
+      code: 'USER_OUT_OF_SCOPE',
+    })
   })
 
   it('shuts out someone an owner removed even when a group on the list holds them', async () => {

@@ -535,6 +535,35 @@ describe('useDraftManager', () => {
       consoleErrorSpy.mockRestore()
     })
 
+    it("words a branch access refusal by its code, not the server's text", async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      mockSaveEntry.mockRejectedValueOnce(
+        new SaveApiError(
+          403,
+          "You don't have access to this branch.",
+          undefined,
+          'BRANCH_ACCESS_DENIED',
+        ),
+      )
+      const { result } = renderHook(() => useDraftManager(defaultOptions))
+
+      act(() => {
+        result.current.setDrafts({ abc123def456: { title: 'Draft' } })
+      })
+      await act(async () => {
+        await result.current.handleSave()
+      })
+
+      const { notifications } = await import('@mantine/notifications')
+      expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'Save not allowed',
+          message: 'You no longer have access to this branch. Choose another branch in "Branches".',
+        }),
+      )
+      consoleErrorSpy.mockRestore()
+    })
+
     it("shows the server's own message on a 409, untitled", async () => {
       const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
       const busy =

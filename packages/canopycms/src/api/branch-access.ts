@@ -30,7 +30,7 @@ import { canopyLogWarn } from '../utils/logger'
 import { loadCmsUserIds, lookupEmails, RATE_LIMITED_MESSAGE } from './people'
 
 export interface AccessRefused {
-  status: 400 | 403 | 429
+  status: 400 | 403 | 409 | 429
   error: string
   code: ApiErrorCode
   ids?: string[]
@@ -45,7 +45,7 @@ const refused = (
 
 const fromRefusal = (refusal: BranchAccessRefusal): AccessRefused =>
   refused(
-    refusal.code === 'ACCESS_CHANGE_INVALID' ? 400 : 403,
+    refusal.code === 'ACCESS_CHANGE_INVALID' || refusal.code === 'EXCLUSION_CAP' ? 400 : 403,
     refusal.code,
     refusal.message,
     refusal.ids,
@@ -70,13 +70,15 @@ async function unknownUsers(
 
 /**
  * Refuses users the sign-in provider does not know, and, for anyone but an admin, users who don't
- * work in this CMS ({@link loadCmsUserIds}). An id learned elsewhere (a listing, a pull request)
- * therefore adds no one a non-admin could not otherwise reach.
+ * work in this CMS ({@link loadCmsUserIds}) unless `vouched`. An id learned elsewhere (a listing, a
+ * pull request) therefore adds no one a non-admin could not otherwise reach, bar someone this
+ * branch's list once held.
  */
 async function checkUsersToAdd(
   ctx: ApiContext,
   actor: CanopyUser,
   userIds: readonly CanopyUserId[],
+  vouched: ReadonlySet<CanopyUserId> = new Set(),
 ): Promise<AccessRefused | null> {
   if (userIds.length === 0) return null
   const unknown = await unknownUsers(ctx, userIds)
@@ -85,7 +87,7 @@ async function checkUsersToAdd(
   }
   if (isAdmin(actor.groups)) return null
   const cmsUsers = await loadCmsUserIds(ctx)
-  const outside = userIds.filter((id) => !cmsUsers.has(id))
+  const outside = userIds.filter((id) => !cmsUsers.has(id) && !vouched.has(id))
   return outside.length > 0
     ? refused(
         403,
@@ -161,6 +163,8 @@ function refuseOutright(
   return null
 }
 
+const NO_SUCH_ADDRESS = 'No account uses one of these email addresses.'
+
 /** A change as a request states it: people to add may also be named by exact email address. */
 export type BranchAccessRequest = Omit<BranchAccessChange, 'add'> & {
   add?: NonNullable<BranchAccessChange['add']> & { emails?: string[] }
@@ -192,7 +196,7 @@ async function resolveEmailAdds(
   if (ids.length < found.length) {
     return {
       ok: false,
-      refused: refused(400, 'USER_NOT_FOUND', 'No account uses one of these email addresses.'),
+      refused: refused(400, 'USER_NOT_FOUND', NO_SUCH_ADDRESS),
     }
   }
   return {
@@ -222,6 +226,17 @@ export async function recordRecentShares(
   }
 }
 
+/**
+ * `refusal` without the ids an address in the request resolved to: the caller typed the address,
+ * and the id behind it is no business of theirs.
+ */
+function hidingEmailIds(refusal: AccessRefused, byEmail: ReadonlySet<CanopyUserId>): AccessRefused {
+  if (!refusal.ids || byEmail.size === 0) return refusal
+  const { ids, ...rest } = refusal
+  const shown = ids.filter((id) => !byEmail.has(id))
+  return shown.length > 0 ? { ...rest, ids: shown } : rest
+}
+
 export type BranchAccessOutcome =
   | { ok: true; branch: BranchMetadata; result: BranchAccessChangeResult | null }
   | { ok: false; refused: AccessRefused }
@@ -248,6 +263,22 @@ export async function changeBranchAccess(
   const resolved = await resolveEmailAdds(ctx, actor, request)
   if (!resolved.ok) return resolved
   const { change, byEmail } = resolved
+  // Find skips removed people, so to someone who can't see the list's removals an address that
+  // finds one answers as an unknown address does: here, and again on the list on disk, before
+  // any rule that could answer differently.
+  const findsSomeoneRemoved = (branch: BranchMetadata): boolean => {
+    const excluded = branch.access.excluded ?? {}
+    return (
+      !rightsFor(ctx, actor, branch).canManage &&
+      [...byEmail].some((id) => Object.prototype.hasOwnProperty.call(excluded, id))
+    )
+  }
+  const noSuchAddress = refused(400, 'USER_NOT_FOUND', NO_SUCH_ADDRESS)
+  if (findsSomeoneRemoved(context.branch)) return { ok: false, refused: noSuchAddress }
+  const refuse = (refusal: AccessRefused): BranchAccessOutcome => ({
+    ok: false,
+    refused: hidingEmailIds(refusal, byEmail),
+  })
 
   const now = new Date().toISOString()
   const defaultAccess = ctx.services.config.defaultBranchAccess ?? 'deny'
@@ -262,19 +293,24 @@ export async function changeBranchAccess(
 
   // A dry run first, so a change the rules refuse costs no user lookup and no lock.
   const dryRun = apply(context.branch)
-  if ('refusal' in dryRun) return { ok: false, refused: fromRefusal(dryRun.refusal) }
+  if ('refusal' in dryRun) return refuse(fromRefusal(dryRun.refusal))
   // Ids already listed are a no-op and skip the check. The list on disk may have dropped one
   // since; an id added there that this check never saw is refused inside the lock.
   const listed = new Set(context.branch.access.allowedUsers ?? [])
   const checked = new Set(
     (change.add?.users ?? []).filter((id) => id !== actor.userId && !listed.has(id)),
   )
+  // An exclusion records someone this list held, someone in this CMS (the removal check below), or,
+  // when an admin made it, anyone; `byAdmin` exclusions only an admin lifts
+  // (authorization/branch-sharing.ts `applyAccessChange`). So allowing back by id needs no scope.
+  const excludedHere = new Set(Object.keys(context.branch.access.excluded ?? {}))
   const scope = await checkUsersToAdd(
     ctx,
     actor,
     [...checked].filter((id) => !byEmail.has(id)),
+    excludedHere,
   )
-  if (scope) return { ok: false, refused: scope }
+  if (scope) return refuse(scope)
   // Excluding someone not on the list records an id nothing else vouches for, so it must be a real
   // person, never an arbitrary string. Only exclusions this change records are looked up.
   const newlyExcluded = new Set(dryRun.excluded)
@@ -284,9 +320,22 @@ export async function changeBranchAccess(
   const vouched = new Set([...listed, ...unlisted])
   const unknown = await unknownUsers(ctx, unlisted)
   if (unknown.length > 0) {
-    return {
-      ok: false,
-      refused: refused(400, 'USER_NOT_FOUND', 'Some of these people could not be found.', unknown),
+    return refuse(
+      refused(400, 'USER_NOT_FOUND', 'Some of these people could not be found.', unknown),
+    )
+  }
+  if (unlisted.length > 0 && !isAdmin(actor.groups)) {
+    const cmsUsers = await loadCmsUserIds(ctx)
+    const outside = unlisted.filter((id) => !cmsUsers.has(id))
+    if (outside.length > 0) {
+      return refuse(
+        refused(
+          403,
+          'USER_OUT_OF_SCOPE',
+          "You can't remove people who don't work in this editor.",
+          outside,
+        ),
+      )
     }
   }
 
@@ -301,6 +350,7 @@ export async function changeBranchAccess(
     const written = await metadata.update((existing) => {
       if (!existing) return null
       outcome.current = existing.branch
+      if (findsSomeoneRemoved(existing.branch)) throw new AccessChangeRefusedError(noSuchAddress)
       const applied = apply(existing.branch)
       if ('refusal' in applied) throw new AccessChangeRefusedError(fromRefusal(applied.refusal))
       const unchecked = isAdmin(actor.groups)
@@ -313,12 +363,10 @@ export async function changeBranchAccess(
       )
       if (unchecked.length + unvouched.length > 0) {
         throw new AccessChangeRefusedError(
-          refused(
-            403,
-            'USER_OUT_OF_SCOPE',
-            'The list changed while this was being saved. Try again.',
-            [...unchecked, ...unvouched],
-          ),
+          refused(409, 'LIST_CHANGED', 'The list changed while this was being saved. Try again.', [
+            ...unchecked,
+            ...unvouched,
+          ]),
         )
       }
       outcome.applied = applied.changed ? applied : null
@@ -326,7 +374,7 @@ export async function changeBranchAccess(
     })
     saved = written?.branch
   } catch (err: unknown) {
-    if (err instanceof AccessChangeRefusedError) return { ok: false, refused: err.refused }
+    if (err instanceof AccessChangeRefusedError) return refuse(err.refused)
     throw err
   }
 
@@ -355,6 +403,10 @@ export async function initialBranchAccess(
   }
   const resolved = await resolveEmailAdds(ctx, actor, { add })
   if (!resolved.ok) return resolved
+  const refuse = (refusal: AccessRefused) => ({
+    ok: false as const,
+    refused: hidingEmailIds(refusal, resolved.byEmail),
+  })
   const applied = applyAccessChange({}, resolved.change, {
     actor,
     rights: { isOwner: true, isMember: false, canAdd: true, canManage: true },
@@ -362,13 +414,13 @@ export async function initialBranchAccess(
     defaultAccess: ctx.services.config.defaultBranchAccess ?? 'deny',
     now: new Date().toISOString(),
   })
-  if ('refusal' in applied) return { ok: false, refused: fromRefusal(applied.refusal) }
+  if ('refusal' in applied) return refuse(fromRefusal(applied.refusal))
   const scope = await checkUsersToAdd(
     ctx,
     actor,
     applied.added.users.filter((id) => !resolved.byEmail.has(id)),
   )
-  if (scope) return { ok: false, refused: scope }
+  if (scope) return refuse(scope)
   return { ok: true, access: applied.access, added: applied.added.users }
 }
 

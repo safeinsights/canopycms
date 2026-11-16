@@ -21,8 +21,15 @@ import {
   UnstyledButton,
   VisuallyHidden,
 } from '@mantine/core'
-import { IconChevronDown, IconChevronRight, IconDots, IconExternalLink } from '@tabler/icons-react'
+import {
+  IconChevronDown,
+  IconChevronRight,
+  IconDots,
+  IconExternalLink,
+  IconUserPlus,
+} from '@tabler/icons-react'
 import type { OperatingMode } from '../operating-mode'
+import type { BranchListItem } from '../api/branch'
 import type { BranchHold, ConflictStatus, PullRequestState, SyncStatus } from '../types'
 import type { CommentThread } from '../comment-store'
 import type { UserSearchResult } from '../auth/types'
@@ -46,7 +53,10 @@ import {
   type HoldViewer,
 } from './branch-status'
 import { TooltipDetail } from './components/TooltipDetail'
-import { branchAddress, displayBranchName } from './branch-names'
+import { branchAddress, branchUrlName, displayBranchName } from './branch-names'
+import { ShareBranchDialog } from './sharing/ShareBranchDialog'
+import { WhoHasAccessPopover } from './sharing/WhoHasAccessPopover'
+import { returnTarget } from './utils/focus-return'
 import type { CreateRefusal } from './hooks/create-branch-request'
 import {
   CLOSED_PULL_REQUEST_REASON,
@@ -58,7 +68,7 @@ import {
 import { GetLatestChangesButton } from './components/GetLatestChangesButton'
 import type { BaseUpdateControl } from './base-update-wait'
 import { isReviewerOfOthersReview } from '../authorization/review-role'
-import { SYSTEM_USER_ID } from '../system-users'
+import { isSystemUserId, SYSTEM_USER_ID } from '../system-users'
 
 /** @internal Exported for tests. */
 export interface BranchSummary {
@@ -103,6 +113,10 @@ export interface BranchSummary {
   submitBlocked?: boolean
   /** Server-computed: the API refuses Approve, as the last submit didn't finish. */
   approveBlocked?: boolean
+  /** People who have saved to the branch. */
+  editors?: string[]
+  /** What the viewer may do to the branch's access list. */
+  sharing?: BranchListItem['sharing']
 }
 
 export interface UserContext {
@@ -267,6 +281,10 @@ export interface BranchManagerProps {
   onGetOwnerMetadata?: (userId: string) => Promise<UserSearchResult | null>
   /** Names the people in branch comments; without it they show as ids */
   onGetCommentUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
+  /** Who may open a branch changed, or may have: read the list again. */
+  onAccessChanged?: () => void
+  /** The Share dialog or "Who has access" is open, so the drawer leaves Escape to it. */
+  onOverlayChange?: (open: boolean) => void
 }
 
 /** The lookup when a card has none: an owner reads "Name unavailable" and access users are counted, not named. */
@@ -351,6 +369,24 @@ interface BranchCardProps {
   onDelete?: (name: string) => void
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
   onGetOwnerMetadata?: (userId: string) => Promise<UserSearchResult | null>
+  /** Opens the Share dialog; focus goes back to `returnFocusTo()` when it closes. */
+  onShare?: (returnFocusTo: () => HTMLElement | null) => void
+  accessPopoverOpen?: boolean
+  onAccessPopoverChange?: (open: boolean) => void
+}
+
+/**
+ * Whether `user` is offered Share… for `b`: the server's rights, less the branches it is never
+ * offered on for anyone but an admin (archived, system-owned) and the base branch.
+ * @internal Exported for tests.
+ */
+export const canShareBranch = (b: BranchSummary, user: UserContext | undefined): boolean => {
+  const rights = b.sharing
+  if (!user || !rights || !(rights.canAdd || rights.canManage) || b.isProtected) return false
+  return (
+    isAdmin(user.groups) ||
+    (b.status !== 'archived' && !!b.createdBy && !isSystemUserId(b.createdBy))
+  )
 }
 
 /** Lets the card's details shrink beside its actions, which a long unbroken name would push out. */
@@ -379,6 +415,9 @@ const BranchCard: React.FC<BranchCardProps> = ({
   onDelete,
   onGetUserMetadata,
   onGetOwnerMetadata = onGetUserMetadata,
+  onShare,
+  accessPopoverOpen = false,
+  onAccessPopoverChange,
 }) => {
   const statusBadge = branchStatusPresentation(b.status, b.isProtected)
   const perms = getBranchPermissions(b, user)
@@ -451,11 +490,28 @@ const BranchCard: React.FC<BranchCardProps> = ({
   const menuActions = [approve, requestChanges, workflow, archive].filter(
     (a): a is BranchWorkflowAction => !!a && a !== primary && a !== secondary,
   )
+  const showShare = canShareBranch(b, user) && !!onShare
   const showViewPullRequest = !!b.pullRequestUrl
   const showDelete = !b.isProtected && (userIsAdmin || (!!user && b.createdBy === user.userId))
-  const hasMenu = menuActions.length > 0 || showViewPullRequest || showDelete
+  const hasMenu = menuActions.length > 0 || showShare || showViewPullRequest || showDelete
   const menuLabel = `More actions for ${displayBranchName(b)}`
   const [menuOpen, setMenuOpen] = useState(false)
+  const menuTriggerRef = useRef<HTMLButtonElement>(null)
+  const share = (opener: HTMLElement | null) =>
+    onShare?.(() => returnTarget(opener, () => menuTriggerRef.current))
+  const accessLine = b.access && !b.isProtected && (
+    <BranchAccessList
+      users={b.access.users}
+      groups={b.access.groups}
+      openToEveryone={b.sharing?.openToEveryone}
+      getUserMetadata={onGetOwnerMetadata ?? noUserLookup}
+      onClick={(event) =>
+        showShare ? share(event.currentTarget) : onAccessPopoverChange?.(!accessPopoverOpen)
+      }
+      aria-haspopup="dialog"
+      data-testid={`branch-access-${b.name}`}
+    />
+  )
 
   const inReview = b.status === 'submitted' || b.status === 'approved'
   const holdViewer: HoldViewer = {
@@ -604,13 +660,18 @@ const BranchCard: React.FC<BranchCardProps> = ({
               </Group>
             )}
           </Group>
-          {b.access && (
-            <BranchAccessList
-              users={b.access.users}
-              groups={b.access.groups}
-              getUserMetadata={onGetOwnerMetadata ?? noUserLookup}
-            />
-          )}
+          {accessLine &&
+            (showShare ? (
+              accessLine
+            ) : (
+              <WhoHasAccessPopover
+                branch={b}
+                opened={accessPopoverOpen}
+                onChange={(open) => onAccessPopoverChange?.(open)}
+              >
+                {accessLine}
+              </WhoHasAccessPopover>
+            ))}
         </Stack>
         <Group gap={8} wrap="nowrap">
           {!isCurrent && (
@@ -630,6 +691,7 @@ const BranchCard: React.FC<BranchCardProps> = ({
               <Tooltip label={menuLabel} disabled={menuOpen}>
                 <Menu.Target>
                   <ActionIcon
+                    ref={menuTriggerRef}
                     variant="subtle"
                     color="gray"
                     aria-label={menuLabel}
@@ -655,6 +717,15 @@ const BranchCard: React.FC<BranchCardProps> = ({
                     {action.label}
                   </ReasonedMenuItem>
                 ))}
+                {showShare && (
+                  <Menu.Item
+                    leftSection={<IconUserPlus size={14} aria-hidden />}
+                    onClick={() => share(null)}
+                    data-testid={`share-branch-${b.name}`}
+                  >
+                    {`${EDITOR_ACTIONS.share}…`}
+                  </Menu.Item>
+                )}
                 {showViewPullRequest && (
                   <Menu.Item
                     component="a"
@@ -671,7 +742,9 @@ const BranchCard: React.FC<BranchCardProps> = ({
                 )}
                 {showDelete && (
                   <>
-                    {(menuActions.length > 0 || showViewPullRequest) && <Menu.Divider />}
+                    {(menuActions.length > 0 || showShare || showViewPullRequest) && (
+                      <Menu.Divider />
+                    )}
                     <DestructiveMenuItem
                       data-testid={`delete-branch-button-${b.name}`}
                       blockedReason={
@@ -850,6 +923,8 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   onGetUserMetadata,
   onGetOwnerMetadata,
   onGetCommentUserMetadata,
+  onAccessChanged,
+  onOverlayChange,
 }) => {
   const supportsBranching = clientOperatingStrategy(mode).supportsBranching()
   const [showCreateForm, setShowCreateForm] = useState(startCreating)
@@ -928,6 +1003,19 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   )
   const matchCount = live.length + archived.length
 
+  const [sharing, setSharing] = useState<{
+    name: string
+    opened: boolean
+    returnFocusTo: () => HTMLElement | null
+  } | null>(null)
+  const [accessPopoverFor, setAccessPopoverFor] = useState<string | null>(null)
+  const overlayOpen = !!sharing?.opened || accessPopoverFor !== null
+  useEffect(() => {
+    onOverlayChange?.(overlayOpen)
+    return () => onOverlayChange?.(false)
+  }, [overlayOpen, onOverlayChange])
+  const sharedBranch = sharing && branches.find((b) => b.name === sharing.name)
+
   const renderCard = (b: BranchSummary) => {
     // The editor resolves a shadowed outside branch's full name to the namespace branch whose
     // short name it is, so a card's actions name its branch by `branchAddress`.
@@ -952,6 +1040,11 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
         onDelete={act(onDelete)}
         onGetUserMetadata={onGetUserMetadata}
         onGetOwnerMetadata={onGetOwnerMetadata}
+        onShare={(returnFocusTo) => setSharing({ name: b.name, opened: true, returnFocusTo })}
+        accessPopoverOpen={accessPopoverFor === b.name}
+        onAccessPopoverChange={(open) =>
+          setAccessPopoverFor((current) => (open ? b.name : current === b.name ? null : current))
+        }
       />
     )
   }
@@ -1076,6 +1169,20 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
         <VisuallyHidden role="status" data-testid="branch-filter-status">
           {query && `${matchCount} ${matchCount === 1 ? 'branch matches' : 'branches match'}`}
         </VisuallyHidden>
+      )}
+
+      {sharedBranch && user && (
+        <ShareBranchDialog
+          key={sharedBranch.name}
+          opened={!!sharing?.opened}
+          onClose={() => setSharing((current) => current && { ...current, opened: false })}
+          onChanged={() => onAccessChanged?.()}
+          branch={sharedBranch}
+          urlName={branchUrlName(branches, sharedBranch)}
+          user={user}
+          getUserMetadata={onGetOwnerMetadata ?? onGetUserMetadata ?? noUserLookup}
+          returnFocusTo={sharing?.returnFocusTo}
+        />
       )}
 
       <ScrollArea style={{ flex: 1 }} pt={showFilter ? 'sm' : undefined} pb="md">

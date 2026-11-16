@@ -1,4 +1,7 @@
+import React from 'react'
 import type { Meta, StoryObj } from '@storybook/react'
+
+import { ApiClientProvider, type ApiClient } from './context'
 
 import { BranchManager } from './BranchManager'
 import type { BranchSummary } from './BranchManager'
@@ -535,6 +538,134 @@ export const NewBranchFormServerRefusal: Story = {
   play: async () => {
     await typeBranchName('spring-update')
     document.querySelector<HTMLButtonElement>('[data-testid="create-branch-submit"]')?.click()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  },
+}
+
+const SHARING_NAMES: Record<string, string> = {
+  alice: 'Alice Chen',
+  bob: 'Bob Diaz',
+  cara: 'Cara Ito',
+}
+const sharingLookup = async (id: string) =>
+  SHARING_NAMES[id] ? { id, name: SHARING_NAMES[id], email: '' } : null
+
+/** Each Sharing story branch's list, as its card shows it. */
+const SHARING_LISTS: Record<string, string[]> = {
+  'canopycms/prod/landing': ['alice', 'bob'],
+  'canopycms/prod/pricing': ['bob', 'alice', 'cara'],
+}
+
+/** The access endpoints, answering for whichever branch is asked about. */
+const sharingClient = {
+  branches: {
+    getAccess: async ({ branch }: Record<string, string>) => ({
+      ok: true,
+      status: 200,
+      data: {
+        entries: (SHARING_LISTS[branch] ?? []).map((id) => ({
+          kind: 'user',
+          id,
+          name: SHARING_NAMES[id],
+          maskedEmail: `${id[0]}•••@example.org`,
+        })),
+        restricted: branch !== 'canopycms/prod/faq',
+        openToEveryone: branch === 'canopycms/prod/faq',
+        defaultAccess: branch === 'canopycms/prod/faq' ? 'allow' : 'deny',
+        addBy: 'members',
+        rights:
+          branch === 'canopycms/prod/landing'
+            ? { isOwner: true, canAdd: true, canManage: true }
+            : { isOwner: false, canAdd: false, canManage: false },
+        searchable: 'cms-users',
+        addableByEmail: 'all-users',
+      },
+    }),
+    findPeople: async () => ({ ok: true, status: 200, data: { people: [], groups: [] } }),
+    updateAccess: async () => ({ ok: true, status: 200, data: { branch: {} } }),
+  },
+} as unknown as ApiClient
+
+/**
+ * Sharing from a card: Share… in the owner's "…" menu, and the Access line as a button that opens
+ * the Share dialog there, "Who has access" on a branch the viewer can't add to, and on an open
+ * branch reads "anyone who can sign in".
+ */
+export const Sharing: Story = {
+  decorators: [
+    (Story) => (
+      <ApiClientProvider client={sharingClient}>
+        <Story />
+      </ApiClientProvider>
+    ),
+  ],
+  args: {
+    user: { userId: 'alice', groups: [] },
+    onGetOwnerMetadata: sharingLookup,
+    branches: [
+      {
+        name: 'canopycms/prod/landing',
+        shortName: 'landing',
+        status: 'editing',
+        updatedAt: ago(HOUR),
+        createdBy: 'alice',
+        access: { users: ['alice', 'bob'] },
+        submitBlocked: false,
+        sharing: {
+          isOwner: true,
+          canAdd: true,
+          canManage: true,
+          restricted: true,
+          openToEveryone: false,
+          addBy: 'members',
+        },
+      },
+      {
+        name: 'canopycms/prod/pricing',
+        shortName: 'pricing',
+        status: 'editing',
+        updatedAt: ago(2 * HOUR),
+        createdBy: 'bob',
+        access: { users: ['bob', 'alice', 'cara'] },
+        sharing: {
+          isOwner: false,
+          canAdd: false,
+          canManage: false,
+          restricted: true,
+          openToEveryone: false,
+          addBy: 'owner',
+        },
+      },
+      {
+        name: 'canopycms/prod/faq',
+        shortName: 'faq',
+        status: 'editing',
+        updatedAt: ago(DAY),
+        createdBy: 'cara',
+        access: {},
+        sharing: {
+          isOwner: false,
+          canAdd: false,
+          canManage: false,
+          restricted: false,
+          openToEveryone: true,
+          addBy: 'members',
+        },
+      },
+    ],
+    currentBranchName: 'canopycms/prod/landing',
+  },
+}
+
+/** The owner's "…" menu, open on Share…. */
+export const SharingMenu: Story = {
+  ...Sharing,
+  play: async () => {
+    document
+      .querySelector<HTMLButtonElement>(
+        '[data-testid="branch-actions-menu-canopycms/prod/landing"]',
+      )
+      ?.click()
     await new Promise((resolve) => setTimeout(resolve, 0))
   },
 }

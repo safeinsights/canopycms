@@ -668,6 +668,7 @@ export const createBranchHandler = async (
         status: initialAccess.refused.status,
         error: initialAccess.refused.error,
         code: initialAccess.refused.code,
+        ...(initialAccess.refused.ids && { ids: initialAccess.refused.ids }),
       }
     }
 
@@ -1035,6 +1036,7 @@ export const updateBranchAccessHandler = async (
       status: outcome.refused.status,
       error: outcome.refused.error,
       code: outcome.refused.code,
+      ...(outcome.refused.ids && { ids: outcome.refused.ids }),
     }
   }
   return {

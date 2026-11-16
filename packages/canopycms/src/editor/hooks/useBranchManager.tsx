@@ -473,6 +473,8 @@ interface BranchSummary {
   submitBlocked: boolean
   /** Server-computed: the API refuses Approve, as the last submit didn't finish. */
   approveBlocked?: boolean
+  editors?: string[]
+  sharing?: BranchListItem['sharing']
 }
 
 export interface UseBranchManagerOptions {
@@ -709,6 +711,8 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         conflictFiles: b.conflictFiles,
         hold: b.hold,
         approveBlocked: b.approveBlocked,
+        editors: b.editors,
+        sharing: b.sharing,
         commentCount: unresolvedCount,
         // Fail CLOSED (`?? true`): these flags are optional on the wire (see
         // BranchListItem's doc comment in api/branch.ts) so a version-skewed

@@ -349,7 +349,7 @@ describe('applyAccessChange: exclusions and opening', () => {
     )
     expect(
       codeOf(apply(owner, { ...shared, excluded: many }, { remove: { users: ['member'] } })),
-    ).toBe('ACCESS_CHANGE_INVALID')
+    ).toBe('EXCLUSION_CAP')
   })
 
   it('refuses opening a branch together with any other change', () => {

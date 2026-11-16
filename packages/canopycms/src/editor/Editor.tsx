@@ -341,6 +341,7 @@ const EditorContent: React.FC<EditorProps> = ({
   const [groupManagerOpen, setGroupManagerOpen] = useState(false)
   const [permissionManagerOpen, setPermissionManagerOpen] = useState(false)
   const [branchManagerOpen, setBranchManagerOpen] = useState(false)
+  const [branchOverlayOpen, setBranchOverlayOpen] = useState(false)
   // Each opening remounts Branches; one from New branch… starts on its new-branch form.
   const [branchManagerOpening, setBranchManagerOpening] = useState({ seq: 0, create: false })
   const openBranchesDrawer = (create: boolean) => {
@@ -3226,7 +3227,7 @@ const EditorContent: React.FC<EditorProps> = ({
               <BranchesDrawer
                 opened={branchManagerOpen}
                 onClose={() => setBranchManagerOpen(false)}
-                confirmOpen={branchConfirmOpen}
+                confirmOpen={branchConfirmOpen || branchOverlayOpen}
                 returnFocusTo={branchReturnTarget}
               >
                 <BranchManager
@@ -3289,6 +3290,8 @@ const EditorContent: React.FC<EditorProps> = ({
                   onGetUserMetadata={canResolveUserNames ? handleGetUserMetadata : undefined}
                   onGetOwnerMetadata={getCommentUserMetadata}
                   onGetCommentUserMetadata={getCommentUserMetadata}
+                  onAccessChanged={() => void loadBranches().catch(console.error)}
+                  onOverlayChange={setBranchOverlayOpen}
                 />
               </BranchesDrawer>
               {changesSubject && (
