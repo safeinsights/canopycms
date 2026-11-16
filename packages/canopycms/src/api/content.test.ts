@@ -14,6 +14,7 @@ const writeContent = CONTENT_ROUTES.write.handler
 /** Version an update of an existing (mocked) entry sends; the API refuses a version-less one. */
 const EXISTING_VERSION = 1
 const renameEntry = CONTENT_ROUTES.renameEntry.handler
+const validateReferences = CONTENT_ROUTES.validateReferences.handler
 
 vi.mock('../content-store', () => {
   // [SYNC-C1] BranchSyncingError really is a ContentConflictError subclass in
@@ -248,12 +249,13 @@ describe('content api', () => {
       path: unsafeAsLogicalPath('posts/hello'),
     }
 
-    it("answers a removed person's save, read and rename with BRANCH_ACCESS_DENIED", async () => {
+    it("answers a removed person's save, read, rename and reference check with BRANCH_ACCESS_DENIED", async () => {
       const ctx = shutOut(removed)
       const responses = [
         await writeContent(ctx, { user: ben }, params, { format: 'json', data: { title: 'hi' } }),
         await readContent(ctx, { user: ben }, params),
         await renameEntry(ctx, { user: ben }, params, { newSlug: unsafeAsSlug('new-slug') }),
+        await validateReferences(ctx, { user: ben }, params, { data: {} }),
       ]
       for (const res of responses) {
         expect(res).toMatchObject({ ok: false, status: 403, code: 'BRANCH_ACCESS_DENIED' })

@@ -12,6 +12,7 @@ import {
 } from '../base-update'
 import { enqueueTask, listTasks } from '../task-queue/cms-task-queue'
 import { ContentWriteLockBusyError } from '../utils/content-write-lock'
+import { createCheckBranchAccess } from '../authorization/branch'
 import type { BranchName } from '../paths/types'
 import type { BranchContext, BranchStatus } from '../types'
 import type { ApiRequest } from './types'
@@ -77,6 +78,7 @@ describe('POST /:branch/update-from-base', () => {
       mode?: 'prod' | 'dev'
       commitSavedWork?: CanopyServices['commitSavedWork']
       runBaseUpdateNow?: CanopyServices['runBaseUpdateNow']
+      checkBranchAccess?: CanopyServices['checkBranchAccess']
     } = {},
   ) => {
     const commitSavedWork = vi.fn(options.commitSavedWork ?? (async () => true))
@@ -86,6 +88,7 @@ describe('POST /:branch/update-from-base', () => {
       config: { mode: options.mode ?? 'prod', defaultBaseBranch: 'main' },
       commitSavedWork,
       runBaseUpdateNow,
+      ...(options.checkBranchAccess && { checkBranchAccess: options.checkBranchAccess }),
     })
     const res = await updateFromBase.handler(ctx, options.req ?? owner, {
       branch: BRANCH as BranchName,
@@ -334,6 +337,27 @@ describe('POST /:branch/update-from-base', () => {
     const { res, commitSavedWork } = await request(await branchWith(), { req: stranger })
 
     expect(res.status).toBe(403)
+    expect(commitSavedWork).not.toHaveBeenCalled()
+  })
+
+  it('answers someone removed from the branch with BRANCH_ACCESS_DENIED', async () => {
+    const context = await branchWith()
+    const { res, commitSavedWork } = await request(
+      {
+        ...context,
+        branch: {
+          ...context.branch,
+          access: {
+            restricted: true,
+            allowedUsers: ['u1'],
+            excluded: { u2: { by: 'u1', at: 'now', byAdmin: false } },
+          },
+        },
+      },
+      { req: stranger, checkBranchAccess: createCheckBranchAccess('allow') },
+    )
+
+    expect(res).toMatchObject({ ok: false, status: 403, code: 'BRANCH_ACCESS_DENIED' })
     expect(commitSavedWork).not.toHaveBeenCalled()
   })
 

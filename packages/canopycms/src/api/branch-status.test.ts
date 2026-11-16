@@ -53,7 +53,8 @@ vi.mock('./github-sync', async (importOriginal) => {
 
 import { WORKFLOW_ROUTES } from './branch-status'
 import { ContentWriteLockBusyError } from '../utils/content-write-lock'
-import { NothingToSubmitError } from '../services'
+import { NothingToSubmitError, type CanopyServices } from '../services'
+import { createCheckBranchAccess } from '../authorization/branch'
 import {
   createMockApiContext,
   createMockBranchContext,
@@ -110,6 +111,35 @@ describe('branch status api', () => {
       undefined,
     )
     expect(res.status).toBe(403)
+  })
+
+  it('answers someone removed from the branch with BRANCH_ACCESS_DENIED', async () => {
+    const ctx = createMockApiContext({
+      branchContext: {
+        ...baseContext,
+        branch: {
+          ...baseContext.branch,
+          access: {
+            restricted: true,
+            allowedUsers: ['u1'],
+            excluded: { u2: { by: 'u1', at: 'now', byAdmin: false } },
+          },
+        },
+      },
+      services: {
+        checkBranchAccess: createCheckBranchAccess('allow'),
+        config: { defaultBranchAccess: 'allow' } as unknown as CanopyServices['config'],
+      },
+    })
+
+    const res = await submitBranchForMerge(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u2', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+      undefined,
+    )
+
+    expect(res).toMatchObject({ ok: false, status: 403, code: 'BRANCH_ACCESS_DENIED' })
   })
 
   it('submits branch when allowed', async () => {
