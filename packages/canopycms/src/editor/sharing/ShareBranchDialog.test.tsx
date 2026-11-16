@@ -1178,6 +1178,27 @@ describe('ShareBranchDialog: states', () => {
     expect(api.branches.updateAccess.mock.calls[1][1]).toEqual({ remove: { groups: ['team'] } })
   })
 
+  it('drops only the removals the fresh list no longer holds, naming them from it', async () => {
+    const cole = { kind: 'user' as const, id: 'cole', name: 'Cole Ortiz' }
+    const { api } = setup({ data: access({ entries: [...access().entries, cole] }) })
+    api.branches.updateAccess.mockResolvedValueOnce({
+      ...refusal(403, 'USER_OUT_OF_SCOPE'),
+      ids: ['ben', 'cole'],
+    })
+    await loaded()
+    api.branches.getAccess.mockResolvedValue(
+      ok(access({ entries: [...access().entries.filter((e) => e.id !== 'ben'), cole] })),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Ben Ortiz' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Cole Ortiz' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
+
+    const problem = await screen.findByTestId('share-save-problem')
+    expect(problem.textContent).toContain('Ben Ortiz is no longer on the list.')
+    expect(problem.textContent).not.toContain('Cole')
+    expect(within(row('Cole Ortiz')).getByText('Will be removed')).toBeTruthy()
+  })
+
   it('shows a refusal that names one change as a problem with that change, not a lockout', async () => {
     const { api } = setup()
     api.branches.updateAccess.mockResolvedValueOnce({

@@ -549,20 +549,33 @@ function ShareBranchBody({
       } else if (isLockout(result.code, result.ids)) {
         setRefused(result.code)
       } else if (goneFromList(result.code, result.ids)) {
-        const gone = result.ids ?? []
-        const goneNames = gone.map(
-          (id) => data.entries.find((entry) => entry.id === id)?.name ?? 'Name unavailable',
-        )
-        setStaged((prev) => ({
-          ...prev,
-          remove: prev.remove.filter((r) => !(r.kind === 'user' && gone.includes(r.id))),
-        }))
-        void reload()
-        setSaveProblem({
-          tone: 'warning',
-          message: `${joinNames(goneNames)} ${gone.length === 1 ? 'is' : 'are'} no longer on the list.`,
-          retryable: false,
-        })
+        const fresh = await reload()
+        const gone = fresh
+          ? (result.ids ?? []).filter(
+              (id) => !fresh.entries.some((entry) => entry.kind === 'user' && entry.id === id),
+            )
+          : []
+        if (gone.length > 0) {
+          const goneNames = gone.map(
+            (id) => data.entries.find((entry) => entry.id === id)?.name ?? 'Name unavailable',
+          )
+          setStaged((prev) => ({
+            ...prev,
+            remove: prev.remove.filter((r) => !(r.kind === 'user' && gone.includes(r.id))),
+          }))
+          setSaveProblem({
+            tone: 'warning',
+            message: `${joinNames(goneNames)} ${gone.length === 1 ? 'is' : 'are'} no longer on the list.`,
+            retryable: false,
+          })
+        } else {
+          setSaveProblem({
+            tone: 'error',
+            message: accessRefusalMessage(result.code) ?? (result.error || UPDATE_FAILED),
+            retryable: false,
+            ids: result.ids,
+          })
+        }
       } else {
         setSaveProblem({
           tone: result.code === 'LIST_CHANGED' ? 'warning' : 'error',

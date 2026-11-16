@@ -272,6 +272,15 @@ export async function changeBranchAccess(
   if (!resolved.ok) return resolved
   const { change, byEmail } = resolved
   const seesExclusions = rightsFor(ctx, actor, context.branch).canManage
+  // Answered where an unknown address is, before any other rule could tell the two apart, since
+  // find skips removed people and someone who can't see the list's removals mustn't learn them.
+  const excluded = context.branch.access.excluded ?? {}
+  if (
+    !seesExclusions &&
+    [...byEmail].some((id) => Object.prototype.hasOwnProperty.call(excluded, id))
+  ) {
+    return { ok: false, refused: refused(400, 'USER_NOT_FOUND', NO_SUCH_ADDRESS) }
+  }
   const refuse = (refusal: AccessRefused): BranchAccessOutcome => ({
     ok: false,
     refused: hidingEmailIds(refusal, byEmail, seesExclusions),

@@ -723,6 +723,32 @@ describe('PATCH /:branch/access adding by email', () => {
     expect(JSON.stringify(res)).not.toContain('outsider')
   })
 
+  it.each([
+    ['a reserved group', { groups: [RESERVED_GROUPS.ADMINS] }],
+    ['an unknown id', { users: ['bogus'] }],
+  ])(
+    'answers a member a removed address beside %s as it answers an unknown one',
+    async (_label, more) => {
+      await addBranch('feature/x', {
+        access: {
+          restricted: true,
+          allowedUsers: ['owner', 'member'],
+          excluded: { outsider: { by: 'owner', at: 't', byAdmin: false } },
+        },
+      })
+
+      const removed = await patch(member, 'feature/x', {
+        add: { emails: ['otto@example.org'], ...more },
+      })
+      const nobody = await patch(member, 'feature/x', {
+        add: { emails: ['ghost@example.org'], ...more },
+      })
+
+      expect(removed).toEqual(nobody)
+      expect(nobody).toMatchObject({ status: 400, code: 'USER_NOT_FOUND' })
+    },
+  )
+
   it('answers a member an address that finds someone removed as one that finds no one', async () => {
     await addBranch('feature/x', {
       access: {
