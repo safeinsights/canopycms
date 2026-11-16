@@ -518,8 +518,8 @@ const deleteTask = defineEndpoint({
 })
 
 /**
- * They are recorded again on a later visit, while they still hold a qualifying group, to a process
- * that has not recorded them since it started (api/people.ts `enrolSeenUser`).
+ * They are recorded again on a later visit, while they still hold a qualifying group, to this
+ * process or one that has not recorded them since it started (api/people.ts `enrolSeenUser`).
  */
 const removeSeen = defineEndpoint({
   namespace: 'admin',
