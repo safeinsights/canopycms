@@ -461,7 +461,7 @@ const MARK_MERGED_CONFIRM_TEXT =
   'In production the server cannot verify the PR actually merged (no GitHub access from the API) — confirm the PR is merged on GitHub first.'
 
 const REPAIR_CONFIRM_TEXT =
-  "Rebuilds the branch's metadata and archives the corrupt file alongside. Its status goes back to editing. Its creator, base branch and access are each kept if the corrupt file still holds them; a creator it can't read is recorded as unknown. If the access can't be read, only admins and reviewers can open the branch until an admin shares it again, and any lockdown and removals that still read are kept. The base branch, and in development the active branch, take no access list: they keep only that lockdown and those removals."
+  "Rebuilds the branch's metadata and archives the corrupt file alongside. An archived branch stays archived; any other goes back to editing. Its creator, base branch and access are each kept if the corrupt file still holds them, and a creator it can't read is recorded as unknown. If the access can't be read, the branch opens only to admins and reviewers. The base branch, and in development the active branch, take no access list, so they stay open to anyone who can sign in unless the corrupt file may have limited them, which locks them to admins and reviewers. Either way, removals that still read are kept entry by entry, a malformed entry as an admin's, and a lockdown is kept, or turned on when it can't be read."
 
 const DUPLICATE_REPAIR_CONFIRM_TEXT =
   'These files share a content ID, so the editor uses only the one marked Keep. Archiving renames each other file to a hidden name in the same folder. Nothing is deleted.'

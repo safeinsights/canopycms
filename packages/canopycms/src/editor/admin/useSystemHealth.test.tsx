@@ -204,21 +204,22 @@ describe('useSystemHealth', () => {
   describe('repairDir says who can open the repaired branch', () => {
     const removal = { by: 'alice', at: '2026-11-01T00:00:00.000Z', byAdmin: false }
     const ARCHIVED =
-      ' Its status is back to editing. The corrupt file is archived as branch.json.corrupt-x.'
+      ' Its status is editing. The corrupt file is archived as branch.json.corrupt-x.'
 
     const repairWith = async (
       access: BranchAccessControl,
       fields: Pick<
         NonNullable<RepairBranchDirResponse['data']>,
-        'reset' | 'kept' | 'restricted' | 'openToEveryone'
+        'reset' | 'kept' | 'restricted' | 'openToEveryone' | 'warning'
       >,
       createdBy = 'alice',
+      status: 'editing' | 'archived' = 'editing',
     ) => {
       mockClient.admin.repairBranchDir.mockResolvedValueOnce(
         mockSuccess({
           branch: {
             name: 'foo',
-            status: 'editing',
+            status,
             access,
             createdBy,
             createdAt: '2026-01-01',
@@ -379,22 +380,96 @@ describe('useSystemHealth', () => {
       })
     })
 
-    it('says a branch that takes no list kept its lockdown', async () => {
-      const access = { managerOrAdminAllowed: true }
+    it('says a branch locked because its access could not be read needs branch.json edited', async () => {
+      for (const restricted of [false, true]) {
+        const access = { managerOrAdminAllowed: true, ...(restricted && { restricted }) }
+        const shown = await repairWith(
+          access,
+          {
+            reset: { status: 'editing', access },
+            kept: { createdBy: 'canopycms-system' },
+            restricted,
+            openToEveryone: false,
+          },
+          'canopycms-system',
+        )
+        expect(shown).toMatchObject({
+          message:
+            "Access couldn't be read, so this branch is locked to admins and reviewers. Opening it again needs its branch.json edited by hand." +
+            ARCHIVED,
+          color: 'yellow',
+          autoClose: false,
+        })
+      }
+    })
+
+    it('names no creator for a kept open branch on a closed site that excludes its creator', async () => {
+      const access = { excluded: { alice: removal } }
+      const shown = await repairWith(access, {
+        reset: { status: 'editing' },
+        kept: { access, createdBy: 'alice' },
+        restricted: false,
+        openToEveryone: false,
+      })
+      expect(shown?.message).toBe(
+        'Kept its access: only admins and reviewers can open it. The 1 person removed from it stays out.' +
+          ARCHIVED,
+      )
+    })
+
+    it('says an archived branch stays archived', async () => {
+      const access = { restricted: true, allowedUsers: ['alice'] }
       const shown = await repairWith(
         access,
         {
-          reset: { status: 'editing', access },
-          kept: { createdBy: 'canopycms-system' },
-          restricted: false,
+          reset: {},
+          kept: { status: 'archived', access, createdBy: 'alice' },
+          restricted: true,
           openToEveryone: false,
         },
-        'canopycms-system',
+        'alice',
+        'archived',
       )
       expect(shown?.message).toBe(
-        "Access couldn't be read. Its lockdown was kept, so only admins and reviewers can open it." +
-          ARCHIVED,
+        'Kept its access: only the people listed can open it. It stays archived. The corrupt file is archived as branch.json.corrupt-x.',
       )
+    })
+
+    it('keeps a refused repair on screen, since its error may ask the admin to check access', async () => {
+      mockClient.admin.repairBranchDir.mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        error: 'Check the branch\'s access in "Branches".',
+      })
+      const { notifications } = await import('@mantine/notifications')
+      const { result } = renderHook(() => useSystemHealth({ isOpen: false }), { wrapper })
+      await act(async () => {
+        await result.current.repairDir('foo')
+      })
+      expect(vi.mocked(notifications.show).mock.calls.at(-1)?.[0]).toEqual({
+        message: 'Check the branch\'s access in "Branches".',
+        color: 'red',
+        autoClose: false,
+      })
+    })
+
+    it('adds the warning of a repair whose follow-up step failed, and stays until dismissed', async () => {
+      const access = { restricted: true, allowedUsers: ['alice'] }
+      const shown = await repairWith(access, {
+        reset: { status: 'editing' },
+        kept: { access, createdBy: 'alice' },
+        restricted: true,
+        openToEveryone: false,
+        warning: 'The list may show the branch late.',
+      })
+      expect(shown).toMatchObject({
+        message:
+          'Kept its access: only the people listed can open it.' +
+          ARCHIVED +
+          ' The list may show the branch late.',
+        color: 'yellow',
+        autoClose: false,
+      })
     })
   })
 

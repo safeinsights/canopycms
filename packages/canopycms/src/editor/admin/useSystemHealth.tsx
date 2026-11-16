@@ -25,6 +25,7 @@ import type {
 } from '../../api/admin'
 import type { BranchHealthData, RepairBranchDirResponse } from '../../api/admin-branch-health'
 import { isNobody } from '../../system-users'
+import { isExcludedFrom } from '../../authorization/helpers'
 import type { BranchAccessControl } from '../../types'
 import type { DuplicateIdScan } from '../../branch-health'
 import { BRANCHES_KEY } from '../hooks/useBranchesData'
@@ -62,22 +63,29 @@ function stayOutSentence(access: BranchAccessControl): string {
   return ` The ${removed} removed from it ${people + groups === 1 ? 'stays' : 'stay'} out.`
 }
 
-/** Who can open a repaired branch now, and whether an admin has to share it again. */
-function repairedAccess(repaired: RepairedBranch): { text: string; mustShare: boolean } {
+/** Who can open a repaired branch now, and whether an admin has to act on it. */
+function repairedAccess(repaired: RepairedBranch): { text: string; mustAct: boolean } {
   const { access, createdBy } = repaired.branch
   const stayOut = stayOutSentence(access)
   if (repaired.reset.access) {
+    // No access-list change lifts a lockdown (authorization/branch-sharing.ts).
+    if (access.managerOrAdminAllowed) {
+      return {
+        text: `Access couldn't be read, so this branch is locked to admins and reviewers. Opening it again needs its branch.json edited by hand.${stayOut}`,
+        mustAct: true,
+      }
+    }
     if (repaired.restricted) {
       return {
         text: `Access couldn't be read, so only admins and reviewers can open it. Share it again from "Branches".${stayOut}`,
-        mustShare: true,
+        mustAct: true,
       }
     }
-    // The base branch and dev's active branch take no list, so they keep only what narrows.
-    const who = access.managerOrAdminAllowed
-      ? 'Its lockdown was kept, so only admins and reviewers can open it.'
-      : 'This branch takes no access list, so anyone who can sign in can open this branch.'
-    return { text: `Access couldn't be read. ${who}${stayOut}`, mustShare: false }
+    // Only the base branch and dev's active branch fall back to no list.
+    return {
+      text: `Access couldn't be read. This branch takes no access list, so anyone who can sign in can open this branch.${stayOut}`,
+      mustAct: false,
+    }
   }
   const who = access.managerOrAdminAllowed
     ? 'only admins and reviewers can open it'
@@ -85,10 +93,10 @@ function repairedAccess(repaired: RepairedBranch): { text: string; mustShare: bo
       ? 'only the people listed can open it'
       : repaired.openToEveryone
         ? 'anyone who can sign in can open it'
-        : isNobody(createdBy)
+        : isNobody(createdBy) || isExcludedFrom(access, createdBy)
           ? 'only admins and reviewers can open it'
           : 'only its creator, admins and reviewers can open it'
-  return { text: `Kept its access: ${who}.${stayOut}`, mustShare: false }
+  return { text: `Kept its access: ${who}.${stayOut}`, mustAct: false }
 }
 
 /**
@@ -350,16 +358,20 @@ export function useSystemHealth(options: UseSystemHealthOptions): UseSystemHealt
       try {
         const result = await apiClient.admin.repairBranchDir({ dirName })
         if (!result.ok || !result.data) throw new Error(result.error || 'Failed to repair metadata')
-        const { text, mustShare } = repairedAccess(result.data)
+        const { text, mustAct } = repairedAccess(result.data)
+        const status =
+          result.data.branch.status === 'archived' ? 'It stays archived.' : 'Its status is editing.'
+        const warning = result.data.warning ? ` ${result.data.warning}` : ''
         notifications.show({
           title: 'Metadata repaired',
-          message: `${text} Its status is back to editing. The corrupt file is archived as ${result.data.archivedAs}.`,
-          ...(mustShare ? { color: 'yellow', autoClose: false } : { color: 'green' }),
+          message: `${text} ${status} The corrupt file is archived as ${result.data.archivedAs}.${warning}`,
+          ...(mustAct || warning ? { color: 'yellow', autoClose: false } : { color: 'green' }),
         })
         await refresh()
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to repair metadata'
-        notifications.show({ message, color: 'red' })
+        // A failed repair can leave the branch with default metadata the admin must check.
+        notifications.show({ message, color: 'red', autoClose: false })
       }
     },
     [apiClient, refresh],
