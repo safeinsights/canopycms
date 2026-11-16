@@ -4,7 +4,11 @@ import path from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { BranchMetadataCorruptError, readBranchMetadataFile } from './branch-metadata-file'
+import {
+  BranchMetadataCorruptError,
+  readBranchMetadataFile,
+  salvageBranchMetadata,
+} from './branch-metadata-file'
 
 describe('readBranchMetadataFile', () => {
   let branchRoot: string
@@ -204,5 +208,111 @@ describe('readBranchMetadataFile', () => {
     )
     expect(err).not.toBeInstanceOf(BranchMetadataCorruptError)
     expect((err as NodeJS.ErrnoException).code).toBe('EISDIR')
+  })
+})
+
+describe('salvageBranchMetadata', () => {
+  const nothing = { access: { readable: false, narrowing: {}, creatorAccess: null } }
+  const salvage = (file: unknown) => salvageBranchMetadata(JSON.stringify(file))
+  const removal = { by: 'admin', at: '2026-11-01T00:00:00.000Z', byAdmin: true }
+
+  it.each([
+    ['text that is not JSON', 'not json {{{'],
+    ['JSON that is not an object', '[1, 2]'],
+    ['no branch', '{}'],
+    ['a branch that is an array', '{"branch": []}'],
+    ['a branch that is null', '{"branch": null}'],
+  ])('salvages nothing from %s', (_case, raw) => {
+    expect(salvageBranchMetadata(raw)).toEqual(nothing)
+  })
+
+  it.each([
+    ['null', null],
+    ['an array', []],
+    ['missing', undefined],
+  ])('reads no creator rule from access that is %s', (_case, access) => {
+    expect(salvage({ branch: { access, createdBy: 'alice' } })).toEqual({
+      ...nothing,
+      createdBy: 'alice',
+    })
+  })
+
+  it('keeps an access that passes whole, unknown keys included', () => {
+    const access = { restricted: true, allowedUsers: ['alice'], futureKey: 1 }
+    expect(salvage({ branch: { access } }).access).toEqual({ readable: true, access })
+  })
+
+  it('reads each field of a damaged access on its own', () => {
+    const salvaged = salvage({
+      branch: {
+        access: {
+          restricted: true,
+          allowedUsers: 'x',
+          allowedGroups: ['writers'],
+          managerOrAdminAllowed: true,
+          excluded: { bob: removal },
+          excludedGroups: { readers: 'damaged' },
+        },
+      },
+    })
+    expect(salvaged.access).toEqual({
+      readable: false,
+      narrowing: { managerOrAdminAllowed: true, excluded: { bob: removal } },
+      creatorAccess: {
+        fields: {
+          restricted: true,
+          allowedGroups: ['writers'],
+          managerOrAdminAllowed: true,
+          excluded: { bob: removal },
+        },
+        unreadable: ['allowedUsers'],
+      },
+    })
+  })
+
+  it('carries a lockdown only when it reads as true', () => {
+    const salvaged = salvage({ branch: { access: { managerOrAdminAllowed: false, entryMeta: 1 } } })
+    expect(salvaged.access).toMatchObject({ readable: false, narrowing: {} })
+  })
+
+  it.each([
+    ['a number', 42],
+    ['an empty string', ''],
+  ])('keeps no createdBy or baseBranch that is %s', (_case, value) => {
+    const salvaged = salvage({ branch: { createdBy: value, baseBranch: value } })
+    expect(salvaged).toEqual(nothing)
+  })
+
+  it('keeps a non-empty createdBy and baseBranch', () => {
+    expect(salvage({ branch: { createdBy: 'alice', baseBranch: 'main' } })).toEqual({
+      ...nothing,
+      createdBy: 'alice',
+      baseBranch: 'main',
+    })
+  })
+
+  it('takes nothing a __proto__ key carries', () => {
+    const raw =
+      '{"__proto__": {"branch": {"createdBy": "mallory"}}, "branch": {"__proto__": {"createdBy": "mallory"},' +
+      ' "access": {"__proto__": {"allowedUsers": ["mallory"]}, "restricted": "damaged",' +
+      ' "excluded": {"__proto__": {"by": "x", "at": "y", "byAdmin": false}}}}}'
+    const salvaged = salvageBranchMetadata(raw)
+    expect(salvaged.createdBy).toBeUndefined()
+    if (salvaged.access.readable) throw new Error('expected damaged access')
+    const { creatorAccess, narrowing } = salvaged.access
+    expect(creatorAccess?.fields.allowedUsers).toBeUndefined()
+    expect(Object.getPrototypeOf(creatorAccess?.fields)).toBe(Object.prototype)
+    const excluded = narrowing.excluded ?? {}
+    expect(Object.getPrototypeOf(excluded)).toBe(Object.prototype)
+    expect(Object.keys(excluded)).toEqual([])
+    expect(({} as Record<string, unknown>).allowedUsers).toBeUndefined()
+  })
+
+  it('keeps a whole access whose __proto__ key would otherwise widen it, without the key', () => {
+    const raw = '{"branch": {"access": {"__proto__": {"allowedUsers": ["mallory"]}}}}'
+    const salvaged = salvageBranchMetadata(raw)
+    if (!salvaged.access.readable) throw new Error('expected readable access')
+    expect(salvaged.access.access.allowedUsers).toBeUndefined()
+    expect(Object.getPrototypeOf(salvaged.access.access)).toBe(Object.prototype)
   })
 })

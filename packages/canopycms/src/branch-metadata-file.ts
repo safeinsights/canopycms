@@ -83,9 +83,8 @@ const branchAccessSchema = z
  *
  * Strict where a guard or an access check reads the field: `status` (writes and
  * submits are gated on it), `name` (the protected-base-branch test compares it)
- * and `access` (defaulted to `{}`, a missing one would read as "no ACL" and
- * widen access). Lenient,
- * with defaults, where a hand-written file can omit bookkeeping: the envelope's
+ * and `access` (required: a missing one would read as "no ACL" and widen
+ * access). Lenient, with defaults, where a hand-written file can omit bookkeeping: the envelope's
  * `version` (0, as occ-json-write reads it) and `schemaVersion`, and
  * `createdBy` ('unknown', which matches no user, so the creator grant fails
  * closed) and the timestamps. Every optional field is type-checked.
@@ -248,31 +247,119 @@ function parseBranchMetadataFile(branchRoot: string, raw: string): BranchMetadat
   return file
 }
 
-/** Each field is dropped, not failed, when it doesn't pass on its own. */
-const salvageableFieldsSchema = z.object({
-  branch: z.object({
-    access: branchAccessSchema.optional().catch(undefined),
-    createdBy: z.string().min(1).optional().catch(undefined),
-  }),
-})
+/** The fields that only ever narrow who may open a branch. */
+type NarrowingAccess = Pick<
+  BranchAccessControl,
+  'managerOrAdminAllowed' | 'excluded' | 'excludedGroups'
+>
+
+/** The fields that decide whether a branch's creator may open it. */
+type CreatorAccess = Pick<
+  BranchAccessControl,
+  'restricted' | 'allowedUsers' | 'allowedGroups' | 'managerOrAdminAllowed' | 'excluded'
+>
+
+/** What a damaged `branch.json` still says about who may open the branch. */
+export type SalvagedAccess =
+  | { readable: true; access: BranchAccessControl }
+  | {
+      readable: false
+      /** Each narrowing field that reads on its own, `managerOrAdminAllowed` only when true. */
+      narrowing: NarrowingAccess
+      /**
+       * The fields deciding the creator's access that read, and the keys of those that don't;
+       * null when `access` is not an object at all.
+       */
+      creatorAccess: { fields: CreatorAccess; unreadable: (keyof CreatorAccess)[] } | null
+    }
+
+interface SalvagedBranch {
+  access: SalvagedAccess
+  /** A non-empty `createdBy`. */
+  createdBy?: CanopyUserId
+  /** A non-empty `baseBranch`. */
+  baseBranch?: string
+}
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const unreadable = Symbol('unreadable')
+
+/** `value` through `schema`, or `unreadable` when it fails. */
+function readField<T>(schema: z.ZodType<T>, value: unknown): T | typeof unreadable {
+  const result = schema.safeParse(value)
+  return result.success ? result.data : unreadable
+}
+
+const nonEmptyString = z.string().min(1).optional()
 
 /**
- * Who may open the branch, as far as `branch.json` text that fails {@link readBranchMetadataFile}
- * still says: its `access` when that passes its own schema, and a non-empty `createdBy`. Either is
- * absent when it can't be read, and both are when the text is not JSON or holds no `branch` object.
+ * What `branch.json` text that fails {@link readBranchMetadataFile} still says, each field read
+ * on its own, so one bad field never takes another with it. `access` is readable only
+ * when it passes its schema whole. When it doesn't, the fields that only narrow are read one by
+ * one, and so are those deciding the creator's own access. Text that is not JSON, or holds no
+ * `branch` object, salvages nothing.
  */
-export function salvageBranchAccess(raw: string): {
-  access?: BranchAccessControl
-  createdBy?: CanopyUserId
-} {
+export function salvageBranchMetadata(raw: string): SalvagedBranch {
+  const nothing: SalvagedBranch = {
+    access: { readable: false, narrowing: {}, creatorAccess: null },
+  }
   let json: unknown
   try {
     json = JSON.parse(raw)
   } catch {
-    return {}
+    return nothing
   }
-  const result = salvageableFieldsSchema.safeParse(json)
-  if (!result.success) return {}
-  const { access, createdBy } = result.data.branch
-  return { ...(access && { access }), ...(createdBy !== undefined && { createdBy }) }
+  if (!isPlainObject(json)) return nothing
+  const branch = json.branch
+  if (!isPlainObject(branch)) return nothing
+
+  const createdBy = readField(nonEmptyString, branch.createdBy)
+  const baseBranch = readField(nonEmptyString, branch.baseBranch)
+  return {
+    access: salvageAccess(branch.access),
+    ...(typeof createdBy === 'string' && { createdBy }),
+    ...(typeof baseBranch === 'string' && { baseBranch }),
+  }
+}
+
+function salvageAccess(rawAccess: unknown): SalvagedAccess {
+  const whole = branchAccessSchema.safeParse(rawAccess)
+  if (whole.success) return { readable: true, access: whole.data }
+  if (!isPlainObject(rawAccess)) return { readable: false, narrowing: {}, creatorAccess: null }
+
+  const { shape } = branchAccessSchema
+  const read = <T>(schema: z.ZodType<T>, key: string) => readField(schema, rawAccess[key])
+  const lockdown = read(shape.managerOrAdminAllowed, 'managerOrAdminAllowed')
+  const excluded = read(shape.excluded, 'excluded')
+  const excludedGroups = read(shape.excludedGroups, 'excludedGroups')
+  const restricted = read(shape.restricted, 'restricted')
+  const allowedUsers = read(shape.allowedUsers, 'allowedUsers')
+  const allowedGroups = read(shape.allowedGroups, 'allowedGroups')
+
+  const narrowing: NarrowingAccess = {
+    ...(lockdown === true && { managerOrAdminAllowed: true }),
+    ...(excluded !== unreadable && excluded && { excluded }),
+    ...(excludedGroups !== unreadable && excludedGroups && { excludedGroups }),
+  }
+  const unreadableKeys = (
+    [
+      ['managerOrAdminAllowed', lockdown],
+      ['excluded', excluded],
+      ['restricted', restricted],
+      ['allowedUsers', allowedUsers],
+      ['allowedGroups', allowedGroups],
+    ] as const
+  )
+    .filter(([, value]) => value === unreadable)
+    .map(([key]) => key)
+  const fields: CreatorAccess = {
+    ...(lockdown !== unreadable && lockdown !== undefined && { managerOrAdminAllowed: lockdown }),
+    ...(excluded !== unreadable && excluded && { excluded }),
+    ...(restricted !== unreadable && restricted !== undefined && { restricted }),
+    ...(allowedUsers !== unreadable && allowedUsers && { allowedUsers }),
+    ...(allowedGroups !== unreadable && allowedGroups && { allowedGroups }),
+  }
+  return { readable: false, narrowing, creatorAccess: { fields, unreadable: unreadableKeys } }
 }
