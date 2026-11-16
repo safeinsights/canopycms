@@ -225,7 +225,10 @@ export const NarrowingWarning: Story = {
   play: () => clickLabel('Only people listed here'),
 }
 
-export const Loading: Story = { args: { load: 'loading' } }
+/** Loading the owner's list: a row held for each entry the listing names, as OwnerOnDenySite shows. */
+export const Loading: Story = {
+  args: { load: 'loading', branch: { access: { users: ['ana', 'ben'], groups: ['marketing'] } } },
+}
 
 export const LoadError: Story = { args: { load: 'error' } }
 
