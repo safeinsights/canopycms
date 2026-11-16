@@ -81,10 +81,10 @@ export function shareControlName(
 }
 
 /**
- * The people behind `ids`, as the lookup answers, by id; null until it first has. While it has no
- * record for someone, it asks again for each new `listing` (the summary, which each listing and
- * any other change to it renews), as a lookup that reads a cache the listing seeds can know more
- * once it arrives; a later answer never takes back a record an earlier one gave.
+ * The people behind `ids`, as the lookup answers, by id; null until it first has. While anyone is
+ * unnamed, it asks again for each new `listing` (the summary, which each listing and any other
+ * change to it renews), as a lookup that reads a cache the listing seeds can know more once it
+ * arrives. A record with a name is never replaced by a later one without.
  */
 function useLookedUp(
   ids: readonly string[],
@@ -97,7 +97,9 @@ function useLookedUp(
     people: Record<string, UserSearchResult | null>
   }>()
   const known = result?.key === key ? result.people : null
-  const complete = !!known && ids.every((id) => known[id])
+  const named = (id: string, person: UserSearchResult | null | undefined) =>
+    !!person && personName(id, person.name) !== undefined
+  const complete = !!known && ids.every((id) => named(id, known[id]))
   useEffect(() => {
     if (complete) return
     let current = true
@@ -107,7 +109,12 @@ function useLookedUp(
       setResult((prev) => {
         const earlier = prev?.key === key ? prev.people : {}
         const people = Object.fromEntries(
-          wanted.map((id, i) => [id, found[i] ?? earlier[id] ?? null]),
+          wanted.map((id, i) => [
+            id,
+            named(id, found[i]) || !named(id, earlier[id])
+              ? (found[i] ?? earlier[id] ?? null)
+              : earlier[id],
+          ]),
         )
         return { key, people }
       })

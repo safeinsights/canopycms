@@ -44,6 +44,7 @@ const access: BranchAccess = {
   openToEveryone: false,
   defaultAccess: 'deny',
   addBy: 'members',
+  whoCanAdd: 'members',
   rights: { isOwner: false, canAdd: false, canManage: false },
   searchable: 'cms-users',
   addableByEmail: 'all-users',
@@ -232,11 +233,11 @@ describe('EditorHeader - sharing control', () => {
     await waitFor(() => expect(initials()).toEqual(['AL']))
   })
 
-  it('asks again with each listing while anyone is unnamed, keeping names it had', async () => {
+  it('asks again with each listing while anyone is unnamed, never trading a name for none', async () => {
     let anaKnown = true
     const lookupAgain = vi.fn(
       async (id: string): Promise<UserSearchResult | null> =>
-        id === 'ana' && anaKnown ? { id, name: 'Ana Lee', email: '' } : null,
+        id !== 'ana' ? null : { id, name: anaKnown ? 'Ana Lee' : id, email: '' },
     )
     const bar = (b: BranchSummary) => (
       <CanopyCMSProvider>
