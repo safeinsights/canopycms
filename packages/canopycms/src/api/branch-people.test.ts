@@ -22,7 +22,7 @@ import type { CanopyUser } from '../user'
 import { setBranchAccessLogSink } from '../utils/access-log'
 import { ADMIN_ROUTES } from './admin'
 import { updateBranchAccessHandler, type UpdateBranchAccessBody } from './branch'
-import { initialBranchAccess } from './branch-access'
+import { changeBranchAccess, initialBranchAccess } from './branch-access'
 import { BRANCH_PEOPLE_ROUTES, type BranchAccessResponse } from './branch-people'
 import { EMAIL_LOOKUP_LIMIT, resetEmailLookupLimits, type FindPeopleResult } from './people'
 import type { ApiContext, ApiResponse } from './types'
@@ -748,6 +748,34 @@ describe('PATCH /:branch/access adding by email', () => {
       expect(nobody).toMatchObject({ status: 400, code: 'USER_NOT_FOUND' })
     },
   )
+
+  it('answers a member a removed address as an unknown one when only the list on disk removed it', async () => {
+    const context = await addBranch('feature/x', {
+      access: {
+        restricted: true,
+        allowedUsers: ['owner', 'member'],
+        excluded: { outsider: { by: 'owner', at: 't', byAdmin: false } },
+        excludedGroups: { team: { by: 'owner', at: 't', byAdmin: false } },
+      },
+    })
+    const stale = {
+      ...context,
+      branch: {
+        ...context.branch,
+        access: { restricted: true, allowedUsers: ['owner', 'member'] },
+      },
+    }
+
+    const removed = await changeBranchAccess(ctx(), member, stale, {
+      add: { emails: ['otto@example.org'], groups: ['team'] },
+    })
+    const nobody = await changeBranchAccess(ctx(), member, stale, {
+      add: { emails: ['ghost@example.org'], groups: ['team'] },
+    })
+
+    expect(removed).toEqual(nobody)
+    expect(nobody).toMatchObject({ ok: false, refused: { status: 400, code: 'USER_NOT_FOUND' } })
+  })
 
   it('answers a member an address that finds someone removed as one that finds no one', async () => {
     await addBranch('feature/x', {

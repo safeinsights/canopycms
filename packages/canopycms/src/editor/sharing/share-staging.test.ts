@@ -100,6 +100,8 @@ describe('changeLanded', () => {
     expect(changeLanded(body, current())).toBe(false)
     expect(changeLanded({ add: { emails: ['x@example.org'] } }, landed)).toBe(false)
     expect(changeLanded({ restricted: false }, current())).toBe(false)
+    expect(changeLanded({ remove: { users: ['ana'] } }, current())).toBe(false)
+    expect(changeLanded({ unexclude: { users: ['pat'] } }, current())).toBe(false)
   })
 })
 

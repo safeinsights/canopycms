@@ -228,20 +228,11 @@ export async function recordRecentShares(
 
 /**
  * `refusal` without the ids an address in the request resolved to: the caller typed the address,
- * and the id behind it is no business of theirs. For a caller who can't see the list's removals,
- * a USER_EXCLUDED naming such an id becomes the unknown-address refusal. That covers someone
- * removed while the request waited; {@link changeBranchAccess} answers the rest before any rule.
+ * and the id behind it is no business of theirs.
  */
-function hidingEmailIds(
-  refusal: AccessRefused,
-  byEmail: ReadonlySet<CanopyUserId>,
-  seesExclusions: boolean,
-): AccessRefused {
+function hidingEmailIds(refusal: AccessRefused, byEmail: ReadonlySet<CanopyUserId>): AccessRefused {
   if (!refusal.ids || byEmail.size === 0) return refusal
   const { ids, ...rest } = refusal
-  if (rest.code === 'USER_EXCLUDED' && !seesExclusions && ids.some((id) => byEmail.has(id))) {
-    return refused(400, 'USER_NOT_FOUND', NO_SUCH_ADDRESS)
-  }
   const shown = ids.filter((id) => !byEmail.has(id))
   return shown.length > 0 ? { ...rest, ids: shown } : rest
 }
@@ -272,19 +263,21 @@ export async function changeBranchAccess(
   const resolved = await resolveEmailAdds(ctx, actor, request)
   if (!resolved.ok) return resolved
   const { change, byEmail } = resolved
-  const seesExclusions = rightsFor(ctx, actor, context.branch).canManage
-  // Answered where an unknown address is, before any other rule could tell the two apart, since
-  // find skips removed people and someone who can't see the list's removals mustn't learn them.
-  const excluded = context.branch.access.excluded ?? {}
-  if (
-    !seesExclusions &&
-    [...byEmail].some((id) => Object.prototype.hasOwnProperty.call(excluded, id))
-  ) {
-    return { ok: false, refused: refused(400, 'USER_NOT_FOUND', NO_SUCH_ADDRESS) }
+  // Find skips removed people, so to someone who can't see the list's removals an address that
+  // finds one answers as an unknown address does: here, and again on the list on disk, before
+  // any rule that could answer differently.
+  const findsSomeoneRemoved = (branch: BranchMetadata): boolean => {
+    const excluded = branch.access.excluded ?? {}
+    return (
+      !rightsFor(ctx, actor, branch).canManage &&
+      [...byEmail].some((id) => Object.prototype.hasOwnProperty.call(excluded, id))
+    )
   }
+  const noSuchAddress = refused(400, 'USER_NOT_FOUND', NO_SUCH_ADDRESS)
+  if (findsSomeoneRemoved(context.branch)) return { ok: false, refused: noSuchAddress }
   const refuse = (refusal: AccessRefused): BranchAccessOutcome => ({
     ok: false,
-    refused: hidingEmailIds(refusal, byEmail, seesExclusions),
+    refused: hidingEmailIds(refusal, byEmail),
   })
 
   const now = new Date().toISOString()
@@ -357,6 +350,7 @@ export async function changeBranchAccess(
     const written = await metadata.update((existing) => {
       if (!existing) return null
       outcome.current = existing.branch
+      if (findsSomeoneRemoved(existing.branch)) throw new AccessChangeRefusedError(noSuchAddress)
       const applied = apply(existing.branch)
       if ('refusal' in applied) throw new AccessChangeRefusedError(fromRefusal(applied.refusal))
       const unchecked = isAdmin(actor.groups)
@@ -411,7 +405,7 @@ export async function initialBranchAccess(
   if (!resolved.ok) return resolved
   const refuse = (refusal: AccessRefused) => ({
     ok: false as const,
-    refused: hidingEmailIds(refusal, resolved.byEmail, true),
+    refused: hidingEmailIds(refusal, resolved.byEmail),
   })
   const applied = applyAccessChange({}, resolved.change, {
     actor,
