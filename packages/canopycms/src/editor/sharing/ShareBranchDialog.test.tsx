@@ -663,7 +663,7 @@ describe('ShareBranchDialog: removing and staging', () => {
     expect(api.branches.updateAccess.mock.calls[0][1]).toEqual({ add: { users: ['cole'] } })
   })
 
-  it('focuses the input when no row follows the removed one', async () => {
+  it("focuses the removed row's own Undo when no row follows it", async () => {
     setup()
     await loaded()
 
@@ -671,9 +671,25 @@ describe('ShareBranchDialog: removing and staging', () => {
 
     await waitFor(() =>
       expect(document.activeElement).toBe(
-        screen.getByRole('textbox', { name: 'Add people or groups' }),
+        screen.getByRole('button', { name: 'Undo removing Marketing team' }),
       ),
     )
+  })
+
+  it('focuses the input when the last row was an unsaved add, which leaves no row', async () => {
+    const { api } = setup()
+    api.branches.findPeople.mockResolvedValue(
+      ok({ people: [{ id: 'cole', name: 'Cole Ortiz' }], groups: [] }),
+    )
+    await loaded()
+    await userEvent.type(picker(), 'Co')
+    await userEvent.click(await screen.findByRole('option', { name: /Cole Ortiz/ }))
+    const removes = screen.getAllByRole('button', { name: /^Remove / })
+    expect(removes.at(-1)).toBe(screen.getByRole('button', { name: 'Remove Cole Ortiz' }))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Remove Cole Ortiz' }))
+
+    await waitFor(() => expect(document.activeElement).toBe(picker()))
   })
 
   it('discards staged edits: the dismiss button says so and sends nothing', async () => {

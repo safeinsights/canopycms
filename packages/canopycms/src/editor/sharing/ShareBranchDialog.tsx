@@ -233,7 +233,7 @@ function ShareBranchBody({
   const refusalCloseRef = useRef<HTMLButtonElement>(null)
   const beforeAskRef = useRef<HTMLElement | null>(null)
   const [pendingFocus, setPendingFocus] = useState<
-    { remove: number } | { restore: string } | { undo: true }
+    { remove: number; key: string } | { restore: string } | { undo: true }
   >()
 
   const userIsAdmin = isAdmin(user.groups)
@@ -407,17 +407,19 @@ function ShareBranchBody({
     if (!pendingFocus) return
     setPendingFocus(undefined)
     const fallback = inputRef.current ?? headingRef.current
+    const shareRow = (key: string) =>
+      Array.from(document.querySelectorAll<HTMLElement>('[data-share-row]')).find(
+        (row) => row.getAttribute('data-share-row') === key,
+      )
     if ('remove' in pendingFocus) {
       const buttons = listRef.current?.querySelectorAll<HTMLElement>('button[data-share-remove]')
-      ;(buttons?.[pendingFocus.remove] ?? fallback)?.focus()
+      // The last row's Remove has no next one, but a removed entry stays, struck, with its Undo.
+      const undo = shareRow(pendingFocus.key)?.querySelector<HTMLElement>('button[data-share-undo]')
+      ;(buttons?.[pendingFocus.remove] ?? undo ?? fallback)?.focus()
     } else if ('undo' in pendingFocus) {
       ;(undoRef.current ?? fallback)?.focus()
     } else {
-      const { restore } = pendingFocus
-      Array.from(document.querySelectorAll<HTMLElement>('[data-share-row]'))
-        .find((row) => row.getAttribute('data-share-row') === restore)
-        ?.querySelector<HTMLElement>('button')
-        ?.focus()
+      shareRow(pendingFocus.restore)?.querySelector<HTMLElement>('button')?.focus()
     }
   }, [pendingFocus])
 
@@ -453,7 +455,7 @@ function ShareBranchBody({
         ? `Removed ${row.name}. ${cantAddBack(row.name)}`
         : `Removed ${row.name}`,
     )
-    setPendingFocus({ remove: index })
+    setPendingFocus({ remove: index, key: row.key })
   }
 
   const keep = (row: Row) => {
@@ -1184,6 +1186,7 @@ function AccessRow({
             size="compact-sm"
             onClick={onKeep}
             aria-label={`Undo removing ${row.name}`}
+            data-share-undo
           >
             Undo
           </Button>
