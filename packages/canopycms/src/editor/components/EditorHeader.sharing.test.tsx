@@ -274,6 +274,9 @@ describe('EditorHeader - sharing control', () => {
 
       const list = await screen.findByRole('dialog', { name: 'Who has access' })
       expect(await within(list).findByText('Ana Lee')).toBeTruthy()
+      // As in a browser, the menu has finished closing, its own focus return spent, before Esc.
+      await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+      await new Promise((resolve) => requestAnimationFrame(resolve))
       await userEvent.keyboard('{Escape}')
       await waitFor(() =>
         expect(screen.queryByRole('dialog', { name: 'Who has access' })).toBeNull(),

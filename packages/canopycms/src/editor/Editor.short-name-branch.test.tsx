@@ -480,9 +480,7 @@ describe('the editor on a namespace branch named by its short name', () => {
         'Branch “summer” created',
       ),
     )
-    expect(notifications.show).not.toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'Branch “summer” created' }),
-    )
+    expect(notifications.show).not.toHaveBeenCalledWith(expect.objectContaining({ color: 'green' }))
     await waitFor(() => expect(urlBranch()).toBe('summer'))
     // The listing may not hold it yet, so the push itself carries the short name.
     expect(

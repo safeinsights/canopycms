@@ -4,7 +4,7 @@ import React, { useEffect, useId, useRef } from 'react'
 import { Button, Popover, Skeleton, Stack, Text } from '@mantine/core'
 
 import { accessRefusalMessage } from '../copy'
-import { focusIfIdle } from '../utils/focus-return'
+import { FOCUS_RETURN_ATTR, focusIfIdle } from '../utils/focus-return'
 import { PersonLabel, type ShareTarget } from './ShareBranchDialog'
 import { LISTED_ONLY_LINE, LOCKDOWN_LINE, OPEN_TO_EVERYONE_LINE } from './share-copy'
 import { entryKey } from './share-staging'
@@ -48,6 +48,7 @@ export function WhoHasAccessPopover({
         aria-labelledby={headingId}
         tabIndex={-1}
         data-testid="who-has-access"
+        {...(returnFocusTo && { [FOCUS_RETURN_ATTR]: true })}
       >
         <WhoHasAccessBody
           branch={branch.name}
