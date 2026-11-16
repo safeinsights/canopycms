@@ -827,6 +827,7 @@ const EditorContent: React.FC<EditorProps> = ({
     setBusy: setEntriesLoading,
     // The errors are in the form.
     onSaveBlocked: () => setPreviewMaximized(false),
+    onBranchAccessLost: () => void loadBranches().catch(console.error),
     onSaved: () => {
       void refreshEntries(branchNameState).catch((err) =>
         console.error('Failed to refresh entries after save', err),

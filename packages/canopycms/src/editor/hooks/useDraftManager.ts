@@ -148,6 +148,12 @@ const parsePersistedDrafts = (
   return { drafts, baseVersions }
 }
 
+/** Refusals of a save that mean the viewer may no longer open the branch at all. */
+const BRANCH_LOCKOUT_CODES: ReadonlySet<ApiErrorCode> = new Set([
+  'BRANCH_ACCESS_DENIED',
+  'BRANCH_LOCKED_DOWN',
+])
+
 export interface UseDraftManagerOptions {
   branchName: string
   selectedPath: string
@@ -182,6 +188,11 @@ export interface UseDraftManagerOptions {
   onSaved?: () => void
   /** A save was refused for field errors, which the form now shows. */
   onSaveBlocked?: () => void
+  /**
+   * A save was refused because the viewer may no longer open the branch. The caller reads the
+   * branch list again, so the branch's not-available state takes over.
+   */
+  onBranchAccessLost?: () => void
   /**
    * Fired when drafts are thrown away for the server's copy: Discard (one entry, or every entry
    * when `contentId` is undefined) and Reload. Anything built on the discarded draft, such as an
@@ -1123,6 +1134,11 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         })
       } else {
         const explained = isValidation || isForbidden || isUnavailable
+        const lostBranch =
+          isForbidden &&
+          err instanceof SaveApiError &&
+          !!err.code &&
+          BRANCH_LOCKOUT_CODES.has(err.code)
         notifications.show({
           ...(isValidation ? { title: 'Save rejected' } : {}),
           ...(isForbidden ? { title: 'Save not allowed' } : {}),
@@ -1132,9 +1148,11 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
               err.message)
             : 'Save failed',
           color: isUnavailable ? 'yellow' : 'red',
-          autoClose: getNotificationDuration(explained ? 8000 : 6000),
+          // No longer being able to open the branch needs the user to choose another.
+          autoClose: lostBranch ? false : getNotificationDuration(explained ? 8000 : 6000),
           withCloseButton: true,
         })
+        if (lostBranch) latestOptionsRef.current.onBranchAccessLost?.()
       }
     } finally {
       singleSaveRef.current = false

@@ -313,6 +313,145 @@ describe('Editor integration', () => {
     })
   })
 
+  it('turns read-only, as not available, once a save is refused for branch access', async () => {
+    mockConsole()
+    const entryApiPath = '/api/canopycms/main/content/content/posts/hello'
+    const entry: EditorEntry = {
+      path: unsafeAsLogicalPath('content/posts/hello'),
+      contentId: unsafeAsContentId('def456ABC123'),
+      label: 'Hello',
+      status: 'entry',
+      schema: [{ name: 'title', type: 'string' }],
+      collectionPath: unsafeAsLogicalPath('content/posts'),
+      collectionName: 'posts',
+      slug: 'hello',
+      format: 'json',
+      type: 'entry',
+    }
+    // The branch list holds the branch until the save is refused, as a removal leaves it.
+    let removed = false
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (url.endsWith('/api/canopycms/branches')) {
+        const branches = removed
+          ? []
+          : [
+              {
+                name: 'main',
+                status: 'editing',
+                access: {},
+                createdBy: 'user-1',
+                createdAt: '2024-01-01',
+                updatedAt: '2024-01-01',
+                isProtected: false,
+                readOnly: false,
+                writeBlocked: false,
+                submitBlocked: false,
+              },
+            ]
+        return Promise.resolve(
+          okJson({ ok: true, status: 200, data: { branches, defaultBranch: 'main' } }),
+        )
+      }
+      if (url.includes('/schema') && !url.includes('/schema/')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              schema: {},
+              flatSchema: [
+                {
+                  type: 'entry-type',
+                  logicalPath: 'content/posts/post',
+                  name: 'post',
+                  parentPath: 'content/posts',
+                  format: 'json',
+                  schemaRef: 'postSchema',
+                },
+              ],
+              entrySchemas: { postSchema: entry.schema },
+            },
+          }),
+        )
+      }
+      if (url.includes('/entries')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              collections: [],
+              entries: [
+                {
+                  logicalPath: entry.path,
+                  contentId: 'def456ABC123',
+                  collectionPath: entry.collectionPath,
+                  collectionName: entry.collectionName,
+                  slug: entry.slug,
+                  format: entry.format,
+                  entryType: 'post',
+                  physicalPath: '/content/posts.abc123XYZ789/post.hello.def456ABC123.json',
+                  exists: true,
+                },
+              ],
+              pagination: { hasMore: false, limit: 50 },
+            },
+          }),
+        )
+      }
+      if (plainBranchPath(url).startsWith(entryApiPath) && init?.method === 'PUT') {
+        removed = true
+        return Promise.resolve(
+          okJson(
+            {
+              ok: false,
+              status: 403,
+              code: 'BRANCH_ACCESS_DENIED',
+              error: "You don't have access to this branch.",
+            },
+            403,
+          ),
+        )
+      }
+      if (plainBranchPath(url) === entryApiPath) {
+        return Promise.resolve(
+          okJson({ ok: true, status: 200, data: { title: 'Loaded title', version: 100 } }),
+        )
+      }
+      return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderWithProviders(
+      <Editor
+        entries={[entry]}
+        title="Test Editor"
+        branchName="main"
+        operatingMode="dev"
+        themeOptions={{}}
+      />,
+    )
+
+    let input: HTMLInputElement | null = null
+    await waitFor(() => {
+      input = screen.queryByRole('textbox', { name: /title/i }) as HTMLInputElement | null
+      expect(input?.value).toBe('Loaded title')
+    })
+    fireEvent.change(input!, { target: { value: 'Modified title' } })
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: /^save$/i }).getAttribute('aria-disabled'),
+      ).toBeNull(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('branch-status').textContent).toBe('Not available · read-only'),
+    )
+  })
+
   it("carries an unsaved draft onto the version a submit's stamp left", async () => {
     const entryApiPath = '/api/canopycms/main/content/content/posts/hello'
     const stamp = '2026-10-14T09:00:00.000Z'
