@@ -658,6 +658,7 @@ export const createBranchHandler = async (
         ok: false,
         status: 403,
         error: 'You do not have permission to create branches',
+        code: 'BRANCH_CREATE_FORBIDDEN',
       }
     }
 

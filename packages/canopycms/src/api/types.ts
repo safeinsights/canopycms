@@ -83,7 +83,8 @@ export interface ApiResponse<TData = unknown> {
  * {@link BranchAccessRefusalCode}) refuse a change to who may open a branch (api/branch-access.ts);
  * the list is unchanged. `LIST_CHANGED`: another change to the list landed while this one was
  * saved (a 409), so a retry can pass. `RATE_LIMITED`: the caller made too many email lookups while finding
- * people (a 429, api/people.ts); a retry in a few minutes can pass.
+ * people (a 429, api/people.ts); a retry in a few minutes can pass. `BRANCH_CREATE_FORBIDDEN`: the
+ * caller may not create branches (a 403), so only a path permission that lets them edit can pass.
  */
 export type ApiErrorCode =
   | 'SCHEMA_UNAVAILABLE'
@@ -105,4 +106,5 @@ export type ApiErrorCode =
   | 'USER_OUT_OF_SCOPE'
   | 'LIST_CHANGED'
   | 'RATE_LIMITED'
+  | 'BRANCH_CREATE_FORBIDDEN'
   | BranchAccessRefusalCode

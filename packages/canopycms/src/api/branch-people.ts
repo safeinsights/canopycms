@@ -74,7 +74,14 @@ interface BranchAccessData {
 
 export type BranchAccessResponse = ApiResponse<BranchAccessData>
 
-export type FindPeopleResponse = ApiResponse<FindPeopleResult>
+/** What a branch not yet created takes from the site: the branchless finder's answer carries it. */
+export interface NewBranchSharing {
+  defaultAccess: DefaultBranchAccess
+  searchable: BranchAccessData['searchable']
+  addableByEmail: BranchAccessData['addableByEmail']
+}
+
+export type FindPeopleResponse = ApiResponse<FindPeopleResult & { newBranch?: NewBranchSharing }>
 
 const findPeopleBodySchema = z.object({ query: z.string().max(320) }).strict()
 
@@ -256,9 +263,28 @@ const findPeopleForNewBranchHandler = async (
   body: FindPeopleBody,
 ): Promise<FindPeopleResponse> => {
   if (!(await branchCreatePermission(ctx, req.user)).allowed) {
-    return { ok: false, status: 403, error: 'You do not have permission to create branches' }
+    return {
+      ok: false,
+      status: 403,
+      error: 'You do not have permission to create branches',
+      code: 'BRANCH_CREATE_FORBIDDEN',
+    }
   }
-  return findResponse(ctx, req, body.query)
+  const found = await findResponse(ctx, req, body.query)
+  if (!found.data) return found
+  const { config } = ctx.services
+  const sharing = resolveBranchSharing(config)
+  return {
+    ...found,
+    data: {
+      ...found.data,
+      newBranch: {
+        defaultAccess: config.defaultBranchAccess ?? 'deny',
+        searchable: sharing.searchable,
+        addableByEmail: isAdmin(req.user.groups) ? 'all-users' : sharing.addableByEmail,
+      },
+    },
+  }
 }
 
 const getBranchAccess = defineEndpoint({

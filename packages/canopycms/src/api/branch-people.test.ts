@@ -23,7 +23,11 @@ import { setBranchAccessLogSink } from '../utils/access-log'
 import { ADMIN_ROUTES } from './admin'
 import { updateBranchAccessHandler, type UpdateBranchAccessBody } from './branch'
 import { changeBranchAccess, initialBranchAccess } from './branch-access'
-import { BRANCH_PEOPLE_ROUTES, type BranchAccessResponse } from './branch-people'
+import {
+  BRANCH_PEOPLE_ROUTES,
+  type BranchAccessResponse,
+  type FindPeopleResponse,
+} from './branch-people'
 import { EMAIL_LOOKUP_LIMIT, resetEmailLookupLimits, type FindPeopleResult } from './people'
 import type { ApiContext, ApiResponse } from './types'
 import { USER_ROUTES } from './user'
@@ -124,9 +128,11 @@ const find = (actor: CanopyUser, branch: string, query: string) =>
   ) as Promise<ApiResponse<FindPeopleResult>>
 
 const findForNewBranch = (actor: CanopyUser, query: string) =>
-  BRANCH_PEOPLE_ROUTES.findPeopleForNewBranch.handler(ctx(), { user: actor }, { query }) as Promise<
-    ApiResponse<FindPeopleResult>
-  >
+  BRANCH_PEOPLE_ROUTES.findPeopleForNewBranch.handler(
+    ctx(),
+    { user: actor },
+    { query },
+  ) as Promise<FindPeopleResponse>
 
 const getAccess = (actor: CanopyUser, branch: string) =>
   BRANCH_PEOPLE_ROUTES.getAccess.handler(
@@ -462,9 +468,10 @@ describe('POST /branches/access/find', () => {
   it('leaves it to admins and reviewers when there are no rules and edit defaults to deny', async () => {
     await writeSettings(settingsRoot, [])
 
-    expect(await findForNewBranch(user('pal'), 'Cole')).toMatchObject({ ok: false, status: 403 })
+    const refused = { ok: false, status: 403, code: 'BRANCH_CREATE_FORBIDDEN' }
+    expect(await findForNewBranch(user('pal'), 'Cole')).toMatchObject(refused)
     config = { ...config, defaultPathAccess: { read: 'allow' } }
-    expect(await findForNewBranch(user('pal'), 'Cole')).toMatchObject({ ok: false, status: 403 })
+    expect(await findForNewBranch(user('pal'), 'Cole')).toMatchObject(refused)
     expect((await findForNewBranch(reviewer, 'Cole')).ok).toBe(true)
   })
 
@@ -472,6 +479,18 @@ describe('POST /branches/access/find', () => {
     await peopleStore.recordShares('owner', ['pal'])
 
     expect(ids(await findForNewBranch(owner, ''))).toEqual(['pal'])
+  })
+
+  it("sends the site's sharing settings, which a branch not yet created has no list to carry", async () => {
+    config = { ...config, defaultBranchAccess: 'allow' }
+    sharing({ searchable: 'nobody', addableByEmail: 'cms-users' })
+
+    expect((await findForNewBranch(owner, '')).data?.newBranch).toEqual({
+      defaultAccess: 'allow',
+      searchable: 'nobody',
+      addableByEmail: 'cms-users',
+    })
+    expect((await findForNewBranch(admin, '')).data?.newBranch?.addableByEmail).toBe('all-users')
   })
 })
 

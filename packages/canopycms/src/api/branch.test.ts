@@ -358,6 +358,7 @@ describe('branch api', () => {
     expect(res.ok).toBe(false)
     expect(res.status).toBe(403)
     expect(res.error).toBe('You do not have permission to create branches')
+    expect(res.code).toBe('BRANCH_CREATE_FORBIDDEN')
   })
 
   it('allows admin to create branch even with restrictions', async () => {
