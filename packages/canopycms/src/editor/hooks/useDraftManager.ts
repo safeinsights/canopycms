@@ -1363,7 +1363,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
           result.saved.push({ contentId: entry.contentId, label: entry.label, path: entry.path })
         } else if (outcome) {
           result.failed.push(outcome.failure)
-          // The branch now refuses this viewer, so the rest would be refused too: none is sent.
+          // A branch that refuses this viewer refuses the rest too, so none is sent.
           if (outcome.lockout) {
             lockedOut = true
             for (const rest of queue.slice(index + 1)) {
