@@ -291,17 +291,20 @@ interface SalvagedBranch {
  * The value a present field that doesn't read takes, for the fields that hold something back:
  * - `status` `submitted` locks writes, and Withdraw recovers the branch;
  * - `unpublishedAtMerge` true holds a delete for an admin;
- * - `rewrittenOnGitHub` naming no commit refuses pushes until a sync checks GitHub's branch, which
- *   clears it unless that branch dropped a commit it recorded, and on an archived branch holds a
- *   delete for an admin;
+ * - `rewrittenOnGitHub` naming no commit refuses pushes, and on an archived branch holds a delete
+ *   for an admin. A sync clears it when GitHub has no branch of that name; with one, only a
+ *   published branch's sync clears it, once GitHub's branch holds every commit recorded;
  * - `archivedAt` the repair time keeps deletion by age from counting from an older merge.
  *
- * Any other unreadable field is left out, as save()'s defaults leave it. That widens nothing but
- * review and merge rights, in four cases: a `submitUnfinished` left out no longer blocks Approve; a
- * `syncStatus` left out no longer marks a later merge as possibly unpublished; a `pullRequestState`
- * left out, if `closed`, no longer blocks Approve, Request changes and Mark merged; and a status
- * read as `submitted` lets reviewers Approve or Request changes on what may have been an editing
- * branch.
+ * Any other unreadable field is left out, as save()'s defaults leave it. Nothing that decides who
+ * can open, edit or delete the branch widens. Review and merge rights can, in four cases: a
+ * `submitUnfinished` left out no longer blocks Approve; a `syncStatus` left out no longer marks a
+ * later merge as possibly unpublished; a `pullRequestState` left out, if `closed`, no longer
+ * blocks Approve, Request changes and Mark merged; and a status read as `submitted` lets reviewers
+ * Approve or Request changes on what may have been an editing branch. And the worker's GitHub sync
+ * loses any record it can't read: an unreadable `lastGitHubTip` or `historyRewrittenFrom` leaves it
+ * less to detect a rewrite by, an unreadable `keptOverGitHub` drops paths from the PR body, and an
+ * unreadable `sync-failed` no longer holds back a retried push or a base update.
  */
 const restrictiveValues = (now: string): SalvagedFields => ({
   status: 'submitted',
@@ -341,11 +344,10 @@ const isSalvagedKey = (key: string): key is SalvagedKey => has(salvagedFieldShap
 
 /**
  * What `branch.json` text that fails {@link readBranchMetadataFile} still says, each field read
- * on its own key, so one bad field never takes another with it, and none widens access: a field
- * that reads is kept, a present one that doesn't takes its most restrictive value or is left out
- * ({@link restrictiveValues} names the four review and merge rights that can widen), and an absent
- * one stays absent. `access` is readable only when it passes its schema
- * whole. Keys the schema doesn't know are carried over verbatim, as a read passes them through,
+ * on its own key, so one bad field never takes another with it: a field that reads is kept, a
+ * present one that doesn't takes its most restrictive value or is left out, and an absent one
+ * stays absent. {@link restrictiveValues} says what that keeps from widening and what it doesn't.
+ * `access` is readable only when it passes its schema whole. Keys the schema doesn't know are carried over verbatim, as a read passes them through,
  * so a restricting field a newer deployment wrote survives. Text that is not JSON, or holds no
  * `branch` object, salvages nothing.
  */

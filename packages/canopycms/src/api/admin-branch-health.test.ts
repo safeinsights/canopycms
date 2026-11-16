@@ -625,6 +625,14 @@ describe('admin branch-health api', () => {
           'unpublishedAtMerge',
           (branch: Record<string, unknown>) => (branch.unpublishedAtMerge = true),
         ],
+        [
+          'rewrittenOnGitHub',
+          (branch: Record<string, unknown>) => (branch.rewrittenOnGitHub = 'c'.repeat(40)),
+        ],
+        [
+          'archivedAt',
+          (branch: Record<string, unknown>) => (branch.archivedAt = '2001-01-01T00:00:00.000Z'),
+        ],
       ])(
         'takes a change to %s, which repair decides, as the write not landing',
         async (_f, change) => {

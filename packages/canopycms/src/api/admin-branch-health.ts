@@ -409,10 +409,12 @@ const purgeBranchDirHandler = async (
  * metadata-only ghost of it.
  *
  * Rebuilt field by field: inside the lock, the corrupt file's text is read and every field is
- * salvaged on its own, never widening access, by the rules salvageBranchMetadata states, which
- * name the four review and merge rights that can widen. `name` comes from the clone, an absent field gets
- * save()'s default, `createdBy` that doesn't read becomes `'unknown'`, and unreadable access
- * becomes {@link fallbackAccess}.
+ * salvaged on its own by the rules salvageBranchMetadata states; nothing that decides who can open,
+ * edit or delete the branch widens. `name` comes from the clone, an absent field gets save()'s
+ * default (`status` `editing`), a `createdBy` that doesn't read or is missing becomes `'unknown'`,
+ * and unreadable access becomes {@link fallbackAccess}. Text that isn't JSON salvages nothing, so
+ * it comes back `editing`, by `'unknown'`, open only to admins and reviewers unless it is the base
+ * branch.
  *
  * The write applies only over no metadata at all, so a write that created the file after the
  * archive is never merged over. A write that throws is checked on disk: if what repair decided
@@ -691,10 +693,13 @@ function repairedData(
  * The access a repaired branch gets when its own fails its schema: an empty list, so only admins
  * and reviewers can open it, with every narrowing field as salvaged.
  *
- * The base branch and dev's active branch ({@link opensWithoutList}) are the exception: they take
- * no list an admin could lift (api/branch-access.ts), so they get the narrowing fields alone, and a
- * lockdown besides when the damaged access may have restricted them. Text that isn't JSON says
- * nothing either way, so it leaves them open: in prod their access comes only from hand edits.
+ * The base branch and dev's active branch ({@link opensWithoutList}) are the exception, being meant
+ * to stay open: the protected base takes no list (api/branch-access.ts), and dev's active branch is
+ * the one a dev server edits. They get the narrowing fields alone, and a lockdown besides when the
+ * damaged access may have restricted them. Text that isn't JSON says nothing either way, so it
+ * leaves the base open: in prod its access comes only from hand edits. Dev's active branch counts
+ * only while its creator reads as the system user; with one that doesn't, it is an ordinary branch
+ * and gets the empty list.
  */
 function fallbackAccess(
   damaged: Extract<SalvagedAccess, { readable: false }>,
@@ -723,6 +728,7 @@ const DECIDED_FIELDS = [
   'baseBranch',
   'unpublishedAtMerge',
   'rewrittenOnGitHub',
+  'archivedAt',
 ] as const satisfies readonly (keyof RepairedFields)[]
 
 /**

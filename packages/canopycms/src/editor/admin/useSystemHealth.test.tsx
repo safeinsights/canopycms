@@ -512,7 +512,7 @@ describe('useSystemHealth', () => {
         },
       )
       expect(shown?.message).toBe(
-        "Kept its access: anyone who can sign in can open it. Its record of GitHub's branch couldn't be read, so nothing is pushed to GitHub until a sync checks GitHub's branch." +
+        "Kept its access: anyone who can sign in can open it. Its record of GitHub's branch couldn't be read, so nothing is pushed to GitHub until a sync clears it: once GitHub has no branch of this name, or once this branch is published and GitHub's holds every commit CanopyCMS recorded." +
           ARCHIVED,
       )
     })

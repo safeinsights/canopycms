@@ -118,7 +118,7 @@ function repairedHolds(repaired: RepairedBranch): string[] {
     reset.rewrittenOnGitHub !== undefined
       ? archived
         ? "Its record of GitHub's branch couldn't be read, so only an admin can delete it."
-        : "Its record of GitHub's branch couldn't be read, so nothing is pushed to GitHub until a sync checks GitHub's branch."
+        : "Its record of GitHub's branch couldn't be read, so nothing is pushed to GitHub until a sync clears it: once GitHub has no branch of this name, or once this branch is published and GitHub's holds every commit CanopyCMS recorded."
       : '',
     reset.archivedAt !== undefined && archived
       ? "Its archive time couldn't be read, so deletion by age counts from this repair."
