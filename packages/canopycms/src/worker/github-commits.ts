@@ -206,7 +206,7 @@ export async function bringInGitHubCommits(
   const gitHubTip = args.gitHub?.tips.get(branchRef)
   // No GitHub branch leaves nothing a push could restore. Ahead of `isPublished`: withdrawing drops
   // a closed PR's number, which can be all that marked the branch published.
-  if (args.gitHub !== undefined && gitHubTip === undefined && branch.rewrittenOnGitHub) {
+  if (args.gitHub !== undefined && gitHubTip === undefined && refusesPushAsRewritten(branch)) {
     await clearRewritten(ctx, args)
   }
   if (!isPublished(metaFile)) return { kind: 'in-step' }

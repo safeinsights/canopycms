@@ -1459,11 +1459,16 @@ describe('bringing commits made on GitHub into a branch clone', () => {
       expect((await readMeta(s))?.rewrittenOnGitHub).toBeUndefined()
     })
 
-    for (const status of ['editing', 'submitted'] as const) {
-      it(`clears for a ${status} branch when GitHub no longer has the branch`, async () => {
+    for (const [status, marker, named] of [
+      ['editing', flag, 'a commit'],
+      ['submitted', flag, 'a commit'],
+      // Repair writes a marker naming no commit for one it couldn't read.
+      ['editing', '', 'no commit'],
+    ] as const) {
+      it(`clears for a ${status} branch, its marker naming ${named}, when GitHub no longer has the branch`, async () => {
         await writeMeta(s, {
           status,
-          rewrittenOnGitHub: flag,
+          rewrittenOnGitHub: marker,
           rebaseFailure: { message: 'x', firstAt: 'y', lastAt: 'y' },
         })
         await s.dropGitHubBranch()
