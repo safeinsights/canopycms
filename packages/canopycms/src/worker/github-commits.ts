@@ -125,6 +125,11 @@ const MAX_LISTED_PATH_LENGTH = 200
 export const REWRITTEN_PUSH_REFUSAL =
   "This branch was changed on GitHub in a way CanopyCMS can't combine with the work here, so nothing was pushed. Nothing is lost."
 
+/** A rewrite recorded on `branch`, naming a commit or not, refuses every push (task-runner.ts). */
+export const refusesPushAsRewritten = (
+  branch: Pick<BranchMetadata, 'rewrittenOnGitHub'>,
+): boolean => branch.rewrittenOnGitHub !== undefined
+
 /** Why a push was refused before any sync had seen the rewrite (task-runner.ts). */
 export const SEEN_COMMIT_GONE_PUSH_REFUSAL =
   'A commit this branch had on GitHub is no longer there, so nothing was pushed. Nothing is lost.'

@@ -35,6 +35,7 @@ import { SYNC_BRANCH_ACTION } from '../base-update'
 import {
   COMMIT_ID,
   REWRITTEN_PUSH_REFUSAL,
+  refusesPushAsRewritten,
   SEEN_COMMIT_GONE_PUSH_REFUSAL,
   enqueueReviewBlockSync,
 } from './github-commits'
@@ -887,10 +888,10 @@ export async function pushBranchToGitHub(
   const metaFile = await readMetadata()
   const marker = metaFile?.branch.historyRewrittenFrom
   // github-commits.ts recorded it: this push would restore what someone removed from GitHub.
-  if (metaFile?.branch.rewrittenOnGitHub !== undefined) {
+  if (metaFile && refusesPushAsRewritten(metaFile.branch)) {
     workerLogWarn(
       `Not pushing ${branch}: GitHub's branch no longer contains ` +
-        `${metaFile.branch.rewrittenOnGitHub}`,
+        `${metaFile.branch.rewrittenOnGitHub || 'a commit it held'}`,
     )
     throw new PermanentTaskError(REWRITTEN_PUSH_REFUSAL)
   }
