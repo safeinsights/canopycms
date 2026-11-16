@@ -719,7 +719,7 @@ async function pickFirstSuggestion(): Promise<void> {
 }
 
 /**
- * "Share with" on the New branch form, its suggestions recent shares only: Bob Diaz chosen, and on
+ * "Share with" on the New branch form, its suggestions recent shares and groups: Bob Diaz chosen, and on
  * a site open to everyone the line saying the branch will be private.
  */
 export const NewBranchShareWith: Story = {

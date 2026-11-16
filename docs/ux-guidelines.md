@@ -238,7 +238,7 @@ filled: other badges, icons and indicators take their colour's light variant.
   internal name.
 - A branch card's access list shows the names the viewer can resolve, then "and N others".
   Anyone who may open a branch receives its whole list; only admins and reviewers see emails.
-- An avatar beside a name has empty `alt`. One showing only initials (two, `personInitials`) is
+- An avatar beside a name has empty `alt`. One showing only initials (`personInitials`) is
   hidden from assistive tech, with the person's name as visually hidden text.
 - Pickers leave out people a role admits. A read-only stand-in for a control says
   who may act.

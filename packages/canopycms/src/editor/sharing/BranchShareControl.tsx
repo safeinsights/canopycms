@@ -11,7 +11,8 @@ import { EDITOR_ACTIONS } from '../copy'
 import { joinNames } from './share-staging'
 
 /**
- * One width for both labels and the skeleton, so neither loading nor a role shifts the bar.
+ * One width for both labels and the skeleton, so the control's own width never changes as the
+ * listing loads or with the viewer's role.
  * @internal Exported for tests.
  */
 export const SHARE_CONTROL_WIDTH = 220
@@ -80,9 +81,10 @@ export function shareControlName(
 }
 
 /**
- * The people behind `ids`, as the lookup answers, by id; null until it first has. While anyone is
- * still unnamed, it asks again for each `listing`, as a lookup that reads a cache the listing seeds
- * can know more once it arrives; a later answer never takes back a name an earlier one gave.
+ * The people behind `ids`, as the lookup answers, by id; null until it first has. While it has no
+ * record for someone, it asks again for each new `listing` (the summary, which each listing and
+ * any other change to it renews), as a lookup that reads a cache the listing seeds can know more
+ * once it arrives; a later answer never takes back a record an earlier one gave.
  */
 function useLookedUp(
   ids: readonly string[],

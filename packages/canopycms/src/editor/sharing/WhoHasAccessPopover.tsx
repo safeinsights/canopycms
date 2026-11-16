@@ -153,7 +153,8 @@ function WhoHasAccessBody({
 
 /**
  * Who may add people, for a viewer who may not. "Anyone on this list" is said only to someone not
- * on it: a member who still can't add (an archived branch) is told nothing they could act on.
+ * listed by name: one listed who still can't add (an archived branch) is told nothing they could
+ * act on.
  */
 function WhoCanAddLine({
   access,

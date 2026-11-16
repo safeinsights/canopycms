@@ -36,8 +36,9 @@ export interface UseBranchActionsOptions {
   /** The current user; a create the server never answered adopts only a listed branch they made. */
   userId?: string
   /**
-   * Says a branch was created, in place of the plain toast: `created` is the server's answer, absent
-   * when a create that went unanswered settled on the listing.
+   * Says a branch was created, in place of the plain toast: `created` is the server's answer, or the
+   * listing's copy a create that went unanswered settled on (create-branch-request.ts `settle`);
+   * absent only when an answer carried no branch.
    */
   announceCreated?: (label: string, created: BranchListItem | undefined) => void
 }

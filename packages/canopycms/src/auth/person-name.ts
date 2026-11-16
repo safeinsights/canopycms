@@ -7,7 +7,7 @@ export function personName(id: string, name: string | undefined): string | undef
   return trimmed && trimmed !== id ? trimmed : undefined
 }
 
-/** A person's initials, first and last name's, as every avatar without a picture shows them: "UT". */
+/** A person's initials, first and last name's ("UT"), or one for a one-word name. */
 export function personInitials(name: string): string {
   const parts = name.trim().split(/\s+/)
   if (parts.length === 1) return parts[0].charAt(0).toUpperCase()

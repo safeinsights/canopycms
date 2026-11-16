@@ -28,7 +28,8 @@ export interface ShareWithFieldProps {
 
 /**
  * The New branch form's "Share with": the Share dialog's picker against the branchless finder,
- * which suggests recent shares only, as a branch not yet created has no editors. The people chosen
+ * which suggests recent shares and the user's groups, as a branch not yet created has no editors
+ * (api/people.ts `findPeople`). The people chosen
  * are removable chips. On a site whose branches are open to everyone, choosing anyone makes the
  * branch private, which a line under them says; the finder's answer says what the site is.
  */

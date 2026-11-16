@@ -84,7 +84,7 @@ export interface ApiResponse<TData = unknown> {
  * the list is unchanged. `LIST_CHANGED`: another change to the list landed while this one was
  * saved (a 409), so a retry can pass. `RATE_LIMITED`: the caller made too many email lookups while finding
  * people (a 429, api/people.ts); a retry in a few minutes can pass. `BRANCH_CREATE_FORBIDDEN`: the
- * caller may not create branches (a 403), so only a path permission that lets them edit can pass.
+ * caller may not create branches (a 403), by api/branch.ts `canCreateBranch`'s rule.
  */
 export type ApiErrorCode =
   | 'SCHEMA_UNAVAILABLE'

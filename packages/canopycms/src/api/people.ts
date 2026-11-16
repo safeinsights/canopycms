@@ -363,7 +363,8 @@ export async function findPeople(
     ...Object.keys(access.excludedGroups ?? {}),
   ])
   const { cmsUsers, internalGroups } = await loadPeopleSources(ctx)
-  // Admins and reviewers open every branch already, so adding them would change nothing.
+  // Members of the Admins and Reviewers groups, bootstrap admins included, open every branch
+  // already, so adding them would change nothing. A provider group's admins can't be told apart.
   const byRole = new Set(
     internalGroups.filter((group) => isReservedGroup(group.id)).flatMap((group) => group.members),
   )

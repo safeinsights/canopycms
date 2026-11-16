@@ -238,7 +238,8 @@ function ShareBranchBody({
   const body = data ? accessChangeBody(staged, data) : {}
   const dirty = Object.keys(body).length > 0
   const lockedDown = !!branch.access?.managerOrAdminAllowed
-  // As many placeholder rows as the listing says the list holds, so the dialog keeps its height.
+  // As many placeholder rows as the listing says the list holds (1 to 8), so the footer barely moves
+  // as the list loads.
   const known = accessPeople(branch)
   const loadingRows = Math.min(
     Math.max(known.users.length + known.groups.length, 1),
@@ -351,7 +352,8 @@ function ShareBranchBody({
       name: entry.name,
       avatarUrl: entry.avatarUrl,
       shownEmail: entry.email ?? entry.maskedEmail,
-      // The owner row says Owner; who added the owner back into the list says nothing more.
+      // The owner's row says Owner, not who put them on the list: the first share does that
+      // (authorization/branch-sharing.ts `applyAccessChange`).
       addedBy:
         entry.addedBy && !isOwner
           ? entry.addedBy.id === user.userId
