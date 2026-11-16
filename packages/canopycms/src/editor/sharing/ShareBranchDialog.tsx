@@ -101,9 +101,9 @@ interface BodyState {
 /**
  * Who may open a branch, for someone who may add people to it: a list whose adds, removals and
  * settings are staged, then sent as one change by "Update access". A viewer the server says can't
- * add sees the list read-only. Esc and ✕ follow the dismiss button: with edits staged they ask
- * before discarding them; once a refusal has replaced the dialog, they close it and read the
- * branch list again, as its Close does.
+ * add sees the list read-only. Esc and ✕ follow the dismiss button: while an update is on its way
+ * they do nothing; with edits staged they ask before discarding them; once a refusal has replaced
+ * the dialog, they close it and read the branch list again, as its Close does.
  */
 export function ShareBranchDialog({
   opened,
@@ -175,7 +175,7 @@ type LastAction =
 interface SaveProblem {
   tone: 'error' | 'warning'
   message: string
-  /** A network failure, a rate limit or a list changed meanwhile: a later try can pass. */
+  /** A request that threw, an answer with no code, a rate limit or a list changed meanwhile. */
   retryable: boolean
   ids?: string[]
 }

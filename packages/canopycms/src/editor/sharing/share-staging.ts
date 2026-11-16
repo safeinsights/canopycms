@@ -14,7 +14,7 @@ export type AccessEntry = BranchAccess['entries'][number]
 export type ExcludedEntry = NonNullable<BranchAccess['excluded']>[number]
 type Kind = AccessEntry['kind']
 
-/** A person to add: by the id a find returned, else by an address no find has looked up. */
+/** A person to add: by id, else by an address no find has answered. */
 export type PersonToAdd = {
   kind: 'user'
   name: string
@@ -47,7 +47,7 @@ export const personToAdd = (person: FoundPerson): PersonToAdd => ({
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
-/** The server's test for a query that finds by exact address (api/people.ts). */
+/** The server's test for a query that finds by exact address (api/people.ts `EMAIL_PATTERN`). */
 export const looksLikeEmail = (query: string): boolean => EMAIL_PATTERN.test(query.trim())
 
 const idsOf = (items: Array<{ kind: Kind; id?: string }>, kind: Kind): string[] =>

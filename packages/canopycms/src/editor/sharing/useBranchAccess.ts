@@ -30,7 +30,7 @@ export type BranchAccessState =
 
 /**
  * GET /:branch/access for `branch`, read on mount. `reload` keeps what was shown while it reads,
- * and resolves to the fresh list, or undefined when the read failed.
+ * and resolves to the fresh list, or undefined when the read failed, was refused or was overtaken.
  */
 export function useBranchAccess(branch: string): {
   state: BranchAccessState

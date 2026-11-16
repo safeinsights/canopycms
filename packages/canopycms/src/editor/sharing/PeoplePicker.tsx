@@ -51,8 +51,8 @@ export interface PeoplePickerProps {
 /**
  * The Share dialog's search: suggestions while empty, people by name from two characters, and one
  * "Add ‹email›" option for an address, which is looked up only once picked, sparing the email
- * lookup limit. While open the list always shows something, since Mantine marks the input
- * `data-mantine-stop-propagation` then, so Esc closes the list and never the dialog behind it.
+ * lookup limit. While open the list always shows something, since Mantine's combobox target marks
+ * the input `data-mantine-stop-propagation` then, so Esc closes the list, never the dialog behind.
  */
 export function PeoplePicker({
   branch,

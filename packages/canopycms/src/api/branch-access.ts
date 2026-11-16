@@ -71,7 +71,8 @@ async function unknownUsers(
 /**
  * Refuses users the sign-in provider does not know, and, for anyone but an admin, users who don't
  * work in this CMS ({@link loadCmsUserIds}) unless `vouched`. An id learned elsewhere (a listing, a
- * pull request) therefore adds no one a non-admin could not otherwise reach.
+ * pull request) therefore adds no one a non-admin could not otherwise reach, bar someone this
+ * branch's list once held.
  */
 async function checkUsersToAdd(
   ctx: ApiContext,
@@ -296,8 +297,9 @@ export async function changeBranchAccess(
   const checked = new Set(
     (change.add?.users ?? []).filter((id) => id !== actor.userId && !listed.has(id)),
   )
-  // Someone removed from this branch was in reach of whoever listed or removed them (below), perhaps
-  // by an address from outside this CMS, so allowing them back by id needs no scope.
+  // An exclusion records someone this list held, someone in this CMS (the removal check below), or,
+  // when an admin made it, anyone; `byAdmin` exclusions only an admin lifts
+  // (authorization/branch-sharing.ts `applyAccessChange`). So allowing back by id needs no scope.
   const excludedHere = new Set(Object.keys(context.branch.access.excluded ?? {}))
   const scope = await checkUsersToAdd(
     ctx,
