@@ -26,7 +26,7 @@ import type {
 import type { BranchHealthData, RepairBranchDirResponse } from '../../api/admin-branch-health'
 import { isNobody } from '../../system-users'
 import { isExcludedFrom } from '../../authorization/helpers'
-import type { BranchAccessControl } from '../../types'
+import type { BranchAccessControl, BranchAddBy } from '../../types'
 import type { DuplicateIdScan } from '../../branch-health'
 import { BRANCHES_KEY } from '../hooks/useBranchesData'
 import { isGatewayFailure, isUnanswered, UnansweredError } from '../unanswered'
@@ -52,14 +52,15 @@ const plural = (count: number, one: string, many: string): string =>
 /**
  * What `access`'s removals enforce, in sentences, '' when there are none. A removed person stays
  * out; a removed group keeps no one out, but only a manager of the list re-adds it, and only an
- * admin one an admin removed (authorization/branch-sharing.ts).
+ * admin one an admin removed or where `addBy` leaves the list to admins
+ * (authorization/branch-sharing.ts).
  */
-function stayOutSentence(access: BranchAccessControl): string {
+function stayOutSentence(access: BranchAccessControl, addBy: BranchAddBy): string {
   const people = Object.keys(access.excluded ?? {}).length
   const groups = Object.values(access.excludedGroups ?? {})
   const byAdmin = groups.filter((removal) => removal.byAdmin).length
   const reAdders =
-    byAdmin === groups.length
+    addBy === 'admins' || byAdmin === groups.length
       ? 'an admin'
       : byAdmin === 0
         ? 'its owner or an admin'
@@ -77,7 +78,7 @@ function stayOutSentence(access: BranchAccessControl): string {
 /** Who can open a repaired branch now, and whether an admin has to act on it. */
 function repairedAccess(repaired: RepairedBranch): { text: string; mustAct: boolean } {
   const { access, createdBy } = repaired.branch
-  const stayOut = stayOutSentence(access)
+  const stayOut = stayOutSentence(access, repaired.addBy)
   if (repaired.reset.access) {
     // No access-list change lifts a lockdown (authorization/branch-sharing.ts).
     if (access.managerOrAdminAllowed) {
@@ -132,6 +133,7 @@ function repairedHolds(repaired: RepairedBranch): string[] {
   const { reset, branch } = repaired
   const archived = branch.status === 'archived'
   const deleteHeld = branch.unpublishedAtMerge === true || branch.rewrittenOnGitHub !== undefined
+  const inReview = branch.status === 'submitted' || branch.status === 'approved'
   return [
     reset.status === 'submitted'
       ? "Its status couldn't be read or was missing, so it is locked as submitted until it is withdrawn."
@@ -140,17 +142,20 @@ function repairedHolds(repaired: RepairedBranch): string[] {
       ? 'Its creator couldn\'t be read or was missing, so only an admin can share it again from "Branches".'
       : '',
     reset.unpublishedAtMerge
-      ? "What held its delete for an admin couldn't be read, so only an admin can delete it."
+      ? `${reset.status !== undefined ? "Its status couldn't be read or was missing beside a record of a rewrite on GitHub" : "Its merge record couldn't be read"}, so ${inReview ? 'once it is withdrawn, only an admin can delete it' : 'only an admin can delete it'}.`
       : '',
     reset.rewrittenOnGitHub !== undefined
       ? archived
         ? "Its record of GitHub's branch couldn't be read, so only an admin can delete it."
-        : "Its record of GitHub's branch couldn't be read, so nothing is pushed to GitHub until a sync clears it: once GitHub has no branch of this name, or, with this branch published, once GitHub's holds every commit of this branch's."
+        : "Its record of GitHub's branch couldn't be read, so nothing is pushed to GitHub until a sync clears it: when GitHub has no branch of this name and no pull request is recorded, or, with this branch published, when GitHub's branch holds this branch's commits or a commit CanopyCMS recorded there."
       : '',
     reset.archivedAt !== undefined && archived && !deleteHeld
       ? "Its archive time couldn't be read, so deletion by age counts from this repair."
       : '',
-    repaired.removalsUnreadable && !repaired.isBase
+    // Only a list repair emptied is shared again; a branch it locked needs a hand edit first.
+    repaired.removalsUnreadable &&
+    repaired.restricted &&
+    !repaired.branch.access.managerOrAdminAllowed
       ? "Its removals couldn't be read, so check who was removed before sharing it again."
       : '',
     ...repaired.otherFields.dropped.map((field) => DROPPED_HOLDS[field] ?? ''),

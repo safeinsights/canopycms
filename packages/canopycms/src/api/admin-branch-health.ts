@@ -16,7 +16,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import { simpleGit } from 'simple-git'
 
-import type { BranchAccessControl, BranchMetadata } from '../types'
+import type { BranchAccessControl, BranchAddBy, BranchMetadata } from '../types'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
 // Same constants the reader uses, rather than a second copy of the two string
 // literals.
@@ -28,10 +28,12 @@ import {
   type SalvagedAccess,
 } from '../branch-metadata-file'
 import {
+  effectiveAddBy,
   getBranchProtection,
   hasAccessList,
   opensToEveryone,
   opensWithoutList,
+  resolveBranchSharing,
 } from '../authorization'
 import { UNKNOWN_CREATOR_ID } from '../system-users'
 import {
@@ -108,6 +110,8 @@ interface RepairBranchDirData {
   otherFields: { kept: string[]; dropped: (keyof BranchMetadata)[] }
   /** The protected base branch, which takes no access list. */
   isBase: boolean
+  /** Who besides admins may add people to it now (effectiveAddBy); `'admins'` leaves it to them. */
+  addBy: BranchAddBy
   /** Repair itself turned the lockdown on, rather than keeping one the file held. */
   lockedByRepair: boolean
   /** Removals may have been lost, so `addBy` is `'admins'`: check who was removed. */
@@ -404,27 +408,24 @@ const purgeBranchDirHandler = async (
 
 /**
  * Repair a corrupt branch.json by archiving it (forensics preserved as
- * `branch.json.corrupt-{STAMP}`) and rebuilding it via saveIf(). Unlike
- * purge, the base branch IS a valid target -- a corrupt BASE branch.json is
- * exactly the degraded-service scenario this handler exists to fix.
+ * `branch.json.corrupt-{STAMP}`) and rebuilding it via saveIf(). Unlike purge, the base branch IS a
+ * valid target -- a corrupt BASE branch.json is exactly the degraded-service scenario this fixes.
  *
- * Lock sequence: withOccFileLock is NOT reentrant and saveIf() takes its own
- * hold, so the archive rename must complete and the lock must be RELEASED
- * before saveIf() runs, or it would deadlock against itself. The
- * provisioning lock stays held across the whole archive+save sequence, same
- * order as purge (provisioning -> branch.json) so the two operations can
- * never deadlock each other; without that hold, a concurrent purge could
- * trash the directory mid-sequence and have saveIf() resurrect a
- * metadata-only ghost of it.
+ * Lock sequence: withOccFileLock is NOT reentrant and saveIf() takes its own hold, so the archive
+ * rename must complete and the lock must be RELEASED before saveIf() runs, or it would deadlock
+ * against itself. The provisioning lock stays held across the whole archive+save sequence, same
+ * order as purge (provisioning -> branch.json) so the two can never deadlock each other; without
+ * that hold, a concurrent purge could trash the directory mid-sequence and have saveIf()
+ * resurrect a metadata-only ghost of it.
  *
  * Rebuilt field by field: inside the lock, the corrupt file's text is read and every field is
  * salvaged on its own by the rules salvageBranchMetadata states; nothing that decides who can open,
  * edit or delete the branch widens. `name` comes from the clone, an absent field gets save()'s
- * default but for `status`, which an absent one leaves `submitted`, a `createdBy` that doesn't
- * read or is missing becomes `'unknown'`, and unreadable access becomes {@link fallbackAccess}.
- * Text that isn't JSON salvages nothing, so it comes back `submitted`, by `'unknown'`, open only
- * to admins and reviewers unless it is the base branch. Text that can't be read at all is refused,
- * archiving nothing.
+ * default but for `status`, which an absent one leaves `submitted`, or `archived` beside an archive
+ * or merge time, a `createdBy` that doesn't read or is missing becomes `'unknown'`, and unreadable
+ * access becomes {@link fallbackAccess}. Text that isn't JSON salvages nothing, so it comes back
+ * `submitted`, by `'unknown'`, open only to admins and reviewers unless it is the base branch.
+ * Text that can't be read at all is refused, archiving nothing.
  *
  * The write applies only over no metadata at all, so a write that created the file after the
  * archive is never merged over. A write that throws is checked on disk: if what repair decided
@@ -543,7 +544,7 @@ const repairBranchDirHandler = async (
       ...salvaged.unknownFields,
       ...fields,
       name: branchName,
-      status: fields.status ?? 'editing',
+      status: fields.status ?? 'submitted',
       createdBy,
       access: salvaged.access.readable ? salvaged.access.access : (fallback?.access ?? {}),
     }
@@ -687,6 +688,7 @@ function repairedData(
     else if (key !== 'baseBranch') Object.assign(reset, { [key]: value })
   }
   const reported = new Set<keyof BranchMetadata>([...RIGHTS_FIELDS, 'baseBranch', 'name'])
+  const isBase = getBranchProtection(options.config, written.name, written.baseBranch).isProtected
   return {
     branch: written,
     archivedAs: options.archivedAs,
@@ -703,7 +705,11 @@ function repairedData(
     },
     restricted: hasAccessList(written.access),
     openToEveryone: opensToEveryone(written, options.config),
-    isBase: getBranchProtection(options.config, written.name, written.baseBranch).isProtected,
+    isBase,
+    addBy: effectiveAddBy(written, {
+      isProtected: isBase,
+      whoCanAdd: resolveBranchSharing(options.config).whoCanAdd,
+    }),
     lockedByRepair: options.lockedByRepair,
     removalsUnreadable: !salvaged.access.readable && salvaged.access.removalsUnreadable,
     ...(options.warning !== undefined && { warning: options.warning }),
@@ -991,6 +997,7 @@ const repairBranchDir = defineEndpoint({
     restricted: false,
     openToEveryone: false,
     isBase: false,
+    addBy: 'members',
     lockedByRepair: false,
     removalsUnreadable: false,
   },

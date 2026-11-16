@@ -394,20 +394,23 @@ describe('salvageBranchMetadata', () => {
     expect(salvaged.fields).toMatchObject({ status: 'submitted', unpublishedAtMerge: true })
   })
 
-  it('records a marker naming a commit as the last GitHub tip when the tip is unknown', () => {
-    const marker = 'a'.repeat(40)
-    for (const lastGitHubTip of [undefined, 7]) {
-      const salvaged = salvage({
-        branch: { status: 'editing', rewrittenOnGitHub: marker, lastGitHubTip },
-      })
-      expect(salvaged.fields.lastGitHubTip).toBe(marker)
+  it.each([
+    ['archivedAt', { archivedAt: '2026-01-01T00:00:00.000Z' }],
+    ['an unreadable archivedAt', { archivedAt: 7 }],
+    ['mergedAt', { mergedAt: '2026-01-01T00:00:00.000Z' }],
+  ])('takes an unknown status beside %s as archived', (_c, times) => {
+    for (const status of [{ status: 'bogus' }, {}]) {
+      const salvaged = salvage({ branch: { ...status, ...times } })
+      expect(salvaged.fields.status).toBe('archived')
     }
-    const empty = salvage({ branch: { status: 'editing', rewrittenOnGitHub: '' } })
-    expect(empty.fields.lastGitHubTip).toBeUndefined()
-    const recorded = salvage({
-      branch: { status: 'editing', rewrittenOnGitHub: marker, lastGitHubTip: 'b'.repeat(40) },
+  })
+
+  it('leaves a lastGitHubTip it cannot read out, even beside a marker naming a commit', () => {
+    const salvaged = salvage({
+      branch: { status: 'editing', rewrittenOnGitHub: 'a'.repeat(40), lastGitHubTip: 7 },
     })
-    expect(recorded.fields.lastGitHubTip).toBe('b'.repeat(40))
+    expect(salvaged.fields.lastGitHubTip).toBeUndefined()
+    expect(salvaged.fields.rewrittenOnGitHub).toBe('a'.repeat(40))
   })
 
   it('keeps every other field that reads, and leaves out one that does not', () => {

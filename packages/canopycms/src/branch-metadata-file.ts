@@ -296,15 +296,16 @@ interface SalvagedBranch {
 
 /**
  * The value a present field that doesn't read takes, for the fields that hold something back:
- * - `status` `submitted` locks writes, and Withdraw recovers the branch. A missing status, or
- *   text that isn't JSON, takes it too: it is as unknown;
+ * - `status` `submitted` locks writes, and Withdraw recovers the branch. A missing status, or text
+ *   that isn't JSON, takes it too: it is as unknown. A status unknown on a file with `archivedAt`
+ *   or `mergedAt`, which only an archive writes, is `archived` instead, as nothing un-archives;
  * - `unpublishedAtMerge` true holds a delete for an admin. A status unknown beside a rewrite
- *   marker takes it too, since the archived status that made the marker hold the delete is lost;
+ *   marker takes it too, even over a readable `false`, since the archived status that let the
+ *   marker hold the delete may be lost;
  * - `rewrittenOnGitHub` naming no commit refuses pushes, and on an archived branch holds a delete
- *   for an admin. A sync clears a marker when GitHub has no branch of that name, or, on a
- *   published branch, once GitHub's branch holds the clone's and `remote.git`'s heads or a commit
- *   it recorded there. A readable marker naming a commit is kept, with `lastGitHubTip` set to that
- *   commit when unknown, so the sync has it to compare;
+ *   for an admin. A sync clears it when GitHub has no branch of that name and no pull request is
+ *   recorded, or, on a published branch, when GitHub's branch holds the clone's and `remote.git`'s
+ *   heads or a commit recorded there, a marker that names one among them;
  * - `archivedAt` the repair time keeps deletion by age from counting from an older merge.
  *
  * Any other unreadable field is left out, as save()'s defaults leave it. Nothing that decides who
@@ -312,12 +313,12 @@ interface SalvagedBranch {
  * `submitUnfinished` left out no longer blocks Approve; a `syncStatus` left out no longer marks a
  * later merge as possibly unpublished; a `pullRequestState` left out, if `closed`, no longer
  * blocks Approve, Request changes and Mark merged; and an unknown status taken as `submitted` lets
- * reviewers Approve or Request changes on what may have been an editing branch. And the worker's GitHub sync
- * loses any record it can't read: an unreadable `historyRewrittenFrom`, or `lastGitHubTip` with no
- * marker naming a commit, leaves it less to detect a new rewrite by, though a standing marker
- * stays until GitHub's branch holds all of this branch's; an unreadable `keptOverGitHub` drops
- * paths from the PR body; and a `syncStatus` left out no longer holds back, as `sync-failed` did, a
- * retried push or base update.
+ * reviewers Approve or Request changes on what may have been an editing branch. And the worker's
+ * GitHub sync loses any record it can't read but the rewrite marker: an unreadable
+ * `historyRewrittenFrom` or `lastGitHubTip` leaves it less to detect a new rewrite by, though a
+ * standing marker stays until GitHub's branch holds all of this branch's; an unreadable
+ * `keptOverGitHub` drops paths from the PR body; and a `syncStatus` left out no longer holds back,
+ * as `sync-failed` did, a retried push or base update.
  */
 const restrictiveValues = (now: string): SalvagedFields => ({
   status: 'submitted',
@@ -341,9 +342,6 @@ function readField<T>(schema: z.ZodType<T>, value: unknown): T | typeof unreadab
 }
 
 const nonEmptyString = z.string().min(1).optional()
-
-/** A full commit id, the form worker/github-commits.ts's `COMMIT_ID` checks. */
-const COMMIT_ID = /^[0-9a-f]{40}([0-9a-f]{24})?$/
 
 const {
   name: _name,
@@ -406,15 +404,10 @@ export function salvageBranchMetadata(raw: string, now: Date = new Date()): Salv
     if (has(restrictive, key)) Object.assign(held, { [key]: restrictive[key as SalvagedKey] })
   }
   if (kept.status === undefined) {
-    held.status = restrictive.status
+    // Only an archive writes these times, and nothing un-archives a branch.
+    held.status =
+      has(branch, 'archivedAt') || has(branch, 'mergedAt') ? 'archived' : restrictive.status
     if (has(branch, 'rewrittenOnGitHub')) held.unpublishedAtMerge = true
-  }
-  if (
-    kept.rewrittenOnGitHub !== undefined &&
-    COMMIT_ID.test(kept.rewrittenOnGitHub) &&
-    kept.lastGitHubTip === undefined
-  ) {
-    held.lastGitHubTip = kept.rewrittenOnGitHub
   }
 
   const unknownFields = Object.fromEntries(

@@ -160,6 +160,7 @@ describe('useSystemHealth', () => {
         otherFields: { kept: [], dropped: [] },
         lockedByRepair: false,
         isBase: false,
+        addBy: 'members',
         removalsUnreadable: false,
         restricted: false,
         openToEveryone: false,
@@ -217,7 +218,7 @@ describe('useSystemHealth', () => {
         Partial<
           Pick<
             RepairData,
-            'warning' | 'lockedByRepair' | 'otherFields' | 'isBase' | 'removalsUnreadable'
+            'warning' | 'lockedByRepair' | 'otherFields' | 'isBase' | 'removalsUnreadable' | 'addBy'
           >
         >,
       createdBy = 'alice',
@@ -239,6 +240,7 @@ describe('useSystemHealth', () => {
           otherFields: { kept: [], dropped: [] },
           lockedByRepair: false,
           isBase: false,
+          addBy: 'members',
           removalsUnreadable: false,
           ...fields,
         }),
@@ -534,7 +536,7 @@ describe('useSystemHealth', () => {
         },
       )
       expect(shown?.message).toBe(
-        "Kept its access: anyone who can sign in can open it. Its record of GitHub's branch couldn't be read, so nothing is pushed to GitHub until a sync clears it: once GitHub has no branch of this name, or, with this branch published, once GitHub's holds every commit of this branch's." +
+        "Kept its access: anyone who can sign in can open it. Its record of GitHub's branch couldn't be read, so nothing is pushed to GitHub until a sync clears it: when GitHub has no branch of this name and no pull request is recorded, or, with this branch published, when GitHub's branch holds this branch's commits or a commit CanopyCMS recorded there." +
           ARCHIVED,
       )
     })
@@ -555,7 +557,7 @@ describe('useSystemHealth', () => {
       // A held delete makes the archive time moot, so it isn't mentioned.
       expect(shown).toMatchObject({
         message:
-          "Kept its access: anyone who can sign in can open it. What held its delete for an admin couldn't be read, so only an admin can delete it. Its record of GitHub's branch couldn't be read, so only an admin can delete it. It stays archived. The corrupt file is archived as branch.json.corrupt-x.",
+          "Kept its access: anyone who can sign in can open it. Its merge record couldn't be read, so only an admin can delete it. Its record of GitHub's branch couldn't be read, so only an admin can delete it. It stays archived. The corrupt file is archived as branch.json.corrupt-x.",
         color: 'yellow',
         autoClose: false,
       })
@@ -622,6 +624,63 @@ describe('useSystemHealth', () => {
         lockedByRepair: true,
       })
       expect(onBase?.message).not.toContain('Its removals')
+    })
+
+    it('says only an admin can add back removed groups where repair left the list to admins', async () => {
+      const access = { restricted: true, excludedGroups: { readers: removal } }
+      const shown = await repairWith(access, {
+        reset: {},
+        kept: { status: 'editing', access, createdBy: 'alice' },
+        restricted: true,
+        openToEveryone: false,
+        addBy: 'admins',
+      })
+      expect(shown?.message).toContain(
+        'The 1 group removed from it can be added back only by an admin.',
+      )
+    })
+
+    it.each([
+      [
+        'submitted',
+        { status: 'submitted' as const, unpublishedAtMerge: true },
+        "Its status couldn't be read or was missing beside a record of a rewrite on GitHub, so once it is withdrawn, only an admin can delete it.",
+      ],
+      [
+        'archived',
+        { status: 'archived' as const, unpublishedAtMerge: true },
+        "Its status couldn't be read or was missing beside a record of a rewrite on GitHub, so only an admin can delete it.",
+      ],
+    ])(
+      'says an unknown status beside a rewrite holds the delete, on a %s branch',
+      async (status, reset, sentence) => {
+        const shown = await repairWith(
+          {},
+          {
+            reset,
+            kept: { access: {}, createdBy: 'alice', rewrittenOnGitHub: 'a'.repeat(40) },
+            restricted: false,
+            openToEveryone: true,
+          },
+          'alice',
+          status as BranchStatus,
+          { unpublishedAtMerge: true, rewrittenOnGitHub: 'a'.repeat(40) },
+        )
+        expect(shown?.message).toContain(sentence)
+      },
+    )
+
+    it('says nothing of removals on a branch repair locked, which needs a hand edit first', async () => {
+      const locked = { restricted: true, managerOrAdminAllowed: true, addBy: 'admins' as const }
+      const shown = await repairWith(locked, {
+        reset: { access: locked },
+        kept: { status: 'editing', createdBy: 'alice' },
+        restricted: true,
+        openToEveryone: false,
+        removalsUnreadable: true,
+        lockedByRepair: true,
+      })
+      expect(shown?.message).not.toContain('Its removals')
     })
 
     it('names no share action for the base branch whose creator it could not read', async () => {

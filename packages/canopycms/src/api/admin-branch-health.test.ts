@@ -9,6 +9,7 @@ import type { ApiContext, ApiRequest } from './types'
 import type { CanopyConfig } from '../config'
 import { createMockApiContext, createMockUser, initTestRepo } from '../test-utils'
 import {
+  applyAccessChange,
   branchSharingRights,
   createCheckBranchAccess,
   getBranchWriteProtection,
@@ -1086,7 +1087,7 @@ describe('admin branch-health api', () => {
         ['unreadable', { status: 'bogus' }],
         ['missing', { status: undefined }],
       ])(
-        'holds the delete of an archived, rewritten branch whose status is %s, through Withdraw',
+        'holds the delete of a rewritten branch whose status is %s, with no archive time, through Withdraw',
         async (_c, status) => {
           await createDamaged(
             'lost-status',
@@ -1096,7 +1097,6 @@ describe('admin branch-health api', () => {
               access: {},
               createdBy: 'alice',
               rewrittenOnGitHub: 'a'.repeat(40),
-              mergedAt: '2026-01-01T00:00:00.000Z',
             }),
           )
 
@@ -1124,25 +1124,112 @@ describe('admin branch-health api', () => {
         },
       )
 
-      it('records a rewrite marker as the last GitHub tip when the tip is unknown', async () => {
-        const marker = 'a'.repeat(40)
+      it('holds the delete of a merged, rewritten branch whose status is lost, which stays archived', async () => {
         await createDamaged(
-          'tip-lost',
+          'lost-merged',
           damagedJson({
-            name: 'tip-lost',
+            name: 'lost-merged',
+            status: 'bogus',
             access: {},
             createdBy: 'alice',
-            rewrittenOnGitHub: marker,
-            lastGitHubTip: 7,
+            rewrittenOnGitHub: 'a'.repeat(40),
+            unpublishedAtMerge: false,
+            mergedAt: '2026-01-01T00:00:00.000Z',
           }),
         )
 
-        const result = await repairHandler(ctx, req, { dirName: 'tip-lost' })
+        const result = await repairHandler(ctx, req, { dirName: 'lost-merged' })
 
-        expect(result.data?.branch).toMatchObject({
-          rewrittenOnGitHub: marker,
-          lastGitHubTip: marker,
-        })
+        expect(result.data?.branch).toMatchObject({ status: 'archived', unpublishedAtMerge: true })
+        expect(result.data?.reset).toMatchObject({ status: 'archived', unpublishedAtMerge: true })
+        const deleted = await deleteAsCreator('lost-merged', result.data!.branch)
+        expect(deleted).toMatchObject({ ok: false, status: 409, error: DELETE_NEEDS_ADMIN_REASON })
+      })
+
+      it.each([
+        ['unreadable', { status: 'bogus' }],
+        ['missing', { status: undefined }],
+      ])(
+        'keeps a branch archived whose status is %s but whose file records an archive time',
+        async (_c, status) => {
+          await createDamaged(
+            'was-archived',
+            damagedJson({
+              name: 'was-archived',
+              ...status,
+              access: { restricted: true, allowedUsers: ['alice', 'bob'] },
+              createdBy: 'alice',
+              archivedAt: '2026-01-01T00:00:00.000Z',
+            }),
+          )
+
+          const result = await repairHandler(ctx, req, { dirName: 'was-archived' })
+
+          const written = result.data!.branch
+          expect(written.status).toBe('archived')
+          expect(result.data?.reset).toEqual({ status: 'archived' })
+          expect(result.data?.addBy).toBe('admins')
+          const withdrawn = await withdrawAsCreator('was-archived', written)
+          expect(withdrawn).toMatchObject({ ok: false, status: 400 })
+          const rights = branchSharingRights(alice, written, {
+            isProtected: false,
+            whoCanAdd: 'members',
+          })
+          const added = applyAccessChange(
+            written.access,
+            { add: { users: ['dave'] } },
+            { actor: alice, rights, creator: 'alice', defaultAccess: site, now: 'now' },
+          )
+          expect(added).toHaveProperty('refusal')
+        },
+      )
+
+      it("refuses an owner's re-add after repair left the list to admins, though an admin re-listed them", async () => {
+        await createDamaged(
+          'admins-only',
+          damagedJson({
+            name: 'admins-only',
+            access: { excluded: 'bob', addBy: 'members' },
+            createdBy: 'alice',
+          }),
+        )
+
+        const result = await repairHandler(ctx, req, { dirName: 'admins-only' })
+        expect(result.data?.addBy).toBe('admins')
+
+        // An admin lists the owner again.
+        const admin = req.user
+        const relisted = applyAccessChange(
+          result.data!.branch.access,
+          { add: { users: ['alice'] } },
+          {
+            actor: admin,
+            rights: branchSharingRights(admin, result.data!.branch, {
+              isProtected: false,
+              whoCanAdd: 'members',
+            }),
+            creator: 'alice',
+            defaultAccess: site,
+            now: 'now',
+          },
+        )
+        if ('refusal' in relisted) throw new Error(relisted.refusal.message)
+        const branch = { ...result.data!.branch, access: relisted.access }
+        const ownersAdd = applyAccessChange(
+          branch.access,
+          { add: { users: ['bob'] } },
+          {
+            actor: alice,
+            rights: branchSharingRights(alice, branch, {
+              isProtected: false,
+              whoCanAdd: 'members',
+            }),
+            creator: 'alice',
+            defaultAccess: site,
+            now: 'now',
+          },
+        )
+        expect(ownersAdd).toHaveProperty('refusal')
       })
 
       it('takes an archive time it cannot read as the repair time, so age deletion does not come early', async () => {
