@@ -20,9 +20,13 @@ vi.mock('./utils/occ-json-write', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./utils/occ-json-write')>()
   return {
     ...actual,
-    withOccFileLock: <T>(file: string, fn: () => Promise<T>) => {
+    withOccFileLock: <T>(
+      file: string,
+      fn: () => Promise<T>,
+      options?: Parameters<typeof actual.withOccFileLock>[2],
+    ) => {
       locks.withOccFileLock++
-      return actual.withOccFileLock(file, fn)
+      return actual.withOccFileLock(file, fn, options)
     },
   }
 })
@@ -46,13 +50,15 @@ afterEach(async () => {
   await fs.rm(path.dirname(root), { recursive: true, force: true })
 })
 
+const b64 = (id: string) => Buffer.from(id).toString('base64url')
+const seenDir = () => path.join(root, 'seen')
+
 describe('seen markers', () => {
   it('writes one marker however many first visits race, without taking a lock', async () => {
     // Separate stores, as on separate servers: none can skip the write on its in-process set.
     await Promise.all(Array.from({ length: 12 }, () => store().recordSeen('ana')))
 
-    expect(await fs.readdir(path.join(root, 'seen'))).toEqual([sha('ana')])
-    expect(await fs.readFile(path.join(root, 'seen', sha('ana')), 'utf8')).toBe('ana')
+    expect(await fs.readdir(seenDir())).toEqual([b64('ana')])
     expect(locks).toEqual({ withLock: 0, withOccFileLock: 0 })
   })
 
@@ -67,14 +73,54 @@ describe('seen markers', () => {
     expect(link).not.toHaveBeenCalled()
   })
 
-  it('lists the ids recorded, reading a missing folder as nobody and skipping stray files', async () => {
+  it('lists the ids from the folder alone, reading no marker, and skips stray files', async () => {
     expect(await store().listSeen()).toEqual(new Set())
-    await store().recordSeen('ana')
-    await store().recordSeen('ben')
-    await fs.writeFile(path.join(root, 'seen', sha('cy')), 'not-cy')
-    await fs.writeFile(path.join(root, 'seen', `.${sha('dee')}.abc.tmp`), 'dee')
+    await store().recordSeen('user_2abc/../x')
+    await store().recordSeen('ben@example.org')
+    await fs.writeFile(path.join(seenDir(), 'notes.txt'), '')
+    await fs.writeFile(path.join(seenDir(), `${b64('cy')}=`), '')
+    // Decodes to 'cy', but is not how this store spells it.
+    await fs.writeFile(path.join(seenDir(), 'Y3l'), '')
+    await fs.writeFile(path.join(seenDir(), `.${b64('dee')}.abc.tmp`), '')
+    const read = vi.spyOn(fs, 'readFile')
 
-    expect(await store().listSeen()).toEqual(new Set(['ana', 'ben']))
+    expect(await store().listSeen()).toEqual(new Set(['user_2abc/../x', 'ben@example.org']))
+    expect(read).not.toHaveBeenCalled()
+  })
+
+  it('rejects when the folder cannot be read, rather than listing nobody', async () => {
+    await fs.mkdir(root, { recursive: true })
+    await fs.writeFile(seenDir(), 'not a folder')
+
+    await expect(store().listSeen()).rejects.toThrow()
+  })
+
+  it('records no id too long for a marker name, logging it once', async () => {
+    const long = 'x'.repeat(151)
+    const console = mockConsole()
+    try {
+      await store().recordSeen(long)
+      await store().recordSeen(long)
+      expect(console.all().warn).toHaveLength(1)
+    } finally {
+      console.restore()
+    }
+
+    expect(await store().listSeen()).toEqual(new Set())
+    expect(await store().removeSeen(long)).toBe(false)
+    await store().recordSeen('x'.repeat(150))
+    expect(await store().listSeen()).toEqual(new Set(['x'.repeat(150)]))
+  })
+
+  it('leaves no temp file behind when writing it fails', async () => {
+    const writeFile = fs.writeFile.bind(fs)
+    vi.spyOn(fs, 'writeFile').mockImplementationOnce(async (file) => {
+      await writeFile(file, 'partial')
+      throw Object.assign(new Error('no space'), { code: 'ENOSPC' })
+    })
+
+    await expect(store().recordSeen('ana')).rejects.toThrow('no space')
+    expect(await fs.readdir(seenDir())).toEqual([])
   })
 
   it('removes a marker, and records the person again on their next visit', async () => {
@@ -93,6 +139,45 @@ describe('seen markers', () => {
 
 describe('recent shares', () => {
   const now = new Date('2026-11-15T12:00:00.000Z')
+
+  it('keeps a write that lands from another host between this one reading and writing', async () => {
+    await store().recordShares('ana', ['ben'], now)
+    // What a writer on another host looks like from here: the file moves on after our read.
+    const readFile = fs.readFile.bind(fs)
+    vi.spyOn(fs, 'readFile').mockImplementationOnce(async (file, options) => {
+      const ours = await readFile(file, options)
+      await fs.writeFile(
+        sharesFile('ana'),
+        JSON.stringify({
+          v: 1,
+          sharedWith: { ben: now.toISOString(), cy: now.toISOString() },
+          version: 2,
+          writeId: 'foreign',
+        }),
+      )
+      return ours
+    })
+
+    await store().recordShares('ana', ['dee'], new Date(now.getTime() + 1000))
+
+    expect((await store().recentShares('ana', now)).map((share) => share.userId).sort()).toEqual([
+      'ben',
+      'cy',
+      'dee',
+    ])
+  })
+
+  it('records nothing, at once, while another process holds the file lock', async () => {
+    await store().recordShares('ana', ['ben'], now)
+    // A holder that is alive, or crashed and not yet stale: its lock folder is fresh.
+    await fs.mkdir(`${sharesFile('ana')}.lock`)
+    const started = Date.now()
+
+    await expect(store().recordShares('ana', ['cy'], now)).rejects.toThrow()
+
+    expect(Date.now() - started).toBeLessThan(2000)
+    expect((await store().recentShares('ana', now)).map((share) => share.userId)).toEqual(['ben'])
+  })
 
   it('keeps both of two concurrent writes by one sharer, under the file locks', async () => {
     await Promise.all([

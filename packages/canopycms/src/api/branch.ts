@@ -245,19 +245,15 @@ export const canCreateBranch = (
 }
 
 /**
- * {@link canCreateBranch} over the path permissions in the base branch's own permissions file,
- * the resolved fork point baked into config at service creation (dev: git HEAD when not set).
+ * {@link canCreateBranch} over the site's path permissions, read from the settings workspace as
+ * content access reads them (authorization/content.ts).
  */
 export const branchCreatePermission = async (
   ctx: ApiContext,
   user: CanopyUser,
 ): Promise<{ allowed: boolean; reason: string }> => {
-  const { config } = ctx.services
-  const baseBranchContext = await ctx.getBranchContext(baseBranchOf(config))
-  const pathPermissions: PathPermission[] = baseBranchContext
-    ? await loadPathPermissions(baseBranchContext.branchRoot, config.mode)
-    : []
-  return canCreateBranch(user, pathPermissions)
+  const settingsRoot = await ctx.services.getSettingsBranchRoot()
+  return canCreateBranch(user, await loadPathPermissions(settingsRoot, ctx.services.config.mode))
 }
 
 export interface CreateBranchBody {

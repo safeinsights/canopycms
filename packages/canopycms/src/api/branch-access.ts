@@ -203,8 +203,9 @@ async function resolveEmailAdds(
 }
 
 /**
- * Remembers whom `actor` just shared with, for their suggestions (people-store.ts). Best effort,
- * and called only once the branch.json lock is released: the two locks never nest.
+ * Remembers whom `actor` just shared with, for their suggestions (people-store.ts). Best effort:
+ * a busy lock or a failure skips the record with one log line rather than delaying the share.
+ * Called only once the branch.json lock is released: the two locks never nest.
  */
 export async function recordRecentShares(
   ctx: ApiContext,

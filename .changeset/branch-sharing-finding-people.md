@@ -4,7 +4,7 @@
 'canopycms-auth-dev': patch
 ---
 
-### Find people to share a branch with, by name or exact email address
+### Find people to share a branch with, by name or exact email address — **security fix**
 
 <!-- migration
 area: Branches
@@ -18,6 +18,7 @@ row: Finding people to share with; searchable, addableByEmail
 - **Finding people.** A name matches from the start of the name or of a word in it; an email address finds only an exact match. `POST /:branch/access/find` and, for a branch not yet created, `POST /branches/access/find` take the query in the body. Each person gets 20 email lookups per 10 minutes on each server, and each lookup is logged without the address.
 - **Adding by email.** `PATCH /:branch/access` and a branch create accept `add.emails`, which can add someone who has never opened the editor.
 - **Who counts as working in this CMS** now includes anyone who opened the editor while in a group that reaches content. An admin can remove that record with `DELETE /admin/people/:userId/seen`.
+- **Creating branches** follows the site's path permissions, read from the settings branch: only admins, reviewers and people who may edit some path can create one. It read a file the base branch rarely has, so anyone signed in could.
 - **Auth plugins** may implement `findUserByEmail`; the Clerk and dev plugins do.
 
 **To adopt.** Nothing is required. `branchSharing.searchable` (default `'cms-users'`) and `branchSharing.addableByEmail` (default `'all-users'`; `'cms-users'` is stricter) choose whom people can find; see [the configuration reference](../README.md#configuration-reference).

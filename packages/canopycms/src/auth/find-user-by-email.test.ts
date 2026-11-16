@@ -42,6 +42,17 @@ describe('findUserByEmail', () => {
     expect(await findUserByEmail(fallback, 'na@example.org')).toBeNull()
   })
 
+  it('finds no one in the fallback when two users share the address', async () => {
+    const shared = plugin({
+      searchUsers: vi.fn(async () => [
+        { id: 'one', name: 'One', email: 'same@example.org' },
+        { id: 'two', name: 'Two', email: 'SAME@example.org' },
+      ]),
+    })
+
+    expect(await findUserByEmail(shared, 'same@example.org')).toBeNull()
+  })
+
   it('normalizes the name as other lookups do, and finds no system user', async () => {
     expect(await findUserByEmail(plugin(), 'ben@example.org')).toMatchObject({
       id: 'ben',

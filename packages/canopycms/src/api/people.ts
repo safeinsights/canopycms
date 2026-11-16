@@ -48,8 +48,7 @@ interface PeopleSources {
 
 /**
  * {@link collectCmsUserIds} over the settings files, the branch registry and the seen set, plus
- * the internal groups read on the way. A seen set that can't be read counts as empty, which only
- * narrows who a non-admin can find or add.
+ * the internal groups read on the way. Rejects when any of them can't be read.
  */
 export async function loadPeopleSources(ctx: ApiContext): Promise<PeopleSources> {
   const { config, bootstrapAdminIds, registry, peopleStore } = ctx.services
@@ -58,12 +57,7 @@ export async function loadPeopleSources(ctx: ApiContext): Promise<PeopleSources>
     loadPathPermissions(settingsRoot, config.mode),
     loadInternalGroups(settingsRoot, config.mode, bootstrapAdminIds),
     registry ? registry.list() : Promise.resolve([]),
-    peopleStore
-      ? peopleStore.listSeen().catch((err: unknown) => {
-          canopyLogWarn('[canopy] Could not read who has opened the editor:', getErrorMessage(err))
-          return new Set<CanopyUserId>()
-        })
-      : Promise.resolve(new Set<CanopyUserId>()),
+    peopleStore ? peopleStore.listSeen() : Promise.resolve(new Set<CanopyUserId>()),
   ])
   return {
     cmsUsers: collectCmsUserIds({

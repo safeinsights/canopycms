@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -432,15 +433,21 @@ describe('POST /:branch/access/find', () => {
 
 describe('POST /branches/access/find', () => {
   beforeEach(async () => {
-    const main = await addBranch('main', { createdBy: 'owner' })
-    await writeSettings(main.branchRoot, [
+    await writeSettings(settingsRoot, [
       { path: 'content/**', edit: { allowedGroups: ['writers'] } },
     ])
   })
 
-  it('answers only someone who may create branches', async () => {
+  it('answers only someone the path permissions let create branches', async () => {
     expect(await findForNewBranch(user('pal'), 'Cole')).toMatchObject({ ok: false, status: 403 })
     expect(ids(await findForNewBranch(owner, 'Cole'))).toEqual(['colleague'])
+  })
+
+  it("reads the path permissions from the settings workspace, never the base branch's clone", async () => {
+    const main = await addBranch('main', { createdBy: 'owner' })
+    await writeSettings(main.branchRoot, [{ path: 'content/**', edit: {} }])
+
+    expect(await findForNewBranch(user('pal'), 'Cole')).toMatchObject({ ok: false, status: 403 })
   })
 
   it('suggests recent shares with no branch to draw editors from', async () => {
@@ -560,6 +567,27 @@ describe('PATCH /:branch/access adding by email', () => {
     expect((await peopleStore.recentShares('owner')).map((share) => share.userId)).toEqual([
       'outsider',
     ])
+  })
+
+  it('answers a share at once, recording no suggestion, while the recent-shares lock is busy', async () => {
+    const context = await addBranch('feature/x')
+    const sharer = createHash('sha256').update('owner').digest('hex')
+    await fs.mkdir(path.join(workspace, '.people', 'shares', `${sharer}.json.lock`), {
+      recursive: true,
+    })
+    const console = mockConsole()
+    try {
+      const started = Date.now()
+      const res = await patch(owner, 'feature/x', { add: { users: ['colleague'] } })
+
+      expect(res.ok).toBe(true)
+      expect(Date.now() - started).toBeLessThan(2000)
+      expect(console.all().warn).toHaveLength(1)
+    } finally {
+      console.restore()
+    }
+    expect((await onDisk(context))?.access.allowedUsers).toEqual(['owner', 'colleague'])
+    expect(await peopleStore.recentShares('owner')).toEqual([])
   })
 
   it("refuses an address outside this CMS under 'cms-users', and accepts one inside it", async () => {
