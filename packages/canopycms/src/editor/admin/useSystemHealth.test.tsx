@@ -8,7 +8,7 @@ import type {
   BranchHealthResponse,
   RepairBranchDirResponse,
 } from '../../api/admin-branch-health'
-import type { BranchAccessControl } from '../../types'
+import type { BranchAccessControl, BranchStatus } from '../../types'
 import type { BranchHealthEntry, DuplicateIdScan } from '../../branch-health'
 import { unsafeAsContentId, unsafeAsPhysicalPath } from '../../paths/test-utils'
 import { setupMockApiClient, createApiClientWrapper } from '../hooks/__test__/test-utils'
@@ -157,6 +157,8 @@ describe('useSystemHealth', () => {
         archivedAs: 'branch.json.corrupt-20260101T000000Z',
         reset: { status: 'editing' },
         kept: { access: {}, createdBy: 'admin' },
+        otherFields: { kept: [], dropped: [] },
+        lockedByRepair: false,
         restricted: false,
         openToEveryone: false,
       },
@@ -202,18 +204,17 @@ describe('useSystemHealth', () => {
   })
 
   describe('repairDir says who can open the repaired branch', () => {
+    type RepairData = NonNullable<RepairBranchDirResponse['data']>
     const removal = { by: 'alice', at: '2026-11-01T00:00:00.000Z', byAdmin: false }
     const ARCHIVED =
       ' Its status is editing. The corrupt file is archived as branch.json.corrupt-x.'
 
     const repairWith = async (
       access: BranchAccessControl,
-      fields: Pick<
-        NonNullable<RepairBranchDirResponse['data']>,
-        'reset' | 'kept' | 'restricted' | 'openToEveryone' | 'warning'
-      >,
+      fields: Pick<RepairData, 'reset' | 'kept' | 'restricted' | 'openToEveryone'> &
+        Partial<Pick<RepairData, 'warning' | 'lockedByRepair' | 'otherFields'>>,
       createdBy = 'alice',
-      status: 'editing' | 'archived' = 'editing',
+      status: BranchStatus = 'editing',
     ) => {
       mockClient.admin.repairBranchDir.mockResolvedValueOnce(
         mockSuccess({
@@ -226,6 +227,8 @@ describe('useSystemHealth', () => {
             updatedAt: '2026-01-01',
           },
           archivedAs: 'branch.json.corrupt-x',
+          otherFields: { kept: [], dropped: [] },
+          lockedByRepair: false,
           ...fields,
         }),
       )
@@ -390,6 +393,7 @@ describe('useSystemHealth', () => {
             kept: { createdBy: 'canopycms-system' },
             restricted,
             openToEveryone: false,
+            lockedByRepair: true,
           },
           'canopycms-system',
         )
@@ -401,6 +405,120 @@ describe('useSystemHealth', () => {
           autoClose: false,
         })
       }
+    })
+
+    it('says a lockdown the file held was kept, not that repair locked the branch', async () => {
+      const access = { restricted: true, managerOrAdminAllowed: true }
+      const shown = await repairWith(access, {
+        reset: { access },
+        kept: { status: 'editing', createdBy: 'alice' },
+        restricted: true,
+        openToEveryone: false,
+        lockedByRepair: false,
+      })
+      expect(shown).toMatchObject({
+        message:
+          "Access couldn't be read, but its lockdown could, so only admins and reviewers can open it. Lifting the lockdown needs its branch.json edited by hand." +
+          ARCHIVED,
+        color: 'yellow',
+        autoClose: false,
+      })
+    })
+
+    it('says a status it could not read left the branch locked as submitted', async () => {
+      const access = { restricted: true, allowedUsers: ['alice'] }
+      const shown = await repairWith(
+        access,
+        {
+          reset: { status: 'submitted' },
+          kept: { access, createdBy: 'alice' },
+          restricted: true,
+          openToEveryone: false,
+        },
+        'alice',
+        'submitted',
+      )
+      expect(shown).toMatchObject({
+        message:
+          "Kept its access: only the people listed can open it. Its status couldn't be read, so it is locked as submitted until it is withdrawn. The corrupt file is archived as branch.json.corrupt-x.",
+        color: 'yellow',
+        autoClose: false,
+      })
+    })
+
+    it('says a kept review status stays', async () => {
+      const shown = await repairWith(
+        {},
+        {
+          reset: {},
+          kept: { status: 'approved', access: {}, createdBy: 'alice' },
+          restricted: false,
+          openToEveryone: true,
+        },
+        'alice',
+        'approved',
+      )
+      expect(shown?.message).toBe(
+        'Kept its access: anyone who can sign in can open it. It stays approved. The corrupt file is archived as branch.json.corrupt-x.',
+      )
+    })
+
+    it('says only an admin can share a closed branch whose creator it could not read', async () => {
+      const access = { restricted: true, allowedUsers: ['bob'] }
+      const shown = await repairWith(
+        access,
+        {
+          reset: { createdBy: 'unknown' },
+          kept: { status: 'editing', access },
+          restricted: true,
+          openToEveryone: false,
+        },
+        'unknown',
+      )
+      expect(shown).toMatchObject({
+        message:
+          'Kept its access: only the people listed can open it. Its creator couldn\'t be read, so only an admin can share it again from "Branches".' +
+          ARCHIVED,
+        color: 'yellow',
+        autoClose: false,
+      })
+    })
+
+    it('says nothing of an unreadable creator on a branch open to everyone', async () => {
+      const shown = await repairWith(
+        {},
+        {
+          reset: { createdBy: 'unknown' },
+          kept: { status: 'editing', access: {} },
+          restricted: false,
+          openToEveryone: true,
+        },
+        'unknown',
+      )
+      expect(shown).toMatchObject({
+        message: 'Kept its access: anyone who can sign in can open it.' + ARCHIVED,
+        color: 'green',
+      })
+    })
+
+    it('says what an unreadable merge record and GitHub record hold back', async () => {
+      const shown = await repairWith(
+        {},
+        {
+          reset: { unpublishedAtMerge: true, rewrittenOnGitHub: '' },
+          kept: { status: 'archived', access: {}, createdBy: 'alice' },
+          restricted: false,
+          openToEveryone: true,
+        },
+        'alice',
+        'archived',
+      )
+      expect(shown).toMatchObject({
+        message:
+          "Kept its access: anyone who can sign in can open it. Its merge record couldn't be read, so only an admin can delete it. Its record of GitHub's branch couldn't be read, so nothing is pushed to GitHub until CanopyCMS confirms that branch. It stays archived. The corrupt file is archived as branch.json.corrupt-x.",
+        color: 'yellow',
+        autoClose: false,
+      })
     })
 
     it('names no creator for a kept open branch on a closed site that excludes its creator', async () => {

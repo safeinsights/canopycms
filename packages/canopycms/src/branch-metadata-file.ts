@@ -19,7 +19,6 @@ import type {
   BranchAddBy,
   BranchMetadata,
   BranchStatus,
-  CanopyUserId,
   ConflictStatus,
   PullRequestState,
   SyncStatus,
@@ -265,30 +264,44 @@ export type SalvagedAccess =
        * its lockdown or `excluded` doesn't read.
        */
       mayRestrict: boolean
+      /** The lockdown in `narrowing` stands in for one that didn't read. */
+      lockdownUnreadable: boolean
     }
+
+/** The fields repair writes besides `name`, `access` and the timestamps save() manages. */
+type SalvagedFields = Partial<Omit<BranchMetadata, 'name' | 'access' | 'createdAt' | 'updatedAt'>>
 
 interface SalvagedBranch {
   access: SalvagedAccess
-  /** A non-empty `createdBy`. */
-  createdBy?: CanopyUserId
-  /** A non-empty `baseBranch`. */
-  baseBranch?: string
   /**
-   * `editing` or `archived`, the statuses repair keeps. Its pull-request fields aren't salvaged,
-   * so a `submitted` or `approved` one would be stranded, and resets to `editing` like one that
-   * doesn't read.
+   * Every other field the schema knows, each read on its own: a value that passes its own
+   * schema as it is, and a present one that doesn't at {@link RESTRICTIVE_VALUES} where it has one.
+   * `createdBy` and `baseBranch` must also be non-empty.
    */
-  status?: KeptStatus
+  fields: SalvagedFields
+  /** A readable `createdAt`, which only narrows: it bounds the creator's recent-create window. */
+  createdAt?: string
+  /** The keys present but unreadable, so given their restrictive value or left out. */
+  unreadable: (keyof BranchMetadata)[]
 }
 
-type KeptStatus = Extract<BranchStatus, 'editing' | 'archived'>
-const isKeptStatus = (value: unknown): value is KeptStatus =>
-  value === 'editing' || value === 'archived'
+/**
+ * The value a present field that doesn't read takes, for the fields that hold rights back:
+ * `submitted` locks writes and leaves Withdraw to recover the branch, `unpublishedAtMerge` holds
+ * a delete for an admin, and a `rewrittenOnGitHub` naming no commit refuses pushes until the
+ * worker can show GitHub's branch holds what it held. Any other unreadable field is left out, as
+ * save()'s defaults leave it.
+ */
+const RESTRICTIVE_VALUES: SalvagedFields = {
+  status: 'submitted',
+  unpublishedAtMerge: true,
+  rewrittenOnGitHub: '',
+}
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-const has = (record: Record<string, unknown>, key: string): boolean =>
+const has = (record: object, key: string): boolean =>
   Object.prototype.hasOwnProperty.call(record, key)
 
 const unreadable = Symbol('unreadable')
@@ -301,16 +314,32 @@ function readField<T>(schema: z.ZodType<T>, value: unknown): T | typeof unreadab
 
 const nonEmptyString = z.string().min(1).optional()
 
+const {
+  name: _name,
+  access: _access,
+  createdAt: _createdAt,
+  updatedAt: _updatedAt,
+  ...rest
+} = branchMetadataShape
+/** Each salvaged field's own schema; every one optional, so a field absent stays absent. */
+const salvagedFieldShape = { ...rest, createdBy: nonEmptyString, baseBranch: nonEmptyString }
+const salvagedFieldsSchema = z.object(salvagedFieldShape).partial().strip()
+type SalvagedKey = keyof typeof salvagedFieldShape
+const isSalvagedKey = (key: string): key is SalvagedKey => has(salvagedFieldShape, key)
+
 /**
  * What `branch.json` text that fails {@link readBranchMetadataFile} still says, each field read
- * on its own, so one bad field never takes another with it, and none widens access: a field that
- * reads is kept, a present one that doesn't is taken at its most restrictive, an absent one as if
- * absent. `access` is readable only when it passes its schema whole. Text that is not JSON, or
- * holds no `branch` object, salvages nothing.
+ * on its own key, so one bad field never takes another with it, and none widens access or rights:
+ * a field that reads is kept, a present one that doesn't takes its most restrictive value or is
+ * left out, and an absent one stays absent. `access` is readable only when it passes its schema
+ * whole. Keys the schema doesn't know are dropped. Text that is not JSON, or holds no `branch`
+ * object, salvages nothing.
  */
 export function salvageBranchMetadata(raw: string): SalvagedBranch {
   const nothing: SalvagedBranch = {
-    access: { readable: false, narrowing: {}, mayRestrict: false },
+    access: { readable: false, narrowing: {}, mayRestrict: false, lockdownUnreadable: false },
+    fields: {},
+    unreadable: [],
   }
   let json: unknown
   try {
@@ -322,13 +351,27 @@ export function salvageBranchMetadata(raw: string): SalvagedBranch {
   const branch = json.branch
   if (!isPlainObject(branch)) return nothing
 
-  const createdBy = readField(nonEmptyString, branch.createdBy)
-  const baseBranch = readField(nonEmptyString, branch.baseBranch)
+  const read: Record<string, unknown> = {}
+  const unreadableKeys: (keyof BranchMetadata)[] = []
+  for (const key of Object.keys(branch).filter(isSalvagedKey)) {
+    const value = readField(salvagedFieldShape[key], branch[key])
+    if (value !== unreadable && value !== undefined) {
+      read[key] = value
+      continue
+    }
+    unreadableKeys.push(key)
+    if (has(RESTRICTIVE_VALUES, key)) read[key] = RESTRICTIVE_VALUES[key]
+  }
+  const createdAt = has(branch, 'createdAt')
+    ? readField(branchMetadataShape.createdAt, branch.createdAt)
+    : undefined
+  if (createdAt === unreadable) unreadableKeys.push('createdAt')
   return {
     access: has(branch, 'access') ? salvageAccess(branch.access) : nothing.access,
-    ...(typeof createdBy === 'string' && { createdBy }),
-    ...(typeof baseBranch === 'string' && { baseBranch }),
-    ...(isKeptStatus(branch.status) && { status: branch.status }),
+    // Every value was read through these same schemas, so this parse only gives it its type.
+    fields: salvagedFieldsSchema.parse(read),
+    ...(typeof createdAt === 'string' && { createdAt }),
+    unreadable: unreadableKeys,
   }
 }
 
@@ -336,7 +379,9 @@ export function salvageBranchMetadata(raw: string): SalvagedBranch {
 function salvageAccess(rawAccess: unknown): SalvagedAccess {
   const whole = branchAccessSchema.safeParse(rawAccess)
   if (whole.success) return { readable: true, access: whole.data }
-  if (!isPlainObject(rawAccess)) return { readable: false, narrowing: {}, mayRestrict: true }
+  if (!isPlainObject(rawAccess)) {
+    return { readable: false, narrowing: {}, mayRestrict: true, lockdownUnreadable: false }
+  }
 
   const { shape } = branchAccessSchema
   const lockdown = has(rawAccess, 'managerOrAdminAllowed')
@@ -359,6 +404,7 @@ function salvageAccess(rawAccess: unknown): SalvagedAccess {
       ['restricted', 'allowedUsers', 'allowedGroups'].some((key) => has(rawAccess, key)) ||
       lockdown === unreadable ||
       excluded === unreadable,
+    lockdownUnreadable: lockdown === unreadable,
   }
 }
 

@@ -71,7 +71,9 @@ function repairedAccess(repaired: RepairedBranch): { text: string; mustAct: bool
     // No access-list change lifts a lockdown (authorization/branch-sharing.ts).
     if (access.managerOrAdminAllowed) {
       return {
-        text: `Access couldn't be read, so this branch is locked to admins and reviewers. Opening it again needs its branch.json edited by hand.${stayOut}`,
+        text: repaired.lockedByRepair
+          ? `Access couldn't be read, so this branch is locked to admins and reviewers. Opening it again needs its branch.json edited by hand.${stayOut}`
+          : `Access couldn't be read, but its lockdown could, so only admins and reviewers can open it. Lifting the lockdown needs its branch.json edited by hand.${stayOut}`,
         mustAct: true,
       }
     }
@@ -97,6 +99,40 @@ function repairedAccess(repaired: RepairedBranch): { text: string; mustAct: bool
           ? 'only admins and reviewers can open it'
           : 'only its creator, admins and reviewers can open it'
   return { text: `Kept its access: ${who}.${stayOut}`, mustAct: false }
+}
+
+/** What else a repair could not read and held back, each needing an admin; in sentences. */
+function repairedHolds(repaired: RepairedBranch): string[] {
+  const { reset } = repaired
+  return [
+    reset.status === 'submitted'
+      ? "Its status couldn't be read, so it is locked as submitted until it is withdrawn."
+      : '',
+    reset.createdBy !== undefined && !repaired.openToEveryone
+      ? 'Its creator couldn\'t be read, so only an admin can share it again from "Branches".'
+      : '',
+    reset.unpublishedAtMerge
+      ? "Its merge record couldn't be read, so only an admin can delete it."
+      : '',
+    reset.rewrittenOnGitHub !== undefined
+      ? "Its record of GitHub's branch couldn't be read, so nothing is pushed to GitHub until CanopyCMS confirms that branch."
+      : '',
+  ].filter(Boolean)
+}
+
+/** The repaired branch's status, unless {@link repairedHolds} already says it. */
+function statusSentence(repaired: RepairedBranch): string {
+  if (repaired.reset.status === 'submitted') return ''
+  switch (repaired.branch.status) {
+    case 'archived':
+      return 'It stays archived.'
+    case 'submitted':
+      return 'It stays submitted.'
+    case 'approved':
+      return 'It stays approved.'
+    default:
+      return 'Its status is editing.'
+  }
 }
 
 /**
@@ -359,18 +395,26 @@ export function useSystemHealth(options: UseSystemHealthOptions): UseSystemHealt
         const result = await apiClient.admin.repairBranchDir({ dirName })
         if (!result.ok || !result.data) throw new Error(result.error || 'Failed to repair metadata')
         const { text, mustAct } = repairedAccess(result.data)
-        const status =
-          result.data.branch.status === 'archived' ? 'It stays archived.' : 'Its status is editing.'
-        const warning = result.data.warning ? ` ${result.data.warning}` : ''
+        const holds = repairedHolds(result.data)
+        const message = [
+          text,
+          ...holds,
+          statusSentence(result.data),
+          `The corrupt file is archived as ${result.data.archivedAs}.`,
+          result.data.warning ?? '',
+        ]
+          .filter(Boolean)
+          .join(' ')
+        const needsAdmin = mustAct || holds.length > 0 || result.data.warning !== undefined
         notifications.show({
           title: 'Metadata repaired',
-          message: `${text} ${status} The corrupt file is archived as ${result.data.archivedAs}.${warning}`,
-          ...(mustAct || warning ? { color: 'yellow', autoClose: false } : { color: 'green' }),
+          message,
+          ...(needsAdmin ? { color: 'yellow', autoClose: false } : { color: 'green' }),
         })
         await refresh()
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to repair metadata'
-        // A failed repair can leave the branch with default metadata the admin must check.
+        // A failed repair can leave the branch with another write's metadata the admin must check.
         notifications.show({ message, color: 'red', autoClose: false })
       }
     },
