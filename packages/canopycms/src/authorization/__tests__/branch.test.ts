@@ -4,8 +4,11 @@ import {
   checkBranchAccessWithDefault,
   canPerformWorkflowAction,
   createCheckBranchAccess,
+  opensToEveryone,
+  branchSharingRights,
   RESERVED_GROUPS,
 } from '../'
+import type { CanopyConfig } from '../../config'
 import type { BranchContext } from '../../types'
 import { ANONYMOUS_USER } from '../../user'
 
@@ -649,4 +652,73 @@ describe('canPerformWorkflowAction', () => {
       expect(canPerformWorkflowAction(context, regularUser, 'deny')).toBe(false)
     })
   })
+})
+
+describe('opensToEveryone', () => {
+  const stranger = { type: 'authenticated' as const, userId: 'stranger', groups: ['team'] }
+  const branches = [
+    { name: 'feature/x', createdBy: 'user-1' },
+    { name: 'main', createdBy: 'canopycms-system' },
+    { name: 'old-main', createdBy: 'user-1', baseBranch: 'old-main' },
+    { name: 'work', createdBy: 'canopycms-system' },
+    { name: 'work', createdBy: 'user-1' },
+  ]
+  const accesses = [
+    {},
+    { restricted: false },
+    { restricted: true },
+    { allowedUsers: ['user-1'] },
+    { allowedGroups: ['team'] },
+    { managerOrAdminAllowed: true },
+  ]
+  const configs: Pick<
+    CanopyConfig,
+    'mode' | 'defaultBaseBranch' | 'defaultActiveBranch' | 'defaultBranchAccess'
+  >[] = [
+    { mode: 'prod', defaultBaseBranch: 'main', defaultBranchAccess: 'allow' },
+    { mode: 'prod', defaultBaseBranch: 'main', defaultBranchAccess: 'deny' },
+    { mode: 'prod', defaultBaseBranch: 'main' },
+    { mode: 'dev', defaultBaseBranch: 'main', defaultActiveBranch: 'work' },
+  ]
+
+  it('agrees with the access check for someone neither listed nor the creator', () => {
+    for (const config of configs) {
+      const check = createCheckBranchAccess(config.defaultBranchAccess ?? 'deny', config)
+      for (const shape of branches) {
+        for (const access of accesses) {
+          const branch = { ...baseContext.branch, ...shape, access }
+          const allowed = check({ ...baseContext, branch }, stranger).allowed
+          // A group listing admits the stranger without opening the branch to everyone.
+          const expected = 'allowedGroups' in access ? false : allowed
+          expect({ config, shape, access, open: opensToEveryone(branch, config) }).toEqual({
+            config,
+            shape,
+            access,
+            open: expected,
+          })
+        }
+      }
+    }
+  })
+})
+
+describe('a creator id no person holds', () => {
+  it.each(['unknown', 'canopycms-system'])(
+    'grants a user whose id is literally %s nothing as creator',
+    (id) => {
+      const branch = { ...baseContext.branch, createdBy: id, access: {} }
+      const user = { type: 'authenticated' as const, userId: id, groups: [] }
+      const context = { ...baseContext, branch }
+      expect(checkBranchAccessWithDefault(context, user, 'deny')).toEqual({
+        allowed: false,
+        reason: 'no_acl',
+      })
+      expect(canPerformWorkflowAction(context, user, 'deny')).toBe(false)
+      // On an allow site the access check admits them, so only the creator guard refuses.
+      if (id === 'unknown') expect(canPerformWorkflowAction(context, user, 'allow')).toBe(false)
+      expect(
+        branchSharingRights(user, branch, { isProtected: false, whoCanAdd: 'members' }).isOwner,
+      ).toBe(false)
+    },
+  )
 })

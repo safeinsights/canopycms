@@ -24,7 +24,7 @@ import type {
   CanopyUserId,
 } from '../types'
 import type { CanopyUser } from '../user'
-import { isSystemUserId } from '../system-users'
+import { isNobody } from '../system-users'
 import { isAdmin, isExcludedFrom, isReservedGroup } from './helpers'
 
 /** {@link BranchSharingConfig} with its defaults applied. */
@@ -57,9 +57,6 @@ function isListedMember(
     !!user.groups?.some((group) => access.allowedGroups?.includes(group))
   )
 }
-
-/** A creator id no person holds: a system user's, or the placeholder of a branch.json without one. */
-const isNobody = (userId: CanopyUserId): boolean => isSystemUserId(userId) || userId === 'unknown'
 
 export interface BranchSharingRights {
   isOwner: boolean
@@ -96,6 +93,7 @@ export function branchSharingRights(
   const isMember = isListedMember(access, user)
   const isOwner =
     branch.createdBy === user.userId &&
+    !isNobody(user.userId) &&
     !isExcludedFrom(access, user.userId) &&
     (!hasAccessList(access) || isMember)
   if (isAdmin(user.groups)) {

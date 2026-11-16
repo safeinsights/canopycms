@@ -146,6 +146,22 @@ describe('BranchMetadataFileManager', () => {
       linkSpy.mockRestore()
     })
 
+    it('takes a createdAt passed at creation, and ignores one passed once the branch exists', async () => {
+      const root = await tmpDir()
+      const meta = createMeta(root, await tmpDir())
+      const created = await meta.save({
+        branch: { name: 'feature/when', status: 'editing', createdBy: 'u1' },
+        createdAt: '2026-01-01T00:00:00.000Z',
+      })
+      expect(created.branch.createdAt).toBe('2026-01-01T00:00:00.000Z')
+
+      const again = await meta.save({
+        branch: { name: 'feature/when' },
+        createdAt: '2001-01-01T00:00:00.000Z',
+      })
+      expect(again.branch.createdAt).toBe('2026-01-01T00:00:00.000Z')
+    })
+
     it('updates existing metadata and stamps updatedAt', async () => {
       const root = await tmpDir()
       const registryDir = await tmpDir()

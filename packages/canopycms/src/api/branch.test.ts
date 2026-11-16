@@ -92,6 +92,7 @@ import {
   toBranchListItem,
 } from './branch'
 import { RESERVED_GROUPS } from '../authorization'
+import { isCreatorsRecentBranch } from './branch-create-window'
 import { unsafeAsPermissionPath } from '../authorization/test-utils'
 import { createMockApiContext, createMockBranchContext, createMockRegistry } from '../test-utils'
 import * as authorization from '../authorization'
@@ -1480,6 +1481,17 @@ describe('canDeleteBranch', () => {
     expect(result.reason).toBe('creator')
   })
 
+  it.each(['unknown', 'canopycms-system'])(
+    'gives a user whose id is the creator id %s no creator right to delete',
+    (id) => {
+      const result = canDeleteBranch(
+        { type: 'authenticated', userId: id, groups: [] },
+        makeBranchContext(id),
+      )
+      expect(result.allowed).toBe(false)
+    },
+  )
+
   it('denies non-creator non-admin from deleting', () => {
     const result = canDeleteBranch(
       { type: 'authenticated', userId: 'u2', groups: [] },
@@ -2029,4 +2041,15 @@ describe('toBranchListItem', () => {
       expect(item.name).toBe('feature/x')
     }
   })
+})
+
+describe('isCreatorsRecentBranch', () => {
+  it.each(['unknown', 'canopycms-system'])(
+    "never takes a branch created by %s as anyone's",
+    (id) => {
+      expect(
+        isCreatorsRecentBranch({ createdBy: id, createdAt: new Date().toISOString() }, id),
+      ).toBe(false)
+    },
+  )
 })

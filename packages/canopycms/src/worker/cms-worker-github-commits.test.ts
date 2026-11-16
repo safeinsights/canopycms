@@ -1352,6 +1352,76 @@ describe('bringing commits made on GitHub into a branch clone', () => {
     })
   })
 
+  describe('a standing rewrite marker with no commit recorded to compare, as repair leaves one', () => {
+    for (const [named, marker] of [
+      ['naming a commit', 'c'.repeat(40)],
+      ['naming no commit', ''],
+    ] as const) {
+      it(`stays, ${named}, while GitHub's tip has diverged, and nothing is pushed`, async () => {
+        await writeMeta(s, { rewrittenOnGitHub: marker, lastGitHubTip: undefined })
+        await s.commit({ 'editor.txt': 'v2\n' }, 'resubmitted')
+        await s.clone.raw(['push', 'origin', `${BRANCH}:${BRANCH}`])
+        await s.forcePushOnGitHub({ 'rewritten.txt': 'rewritten\n' })
+        const before = await s.head()
+
+        await cycle(s)
+
+        expect((await readMeta(s))?.rewrittenOnGitHub).toBe(marker)
+        expect(await s.head()).toBe(before)
+        expect(await queued(s, 'push-branch')).toEqual([])
+      })
+    }
+
+    for (const marker of ['', 'not-a-commit']) {
+      it(`records a block, for a marker ${JSON.stringify(marker)} naming no commit, that names the ways out`, async () => {
+        await writeMeta(s, { rewrittenOnGitHub: marker, lastGitHubTip: undefined })
+        await s.commit({ 'editor.txt': 'v2\n' }, 'resubmitted')
+        await s.clone.raw(['push', 'origin', `${BRANCH}:${BRANCH}`])
+        await s.forcePushOnGitHub({ 'rewritten.txt': 'rewritten\n' })
+
+        await cycle(s)
+
+        const message = (await readMeta(s))?.rebaseFailure?.message
+        expect(message).toContain(
+          `CanopyCMS can't confirm that GitHub's ${BRANCH} holds this branch's commits`,
+        )
+        expect(message).toContain('delete the branch on GitHub instead')
+        expect(message).toContain(
+          'withdraw the branch once CanopyCMS has seen that pull request closed',
+        )
+        expect(message).not.toContain('no longer contains')
+      })
+    }
+
+    it('clears a marker naming a commit, with no tip recorded, once GitHub holds that commit again', async () => {
+      const lastSeen = await s.head()
+      await writeMeta(s, { rewrittenOnGitHub: lastSeen, lastGitHubTip: undefined })
+      await s.commit({ 'editor.txt': 'v2\n' }, 'resubmitted')
+      await s.clone.raw(['push', 'origin', `${BRANCH}:${BRANCH}`])
+      await s.forcePushOnGitHub({ 'rewritten.txt': 'rewritten\n' })
+      await cycle(s)
+      expect((await readMeta(s))?.rewrittenOnGitHub).toBe(lastSeen)
+
+      // As the block tells a developer to: merge that commit back on GitHub.
+      await s.outside.fetch(['--force', 'origin', `refs/heads/${BRANCH}:refs/x/${BRANCH}`])
+      await s.outside.raw(['merge', '--no-edit', '--allow-unrelated-histories', lastSeen])
+      await s.outside.raw(['push', 'origin', `HEAD:refs/remotes/github/${BRANCH}`])
+      await cycle(s)
+
+      expect((await readMeta(s))?.rewrittenOnGitHub).toBeUndefined()
+    })
+
+    it("clears, naming no commit, once GitHub's tip holds the clone's and remote.git's heads", async () => {
+      await writeMeta(s, { rewrittenOnGitHub: '', lastGitHubTip: undefined })
+      await s.commitOnGitHub({ 'fix.txt': 'fix\n' })
+
+      await cycle(s)
+
+      expect((await readMeta(s))?.rewrittenOnGitHub).toBeUndefined()
+      expect(await s.file('fix.txt')).toBe('fix\n')
+    })
+  })
+
   describe('a branch reset to an earlier commit on GitHub', () => {
     let removed: string
     let kept: string
@@ -1459,11 +1529,16 @@ describe('bringing commits made on GitHub into a branch clone', () => {
       expect((await readMeta(s))?.rewrittenOnGitHub).toBeUndefined()
     })
 
-    for (const status of ['editing', 'submitted'] as const) {
-      it(`clears for a ${status} branch when GitHub no longer has the branch`, async () => {
+    for (const [status, marker, named] of [
+      ['editing', flag, 'a commit'],
+      ['submitted', flag, 'a commit'],
+      // Repair writes a marker naming no commit for one it couldn't read.
+      ['editing', '', 'no commit'],
+    ] as const) {
+      it(`clears for a ${status} branch, its marker naming ${named}, when GitHub no longer has the branch`, async () => {
         await writeMeta(s, {
           status,
-          rewrittenOnGitHub: flag,
+          rewrittenOnGitHub: marker,
           rebaseFailure: { message: 'x', firstAt: 'y', lastAt: 'y' },
         })
         await s.dropGitHubBranch()

@@ -196,6 +196,11 @@ describe('PATCH /:branch/access', () => {
       'feature/system',
       { createdBy: SYSTEM_USER_ID, access: { restricted: true, allowedUsers: ['owner'] } },
     ],
+    [
+      'a branch whose creator is unknown (a pin: refused before isNobody too)',
+      'feature/unknown',
+      { createdBy: 'unknown', access: { restricted: true, allowedUsers: ['owner'] } },
+    ],
   ])('refuses sharing %s to a non-admin', async (_label, name, fields) => {
     await addBranch(name, fields)
 

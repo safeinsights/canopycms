@@ -87,6 +87,16 @@ describe('getBranchPermissions', () => {
     expect(perms.canRequestChanges).toBe(false)
   })
 
+  it.each(['unknown'])(
+    'gives a user whose id is the creator id %s no creator permissions',
+    (id) => {
+      const branch: BranchSummary = { name: 'work', status: 'editing', createdBy: id }
+      const perms = getBranchPermissions(branch, { userId: id, groups: [] })
+      expect(perms.hasWorkflowAccess).toBe(false)
+      expect(perms.canDelete).toBe(false)
+    },
+  )
+
   it('grants workflow access to the creator, people given access, reviewers and admins only', () => {
     const branch: BranchSummary = {
       name: 'work',
@@ -1879,6 +1889,17 @@ describe('BranchManager', () => {
 
       await openMenu('main')
       // The submit item is there, so the menu is open on this branch's items.
+      expect(screen.getByTestId('submit-branch-button-main')).toBeTruthy()
+      expect(screen.queryByTestId('delete-branch-button-main')).toBeNull()
+    })
+
+    it('hides Delete branch from a user whose id is the unknown creator id', async () => {
+      const branches: BranchSummary[] = [
+        { ...baseBranches[0], createdBy: 'unknown', access: { users: ['unknown'] } },
+      ]
+      renderBranchManager({ branches, user: { userId: 'unknown', groups: [] }, mode: 'prod' })
+
+      await openMenu('main')
       expect(screen.getByTestId('submit-branch-button-main')).toBeTruthy()
       expect(screen.queryByTestId('delete-branch-button-main')).toBeNull()
     })

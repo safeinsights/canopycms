@@ -4,7 +4,11 @@ import path from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { BranchMetadataCorruptError, readBranchMetadataFile } from './branch-metadata-file'
+import {
+  BranchMetadataCorruptError,
+  readBranchMetadataFile,
+  salvageBranchMetadata,
+} from './branch-metadata-file'
 
 describe('readBranchMetadataFile', () => {
   let branchRoot: string
@@ -204,5 +208,287 @@ describe('readBranchMetadataFile', () => {
     )
     expect(err).not.toBeInstanceOf(BranchMetadataCorruptError)
     expect((err as NodeJS.ErrnoException).code).toBe('EISDIR')
+  })
+})
+
+describe('salvageBranchMetadata', () => {
+  const nothing = {
+    access: {
+      readable: false,
+      narrowing: {},
+      mayRestrict: false,
+      lockdownUnreadable: false,
+      removalsUnreadable: false,
+    },
+    // A status nothing says is as unknown as one that doesn't read.
+    fields: { status: 'submitted' },
+    read: {},
+    unknownFields: {},
+    unreadable: [],
+  }
+  const salvage = (file: unknown) => salvageBranchMetadata(JSON.stringify(file))
+  const removal = { by: 'admin', at: '2026-11-01T00:00:00.000Z', byAdmin: true }
+  const damaged = (
+    narrowing: object,
+    mayRestrict = false,
+    lockdownUnreadable = false,
+    removalsUnreadable = false,
+  ) => ({
+    readable: false,
+    narrowing,
+    mayRestrict,
+    lockdownUnreadable,
+    removalsUnreadable,
+  })
+
+  it.each([
+    ['text that is not JSON', 'not json {{{'],
+    ['JSON that is not an object', '[1, 2]'],
+    ['no branch', '{}'],
+    ['a branch that is an array', '{"branch": []}'],
+    ['a branch that is null', '{"branch": null}'],
+  ])('salvages nothing from %s', (_case, raw) => {
+    expect(salvageBranchMetadata(raw)).toEqual(nothing)
+  })
+
+  it('reads a missing access as absent, suggesting no restriction', () => {
+    expect(salvage({ branch: { createdBy: 'alice' } })).toEqual({
+      ...nothing,
+      fields: { status: 'submitted', createdBy: 'alice' },
+      read: { createdBy: 'alice' },
+    })
+  })
+
+  it.each([
+    ['null', null],
+    ['an array', []],
+    ['a string', 'restricted'],
+  ])('reads an access that is %s as one that may have restricted', (_case, access) => {
+    expect(salvage({ branch: { access } }).access).toEqual(
+      damaged({ addBy: 'admins' }, true, false, true),
+    )
+  })
+
+  it('keeps an access that passes whole, unknown keys included', () => {
+    const access = { restricted: true, allowedUsers: ['alice'], futureKey: 1 }
+    expect(salvage({ branch: { access } }).access).toEqual({ readable: true, access })
+  })
+
+  it('keeps each narrowing field that reads, and notes a list it cannot rebuild', () => {
+    const salvaged = salvage({
+      branch: {
+        access: {
+          allowedUsers: 'x',
+          managerOrAdminAllowed: false,
+          excluded: { bob: removal },
+          excludedGroups: { readers: removal },
+          addBy: 'owner',
+        },
+      },
+    })
+    expect(salvaged.access).toEqual(
+      damaged(
+        {
+          managerOrAdminAllowed: false,
+          excluded: { bob: removal },
+          excludedGroups: { readers: removal },
+          addBy: 'owner',
+        },
+        true,
+      ),
+    )
+  })
+
+  it.each(['restricted', 'allowedUsers', 'allowedGroups'])(
+    'notes a restriction from %s, readable or not',
+    (key) => {
+      const readable = { restricted: true, allowedUsers: ['a'], allowedGroups: ['g'] }[key]
+      for (const value of [readable, 'damaged']) {
+        const salvaged = salvage({ branch: { access: { [key]: value, entryMeta: 1 } } })
+        expect(salvaged.access).toMatchObject({ readable: false, mayRestrict: true })
+      }
+    },
+  )
+
+  it('notes no restriction from narrowing fields that read', () => {
+    const salvaged = salvage({
+      branch: { access: { managerOrAdminAllowed: true, excluded: {}, entryMeta: 1 } },
+    })
+    expect(salvaged.access).toEqual(damaged({ managerOrAdminAllowed: true, excluded: {} }))
+  })
+
+  it('takes a lockdown that does not read as a lockdown', () => {
+    const salvaged = salvage({ branch: { access: { managerOrAdminAllowed: 'yes' } } })
+    expect(salvaged.access).toEqual(damaged({ managerOrAdminAllowed: true }, true, true))
+  })
+
+  it.each(['members', 'owner', 'admins'])('carries addBy %j as it reads', (addBy) => {
+    const salvaged = salvage({ branch: { access: { addBy, entryMeta: 1 } } })
+    expect(salvaged.access).toEqual(damaged({ addBy }))
+  })
+
+  it('takes an addBy that does not read as admins only', () => {
+    const salvaged = salvage({ branch: { access: { addBy: 'nobody', entryMeta: 1 } } })
+    expect(salvaged.access).toEqual(damaged({ addBy: 'admins' }))
+  })
+
+  it("keeps every removal entry, a malformed one as an admin's made by no known user", () => {
+    const salvaged = salvage({
+      branch: {
+        access: {
+          excluded: { bob: removal, carol: 'damaged' },
+          excludedGroups: { readers: { by: 1 } },
+          entryMeta: 1,
+        },
+      },
+    })
+    const madeByNobody = { by: 'unknown', at: expect.any(String), byAdmin: true }
+    expect(salvaged.access).toEqual(
+      damaged({
+        excluded: { bob: removal, carol: madeByNobody },
+        excludedGroups: { readers: madeByNobody },
+      }),
+    )
+  })
+
+  it.each([
+    ['a string', 'readers'],
+    ['an array', ['readers']],
+  ])('drops removed groups that are %s, leaving re-adding to admins', (_case, excludedGroups) => {
+    const salvaged = salvage({ branch: { access: { excludedGroups, entryMeta: 1 } } })
+    expect(salvaged.access).toEqual(damaged({ addBy: 'admins' }, true, false, true))
+  })
+
+  it.each([
+    ['a string', 'bob'],
+    ['an array', ['bob']],
+  ])('drops removals that are %s, leaving re-adding to admins', (_case, excluded) => {
+    const salvaged = salvage({ branch: { access: { excluded, entryMeta: 1, addBy: 'owner' } } })
+    expect(salvaged.access).toEqual(damaged({ addBy: 'admins' }, true, false, true))
+  })
+
+  it.each(['editing', 'submitted', 'approved', 'archived'])('keeps a status of %j', (status) => {
+    expect(salvage({ branch: { status } }).fields.status).toBe(status)
+  })
+
+  it.each([
+    ['status', 'bogus', 'submitted'],
+    ['unpublishedAtMerge', 'yes', true],
+    ['rewrittenOnGitHub', 7, ''],
+    ['archivedAt', 7, '2026-11-16T12:00:00.000Z'],
+  ])('takes an unreadable %s at its most restrictive', (key, value, restrictive) => {
+    const salvaged = salvageBranchMetadata(
+      JSON.stringify({ branch: { status: 'archived', [key]: value } }),
+      new Date('2026-11-16T12:00:00.000Z'),
+    )
+    expect(salvaged.fields).toMatchObject({ [key]: restrictive })
+    expect(salvaged.read).not.toHaveProperty(key)
+    expect(salvaged.unreadable).toEqual([key])
+  })
+
+  it.each([
+    ['unreadable', { status: 'bogus' }],
+    ['missing', {}],
+  ])('holds the delete for an admin when a status is %s beside a rewrite marker', (_c, status) => {
+    const salvaged = salvage({ branch: { ...status, rewrittenOnGitHub: 'a'.repeat(40) } })
+    expect(salvaged.fields).toMatchObject({ status: 'submitted', unpublishedAtMerge: true })
+  })
+
+  it.each([
+    ['archivedAt', { archivedAt: '2026-01-01T00:00:00.000Z' }],
+    ['an unreadable archivedAt', { archivedAt: 7 }],
+    ['mergedAt', { mergedAt: '2026-01-01T00:00:00.000Z' }],
+  ])('takes an unknown status beside %s as archived', (_c, times) => {
+    for (const status of [{ status: 'bogus' }, {}]) {
+      const salvaged = salvage({ branch: { ...status, ...times } })
+      expect(salvaged.fields.status).toBe('archived')
+    }
+  })
+
+  it('leaves a lastGitHubTip it cannot read out, even beside a marker naming a commit', () => {
+    const salvaged = salvage({
+      branch: { status: 'editing', rewrittenOnGitHub: 'a'.repeat(40), lastGitHubTip: 7 },
+    })
+    expect(salvaged.fields.lastGitHubTip).toBeUndefined()
+    expect(salvaged.fields.rewrittenOnGitHub).toBe('a'.repeat(40))
+  })
+
+  it('keeps every other field that reads, and leaves out one that does not', () => {
+    const salvaged = salvage({
+      branch: {
+        pullRequestNumber: 42,
+        lastGitHubTip: 'a'.repeat(40),
+        historyRewrittenFrom: 'b'.repeat(40),
+        editors: ['alice'],
+        syncStatus: 'damaged',
+        review: { state: 'nope' },
+        futureKey: 'carried',
+      },
+    })
+    expect(salvaged.fields).toEqual({
+      status: 'submitted',
+      pullRequestNumber: 42,
+      lastGitHubTip: 'a'.repeat(40),
+      historyRewrittenFrom: 'b'.repeat(40),
+      editors: ['alice'],
+    })
+    expect(salvaged.unreadable).toEqual(['syncStatus', 'review'])
+    expect(salvaged.unknownFields).toEqual({ futureKey: 'carried' })
+  })
+
+  it('carries keys the schema does not know over verbatim, all but __proto__', () => {
+    const salvaged = salvageBranchMetadata(
+      '{"branch": {"futureLock": {"on": true}, "__proto__": {"x": 1}, "status": "bogus"}}',
+    )
+    expect(salvaged.unknownFields).toEqual({ futureLock: { on: true } })
+    expect(Object.keys(salvaged.unknownFields)).toEqual(['futureLock'])
+  })
+
+  it('keeps a createdAt that reads, and notes one that does not', () => {
+    expect(salvage({ branch: { createdAt: '2026-01-01T00:00:00.000Z' } }).createdAt).toBe(
+      '2026-01-01T00:00:00.000Z',
+    )
+    const unreadableCreatedAt = salvage({ branch: { createdAt: 5 } })
+    expect(unreadableCreatedAt.createdAt).toBeUndefined()
+    expect(unreadableCreatedAt.unreadable).toEqual(['createdAt'])
+  })
+
+  it.each([
+    ['a number', 42],
+    ['an empty string', ''],
+  ])('keeps no createdBy or baseBranch that is %s', (_case, value) => {
+    const salvaged = salvage({ branch: { createdBy: value, baseBranch: value } })
+    expect(salvaged).toEqual({ ...nothing, unreadable: ['createdBy', 'baseBranch'] })
+  })
+
+  it('keeps a non-empty createdBy and baseBranch', () => {
+    expect(salvage({ branch: { createdBy: 'alice', baseBranch: 'main' } })).toEqual({
+      ...nothing,
+      fields: { status: 'submitted', createdBy: 'alice', baseBranch: 'main' },
+      read: { createdBy: 'alice', baseBranch: 'main' },
+    })
+  })
+
+  it('takes nothing a __proto__ key carries', () => {
+    const raw =
+      '{"__proto__": {"branch": {"createdBy": "mallory"}}, "branch": {"__proto__": {"createdBy": "mallory"},' +
+      ' "access": {"__proto__": {"allowedUsers": ["mallory"]}, "entryMeta": 1,' +
+      ' "excluded": {"__proto__": {"by": "x", "at": "y", "byAdmin": false}}}}}'
+    const salvaged = salvageBranchMetadata(raw)
+    expect(salvaged.fields).toEqual({ status: 'submitted' })
+    expect(salvaged.access).toEqual(damaged({ excluded: {} }))
+    if (salvaged.access.readable) throw new Error('expected damaged access')
+    const excluded = salvaged.access.narrowing.excluded ?? {}
+    expect(Object.getPrototypeOf(excluded)).toBe(Object.prototype)
+    expect(Object.keys(excluded)).toEqual([])
+    expect(({} as Record<string, unknown>).allowedUsers).toBeUndefined()
+  })
+
+  it('keeps a whole access whose __proto__ key would otherwise widen it, without the key', () => {
+    const raw = '{"branch": {"access": {"__proto__": {"allowedUsers": ["mallory"]}}}}'
+    const salvaged = salvageBranchMetadata(raw)
+    if (!salvaged.access.readable) throw new Error('expected readable access')
+    expect(salvaged.access.access.allowedUsers).toBeUndefined()
+    expect(Object.getPrototypeOf(salvaged.access.access)).toBe(Object.prototype)
   })
 })

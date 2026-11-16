@@ -24,6 +24,8 @@ export {
 export {
   checkBranchAccessWithDefault,
   createCheckBranchAccess,
+  opensToEveryone,
+  opensWithoutList,
   canPerformWorkflowAction,
 } from './branch'
 

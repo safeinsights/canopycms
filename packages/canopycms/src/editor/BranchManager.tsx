@@ -79,7 +79,7 @@ import {
 import { GetLatestChangesButton } from './components/GetLatestChangesButton'
 import type { BaseUpdateControl } from './base-update-wait'
 import { isReviewerOfOthersReview } from '../authorization/review-role'
-import { SYSTEM_USER_ID } from '../system-users'
+import { isNobody, SYSTEM_USER_ID } from '../system-users'
 
 /** @internal Exported for tests. */
 export interface BranchSummary {
@@ -171,7 +171,7 @@ export const getBranchPermissions = (
 
   const userIsAdmin = isAdmin(user.groups)
   const userIsReviewer = isReviewer(user.groups)
-  const userIsCreator = branch.createdBy === user.userId
+  const userIsCreator = branch.createdBy === user.userId && !isNobody(user.userId)
   // The system-branch grant is disabled on the protected base branch -- its
   // auto-provision marker (createdBy: SYSTEM_USER_ID) would otherwise let
   // anyone with general access submit/withdraw/delete it.
@@ -490,7 +490,9 @@ const BranchCard: React.FC<BranchCardProps> = ({
   )
   const showShare = canShareBranch(b, user) && !!onShare
   const showViewPullRequest = !!b.pullRequestUrl
-  const showDelete = !b.isProtected && (userIsAdmin || (!!user && b.createdBy === user.userId))
+  const showDelete =
+    !b.isProtected &&
+    (userIsAdmin || (!!user && b.createdBy === user.userId && !isNobody(user.userId)))
   const hasMenu = menuActions.length > 0 || showShare || showViewPullRequest || showDelete
   const menuLabel = `More actions for ${displayBranchName(b)}`
   const [menuOpen, setMenuOpen] = useState(false)

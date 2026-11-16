@@ -1,10 +1,11 @@
-import type { BranchContext } from '../types'
+import type { BranchContext, BranchMetadata } from '../types'
 import type { CanopyConfig, DefaultBranchAccess } from '../config'
 import { isAdmin, isExcludedFrom, isLockedOutOfBranch, isReviewer } from './helpers'
 import { getBranchProtection } from './protected-branch'
+import { hasAccessList } from './branch-sharing'
 import type { CanopyUser } from '../user'
 import type { BranchAccessResult } from './types'
-import { isSystemUserId, SYSTEM_USER_ID } from '../system-users'
+import { isNobody, isSystemUserId, SYSTEM_USER_ID } from '../system-users'
 import { sanitizeBranchName } from '../paths/branch-name'
 import { baseBranchOf } from '../utils/base-branch'
 
@@ -49,7 +50,7 @@ interface BranchAccessOptions {
  */
 function isDevActiveBranch(
   config: Pick<CanopyConfig, 'mode' | 'defaultBaseBranch' | 'defaultActiveBranch'>,
-  context: BranchContext,
+  context: { branch: Pick<BranchMetadata, 'createdBy' | 'name'> },
 ): boolean {
   if (config.mode !== 'dev' || !isSystemUserId(context.branch.createdBy)) return false
   const active = config.defaultActiveBranch ?? baseBranchOf(config)
@@ -93,7 +94,8 @@ export function checkBranchAccessWithDefault(
     // could not open a branch they had just made. Scoped to the no-ACL case on purpose -- an EXPLICIT
     // allowlist omitting the creator still denies them, which is how an admin
     // locks down a branch someone else created.
-    if (context.branch.createdBy === user.userId) {
+    // A creator id no person holds grants nothing, whoever's id it matches.
+    if (context.branch.createdBy === user.userId && !isNobody(user.userId)) {
       return { allowed: true, reason: 'creator' }
     }
     if (defaultAccess === 'allow') {
@@ -139,6 +141,37 @@ export function createCheckBranchAccess(
     })
 }
 
+/**
+ * Whether the access {@link createCheckBranchAccess} binds for `config` admits everyone who can
+ * sign in to `branch`, bar anyone its list excludes: no list or lockdown is in force, and the site
+ * default, the base-branch grant or the dev-active-branch grant admits someone not its creator.
+ */
+export function opensToEveryone(
+  branch: Pick<BranchMetadata, 'access' | 'name' | 'baseBranch' | 'createdBy'>,
+  config: Pick<
+    CanopyConfig,
+    'mode' | 'defaultBaseBranch' | 'defaultActiveBranch' | 'defaultBranchAccess'
+  >,
+): boolean {
+  const { access } = branch
+  if (access.managerOrAdminAllowed || hasAccessList(access)) return false
+  return (config.defaultBranchAccess ?? 'deny') === 'allow' || opensWithoutList(branch, config)
+}
+
+/**
+ * Whether `branch` is the base branch or dev's active branch: those every signed-in user may open,
+ * on either site default, while no list or lockdown is in force.
+ */
+export function opensWithoutList(
+  branch: Pick<BranchMetadata, 'name' | 'baseBranch' | 'createdBy'>,
+  config: Pick<CanopyConfig, 'mode' | 'defaultBaseBranch' | 'defaultActiveBranch'>,
+): boolean {
+  return (
+    getBranchProtection(config, branch.name, branch.baseBranch).isProtected ||
+    isDevActiveBranch(config, { branch })
+  )
+}
+
 /** Options tightening {@link canPerformWorkflowAction} beyond the default hybrid model. */
 export interface WorkflowActionOptions {
   /**
@@ -178,7 +211,7 @@ export function canPerformWorkflowAction(
     return false
   }
 
-  const userIsCreator = context.branch.createdBy === user.userId
+  const userIsCreator = context.branch.createdBy === user.userId && !isNobody(user.userId)
 
   const isSystemBranch = !options?.isProtectedBranch && context.branch.createdBy === SYSTEM_USER_ID
 
