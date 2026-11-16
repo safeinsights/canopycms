@@ -8,7 +8,7 @@ import { z } from 'zod'
 
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { BranchAddBy, BranchContext, CanopyGroupId, CanopyUserId } from '../types'
-import type { DefaultBranchAccess } from '../config'
+import type { BranchSharingConfig, DefaultBranchAccess } from '../config'
 import type { UserSearchResult } from '../auth/types'
 import { accessForViewer, hasAccessList, isAdmin, resolveBranchSharing } from '../authorization'
 import { lookupUsersMetadata } from '../auth/user-metadata-lookup'
@@ -66,6 +66,10 @@ interface BranchAccessData {
   defaultAccess: DefaultBranchAccess
   addBy: BranchAddBy
   rights: { isOwner: boolean; canAdd: boolean; canManage: boolean }
+  /** Whose names the viewer's search finds (`branchSharing.searchable`). */
+  searchable: NonNullable<BranchSharingConfig['searchable']>
+  /** Whom an exact email address finds for the viewer: `'all-users'` for an admin. */
+  addableByEmail: NonNullable<BranchSharingConfig['addableByEmail']>
 }
 
 export type BranchAccessResponse = ApiResponse<BranchAccessData>
@@ -195,6 +199,7 @@ const getBranchAccessHandler = async (
       : undefined
 
   const restricted = hasAccessList(access)
+  const sharing = resolveBranchSharing(config)
   return {
     ok: true,
     status: 200,
@@ -205,8 +210,10 @@ const getBranchAccessHandler = async (
       openToEveryone:
         !restricted && config.defaultBranchAccess === 'allow' && !access.managerOrAdminAllowed,
       defaultAccess: config.defaultBranchAccess ?? 'deny',
-      addBy: access.addBy ?? resolveBranchSharing(config).whoCanAdd,
+      addBy: access.addBy ?? sharing.whoCanAdd,
       rights: { isOwner: rights.isOwner, canAdd: rights.canAdd, canManage: rights.canManage },
+      searchable: sharing.searchable,
+      addableByEmail: isAdmin(viewer.groups) ? 'all-users' : sharing.addableByEmail,
     },
   }
 }
@@ -269,6 +276,8 @@ const getBranchAccess = defineEndpoint({
     defaultAccess: 'deny',
     addBy: 'members',
     rights: { isOwner: false, canAdd: false, canManage: false },
+    searchable: 'cms-users',
+    addableByEmail: 'all-users',
   },
   guards: ['branchAccess'] as const,
   handler: getBranchAccessHandler,

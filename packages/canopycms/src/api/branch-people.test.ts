@@ -538,6 +538,8 @@ describe('GET /:branch/access', () => {
       defaultAccess: 'deny',
       addBy: 'members',
       rights: { isOwner: true, canAdd: true, canManage: true },
+      searchable: 'cms-users',
+      addableByEmail: 'all-users',
     })
   })
 
@@ -594,6 +596,20 @@ describe('GET /:branch/access', () => {
     await shared()
 
     expect(await getAccess(user('pal'), 'feature/x')).toMatchObject({ ok: false, status: 403 })
+  })
+
+  it('says whom search and email find for the viewer, an admin finding anyone by email', async () => {
+    await shared()
+    sharing({ searchable: 'nobody', addableByEmail: 'cms-users' })
+
+    expect((await getAccess(owner, 'feature/x')).data).toMatchObject({
+      searchable: 'nobody',
+      addableByEmail: 'cms-users',
+    })
+    expect((await getAccess(admin, 'feature/x')).data).toMatchObject({
+      searchable: 'nobody',
+      addableByEmail: 'all-users',
+    })
   })
 })
 
