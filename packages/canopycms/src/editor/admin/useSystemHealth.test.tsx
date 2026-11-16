@@ -212,6 +212,7 @@ describe('useSystemHealth', () => {
         NonNullable<RepairBranchDirResponse['data']>,
         'reset' | 'kept' | 'restricted' | 'openToEveryone'
       >,
+      createdBy = 'alice',
     ) => {
       mockClient.admin.repairBranchDir.mockResolvedValueOnce(
         mockSuccess({
@@ -219,7 +220,7 @@ describe('useSystemHealth', () => {
             name: 'foo',
             status: 'editing',
             access,
-            createdBy: 'alice',
+            createdBy,
             createdAt: '2026-01-01',
             updatedAt: '2026-01-01',
           },
@@ -239,7 +240,8 @@ describe('useSystemHealth', () => {
       const access = {
         restricted: true,
         allowedUsers: ['alice'],
-        excluded: { bob: removal, carol: removal },
+        excluded: { bob: removal },
+        excludedGroups: { readers: removal, editors: removal },
       }
       const shown = await repairWith(access, {
         reset: { status: 'editing' },
@@ -250,7 +252,7 @@ describe('useSystemHealth', () => {
       expect(shown).toMatchObject({
         title: 'Metadata repaired',
         message:
-          'Kept its access: only the people listed can open it. The 2 people removed from it stay out.' +
+          'Kept its access: only the people listed can open it. The 1 person and 2 groups removed from it stay out.' +
           ARCHIVED,
         color: 'green',
       })
@@ -258,7 +260,7 @@ describe('useSystemHealth', () => {
     })
 
     it('says a kept open branch is open to anyone who can sign in, bar the person removed', async () => {
-      const access = { excluded: { bob: removal } }
+      const access = { excluded: { bob: removal, carol: removal } }
       const shown = await repairWith(access, {
         reset: { status: 'editing' },
         kept: { access, createdBy: 'alice' },
@@ -267,7 +269,7 @@ describe('useSystemHealth', () => {
       })
       expect(shown).toMatchObject({
         message:
-          'Kept its access: anyone who can sign in can open it. The 1 person removed from it stays out.' +
+          'Kept its access: anyone who can sign in can open it. The 2 people removed from it stay out.' +
           ARCHIVED,
         color: 'green',
       })
@@ -286,6 +288,58 @@ describe('useSystemHealth', () => {
       expect(shown?.message).toBe(
         'Kept its access: only its creator, admins and reviewers can open it.' + ARCHIVED,
       )
+    })
+
+    it('says one removed group stays out', async () => {
+      const access = { restricted: true, excludedGroups: { readers: removal } }
+      const shown = await repairWith(access, {
+        reset: { status: 'editing' },
+        kept: { access, createdBy: 'alice' },
+        restricted: true,
+        openToEveryone: false,
+      })
+      expect(shown?.message).toBe(
+        'Kept its access: only the people listed can open it. The 1 group removed from it stays out.' +
+          ARCHIVED,
+      )
+    })
+
+    it('names no creator for a kept open branch on a closed site that a system user created', async () => {
+      const shown = await repairWith(
+        {},
+        {
+          reset: { status: 'editing' },
+          kept: { access: {}, createdBy: 'canopycms-system' },
+          restricted: false,
+          openToEveryone: false,
+        },
+        'canopycms-system',
+      )
+      expect(shown?.message).toBe(
+        'Kept its access: only admins and reviewers can open it.' + ARCHIVED,
+      )
+    })
+
+    it('says a fallen-back branch listing no one opens only to admins and reviewers', async () => {
+      const access = { restricted: true }
+      const shown = await repairWith(
+        access,
+        {
+          reset: { status: 'editing', access },
+          kept: { createdBy: 'canopycms-system' },
+          restricted: true,
+          openToEveryone: false,
+        },
+        'canopycms-system',
+      )
+      expect(shown).toMatchObject({
+        message:
+          'Access couldn\'t be read, so only admins and reviewers can open it. Share it again from "Branches".' +
+          ARCHIVED,
+        color: 'yellow',
+        autoClose: false,
+      })
+      expect(mockClient.permissions.batchGetUserMetadata).not.toHaveBeenCalled()
     })
 
     it('names the creator a fallen-back branch is limited to, and stays until dismissed', async () => {

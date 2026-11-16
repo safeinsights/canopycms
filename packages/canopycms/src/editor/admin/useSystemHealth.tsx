@@ -24,9 +24,8 @@ import type {
   DeleteTaskParams,
 } from '../../api/admin'
 import type { BranchHealthData, RepairBranchDirResponse } from '../../api/admin-branch-health'
-import { isSystemUserId } from '../../system-users'
-import type { CanopyUserId } from '../../types'
-import { SYSTEM_USER_LABEL } from '../user-display'
+import { isNobody } from '../../system-users'
+import type { BranchAccessControl, CanopyUserId } from '../../types'
 import type { DuplicateIdScan } from '../../branch-health'
 import { BRANCHES_KEY } from '../hooks/useBranchesData'
 import { isGatewayFailure, isUnanswered, UnansweredError } from '../unanswered'
@@ -46,13 +45,29 @@ const countBranches = (count: number): string =>
 
 type RepairedBranch = NonNullable<RepairBranchDirResponse['data']>
 
-/** The name the editor shows for `userId`, or the id when the lookup finds none. */
+/** The name the editor shows for the person `userId`, or the id when the lookup finds none. */
 async function nameOf(apiClient: ApiClient, userId: CanopyUserId): Promise<string> {
-  if (isSystemUserId(userId)) return SYSTEM_USER_LABEL
   const result = await apiClient.permissions
     .batchGetUserMetadata({ userIds: [userId] })
     .catch(() => null)
   return (result?.ok && result.data?.users.find((u) => u.id === userId)?.name) || userId
+}
+
+const plural = (count: number, one: string, many: string): string =>
+  `${count} ${count === 1 ? one : many}`
+
+/** The people and groups `access` removed, who stay out, in a sentence; '' when there are none. */
+function stayOutSentence(access: BranchAccessControl): string {
+  const people = Object.keys(access.excluded ?? {}).length
+  const groups = Object.keys(access.excludedGroups ?? {}).length
+  if (people + groups === 0) return ''
+  const removed = [
+    people > 0 ? plural(people, 'person', 'people') : '',
+    groups > 0 ? plural(groups, 'group', 'groups') : '',
+  ]
+    .filter(Boolean)
+    .join(' and ')
+  return ` The ${removed} removed from it ${people + groups === 1 ? 'stays' : 'stay'} out.`
 }
 
 /** Who can open a repaired branch now, and whether the admin has to share it again. */
@@ -69,9 +84,13 @@ async function repairedAccess(
         mustShare: false,
       }
     }
-    const creator = await nameOf(apiClient, createdBy)
+    // The fallback lists no one but, at most, the creator, and only when they are a person.
+    const listed = access.allowedUsers?.[0]
+    const who = listed
+      ? `${await nameOf(apiClient, listed)}, admins and reviewers`
+      : 'admins and reviewers'
     return {
-      text: `Access couldn't be read, so only ${creator}, admins and reviewers can open it. Share it again from "Branches".`,
+      text: `Access couldn't be read, so only ${who} can open it. Share it again from "Branches".`,
       mustShare: true,
     }
   }
@@ -81,15 +100,10 @@ async function repairedAccess(
       ? 'only the people listed can open it'
       : repaired.openToEveryone
         ? 'anyone who can sign in can open it'
-        : 'only its creator, admins and reviewers can open it'
-  const removed = Object.keys(access.excluded ?? {}).length
-  const stayOut =
-    removed === 0
-      ? ''
-      : removed === 1
-        ? ' The 1 person removed from it stays out.'
-        : ` The ${removed} people removed from it stay out.`
-  return { text: `Kept its access: ${who}.${stayOut}`, mustShare: false }
+        : isNobody(createdBy)
+          ? 'only admins and reviewers can open it'
+          : 'only its creator, admins and reviewers can open it'
+  return { text: `Kept its access: ${who}.${stayOutSentence(access)}`, mustShare: false }
 }
 
 /**
