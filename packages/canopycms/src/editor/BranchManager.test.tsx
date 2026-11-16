@@ -87,6 +87,16 @@ describe('getBranchPermissions', () => {
     expect(perms.canRequestChanges).toBe(false)
   })
 
+  it.each(['unknown'])(
+    'gives a user whose id is the creator id %s no creator permissions',
+    (id) => {
+      const branch: BranchSummary = { name: 'work', status: 'editing', createdBy: id }
+      const perms = getBranchPermissions(branch, { userId: id, groups: [] })
+      expect(perms.hasWorkflowAccess).toBe(false)
+      expect(perms.canDelete).toBe(false)
+    },
+  )
+
   it('grants workflow access to the creator, people given access, reviewers and admins only', () => {
     const branch: BranchSummary = {
       name: 'work',

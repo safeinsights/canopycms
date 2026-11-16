@@ -27,7 +27,7 @@ import {
   type BranchAccessRefusal,
   type BranchSharingRights,
 } from '../authorization'
-import { isSystemUserId } from '../system-users'
+import { isNobody } from '../system-users'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { lookupUsersMetadata } from '../auth/user-metadata-lookup'
 import { logBranchAccessChange } from '../utils/access-log'
@@ -148,7 +148,7 @@ export function refuseOutright(
       'The base branch does not take an access list. Create a branch to share work.',
     )
   }
-  if (!admin && (isSystemUserId(branch.createdBy) || branch.createdBy === 'unknown')) {
+  if (!admin && isNobody(branch.createdBy)) {
     return refused(403, 'BRANCH_NOT_SHAREABLE', 'Only an admin can share this branch.')
   }
   if (!admin && branch.status === 'archived') {
