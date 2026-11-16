@@ -4,8 +4,10 @@ import {
   checkBranchAccessWithDefault,
   canPerformWorkflowAction,
   createCheckBranchAccess,
+  opensToEveryone,
   RESERVED_GROUPS,
 } from '../'
+import type { CanopyConfig } from '../../config'
 import type { BranchContext } from '../../types'
 import { ANONYMOUS_USER } from '../../user'
 
@@ -648,5 +650,53 @@ describe('canPerformWorkflowAction', () => {
       }
       expect(canPerformWorkflowAction(context, regularUser, 'deny')).toBe(false)
     })
+  })
+})
+
+describe('opensToEveryone', () => {
+  const stranger = { type: 'authenticated' as const, userId: 'stranger', groups: ['team'] }
+  const branches = [
+    { name: 'feature/x', createdBy: 'user-1' },
+    { name: 'main', createdBy: 'canopycms-system' },
+    { name: 'old-main', createdBy: 'user-1', baseBranch: 'old-main' },
+    { name: 'work', createdBy: 'canopycms-system' },
+    { name: 'work', createdBy: 'user-1' },
+  ]
+  const accesses = [
+    {},
+    { restricted: false },
+    { restricted: true },
+    { allowedUsers: ['user-1'] },
+    { allowedGroups: ['team'] },
+    { managerOrAdminAllowed: true },
+  ]
+  const configs: Pick<
+    CanopyConfig,
+    'mode' | 'defaultBaseBranch' | 'defaultActiveBranch' | 'defaultBranchAccess'
+  >[] = [
+    { mode: 'prod', defaultBaseBranch: 'main', defaultBranchAccess: 'allow' },
+    { mode: 'prod', defaultBaseBranch: 'main', defaultBranchAccess: 'deny' },
+    { mode: 'prod', defaultBaseBranch: 'main' },
+    { mode: 'dev', defaultBaseBranch: 'main', defaultActiveBranch: 'work' },
+  ]
+
+  it('agrees with the access check for someone neither listed nor the creator', () => {
+    for (const config of configs) {
+      const check = createCheckBranchAccess(config.defaultBranchAccess ?? 'deny', config)
+      for (const shape of branches) {
+        for (const access of accesses) {
+          const branch = { ...baseContext.branch, ...shape, access }
+          const allowed = check({ ...baseContext, branch }, stranger).allowed
+          // A group listing admits the stranger without opening the branch to everyone.
+          const expected = 'allowedGroups' in access ? false : allowed
+          expect({ config, shape, access, open: opensToEveryone(branch, config) }).toEqual({
+            config,
+            shape,
+            access,
+            open: expected,
+          })
+        }
+      }
+    }
   })
 })

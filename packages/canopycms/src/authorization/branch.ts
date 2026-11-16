@@ -1,7 +1,8 @@
-import type { BranchContext } from '../types'
+import type { BranchContext, BranchMetadata } from '../types'
 import type { CanopyConfig, DefaultBranchAccess } from '../config'
 import { isAdmin, isExcludedFrom, isLockedOutOfBranch, isReviewer } from './helpers'
 import { getBranchProtection } from './protected-branch'
+import { hasAccessList } from './branch-sharing'
 import type { CanopyUser } from '../user'
 import type { BranchAccessResult } from './types'
 import { isSystemUserId, SYSTEM_USER_ID } from '../system-users'
@@ -49,7 +50,7 @@ interface BranchAccessOptions {
  */
 function isDevActiveBranch(
   config: Pick<CanopyConfig, 'mode' | 'defaultBaseBranch' | 'defaultActiveBranch'>,
-  context: BranchContext,
+  context: { branch: Pick<BranchMetadata, 'createdBy' | 'name'> },
 ): boolean {
   if (config.mode !== 'dev' || !isSystemUserId(context.branch.createdBy)) return false
   const active = config.defaultActiveBranch ?? baseBranchOf(config)
@@ -137,6 +138,27 @@ export function createCheckBranchAccess(
         : false,
       isDevActiveBranch: config ? isDevActiveBranch(config, context) : false,
     })
+}
+
+/**
+ * Whether the access {@link createCheckBranchAccess} binds for `config` admits everyone who can
+ * sign in to `branch`, bar anyone its list excludes: no list or lockdown is in force, and the site
+ * default, the base-branch grant or the dev-active-branch grant admits someone not its creator.
+ */
+export function opensToEveryone(
+  branch: Pick<BranchMetadata, 'access' | 'name' | 'baseBranch' | 'createdBy'>,
+  config: Pick<
+    CanopyConfig,
+    'mode' | 'defaultBaseBranch' | 'defaultActiveBranch' | 'defaultBranchAccess'
+  >,
+): boolean {
+  const { access } = branch
+  if (access.managerOrAdminAllowed || hasAccessList(access)) return false
+  return (
+    (config.defaultBranchAccess ?? 'deny') === 'allow' ||
+    getBranchProtection(config, branch.name, branch.baseBranch).isProtected ||
+    isDevActiveBranch(config, { branch })
+  )
 }
 
 /** Options tightening {@link canPerformWorkflowAction} beyond the default hybrid model. */
