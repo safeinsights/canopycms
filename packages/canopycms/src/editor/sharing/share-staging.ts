@@ -69,7 +69,9 @@ const nonEmpty = <T extends Record<string, unknown[]>>(lists: T): Partial<T> | u
 }
 
 /** `add` as a request sends it: people by address where they have one, else by id. */
-export const additionsBody = (add: readonly Addition[]): NonNullable<UpdateBranchAccessBody['add']> | undefined =>
+export const additionsBody = (
+  add: readonly Addition[],
+): NonNullable<UpdateBranchAccessBody['add']> | undefined =>
   nonEmpty({
     users: add.flatMap((item) =>
       item.kind === 'user' && item.id !== undefined && !item.email ? [item.id] : [],
