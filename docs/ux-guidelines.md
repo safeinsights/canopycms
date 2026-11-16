@@ -62,7 +62,8 @@ from `packages/canopycms/src/editor/branch-lock.ts`.
   else's submission sees "Approve" and "Request changes" (the latter alone once approved), and
   anyone else its workflow action; another in review shows them "Review"; others, "Open".
 - **Dismissing a dialog** that mixes staged and immediate changes: "Discard changes" while edits
-  are staged, "Close" after an immediate save, otherwise "Cancel".
+  are staged, "Close" after an immediate save, otherwise "Cancel". Esc and ✕ follow it, asking
+  first while edits are staged.
 - **Quote a named control**: the "Tasks" tab.
 - **No "successfully"**: "Branch created".
 - **Human labels, never internal names**: "Page sections › Hero › Heading", never
@@ -78,14 +79,14 @@ from `packages/canopycms/src/editor/branch-lock.ts`.
 
 ## Choosing a surface
 
-| Need                                                                   | Use                   |
-| ---------------------------------------------------------------------- | --------------------- |
-| A decision that cannot be undone, or a short form of at most 3 fields  | Modal                 |
-| A list or task worked alongside the content: branches, comments, media | Drawer or panel       |
-| Context for one control: a field's comments, a picker, a short note    | Popover               |
-| The result of an action that is not otherwise visible                  | Toast                 |
-| A branch's lasting state: read-only, protected                         | Branch bar status     |
-| One entry's lasting state, such as a read-only draft                   | Notice above its form |
+| Need                                                                                         | Use                   |
+| -------------------------------------------------------------------------------------------- | --------------------- |
+| A decision that cannot be undone, a form of at most 3 fields, or a picker over a staged list | Modal                 |
+| A list or task worked alongside the content: branches, comments, media                       | Drawer or panel       |
+| Context for one control: a field's comments, a picker, a short note                          | Popover               |
+| The result of an action that is not otherwise visible                                        | Toast                 |
+| A branch's lasting state: read-only, protected                                               | Branch bar status     |
+| One entry's lasting state, such as a read-only draft                                         | Notice above its form |
 
 Never open a modal from a modal. A popover anchored to a field never covers its input; a short field's opens below it
 (`packages/canopycms/src/editor/comments/popover-placement.ts`). Don't toast what is already visible: a saved entry shows "Saved" inline, a new comment appears in its thread. Toasts go in the corner opposite the rail (`Notifications` in
@@ -100,8 +101,8 @@ Never open a modal from a modal. A popover anchored to a field never covers its 
   it), and its red confirm button repeats the verb.
 - **Undo instead of confirm** for removals inside a form: a list item, block or image goes at
   once, and a toast offers Undo; an optional object's Clear leaves "Undo clear" behind. Undo
-  updates the current draft, not a snapshot, and focuses the restored row or object. Inside a modal, the Undo is the dialog's own status line: a toast would sit outside
-  its focus trap.
+  updates the current draft, not a snapshot, and focuses the restored row or object. Inside a modal, Undo stays in the dialog, on the struck-through row
+  or in its status line: a toast would sit outside its focus trap.
 - A removed item's comment threads move to the entry's thread, labelled "On a removed item"; the
   Remove toast says so.
 - Never both. A removal most users can't restore, such as "Remove from library", confirms.

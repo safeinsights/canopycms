@@ -5,7 +5,7 @@ import { Button, Popover, Skeleton, Stack, Text } from '@mantine/core'
 
 import { accessRefusalMessage } from '../copy'
 import { PersonLabel, type ShareTarget } from './ShareBranchDialog'
-import { LISTED_ONLY_LINE, OPEN_TO_EVERYONE_LINE } from './share-copy'
+import { LISTED_ONLY_LINE, LOCKDOWN_LINE, OPEN_TO_EVERYONE_LINE } from './share-copy'
 import { entryKey } from './share-staging'
 import { useBranchAccess } from './useBranchAccess'
 
@@ -29,7 +29,12 @@ export function WhoHasAccessPopover({
     <Popover opened={opened} onChange={onChange} position="bottom-start" width={320} shadow="md">
       <Popover.Target>{children}</Popover.Target>
       <Popover.Dropdown aria-labelledby={headingId} data-testid="who-has-access">
-        <WhoHasAccessBody branch={branch.name} owner={branch.createdBy} headingId={headingId} />
+        <WhoHasAccessBody
+          branch={branch.name}
+          owner={branch.createdBy}
+          lockedDown={!!branch.access?.managerOrAdminAllowed}
+          headingId={headingId}
+        />
       </Popover.Dropdown>
     </Popover>
   )
@@ -38,20 +43,20 @@ export function WhoHasAccessPopover({
 function WhoHasAccessBody({
   branch,
   owner,
+  lockedDown,
   headingId,
 }: {
   branch: string
   owner?: string
+  lockedDown: boolean
   headingId: string
 }) {
   const { state, reload } = useBranchAccess(branch)
-  const firstRowRef = useRef<HTMLLIElement>(null)
   const headingRef = useRef<HTMLParagraphElement>(null)
-  const loaded = state.status === 'loaded'
 
   useEffect(() => {
-    ;(firstRowRef.current ?? headingRef.current)?.focus({ preventScroll: true })
-  }, [loaded])
+    headingRef.current?.focus({ preventScroll: true })
+  }, [])
 
   const data = state.data
   return (
@@ -84,13 +89,8 @@ function WhoHasAccessBody({
               aria-labelledby={headingId}
               style={{ listStyle: 'none' }}
             >
-              {data.entries.map((entry, index) => (
-                <li
-                  key={entryKey(entry)}
-                  ref={index === 0 ? firstRowRef : undefined}
-                  tabIndex={-1}
-                  style={{ borderRadius: 4 }}
-                >
+              {data.entries.map((entry) => (
+                <li key={entryKey(entry)}>
                   <PersonLabel
                     kind={entry.kind}
                     name={entry.name}
@@ -103,7 +103,13 @@ function WhoHasAccessBody({
               ))}
             </Stack>
           )}
-          <Text size="sm">{data.openToEveryone ? OPEN_TO_EVERYONE_LINE : LISTED_ONLY_LINE}</Text>
+          <Text size="sm">
+            {lockedDown
+              ? LOCKDOWN_LINE
+              : data.openToEveryone
+                ? OPEN_TO_EVERYONE_LINE
+                : LISTED_ONLY_LINE}
+          </Text>
         </>
       )}
     </Stack>

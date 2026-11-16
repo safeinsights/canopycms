@@ -168,6 +168,7 @@ describe('PATCH /:branch/access', () => {
     expect(await patch(member, 'feature/x', { add: { users: ['owner'] } })).toMatchObject({
       status: 403,
       code: 'USER_EXCLUDED',
+      ids: ['owner'],
     })
     expect((await onDisk(context))?.access.allowedUsers).toEqual(['member'])
   })
@@ -180,6 +181,7 @@ describe('PATCH /:branch/access', () => {
     expect((await patch(member, 'feature/x', { add: { users: ['pal'] } })).ok).toBe(true)
     expect(await patch(member, 'feature/x', { remove: { users: ['owner'] } })).toMatchObject({
       code: 'ACCESS_MANAGE_FORBIDDEN',
+      ids: ['owner'],
     })
     expect((await patch(member, 'feature/x', { remove: { users: ['pal'] } })).ok).toBe(true)
     const saved = await onDisk(context)

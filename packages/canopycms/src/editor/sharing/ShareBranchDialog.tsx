@@ -6,12 +6,14 @@ import {
   Alert,
   Avatar,
   Button,
+  Fieldset,
   Group,
   Modal,
   Radio,
   Skeleton,
   Stack,
   Text,
+  TextInput,
   Tooltip,
   UnstyledButton,
   VisuallyHidden,
@@ -44,9 +46,11 @@ import {
   changeLanded,
   editorsLosingAccess,
   entryKey,
+  isPersonId,
   joinNames,
   narrows,
   NOTHING_STAGED,
+  withAddition,
   type AccessEntry,
   type Addition,
   type ExcludedEntry,
@@ -82,33 +86,61 @@ export interface ShareBranchDialogProps {
 
 const UPDATE_FAILED = "Access couldn't be updated. Check your connection and try again."
 const UPDATE_UNANSWERED =
-  'Updating access may have gone through even though the server didn\'t answer. The list shows what the server has now; choose "Update access" to make sure.'
+  'Updating access may have gone through even though the server didn\'t answer. The list shows what the server has now; choose "Update access" to send your changes again.'
 const NOTHING_TO_UPDATE = 'Nothing has changed yet. Add or remove someone, or change a setting.'
+const NOT_LOADED = "Who has access hasn't loaded yet. Retry above."
+const STILL_LOADING = 'Who has access is still loading.'
+const COPIED_FOR_MS = 3000
+
+interface BodyState {
+  dirty: boolean
+  saving: boolean
+  refused: boolean
+}
 
 /**
  * Who may open a branch, for someone who may add people to it: a list whose adds, removals and
  * settings are staged, then sent as one change by "Update access". A viewer the server says can't
- * add sees the list read-only.
+ * add sees the list read-only. Esc and ✕ follow the dismiss button: with edits staged they ask
+ * before discarding them, and once a refusal showed they read the branch list again too.
  */
 export function ShareBranchDialog({
   opened,
   onClose,
+  onChanged,
   returnFocusTo,
   ...body
 }: ShareBranchDialogProps) {
-  const [busy, setBusy] = useState({ dirty: false, saving: false })
+  const [state, setState] = useState<BodyState>({ dirty: false, saving: false, refused: false })
+  const [discardAsked, setDiscardAsked] = useState(0)
+  const close = () => {
+    setDiscardAsked(0)
+    if (state.refused) onChanged()
+    onClose()
+  }
+  const dismiss = () => {
+    if (state.saving) return
+    if (state.dirty) setDiscardAsked((n) => n + 1)
+    else close()
+  }
   return (
     <Modal
       opened={opened}
-      onClose={onClose}
+      onClose={dismiss}
       title={`Share ${displayBranchName(body.branch)}`}
       size={540}
-      closeOnEscape={!busy.saving}
-      closeOnClickOutside={!busy.saving && !busy.dirty}
-      closeButtonProps={{ disabled: busy.saving }}
+      closeOnClickOutside={!state.saving && !state.dirty}
+      closeButtonProps={{ disabled: state.saving }}
       {...focusReturnProps(returnFocusTo)}
     >
-      <ShareBranchBody {...body} onClose={onClose} onBusy={setBusy} />
+      <ShareBranchBody
+        {...body}
+        onClose={close}
+        onChanged={onChanged}
+        onState={setState}
+        discardAsked={discardAsked}
+        onKeepEditing={() => setDiscardAsked(0)}
+      />
     </Modal>
   )
 }
@@ -123,15 +155,24 @@ interface Row {
   isOwner: boolean
   isYou: boolean
   unsaved: boolean
+  /** Staged for removal: shown struck through, with its own Undo. */
+  removing: boolean
   removable: boolean
   entry?: AccessEntry
   addition?: Addition
 }
 
 type LastAction =
-  | { kind: 'removed'; key: string; name: string; entry: { kind: Row['kind']; id: string } }
   | { kind: 'unstaged'; key: string; name: string; addition: Addition }
-  | { kind: 'allowed'; key: string; name: string }
+  | { kind: 'allowed'; key: string; name: string; via: 'add' | 'unexclude'; message: string }
+
+interface SaveProblem {
+  tone: 'error' | 'warning'
+  message: string
+  /** A network failure or a rate limit, which a later try can pass. */
+  retryable: boolean
+  ids?: string[]
+}
 
 function ShareBranchBody({
   branch,
@@ -140,39 +181,93 @@ function ShareBranchBody({
   getUserMetadata,
   onClose,
   onChanged,
-  onBusy,
+  onState,
+  discardAsked,
+  onKeepEditing,
 }: Omit<ShareBranchDialogProps, 'opened' | 'returnFocusTo'> & {
-  onBusy: (busy: { dirty: boolean; saving: boolean }) => void
+  onState: (state: BodyState) => void
+  discardAsked: number
+  onKeepEditing: () => void
 }) {
   const client = useApiClient()
   const { state, reload } = useBranchAccess(branch.name)
   const data = state.data
   const [staged, setStaged] = useState<StagedAccess>(NOTHING_STAGED)
+  const stagedRef = useRef(staged)
+  stagedRef.current = staged
   const [lastAction, setLastAction] = useState<LastAction>()
   const [saving, setSaving] = useState(false)
-  const [saveProblem, setSaveProblem] = useState<{ tone: 'error' | 'warning'; message: string }>()
+  const savingRef = useRef(false)
+  const [saveProblem, setSaveProblem] = useState<SaveProblem>()
   const [refused, setRefused] = useState<ApiErrorCode>()
   const [announcement, setAnnouncement] = useState('')
   const [removedOpen, setRemovedOpen] = useState(false)
   const [names, setNames] = useState<Record<string, UserSearchResult | null>>({})
+  const [copy, setCopy] = useState<'idle' | 'copied' | 'failed'>('idle')
   const inputRef = useRef<HTMLInputElement>(null)
+  const headingRef = useRef<HTMLParagraphElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const removedRef = useRef<HTMLDivElement>(null)
+  const keepEditingRef = useRef<HTMLButtonElement>(null)
+  const beforeAskRef = useRef<HTMLElement | null>(null)
   const [pendingFocus, setPendingFocus] = useState<
     { remove: number } | { restore: string } | { allow: number }
   >()
-  const [linkCopied, setLinkCopied] = useState(false)
 
   const userIsAdmin = isAdmin(user.groups)
   const owner = branch.createdBy
   const rights = data?.rights ?? branch.sharing
-  const canEdit = state.status !== 'refused' && !refused && !!rights?.canAdd
+  const refusalCode = refused ?? (state.status === 'refused' ? state.code : undefined)
+  const canEdit = !refusalCode && !!rights?.canAdd
   const canManage = canEdit && !!rights?.canManage
   const body = data ? accessChangeBody(staged, data) : {}
   const dirty = Object.keys(body).length > 0
+  const lockedDown = !!branch.access?.managerOrAdminAllowed
 
-  useEffect(() => onBusy({ dirty, saving }), [dirty, saving, onBusy])
+  useEffect(
+    () => onState({ dirty, saving, refused: !!refusalCode }),
+    [dirty, saving, refusalCode, onState],
+  )
 
+  const firstLoad = useRef(true)
+  useEffect(() => {
+    if (!data || !firstLoad.current) return
+    firstLoad.current = false
+    const active = document.activeElement
+    if (
+      canEdit &&
+      (!active ||
+        active === document.body ||
+        active.getAttribute('role') === 'dialog' ||
+        !!active.closest('.mantine-Modal-close'))
+    ) {
+      inputRef.current?.focus()
+    }
+  }, [data, canEdit])
+
+  useEffect(() => {
+    if (copy !== 'copied') return
+    const timer = setTimeout(() => setCopy('idle'), COPIED_FOR_MS)
+    return () => clearTimeout(timer)
+  }, [copy])
+
+  const showDiscard = discardAsked > 0 && dirty
+  useEffect(() => {
+    if (discardAsked === 0) return
+    const active = document.activeElement
+    if (active instanceof HTMLElement && active !== keepEditingRef.current) {
+      beforeAskRef.current = active
+    }
+    keepEditingRef.current?.focus()
+  }, [discardAsked])
+
+  const excludedIds = new Set((data?.excluded ?? []).map((entry) => entry.id))
+  const generalValue =
+    staged.restricted === false
+      ? 'open'
+      : staged.restricted || staged.add.length > 0 || data?.restricted
+        ? 'listed'
+        : 'open'
   const narrowing = !!data && narrows(staged, data)
   const losing = useMemo(
     () =>
@@ -184,8 +279,9 @@ function ShareBranchBody({
   const showOwnerRow =
     !!data &&
     !data.restricted &&
-    !!owner &&
-    (!data.openToEveryone || narrowing) &&
+    isPersonId(owner) &&
+    !excludedIds.has(owner) &&
+    (data.defaultAccess !== 'allow' || narrowing) &&
     !data.entries.some((entry) => entry.kind === 'user' && entry.id === owner)
   const toName = [...losing, ...(showOwnerRow && owner ? [owner] : [])]
     .filter((id) => !(id in names))
@@ -215,12 +311,12 @@ function ShareBranchBody({
       isOwner: true,
       isYou: owner === user.userId,
       unsaved: false,
+      removing: false,
       removable: false,
     })
   }
   for (const entry of data?.entries ?? []) {
     const key = entryKey(entry)
-    if (removedKeys.has(key)) continue
     const isOwner = entry.kind === 'user' && entry.id === owner
     rows.push({
       key,
@@ -236,12 +332,15 @@ function ShareBranchBody({
       isOwner,
       isYou: entry.kind === 'user' && entry.id === user.userId,
       unsaved: false,
+      removing: removedKeys.has(key),
       removable:
         canEdit && (canManage ? userIsAdmin || !isOwner : entry.addedBy?.id === user.userId),
       entry,
     })
   }
+  const entryKeys = new Set(rows.map((row) => row.key))
   for (const addition of staged.add) {
+    if (entryKeys.has(entryKey(addition))) continue
     rows.push({
       key: entryKey(addition),
       kind: addition.kind,
@@ -252,27 +351,27 @@ function ShareBranchBody({
       isOwner: false,
       isYou: false,
       unsaved: true,
+      removing: false,
       removable: true,
       addition,
     })
   }
   const listedKeys = new Set(rows.map((row) => row.key))
-  const unexcludedKeys = new Set(staged.unexclude.map(entryKey))
-  const excluded = (data?.excluded ?? []).filter((entry) => !unexcludedKeys.has(entryKey(entry)))
+  const allowedKeys = new Set([...staged.unexclude.map(entryKey), ...staged.add.map(entryKey)])
+  const excluded = (data?.excluded ?? []).filter((entry) => !allowedKeys.has(entryKey(entry)))
   const showRemoved = canManage && excluded.length > 0
 
   // Focus moves once the list has re-rendered without, or with, the row it acted on.
   useLayoutEffect(() => {
     if (!pendingFocus) return
     setPendingFocus(undefined)
+    const fallback = inputRef.current ?? headingRef.current
     if ('remove' in pendingFocus) {
       const buttons = listRef.current?.querySelectorAll<HTMLElement>('button[data-share-remove]')
-      ;(buttons?.[pendingFocus.remove] ?? inputRef.current)?.focus()
+      ;(buttons?.[pendingFocus.remove] ?? fallback)?.focus()
     } else if ('allow' in pendingFocus) {
       const buttons = removedRef.current?.querySelectorAll<HTMLElement>('button[data-share-allow]')
-      ;(
-        buttons?.[pendingFocus.allow] ?? removedRef.current?.querySelector<HTMLElement>('button')
-      )?.focus()
+      ;(buttons?.[pendingFocus.allow] ?? buttons?.[buttons.length - 1] ?? fallback)?.focus()
     } else {
       const { restore } = pendingFocus
       Array.from(document.querySelectorAll<HTMLElement>('[data-share-row]'))
@@ -284,35 +383,73 @@ function ShareBranchBody({
 
   const announce = (message: string) => setAnnouncement(message)
 
+  /** Any change to the list keeps it, so a staged "Anyone who can sign in" gives way. */
+  const edit = (change: (prev: StagedAccess) => StagedAccess) => {
+    setSaveProblem(undefined)
+    setStaged((prev) => {
+      const next = change(prev)
+      return next.restricted === false ? { ...next, restricted: undefined } : next
+    })
+  }
+
   const add = (addition: Addition) =>
-    setStaged((prev) => ({
-      ...prev,
-      add: listedKeys.has(entryKey(addition)) ? prev.add : [...prev.add, addition],
-      restricted: prev.restricted === false ? undefined : prev.restricted,
-    }))
+    edit((prev) => ({ ...prev, add: withAddition(prev.add, addition, listedKeys) }))
 
   const remove = (row: Row) => {
-    const index = rows.filter((r) => r.removable).findIndex((r) => r.key === row.key)
-    if (row.addition) {
-      const addition = row.addition
-      setStaged((prev) => ({ ...prev, add: prev.add.filter((a) => entryKey(a) !== row.key) }))
+    const index = rows.filter((r) => r.removable && !r.removing).findIndex((r) => r.key === row.key)
+    const { addition, entry } = row
+    if (addition) {
+      edit((prev) => ({ ...prev, add: prev.add.filter((a) => entryKey(a) !== row.key) }))
       setLastAction({ kind: 'unstaged', key: row.key, name: row.name, addition })
-    } else if (row.entry) {
-      const target = { kind: row.entry.kind, id: row.entry.id }
-      setStaged((prev) => ({ ...prev, remove: [...prev.remove, target] }))
-      setLastAction({ kind: 'removed', key: row.key, name: row.name, entry: target })
+    } else if (entry) {
+      edit((prev) =>
+        prev.remove.some((r) => entryKey(r) === row.key)
+          ? prev
+          : { ...prev, remove: [...prev.remove, { kind: entry.kind, id: entry.id }] },
+      )
     }
     announce(`Removed ${row.name}`)
     setPendingFocus({ remove: index })
   }
 
+  const keep = (row: Row) => {
+    edit((prev) => ({ ...prev, remove: prev.remove.filter((r) => entryKey(r) !== row.key) }))
+    announce(`Restored ${row.name}`)
+    setPendingFocus({ restore: row.key })
+  }
+
   const allowAgain = (entry: ExcludedEntry, index: number) => {
-    setStaged((prev) => ({
-      ...prev,
-      unexclude: [...prev.unexclude, { kind: entry.kind, id: entry.id }],
-    }))
     const key = entryKey(entry)
-    setLastAction({ kind: 'allowed', key, name: entry.name })
+    const listOnly = generalValue === 'listed'
+    const canAddBack =
+      entry.kind === 'user' || userIsAdmin || (user.groups ?? []).includes(entry.id)
+    if (listOnly && canAddBack) {
+      edit((prev) => ({
+        ...prev,
+        add: withAddition(prev.add, { kind: entry.kind, id: entry.id, name: entry.name }),
+      }))
+      setLastAction({
+        kind: 'allowed',
+        key,
+        name: entry.name,
+        via: 'add',
+        message: `${entry.name} will be added back.`,
+      })
+    } else {
+      edit((prev) => ({
+        ...prev,
+        unexclude: [...prev.unexclude, { kind: entry.kind, id: entry.id }],
+      }))
+      setLastAction({
+        kind: 'allowed',
+        key,
+        name: entry.name,
+        via: 'unexclude',
+        message: listOnly
+          ? `${entry.name} will be allowed again, but not added back to the list.`
+          : `${entry.name} will be able to open this branch again.`,
+      })
+    }
     announce(`${entry.name} will be allowed again`)
     setPendingFocus({ allow: index })
   }
@@ -320,23 +457,19 @@ function ShareBranchBody({
   const undo = () => {
     if (!lastAction) return
     const { key } = lastAction
-    if (lastAction.kind === 'removed') {
-      setStaged((prev) => ({ ...prev, remove: prev.remove.filter((r) => entryKey(r) !== key) }))
-    } else if (lastAction.kind === 'unstaged') {
+    if (lastAction.kind === 'unstaged') {
       const { addition } = lastAction
-      setStaged((prev) => ({ ...prev, add: [...prev.add, addition] }))
+      edit((prev) => ({ ...prev, add: withAddition(prev.add, addition) }))
+      announce(`Restored ${lastAction.name}`)
     } else {
-      setStaged((prev) => ({
-        ...prev,
-        unexclude: prev.unexclude.filter((r) => entryKey(r) !== key),
-      }))
+      edit((prev) =>
+        lastAction.via === 'add'
+          ? { ...prev, add: prev.add.filter((a) => entryKey(a) !== key) }
+          : { ...prev, unexclude: prev.unexclude.filter((r) => entryKey(r) !== key) },
+      )
       setRemovedOpen(true)
+      announce(`${lastAction.name} stays removed`)
     }
-    announce(
-      lastAction.kind === 'allowed'
-        ? `${lastAction.name} stays removed`
-        : `Restored ${lastAction.name}`,
-    )
     setLastAction(undefined)
     setPendingFocus({ restore: key })
   }
@@ -344,6 +477,7 @@ function ShareBranchBody({
   const setGeneralAccess = (value: string) => {
     if (!data) return
     setLastAction(undefined)
+    setSaveProblem(undefined)
     if (value === 'open') {
       setStaged(
         data.restricted
@@ -356,48 +490,87 @@ function ShareBranchBody({
   }
 
   const addThemToo = () => {
-    for (const id of losing)
-      add({ kind: 'user', id, name: nameOf(id), avatarUrl: names[id]?.avatarUrl })
+    edit((prev) => ({
+      ...prev,
+      add: losing.reduce(
+        (list, id) =>
+          withAddition(list, {
+            kind: 'user',
+            id,
+            name: nameOf(id),
+            avatarUrl: names[id]?.avatarUrl,
+          }),
+        prev.add,
+      ),
+    }))
     announce(`Added ${joinNames(losing.map(nameOf))}`)
   }
 
+  const discardStaged = () => {
+    setStaged(NOTHING_STAGED)
+    setLastAction(undefined)
+    setSaveProblem(undefined)
+    ;(inputRef.current ?? headingRef.current)?.focus()
+  }
+
+  const finish = (sent: StagedAccess) => {
+    onChanged()
+    if (stagedRef.current === sent) onClose()
+    else void reload()
+  }
+
   const update = async () => {
-    if (!data || !dirty || saving) return
+    if (!data || !dirty || savingRef.current) return
+    savingRef.current = true
     setSaving(true)
     setSaveProblem(undefined)
+    const sent = staged
     try {
       const result = await client.branches.updateAccess({ branch: branch.name }, body)
       if (isGatewayFailure(result)) throw new UnansweredError()
       if (result.ok) {
-        onChanged()
-        onClose()
-      } else if (isLockout(result.code)) {
+        finish(sent)
+      } else if (isLockout(result.code, result.ids)) {
         setRefused(result.code)
       } else {
         setSaveProblem({
           tone: 'error',
           message: accessRefusalMessage(result.code) ?? (result.error || UPDATE_FAILED),
+          retryable: !result.code || result.code === 'RATE_LIMITED',
+          ids: result.ids,
         })
       }
     } catch (err: unknown) {
       if (!isUnanswered(err)) {
         console.error(err)
-        setSaveProblem({ tone: 'error', message: UPDATE_FAILED })
+        setSaveProblem({ tone: 'error', message: UPDATE_FAILED, retryable: true })
       } else {
         const fresh = await reload()
-        if (fresh && changeLanded(body, fresh)) {
-          onChanged()
-          onClose()
-        } else {
-          setSaveProblem({ tone: 'warning', message: UPDATE_UNANSWERED })
-        }
+        if (fresh && changeLanded(body, fresh)) finish(sent)
+        else setSaveProblem({ tone: 'warning', message: UPDATE_UNANSWERED, retryable: false })
       }
     } finally {
+      savingRef.current = false
       setSaving(false)
     }
   }
 
-  const refusalCode = refused ?? (state.status === 'refused' ? state.code : undefined)
+  const copyLink = () => {
+    const link = editorBranchLink(window.location.href, urlName)
+    Promise.resolve()
+      .then(() => navigator.clipboard.writeText(link))
+      .then(
+        () => {
+          setCopy('copied')
+          announce('Link copied')
+        },
+        () => {
+          setCopy('failed')
+          announce("Couldn't copy the link")
+        },
+      )
+  }
+
   if (refusalCode) {
     return (
       <Stack gap="md">
@@ -410,13 +583,7 @@ function ShareBranchBody({
           {accessRefusalMessage(refusalCode)}
         </Alert>
         <Group justify="flex-end">
-          <Button
-            variant="default"
-            onClick={() => {
-              onChanged()
-              onClose()
-            }}
-          >
+          <Button variant="default" onClick={onClose}>
             Close
           </Button>
         </Group>
@@ -424,12 +591,6 @@ function ShareBranchBody({
     )
   }
 
-  const generalValue =
-    staged.restricted === false
-      ? 'open'
-      : staged.restricted || staged.add.length > 0 || data?.restricted || !data?.openToEveryone
-        ? 'listed'
-        : 'open'
   const addBy: BranchAddBy | undefined = staged.addBy ?? data?.addBy
   const viewerIsOwner = !!rights?.isOwner
   const groupWarnings = userIsAdmin
@@ -437,235 +598,300 @@ function ShareBranchBody({
     : staged.remove.filter((r) => r.kind === 'group' && !(user.groups ?? []).includes(r.id))
   const groupName = (id: string) =>
     data?.entries.find((entry) => entry.kind === 'group' && entry.id === id)?.name ?? id
+  const nameForId = (id: string): string | undefined =>
+    staged.add.find((a) => a.id === id)?.name ??
+    data?.entries.find((entry) => entry.id === id)?.name ??
+    data?.excluded?.find((entry) => entry.id === id)?.name ??
+    names[id]?.name ??
+    undefined
+  const problemNames = (saveProblem?.ids ?? []).flatMap((id) => nameForId(id) ?? [])
+  const problemRows = rows.filter(
+    (row) => row.addition?.id !== undefined && saveProblem?.ids?.includes(row.addition.id),
+  )
+  const mayLose =
+    data?.entries.some((entry) => entry.kind === 'group') ||
+    staged.add.some((addition) => addition.kind === 'group')
+  const notReadyReason = !data
+    ? state.status === 'failed'
+      ? NOT_LOADED
+      : STILL_LOADING
+    : undefined
+  const updateReason = notReadyReason ?? (dirty ? undefined : NOTHING_TO_UPDATE)
+  const warningIcon = <IconAlertTriangle size={16} color="var(--mantine-color-text)" aria-hidden />
 
   return (
     <Stack gap="md" data-testid="share-dialog">
       <VisuallyHidden role="status" data-testid="share-status">
         {announcement}
       </VisuallyHidden>
-      {canEdit && (
-        <PeoplePicker
-          branch={branch.name}
-          searchable={data?.searchable ?? 'cms-users'}
-          addableByEmail={data?.addableByEmail ?? 'all-users'}
-          staged={listedKeys}
-          onAdd={add}
-          onRefused={setRefused}
-          announce={announce}
-          inputRef={inputRef}
-        />
-      )}
-      <Stack gap="xs">
-        <Text size="sm" fw={600} id="share-people-heading">
-          People with access
-        </Text>
-        {state.status === 'failed' && !data && (
-          <Alert
-            color="red"
-            variant="light"
-            title="Who has access couldn't be loaded."
-            data-testid="share-load-failed"
-          >
-            <Button variant="default" size="xs" onClick={() => void reload()}>
-              Retry
-            </Button>
-          </Alert>
-        )}
-        {!data && state.status === 'loading' ? (
-          <Stack gap="sm" aria-busy data-testid="share-loading">
-            {[0, 1, 2].map((row) => (
-              <Group key={row} gap="sm" wrap="nowrap">
-                <Skeleton circle height={32} />
-                <Stack gap={4} style={{ flex: 1 }}>
-                  <Skeleton height={10} width="45%" />
-                  <Skeleton height={8} width="30%" />
-                </Stack>
-              </Group>
-            ))}
-          </Stack>
-        ) : data && rows.length === 0 ? (
-          <Text size="sm" c="dimmed">
-            No one is listed yet.
-          </Text>
-        ) : (
-          <Stack
-            component="ul"
-            gap="xs"
-            m={0}
-            p={0}
-            ref={listRef}
-            aria-labelledby="share-people-heading"
-            style={{ listStyle: 'none' }}
-          >
-            {rows.map((row) => (
-              <AccessRow key={row.key} row={row} onRemove={() => remove(row)} />
-            ))}
-          </Stack>
-        )}
-        {(lastAction || groupWarnings.length > 0 || staged.restricted === false) && (
-          <Stack gap={4} data-testid="share-status-line">
-            {lastAction && (
-              <Group gap="xs">
-                <Text size="sm">
-                  {lastAction.kind === 'allowed'
-                    ? `${lastAction.name} will be allowed again.`
-                    : `Removed ${lastAction.name}.`}
-                </Text>
-                <Button variant="subtle" size="compact-sm" onClick={undo}>
-                  Undo
+      <Fieldset variant="unstyled" disabled={saving} p={0} m={0} data-testid="share-editing">
+        <Stack gap="md">
+          {canEdit && (
+            <PeoplePicker
+              branch={branch.name}
+              searchable={data?.searchable ?? 'cms-users'}
+              addableByEmail={data?.addableByEmail ?? 'all-users'}
+              staged={listedKeys}
+              onAdd={add}
+              onRefused={setRefused}
+              announce={announce}
+              inputRef={inputRef}
+              disabledReason={
+                data
+                  ? undefined
+                  : state.status === 'failed'
+                    ? NOT_LOADED
+                    : 'Loading who has access…'
+              }
+            />
+          )}
+          <Stack gap="xs">
+            <Text size="sm" fw={600} id="share-people-heading" ref={headingRef} tabIndex={-1}>
+              People with access
+            </Text>
+            {state.status === 'failed' && !data && (
+              <Alert
+                color="red"
+                variant="light"
+                title="Who has access couldn't be loaded."
+                data-testid="share-load-failed"
+              >
+                <Button variant="default" size="xs" onClick={() => void reload()}>
+                  Retry
                 </Button>
-              </Group>
+              </Alert>
             )}
-            {groupWarnings.map((group) => (
-              <Group key={group.id} gap={6} wrap="nowrap">
-                <IconAlertTriangle
-                  size={16}
-                  color="var(--mantine-color-yellow-filled)"
-                  aria-hidden
-                />
-                <Text size="sm">{`You can't add ${groupName(group.id)} back yourself.`}</Text>
-              </Group>
-            ))}
-            {staged.restricted === false && (
-              <Group gap={6} wrap="nowrap">
-                <IconAlertTriangle
-                  size={16}
-                  color="var(--mantine-color-yellow-filled)"
-                  aria-hidden
-                />
-                <Text size="sm">{WIDENING_LINE}</Text>
-              </Group>
-            )}
-          </Stack>
-        )}
-        {narrowing && losing.length > 0 && (
-          <Alert
-            color="yellow"
-            variant="light"
-            icon={<IconAlertTriangle size={18} aria-hidden />}
-            data-testid="share-narrowing"
-          >
-            <Group gap="xs">
-              <Text size="sm">
-                {`${joinNames(losing.map(nameOf))} ${losing.length === 1 ? 'is' : 'are'} working on this branch and will lose access.`}
-              </Text>
-              <Button variant="default" size="compact-sm" onClick={addThemToo}>
-                Add them too
-              </Button>
-            </Group>
-          </Alert>
-        )}
-        {showRemoved && (
-          <div ref={removedRef}>
-            <UnstyledButton
-              onClick={() => setRemovedOpen(!removedOpen)}
-              aria-expanded={removedOpen}
-              data-testid="share-removed-toggle"
-            >
-              <Group gap={4} wrap="nowrap">
-                {removedOpen ? (
-                  <IconChevronDown size={16} aria-hidden />
-                ) : (
-                  <IconChevronRight size={16} aria-hidden />
-                )}
-                <Text size="sm" fw={600}>
-                  Removed ({excluded.length})
-                </Text>
-              </Group>
-            </UnstyledButton>
-            {removedOpen && (
-              <Stack component="ul" gap="xs" m={0} mt="xs" p={0} style={{ listStyle: 'none' }}>
-                {excluded.map((entry, index) => (
-                  <Group
-                    component="li"
-                    key={entryKey(entry)}
-                    justify="space-between"
-                    wrap="nowrap"
-                    data-share-row={entryKey(entry)}
-                  >
-                    <PersonLabel
-                      kind={entry.kind}
-                      name={entry.name}
-                      detail={
-                        entry.byAdmin && !userIsAdmin
-                          ? 'Removed by an admin'
-                          : `Removed by ${entry.by.id === user.userId ? 'you' : entry.by.name}`
-                      }
-                    />
-                    {(userIsAdmin || !entry.byAdmin) && (
-                      <Button
-                        variant="default"
-                        size="compact-sm"
-                        onClick={() => allowAgain(entry, index)}
-                        aria-label={`Allow again: ${entry.name}`}
-                        data-share-allow
-                      >
-                        Allow again
-                      </Button>
-                    )}
+            {!data && state.status === 'loading' ? (
+              <Stack gap="sm" aria-busy data-testid="share-loading">
+                {[0, 1, 2].map((row) => (
+                  <Group key={row} gap="sm" wrap="nowrap">
+                    <Skeleton circle height={32} />
+                    <Stack gap={4} style={{ flex: 1 }}>
+                      <Skeleton height={10} width="45%" />
+                      <Skeleton height={8} width="30%" />
+                    </Stack>
                   </Group>
+                ))}
+                <Skeleton height={12} width="35%" mt="sm" />
+                <Skeleton height={20} width="60%" />
+                <Skeleton height={12} width="85%" />
+                <Skeleton height={32} width="100%" />
+              </Stack>
+            ) : data && rows.length === 0 ? (
+              <Text size="sm" c="dimmed">
+                No one is listed yet.
+              </Text>
+            ) : (
+              <Stack
+                component="ul"
+                gap="xs"
+                m={0}
+                p={0}
+                ref={listRef}
+                aria-labelledby="share-people-heading"
+                style={{ listStyle: 'none' }}
+              >
+                {rows.map((row) => (
+                  <AccessRow
+                    key={row.key}
+                    row={row}
+                    onRemove={() => remove(row)}
+                    onKeep={() => keep(row)}
+                  />
                 ))}
               </Stack>
             )}
-          </div>
-        )}
-      </Stack>
-      {data && (
-        <Stack gap="sm">
-          {userIsAdmin && branch.access?.managerOrAdminAllowed && (
-            <Text size="sm" data-testid="share-lockdown">
-              {LOCKDOWN_LINE}
-            </Text>
-          )}
-          {canManage && addBy ? (
-            <Radio.Group
-              label="Who can add people"
-              value={addBy}
-              onChange={(value) =>
-                setStaged((prev) => ({
-                  ...prev,
-                  addBy: value === data.addBy ? undefined : (value as BranchAddBy),
-                }))
-              }
-            >
-              <Group gap="md" mt={4}>
-                <Radio value="members" label={addByLabel('members', viewerIsOwner)} />
-                <Radio value="owner" label={addByLabel('owner', viewerIsOwner)} />
-                {userIsAdmin && (
-                  <Radio value="admins" label={addByLabel('admins', viewerIsOwner)} />
+            {(lastAction ||
+              groupWarnings.length > 0 ||
+              staged.restricted === false ||
+              showDiscard) && (
+              <Stack gap={4} data-testid="share-status-line">
+                {lastAction && (
+                  <Group gap="xs">
+                    <Text size="sm">
+                      {lastAction.kind === 'allowed'
+                        ? lastAction.message
+                        : `Removed ${lastAction.name}.`}
+                    </Text>
+                    <Button variant="subtle" size="compact-sm" onClick={undo}>
+                      Undo
+                    </Button>
+                  </Group>
                 )}
-              </Group>
-            </Radio.Group>
-          ) : (
-            addBy && <Text size="sm">Who can add people: {addByLabel(addBy, viewerIsOwner)}</Text>
-          )}
-          {data.defaultAccess !== 'allow' ? (
-            <Text size="sm" data-testid="share-general-access">
-              {LISTED_ONLY_LINE}
-            </Text>
-          ) : canManage ? (
-            <Radio.Group label="General access" value={generalValue} onChange={setGeneralAccess}>
-              <Stack gap={6} mt={4}>
-                <Radio value="open" label="Anyone who can sign in to the editor" />
-                <Radio value="listed" label="Only people listed here" />
+                {groupWarnings.map((group) => (
+                  <Group key={group.id} gap={6} wrap="nowrap">
+                    {warningIcon}
+                    <Text size="sm">{`You can't add ${groupName(group.id)} back yourself.`}</Text>
+                  </Group>
+                ))}
+                {staged.restricted === false && (
+                  <Group gap={6} wrap="nowrap">
+                    {warningIcon}
+                    <Text size="sm">{WIDENING_LINE}</Text>
+                  </Group>
+                )}
+                {showDiscard && (
+                  <Group gap="xs" data-testid="share-discard-confirm">
+                    <Text size="sm">Discard your changes?</Text>
+                    <Button variant="default" size="compact-sm" onClick={onClose}>
+                      Discard changes
+                    </Button>
+                    <Button
+                      variant="subtle"
+                      size="compact-sm"
+                      ref={keepEditingRef}
+                      onClick={() => {
+                        onKeepEditing()
+                        const back = beforeAskRef.current
+                        ;(back?.isConnected
+                          ? back
+                          : (inputRef.current ?? headingRef.current)
+                        )?.focus()
+                      }}
+                    >
+                      Keep editing
+                    </Button>
+                  </Group>
+                )}
               </Stack>
-            </Radio.Group>
-          ) : (
-            <Text size="sm" data-testid="share-general-access">
-              {data.openToEveryone ? OPEN_TO_EVERYONE_LINE : LISTED_ONLY_LINE}
-            </Text>
+            )}
+            {narrowing && losing.length > 0 && (
+              <Alert
+                color="yellow"
+                variant="light"
+                icon={<IconAlertTriangle size={18} aria-hidden />}
+                data-testid="share-narrowing"
+              >
+                <Group gap="xs">
+                  <Text size="sm">
+                    {`${joinNames(losing.map(nameOf))} ${losing.length === 1 ? 'is' : 'are'} working on this branch and ${mayLose ? 'may' : 'will'} lose access.`}
+                  </Text>
+                  <Button variant="default" size="compact-sm" onClick={addThemToo}>
+                    Add them too
+                  </Button>
+                </Group>
+              </Alert>
+            )}
+            {showRemoved && (
+              <div ref={removedRef}>
+                <UnstyledButton
+                  onClick={() => setRemovedOpen(!removedOpen)}
+                  aria-expanded={removedOpen}
+                  data-testid="share-removed-toggle"
+                >
+                  <Group gap={4} wrap="nowrap">
+                    {removedOpen ? (
+                      <IconChevronDown size={16} aria-hidden />
+                    ) : (
+                      <IconChevronRight size={16} aria-hidden />
+                    )}
+                    <Text size="sm" fw={600}>
+                      Removed ({excluded.length})
+                    </Text>
+                  </Group>
+                </UnstyledButton>
+                {removedOpen && (
+                  <Stack component="ul" gap="xs" m={0} mt="xs" p={0} style={{ listStyle: 'none' }}>
+                    {excluded.map((entry, index) => (
+                      <Group
+                        component="li"
+                        key={entryKey(entry)}
+                        justify="space-between"
+                        wrap="nowrap"
+                        data-share-row={entryKey(entry)}
+                      >
+                        <PersonLabel
+                          kind={entry.kind}
+                          name={entry.name}
+                          detail={
+                            entry.byAdmin && !userIsAdmin
+                              ? 'Removed by an admin'
+                              : `Removed by ${entry.by.id === user.userId ? 'you' : entry.by.name}`
+                          }
+                        />
+                        {(userIsAdmin || !entry.byAdmin) && (
+                          <Button
+                            variant="default"
+                            size="compact-sm"
+                            onClick={() => allowAgain(entry, index)}
+                            aria-label={`Allow again: ${entry.name}`}
+                            data-share-allow
+                          >
+                            Allow again
+                          </Button>
+                        )}
+                      </Group>
+                    ))}
+                  </Stack>
+                )}
+              </div>
+            )}
+          </Stack>
+          {data && (
+            <Stack gap="sm">
+              {generalValue === 'listed' &&
+                (canManage && addBy ? (
+                  <Radio.Group
+                    label="Who can add people"
+                    value={addBy}
+                    onChange={(value) =>
+                      edit((prev) => ({
+                        ...prev,
+                        addBy: value === data.addBy ? undefined : (value as BranchAddBy),
+                      }))
+                    }
+                  >
+                    <Group gap="md" mt={4}>
+                      <Radio value="members" label={addByLabel('members', viewerIsOwner)} />
+                      <Radio value="owner" label={addByLabel('owner', viewerIsOwner)} />
+                      {userIsAdmin && (
+                        <Radio value="admins" label={addByLabel('admins', viewerIsOwner)} />
+                      )}
+                    </Group>
+                  </Radio.Group>
+                ) : (
+                  addBy && (
+                    <Text size="sm">Who can add people: {addByLabel(addBy, viewerIsOwner)}</Text>
+                  )
+                ))}
+              {lockedDown && (
+                <Text size="sm" data-testid="share-lockdown">
+                  {LOCKDOWN_LINE}
+                </Text>
+              )}
+              {data.defaultAccess === 'allow' && canManage ? (
+                <Radio.Group
+                  label="General access"
+                  value={generalValue}
+                  onChange={setGeneralAccess}
+                >
+                  <Stack gap={6} mt={4}>
+                    <Radio value="open" label="Anyone who can sign in to the editor" />
+                    <Radio value="listed" label="Only people listed here" />
+                  </Stack>
+                </Radio.Group>
+              ) : (
+                !lockedDown && (
+                  <Text size="sm" data-testid="share-general-access">
+                    {data.defaultAccess === 'allow' && !data.restricted
+                      ? OPEN_TO_EVERYONE_LINE
+                      : LISTED_ONLY_LINE}
+                  </Text>
+                )
+              )}
+              <Group gap={6} wrap="nowrap" align="flex-start">
+                <IconInfoCircle
+                  size={16}
+                  color="var(--mantine-color-blue-filled)"
+                  aria-hidden
+                  style={{ flexShrink: 0, marginTop: 2 }}
+                />
+                <Text size="sm">{MEMBER_RIGHTS_LINE}</Text>
+              </Group>
+            </Stack>
           )}
-          <Group gap={6} wrap="nowrap" align="flex-start">
-            <IconInfoCircle
-              size={16}
-              color="var(--mantine-color-blue-filled)"
-              aria-hidden
-              style={{ flexShrink: 0, marginTop: 2 }}
-            />
-            <Text size="sm">{MEMBER_RIGHTS_LINE}</Text>
-          </Group>
         </Stack>
-      )}
+      </Fieldset>
       {saveProblem && (
         <Alert
           color={saveProblem.tone === 'error' ? 'red' : 'yellow'}
@@ -675,28 +901,56 @@ function ShareBranchBody({
         >
           <Stack gap="xs" align="flex-start">
             <Text size="sm">{saveProblem.message}</Text>
-            <Button variant="default" size="xs" onClick={() => void update()}>
-              Retry
-            </Button>
+            {problemNames.length > 0 && (
+              <Text size="sm">{`Applies to ${joinNames(problemNames)}.`}</Text>
+            )}
+            {saveProblem.tone === 'error' && (
+              <Group gap="xs">
+                {saveProblem.retryable ? (
+                  <Button variant="default" size="xs" onClick={() => void update()}>
+                    Retry
+                  </Button>
+                ) : (
+                  <>
+                    {problemRows.map((row) => (
+                      <Button key={row.key} variant="default" size="xs" onClick={() => remove(row)}>
+                        {`Remove ${row.name}`}
+                      </Button>
+                    ))}
+                    <Button variant="default" size="xs" onClick={discardStaged}>
+                      Discard changes
+                    </Button>
+                  </>
+                )}
+              </Group>
+            )}
           </Stack>
         </Alert>
+      )}
+      {copy === 'failed' && (
+        <Stack gap={4} data-testid="share-copy-failed">
+          <Text size="sm" c="var(--canopy-danger-text)">
+            {"Couldn't copy the link. Select it here and copy it yourself."}
+          </Text>
+          <TextInput
+            readOnly
+            aria-label="Link to this branch"
+            value={editorBranchLink(window.location.href, urlName)}
+            onFocus={(event) => event.currentTarget.select()}
+          />
+        </Stack>
       )}
       <Group justify="space-between" wrap="wrap" gap="sm">
         <Button
           variant="subtle"
           leftSection={
-            linkCopied ? <IconCheck size={16} aria-hidden /> : <IconLink size={16} aria-hidden />
+            copy === 'copied' ? (
+              <IconCheck size={16} aria-hidden />
+            ) : (
+              <IconLink size={16} aria-hidden />
+            )
           }
-          onClick={() => {
-            const link = editorBranchLink(window.location.href, urlName)
-            Promise.resolve()
-              .then(() => navigator.clipboard.writeText(link))
-              .then(() => {
-                setLinkCopied(true)
-                announce('Link copied')
-              })
-              .catch(() => announce("Couldn't copy the link"))
-          }}
+          onClick={copyLink}
         >
           {EDITOR_ACTIONS.copyLink}
         </Button>
@@ -705,14 +959,14 @@ function ShareBranchBody({
             {!canEdit ? 'Close' : dirty ? 'Discard changes' : 'Cancel'}
           </Button>
           {canEdit && (
-            <Tooltip label={NOTHING_TO_UPDATE} disabled={dirty || !data} multiline maw={260}>
+            <Tooltip label={updateReason} disabled={!updateReason} multiline maw={260}>
               <Button
                 onClick={() => {
-                  if (dirty) void update()
+                  if (!updateReason) void update()
                 }}
                 loading={saving}
-                data-disabled={!dirty || undefined}
-                aria-disabled={!dirty || undefined}
+                data-disabled={!!updateReason || undefined}
+                aria-disabled={!!updateReason || undefined}
                 data-testid="share-update"
               >
                 {EDITOR_ACTIONS.updateAccess}
@@ -731,12 +985,14 @@ export function PersonLabel({
   avatarUrl,
   detail,
   suffix,
+  struck = false,
 }: {
   kind: Row['kind']
   name: string
   avatarUrl?: string
   detail?: string
   suffix?: string
+  struck?: boolean
 }) {
   return (
     <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
@@ -750,7 +1006,11 @@ export function PersonLabel({
         {kind === 'group' ? <IconUsers size={16} /> : name.charAt(0)}
       </Avatar>
       <Stack gap={0} style={{ minWidth: 0 }}>
-        <Text size="sm" style={{ overflowWrap: 'anywhere' }}>
+        <Text
+          size="sm"
+          td={struck ? 'line-through' : undefined}
+          style={{ overflowWrap: 'anywhere' }}
+        >
           {name}
           {suffix}
         </Text>
@@ -764,12 +1024,22 @@ export function PersonLabel({
   )
 }
 
-function AccessRow({ row, onRemove }: { row: Row; onRemove: () => void }) {
-  const details = [
-    row.kind === 'group' ? 'Group' : row.shownEmail,
-    row.addedBy && `Added by ${row.addedBy}`,
-    row.unsaved && 'Unsaved',
-  ].filter(Boolean)
+function AccessRow({
+  row,
+  onRemove,
+  onKeep,
+}: {
+  row: Row
+  onRemove: () => void
+  onKeep: () => void
+}) {
+  const details = row.removing
+    ? ['Will be removed']
+    : [
+        row.kind === 'group' ? 'Group' : row.shownEmail,
+        row.addedBy && `Added by ${row.addedBy}`,
+        row.unsaved && 'Unsaved',
+      ].filter(Boolean)
   const removeLabel = `Remove ${row.name}`
   return (
     <Group component="li" justify="space-between" wrap="nowrap" data-share-row={row.key}>
@@ -779,6 +1049,7 @@ function AccessRow({ row, onRemove }: { row: Row; onRemove: () => void }) {
         avatarUrl={row.avatarUrl}
         suffix={row.isYou ? ' (you)' : undefined}
         detail={details.join(' · ') || undefined}
+        struck={row.removing}
       />
       <Group gap="xs" wrap="nowrap">
         {row.isOwner && (
@@ -786,18 +1057,29 @@ function AccessRow({ row, onRemove }: { row: Row; onRemove: () => void }) {
             Owner
           </Text>
         )}
-        {row.removable && (
-          <Tooltip label={removeLabel}>
-            <ActionIcon
-              variant="subtle"
-              color="gray"
-              aria-label={removeLabel}
-              onClick={onRemove}
-              data-share-remove
-            >
-              <IconX size={16} aria-hidden />
-            </ActionIcon>
-          </Tooltip>
+        {row.removing ? (
+          <Button
+            variant="subtle"
+            size="compact-sm"
+            onClick={onKeep}
+            aria-label={`Undo removing ${row.name}`}
+          >
+            Undo
+          </Button>
+        ) : (
+          row.removable && (
+            <Tooltip label={removeLabel} position="left">
+              <ActionIcon
+                variant="subtle"
+                color="gray"
+                aria-label={removeLabel}
+                onClick={onRemove}
+                data-share-remove
+              >
+                <IconX size={16} aria-hidden />
+              </ActionIcon>
+            </Tooltip>
+          )
         )}
       </Group>
     </Group>

@@ -550,6 +550,12 @@ const SHARING_NAMES: Record<string, string> = {
 const sharingLookup = async (id: string) =>
   SHARING_NAMES[id] ? { id, name: SHARING_NAMES[id], email: '' } : null
 
+/** Each Sharing story branch's list, as its card shows it. */
+const SHARING_LISTS: Record<string, string[]> = {
+  'canopycms/prod/landing': ['alice', 'bob'],
+  'canopycms/prod/pricing': ['bob', 'alice', 'cara'],
+}
+
 /** The access endpoints, answering for whichever branch is asked about. */
 const sharingClient = {
   branches: {
@@ -557,13 +563,15 @@ const sharingClient = {
       ok: true,
       status: 200,
       data: {
-        entries: [
-          { kind: 'user', id: 'alice', name: 'Alice Chen', maskedEmail: 'a•••@example.org' },
-          { kind: 'user', id: 'bob', name: 'Bob Diaz', maskedEmail: 'b•••@example.org' },
-        ],
-        restricted: true,
-        openToEveryone: false,
-        defaultAccess: 'deny',
+        entries: (SHARING_LISTS[branch] ?? []).map((id) => ({
+          kind: 'user',
+          id,
+          name: SHARING_NAMES[id],
+          maskedEmail: `${id[0]}•••@example.org`,
+        })),
+        restricted: branch !== 'canopycms/prod/faq',
+        openToEveryone: branch === 'canopycms/prod/faq',
+        defaultAccess: branch === 'canopycms/prod/faq' ? 'allow' : 'deny',
         addBy: 'members',
         rights:
           branch === 'canopycms/prod/landing'

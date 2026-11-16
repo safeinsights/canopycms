@@ -82,7 +82,8 @@ export const CLOSED_PULL_REQUEST_REASON =
 
 /** What a refusal to open a branch, or to change who may, tells the person refused. */
 const ACCESS_REFUSALS: Partial<Record<ApiErrorCode, string>> = {
-  BRANCH_ACCESS_DENIED: 'You no longer have access to this branch.',
+  BRANCH_ACCESS_DENIED:
+    'You no longer have access to this branch. Choose another branch in "Branches".',
   BRANCH_LOCKED_DOWN: 'An admin has limited this branch to admins and reviewers.',
   BRANCH_ARCHIVED: "This branch is archived, so who has access can't change.",
   BRANCH_NOT_SHAREABLE: 'Only an admin can share this branch.',

@@ -52,6 +52,8 @@ export interface ApiResponse<TData = unknown> {
   fieldErrors?: Array<{ fieldPath: string; message: string }>
   /** A machine-readable reason for some failures; see {@link ApiErrorCode}. */
   code?: ApiErrorCode
+  /** The users or groups a refused access change names, from among those it sent. */
+  ids?: string[]
 }
 
 /**

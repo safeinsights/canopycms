@@ -7,6 +7,7 @@ import {
   joinNames,
   narrows,
   NOTHING_STAGED,
+  withAddition,
   type BranchAccess,
 } from './share-staging'
 
@@ -118,6 +119,24 @@ describe('narrowing an open branch', () => {
         open,
       ),
     ).toBe(false)
+  })
+
+  it('leaves out removed people, system ids and the no-creator placeholder', () => {
+    expect(
+      editorsLosingAccess(
+        ['pat', 'canopycms-system', 'unknown', 'dana'],
+        'owner',
+        NOTHING_STAGED,
+        current({ entries: [] }),
+      ),
+    ).toEqual(['dana'])
+  })
+
+  it('stages an addition once, and never one already listed', () => {
+    const cole = { kind: 'user' as const, id: 'cole', name: 'Cole' }
+    expect(withAddition([cole], cole)).toEqual([cole])
+    expect(withAddition([], cole, new Set(['user:cole']))).toEqual([])
+    expect(withAddition([], cole)).toEqual([cole])
   })
 
   it('names editors not listed, not staged and not the owner', () => {

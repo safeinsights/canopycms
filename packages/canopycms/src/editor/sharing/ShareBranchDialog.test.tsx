@@ -49,6 +49,14 @@ const access = (over: Partial<BranchAccess> = {}): BranchAccess => ({
 })
 
 const OWNER: UserContext = { userId: 'ana', groups: [] }
+const OWNER_SHARING: NonNullable<ShareTarget['sharing']> = {
+  isOwner: true,
+  canAdd: true,
+  canManage: true,
+  restricted: true,
+  openToEveryone: false,
+  addBy: 'members',
+}
 const names: Record<string, string> = { dana: 'Dana Park', chen: 'Chen Wu', ana: 'Ana Lee' }
 const lookup = async (id: string): Promise<UserSearchResult | null> =>
   names[id] ? { id, name: names[id], email: '' } : null
@@ -107,6 +115,16 @@ const status = () => screen.getByTestId('share-status')
 const loaded = () => screen.findAllByText(/Ben Ortiz/)
 const footerClose = () =>
   screen.getAllByRole('button', { name: 'Close' }).find((button) => button.textContent === 'Close')!
+const modalClose = () =>
+  screen.getAllByRole('button', { name: 'Close' }).find((button) => button.textContent !== 'Close')!
+const picker = () => screen.getByRole('textbox', { name: 'Add people or groups' })
+const deferred = <T,>() => {
+  let resolve: (value: T) => void = () => {}
+  const promise = new Promise<T>((r) => {
+    resolve = r
+  })
+  return { promise, resolve }
+}
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -249,7 +267,7 @@ describe('ShareBranchDialog: adding people', () => {
     )
     await loaded()
 
-    fireEvent.focus(screen.getByRole('textbox', { name: 'Add people or groups' }))
+    await userEvent.click(picker())
 
     const recent = await screen.findByText('Recently shared with')
     expect(recent).toBeTruthy()
@@ -306,9 +324,12 @@ describe('ShareBranchDialog: adding people', () => {
   it.each([
     [
       'all-users',
-      'No account uses that email address yet. Ask them to sign in to the editor once, then try again in about 15 minutes.',
+      'No one found for that address, or they already have access or were removed. Someone new signs in to the editor once, then can be found about 15 minutes later.',
     ],
-    ['cms-users', 'No one who works in this editor uses that email address.'],
+    [
+      'cms-users',
+      'No one who works in this editor was found for that address, or they already have access or were removed.',
+    ],
   ] as const)('says an address under %s found no one', async (scope, message) => {
     const { api } = setup({ data: access({ addableByEmail: scope }) })
     api.branches.findPeople.mockResolvedValue(ok({ people: [], groups: [] }))
@@ -343,18 +364,88 @@ describe('ShareBranchDialog: adding people', () => {
     setup({ data: access({ searchable: 'nobody' }) })
     await loaded()
 
+    expect(picker().getAttribute('placeholder')).toBe('Email address')
+  })
+
+  it("sends no name search where names can't be searched, and says so at once", async () => {
+    const { api } = setup({ data: access({ searchable: 'nobody' }) })
+    await loaded()
+
+    await userEvent.type(picker(), 'Dana')
+
+    expect(await screen.findByText('Type their full email address.')).toBeTruthy()
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    expect(api.branches.findPeople).not.toHaveBeenCalledWith(expect.anything(), { query: 'Dana' })
+  })
+
+  it('opens no list on focus, only on a click, ArrowDown or typing', async () => {
+    setup()
+    await loaded()
+    const input = picker()
+    await waitFor(() => expect(document.activeElement).toBe(input))
+    expect(input.getAttribute('aria-expanded')).toBeNull()
+
+    await userEvent.keyboard('{ArrowDown}')
+
+    await waitFor(() => expect(input.getAttribute('aria-expanded')).toBe('true'))
+  })
+
+  it('looks an address up once however often it is picked while the lookup runs', async () => {
+    const { api } = setup()
+    const lookup =
+      deferred<ReturnType<typeof ok<{ people: { id: string; name: string }[]; groups: never[] }>>>()
+    api.branches.findPeople.mockImplementation(async (_params, body) =>
+      body.query === 'dana@example.org' ? lookup.promise : ok({ people: [], groups: [] }),
+    )
+    await loaded()
+
+    await userEvent.type(picker(), 'dana@example.org')
+    const option = await screen.findByRole('option', { name: 'Add dana@example.org' })
+    fireEvent.click(option)
+    fireEvent.click(option)
+    lookup.resolve(ok({ people: [{ id: 'dana', name: 'Dana Park' }], groups: [] }))
+
+    await screen.findByText('Dana Park')
     expect(
-      screen.getByRole('textbox', { name: 'Add people or groups' }).getAttribute('placeholder'),
-    ).toBe('Email address')
+      api.branches.findPeople.mock.calls.filter(([, body]) => body.query === 'dana@example.org'),
+    ).toHaveLength(1)
+    expect(screen.getAllByText('Dana Park')).toHaveLength(1)
+  })
+
+  it('shows the answer for what is typed now, never a late answer for an earlier query', async () => {
+    const { api } = setup()
+    const late =
+      deferred<ReturnType<typeof ok<{ people: { id: string; name: string }[]; groups: never[] }>>>()
+    api.branches.findPeople.mockImplementation(async (_params, body) =>
+      body.query === 'Col'
+        ? late.promise
+        : ok({
+            people: body.query === 'Co' ? [{ id: 'cole', name: 'Cole Ortiz' }] : [],
+            groups: [],
+          }),
+    )
+    await loaded()
+
+    await userEvent.type(picker(), 'Co')
+    await screen.findByRole('option', { name: /Cole Ortiz/ })
+    await userEvent.type(picker(), 'l')
+    await waitFor(() =>
+      expect(api.branches.findPeople).toHaveBeenCalledWith(expect.anything(), { query: 'Col' }),
+    )
+    await userEvent.type(picker(), '{Backspace}')
+    late.resolve(ok({ people: [], groups: [] }))
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    expect(screen.getByRole('option', { name: /Cole Ortiz/ })).toBeTruthy()
+    expect(screen.queryByText('Searching…')).toBeNull()
   })
 
   it('hints at what to type when there is nothing to suggest, and Esc closes only the hint', async () => {
     const { api, onClose } = setup()
     api.branches.findPeople.mockResolvedValue(ok({ people: [], groups: [] }))
     await loaded()
-    const input = screen.getByRole('textbox', { name: 'Add people or groups' })
-    input.focus()
-    fireEvent.focus(input)
+    const input = picker()
+    await userEvent.click(input)
 
     expect(await screen.findByText('Type a name or a full email address.')).toBeTruthy()
     expect(input.getAttribute('aria-expanded')).toBe('true')
@@ -370,9 +461,7 @@ describe('ShareBranchDialog: adding people', () => {
       ok({ people: [{ id: 'cole', name: 'Cole Ortiz' }], groups: [] }),
     )
     await loaded()
-    const input = screen.getByRole('textbox', { name: 'Add people or groups' })
-    input.focus()
-    fireEvent.focus(input)
+    await userEvent.click(picker())
     await screen.findByRole('option', { name: /Cole Ortiz/ })
 
     await userEvent.keyboard('{Escape}')
@@ -385,16 +474,17 @@ describe('ShareBranchDialog: adding people', () => {
 })
 
 describe('ShareBranchDialog: removing and staging', () => {
-  it('takes a removed row out, focuses the next remove, and Undo brings it back focused', async () => {
+  it('strikes a removed row through with its own Undo, focuses the next remove, and Undo refocuses it', async () => {
     setup()
     await loaded()
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove Ben Ortiz' }))
 
-    expect(screen.queryByText('Ben Ortiz')).toBeNull()
-    expect(
-      within(screen.getByTestId('share-status-line')).getByText('Removed Ben Ortiz.'),
-    ).toBeTruthy()
+    expect(within(row('Ben Ortiz')).getByText('Will be removed')).toBeTruthy()
+    expect(within(row('Ben Ortiz')).getByText('Ben Ortiz').style.textDecoration).toBe(
+      'line-through',
+    )
+    expect(screen.queryByTestId('share-status-line')).toBeNull()
     await waitFor(() =>
       expect(document.activeElement).toBe(
         screen.getByRole('button', { name: 'Remove Marketing team' }),
@@ -402,20 +492,77 @@ describe('ShareBranchDialog: removing and staging', () => {
     )
     expect(status().textContent).toBe('Removed Ben Ortiz')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Undo removing Ben Ortiz' }))
 
     await waitFor(() =>
       expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Remove Ben Ortiz' })),
     )
     expect(status().textContent).toBe('Restored Ben Ortiz')
-    expect(screen.queryByTestId('share-status-line')).toBeNull()
+    expect(within(row('Ben Ortiz')).queryByText('Will be removed')).toBeNull()
+  })
+
+  it('keeps each staged removal undoable, not only the latest', async () => {
+    const { api } = setup()
+    await loaded()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Ben Ortiz' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Marketing team' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Undo removing Ben Ortiz' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
+
+    await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(1))
+    expect(api.branches.updateAccess.mock.calls[0][1]).toEqual({ remove: { groups: ['team'] } })
+  })
+
+  it('takes out an unsaved add with Undo in the status line, which refocuses the restored row', async () => {
+    const { api } = setup()
+    api.branches.findPeople.mockResolvedValue(
+      ok({ people: [{ id: 'cole', name: 'Cole Ortiz' }], groups: [] }),
+    )
+    await loaded()
+    await userEvent.type(picker(), 'Co')
+    await userEvent.click(await screen.findByRole('option', { name: /Cole Ortiz/ }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Cole Ortiz' }))
+    expect(screen.queryByText('Cole Ortiz')).toBeNull()
+    fireEvent.click(
+      within(screen.getByTestId('share-status-line')).getByRole('button', { name: 'Undo' }),
+    )
+
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole('button', { name: 'Remove Cole Ortiz' }),
+      ),
+    )
+  })
+
+  it('stages an add once, even when an Undo puts back what the picker added again', async () => {
+    const { api } = setup()
+    api.branches.findPeople.mockResolvedValue(
+      ok({ people: [{ id: 'cole', name: 'Cole Ortiz' }], groups: [] }),
+    )
+    await loaded()
+    const pick = async () => {
+      await userEvent.type(picker(), 'Co')
+      await userEvent.click(await screen.findByRole('option', { name: /Cole Ortiz/ }))
+    }
+
+    await pick()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Cole Ortiz' }))
+    await pick()
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+
+    expect(screen.getAllByText('Cole Ortiz')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
+    await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(1))
+    expect(api.branches.updateAccess.mock.calls[0][1]).toEqual({ add: { users: ['cole'] } })
   })
 
   it('focuses the input when no row follows the removed one', async () => {
     setup()
     await loaded()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Remove Marketing team' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Remove Marketing team' }))
 
     await waitFor(() =>
       expect(document.activeElement).toBe(
@@ -475,7 +622,10 @@ describe('ShareBranchDialog: removing and staging', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove Marketing team' }))
 
-    expect(screen.getByText("You can't add Marketing team back yourself.")).toBeTruthy()
+    const warning = screen.getByText("You can't add Marketing team back yourself.")
+    expect(warning.parentElement?.querySelector('svg')?.getAttribute('stroke')).toBe(
+      'var(--mantine-color-text)',
+    )
   })
 
   it('does not warn about a group the owner belongs to', async () => {
@@ -518,11 +668,90 @@ describe('ShareBranchDialog: removing and staging', () => {
     expect(within(row('Pat Alvarez')).getByText('Removed by you')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Allow again: Pat Alvarez' }))
 
-    expect(screen.getByText('Pat Alvarez will be allowed again.')).toBeTruthy()
+    expect(screen.getByText('Pat Alvarez will be added back.')).toBeTruthy()
+    expect(within(row('Pat Alvarez')).getByText(/Unsaved/)).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Removed (1)' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
     await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(1))
+    expect(api.branches.updateAccess.mock.calls[0][1]).toEqual({ add: { users: ['pat'] } })
+  })
+
+  it('only lifts the exclusion of a group the owner is not in, and says it is not added back', async () => {
+    const { api } = setup({
+      data: access({
+        excluded: [
+          {
+            kind: 'group',
+            id: 'ops',
+            name: 'Ops',
+            by: { id: 'ana', name: 'Ana Lee' },
+            at: AT,
+            byAdmin: false,
+          },
+        ],
+      }),
+    })
+    await loaded()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Removed (1)' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Allow again: Ops' }))
+
+    expect(
+      screen.getByText('Ops will be allowed again, but not added back to the list.'),
+    ).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
+    await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(1))
+    expect(api.branches.updateAccess.mock.calls[0][1]).toEqual({ unexclude: { groups: ['ops'] } })
+  })
+
+  it('on an open branch only lifts the exclusion, which lets them open it again', async () => {
+    const { api } = setup({
+      data: access({
+        entries: [],
+        restricted: false,
+        openToEveryone: true,
+        defaultAccess: 'allow',
+        excluded: [
+          {
+            kind: 'user',
+            id: 'pat',
+            name: 'Pat Alvarez',
+            by: { id: 'ana', name: 'Ana Lee' },
+            at: AT,
+            byAdmin: false,
+          },
+        ],
+      }),
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Removed (1)' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Allow again: Pat Alvarez' }))
+
+    expect(screen.getByText('Pat Alvarez will be able to open this branch again.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
+    await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(1))
     expect(api.branches.updateAccess.mock.calls[0][1]).toEqual({ unexclude: { users: ['pat'] } })
+  })
+
+  it('focuses the people input once the last removed entry is allowed again', async () => {
+    setup({
+      data: access({
+        excluded: [
+          {
+            kind: 'user',
+            id: 'pat',
+            name: 'Pat Alvarez',
+            by: { id: 'ana', name: 'Ana Lee' },
+            at: AT,
+            byAdmin: false,
+          },
+        ],
+      }),
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Removed (1)' }))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Allow again: Pat Alvarez' }))
+
+    await waitFor(() => expect(document.activeElement).toBe(picker()))
   })
 
   it('hides "Removed (n)" from a member', async () => {
@@ -612,6 +841,119 @@ describe("ShareBranchDialog: general access on an 'allow' site", () => {
     expect(api.branches.updateAccess.mock.calls[0][1]).toEqual({ restricted: false })
   })
 
+  it('gives way to a removal staged after "Anyone who can sign in", sending the removal', async () => {
+    const { api } = setup({ data: access({ defaultAccess: 'allow' }) })
+    await loaded()
+    fireEvent.click(screen.getByRole('radio', { name: 'Anyone who can sign in to the editor' }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Ben Ortiz' }))
+
+    expect(screen.queryByText(WIDENING_LINE)).toBeNull()
+    expect(
+      (screen.getByRole('radio', { name: 'Only people listed here' }) as HTMLInputElement).checked,
+    ).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
+    await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(1))
+    expect(api.branches.updateAccess.mock.calls[0][1]).toEqual({ remove: { users: ['ben'] } })
+  })
+
+  it('gives way to an Allow again staged after "Anyone who can sign in"', async () => {
+    const { api } = setup({
+      data: access({
+        defaultAccess: 'allow',
+        excluded: [
+          {
+            kind: 'user',
+            id: 'pat',
+            name: 'Pat Alvarez',
+            by: { id: 'ana', name: 'Ana Lee' },
+            at: AT,
+            byAdmin: false,
+          },
+        ],
+      }),
+    })
+    await loaded()
+    fireEvent.click(screen.getByRole('radio', { name: 'Anyone who can sign in to the editor' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Removed (1)' }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Allow again: Pat Alvarez' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
+
+    await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(1))
+    expect(api.branches.updateAccess.mock.calls[0][1]).not.toHaveProperty('restricted')
+  })
+
+  it('hides who can add people while the branch is open to everyone', async () => {
+    setup({ data: open })
+    await screen.findByRole('radio', { name: 'Anyone who can sign in to the editor' })
+
+    expect(screen.queryByRole('radiogroup', { name: 'Who can add people' })).toBeNull()
+    fireEvent.click(screen.getByRole('radio', { name: 'Only people listed here' }))
+    expect(screen.getByRole('radiogroup', { name: 'Who can add people' })).toBeTruthy()
+  })
+
+  it('names only editors who would lose access, skipping removed and system ids', async () => {
+    setup({
+      data: {
+        ...open,
+        excluded: [
+          {
+            kind: 'user',
+            id: 'chen',
+            name: 'Chen Wu',
+            by: { id: 'ana', name: 'Ana Lee' },
+            at: AT,
+            byAdmin: false,
+          },
+        ],
+      },
+      branch: { editors: ['dana', 'chen', 'canopycms-system', 'unknown'] },
+    })
+    fireEvent.click(await screen.findByRole('radio', { name: 'Only people listed here' }))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('share-narrowing').textContent).toContain(
+        'Dana Park is working on this branch and will lose access.',
+      ),
+    )
+  })
+
+  it('says editors may lose access when a group being added could hold them', async () => {
+    const { api } = setup({ data: open, branch: { editors: ['dana'] } })
+    api.branches.findPeople.mockResolvedValue(
+      ok({ people: [], groups: [{ id: 'design', name: 'Design' }] }),
+    )
+    await screen.findByRole('radio', { name: 'Only people listed here' })
+
+    await userEvent.type(picker(), 'De')
+    await userEvent.click(await screen.findByRole('option', { name: /Design/ }))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('share-narrowing').textContent).toContain(
+        'Dana Park is working on this branch and may lose access.',
+      ),
+    )
+  })
+
+  it("shows a locked, unlisted branch's general access as unlisted to an admin", async () => {
+    setup({
+      user: { userId: 'root', groups: [RESERVED_GROUPS.ADMINS] },
+      branch: { access: { managerOrAdminAllowed: true } },
+      data: access({
+        entries: [],
+        restricted: false,
+        openToEveryone: false,
+        defaultAccess: 'allow',
+        rights: { isOwner: false, canAdd: true, canManage: true },
+      }),
+    })
+
+    const open = await screen.findByRole('radio', { name: 'Anyone who can sign in to the editor' })
+    expect((open as HTMLInputElement).checked).toBe(true)
+    expect(screen.getByTestId('share-lockdown')).toBeTruthy()
+  })
+
   it("shows a member the branch's general access as text", async () => {
     setup({
       user: { userId: 'ben' },
@@ -628,7 +970,7 @@ describe("ShareBranchDialog: general access on an 'allow' site", () => {
 })
 
 describe('ShareBranchDialog: states', () => {
-  it('shows skeleton rows while loading, with the input usable', async () => {
+  it('shows skeleton rows while loading, with the input held back and saying why', async () => {
     const api = createMockApiClient()
     api.branches.getAccess.mockReturnValue(new Promise(() => {}))
     setup({
@@ -646,9 +988,12 @@ describe('ShareBranchDialog: states', () => {
     })
 
     expect(screen.getByTestId('share-loading')).toBeTruthy()
-    expect(
-      (screen.getByRole('textbox', { name: 'Add people or groups' }) as HTMLInputElement).disabled,
-    ).toBe(false)
+    expect((picker() as HTMLInputElement).disabled).toBe(true)
+    expect(screen.getByText('Loading who has access…')).toBeTruthy()
+    await userEvent.hover(screen.getByRole('button', { name: 'Update access' }))
+    expect((await screen.findByRole('tooltip')).textContent).toBe(
+      'Who has access is still loading.',
+    )
   })
 
   it('says the list could not be loaded, above where it goes, and Retry reads it again', async () => {
@@ -656,10 +1001,16 @@ describe('ShareBranchDialog: states', () => {
     api.branches.getAccess
       .mockResolvedValueOnce({ ok: false, status: 500, error: 'Boom' })
       .mockResolvedValueOnce(ok(access()))
-    setup({ client: api })
+    setup({ client: api, branch: { sharing: OWNER_SHARING } })
 
     const alert = await screen.findByTestId('share-load-failed')
     expect(alert.textContent).toContain("Who has access couldn't be loaded.")
+    expect((picker() as HTMLInputElement).disabled).toBe(true)
+    expect(screen.getAllByText("Who has access hasn't loaded yet. Retry above.")).toHaveLength(1)
+    await userEvent.hover(screen.getByRole('button', { name: 'Update access' }))
+    expect((await screen.findByRole('tooltip')).textContent).toBe(
+      "Who has access hasn't loaded yet. Retry above.",
+    )
     fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
 
     await loaded()
@@ -667,7 +1018,10 @@ describe('ShareBranchDialog: states', () => {
   })
 
   it.each([
-    ['BRANCH_ACCESS_DENIED', 'You no longer have access to this branch.'],
+    [
+      'BRANCH_ACCESS_DENIED',
+      'You no longer have access to this branch. Choose another branch in "Branches".',
+    ],
     ['BRANCH_LOCKED_DOWN', 'An admin has limited this branch to admins and reviewers.'],
   ] as const)('turns a %s refusal on load into its sentence, with Close', async (code, message) => {
     const api = createMockApiClient()
@@ -681,34 +1035,122 @@ describe('ShareBranchDialog: states', () => {
     expect(onChanged).toHaveBeenCalledTimes(1)
   })
 
+  it.each([
+    ['✕', () => fireEvent.click(modalClose())],
+    ['Esc', () => userEvent.keyboard('{Escape}')],
+  ])('reads the branch list again when %s closes a refusal', async (_how, dismiss) => {
+    const api = createMockApiClient()
+    api.branches.getAccess.mockResolvedValue(refusal(403, 'BRANCH_ACCESS_DENIED'))
+    const { onClose, onChanged } = setup({ client: api })
+    await screen.findByTestId('share-refused')
+
+    await dismiss()
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
+    expect(onChanged).toHaveBeenCalledTimes(1)
+  })
+
   it('turns a refusal mid-dialog into a yellow notice with Close', async () => {
     const { api } = setup()
-    api.branches.updateAccess.mockResolvedValue(refusal(403, 'ACCESS_MANAGE_FORBIDDEN'))
+    api.branches.updateAccess.mockResolvedValue(refusal(403, 'BRANCH_LOCKED_DOWN'))
     await loaded()
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove Ben Ortiz' }))
     fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
 
     expect((await screen.findByTestId('share-refused')).textContent).toBe(
-      accessRefusalMessage('ACCESS_MANAGE_FORBIDDEN'),
+      accessRefusalMessage('BRANCH_LOCKED_DOWN'),
     )
   })
 
-  it('keeps the staged edits after a refused change, says why, and Retry sends it again', async () => {
+  it('names whom a refused change concerns, keeps the edits, and offers their Remove, not Retry', async () => {
     const { api } = setup()
-    api.branches.updateAccess.mockResolvedValueOnce(refusal(400, 'USER_EXCLUDED'))
+    api.branches.findPeople.mockResolvedValue(
+      ok({ people: [{ id: 'cole', name: 'Cole Ortiz' }], groups: [] }),
+    )
+    api.branches.updateAccess.mockResolvedValueOnce({
+      ...refusal(403, 'USER_EXCLUDED'),
+      ids: ['cole'],
+    })
     await loaded()
-
     fireEvent.click(screen.getByRole('button', { name: 'Remove Ben Ortiz' }))
+    await userEvent.type(picker(), 'Co')
+    await userEvent.click(await screen.findByRole('option', { name: /Cole Ortiz/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
 
     const problem = await screen.findByTestId('share-save-problem')
     expect(problem.textContent).toContain(accessRefusalMessage('USER_EXCLUDED'))
-    expect(screen.queryByText('Ben Ortiz')).toBeNull()
-    expect(screen.getByRole('button', { name: 'Discard changes' })).toBeTruthy()
-    fireEvent.click(within(problem).getByRole('button', { name: 'Retry' }))
+    expect(problem.textContent).toContain('Applies to Cole Ortiz.')
+    expect(within(problem).queryByRole('button', { name: 'Retry' })).toBeNull()
+    expect(within(row('Ben Ortiz')).getByText('Will be removed')).toBeTruthy()
+    fireEvent.click(within(problem).getByRole('button', { name: 'Remove Cole Ortiz' }))
+
+    expect(screen.queryByTestId('share-save-problem')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
     await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(2))
     expect(api.branches.updateAccess.mock.calls[1][1]).toEqual({ remove: { users: ['ben'] } })
+  })
+
+  it('offers Discard changes for a refusal no retry can pass', async () => {
+    const { api, onClose } = setup()
+    api.branches.updateAccess.mockResolvedValueOnce(refusal(400, 'ACCESS_CHANGE_INVALID'))
+    await loaded()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Ben Ortiz' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
+
+    const problem = await screen.findByTestId('share-save-problem')
+    fireEvent.click(within(problem).getByRole('button', { name: 'Discard changes' }))
+
+    expect(within(row('Ben Ortiz')).queryByText('Will be removed')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('offers Retry after a failure that never reached the server, and sends the edits again', async () => {
+    const { api } = setup()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    api.branches.updateAccess.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    await loaded()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Ben Ortiz' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
+
+    const problem = await screen.findByTestId('share-save-problem')
+    fireEvent.click(within(problem).getByRole('button', { name: 'Retry' }))
+
+    await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(2))
+    expect(api.branches.updateAccess.mock.calls[1][1]).toEqual({ remove: { users: ['ben'] } })
+  })
+
+  it('shows a refusal that names one change as a problem with that change, not a lockout', async () => {
+    const { api } = setup()
+    api.branches.updateAccess.mockResolvedValueOnce({
+      ...refusal(403, 'ACCESS_MANAGE_FORBIDDEN'),
+      ids: ['ben'],
+    })
+    await loaded()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Ben Ortiz' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
+
+    const problem = await screen.findByTestId('share-save-problem')
+    expect(problem.textContent).toContain('Applies to Ben Ortiz.')
+    expect(screen.queryByTestId('share-refused')).toBeNull()
+  })
+
+  it('holds every editing control while the update is on its way', async () => {
+    const { api } = setup()
+    const answer = deferred<ReturnType<typeof ok<{ branch: never }>>>()
+    api.branches.updateAccess.mockReturnValue(answer.promise as never)
+    await loaded()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Ben Ortiz' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
+
+    await waitFor(() => expect(picker().matches(':disabled')).toBe(true))
+    expect(screen.getByRole('button', { name: 'Remove Marketing team' }).matches(':disabled')).toBe(
+      true,
+    )
+    expect(
+      screen.getByRole('button', { name: 'Undo removing Ben Ortiz' }).matches(':disabled'),
+    ).toBe(true)
   })
 
   it('reads the list again after an update gets no answer, and closes when it landed', async () => {
@@ -740,6 +1182,7 @@ describe('ShareBranchDialog: states', () => {
       "may have gone through even though the server didn't answer",
     )
     expect(problem.outerHTML).toMatch(/yellow/)
+    expect(within(problem).queryByRole('button')).toBeNull()
     expect(onClose).not.toHaveBeenCalled()
   })
 
@@ -753,11 +1196,34 @@ describe('ShareBranchDialog: states', () => {
 
     await waitFor(() => expect(status().textContent).toBe('Link copied'))
     expect(writeText).toHaveBeenCalledWith(expect.stringMatching(/^http.*\?branch=spring$/))
+    const copyButton = screen.getByRole('button', { name: 'Copy link' })
+    expect(copyButton.querySelector('.tabler-icon-check')).toBeTruthy()
+    await waitFor(() => expect(copyButton.querySelector('.tabler-icon-check')).toBeNull(), {
+      timeout: 4000,
+    })
+  })
+
+  it('shows the link to copy by hand when copying fails', async () => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: vi.fn().mockRejectedValue(new Error('Denied')) },
+      configurable: true,
+    })
+    setup()
+    await loaded()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy link' }))
+
+    const failed = await screen.findByTestId('share-copy-failed')
+    expect(failed.textContent).toContain("Couldn't copy the link.")
+    expect(
+      (within(failed).getByRole('textbox', { name: 'Link to this branch' }) as HTMLInputElement)
+        .value,
+    ).toMatch(/\?branch=spring$/)
   })
 })
 
-describe('ShareBranchDialog: lockdown', () => {
-  it('tells an admin that a locked branch keeps out the people listed', async () => {
+describe('ShareBranchDialog: lockdown and owner', () => {
+  it('says a locked branch keeps out the people listed, in place of the listed-only line', async () => {
     setup({
       user: { userId: 'root', groups: [RESERVED_GROUPS.ADMINS] },
       branch: { access: { managerOrAdminAllowed: true } },
@@ -767,6 +1233,87 @@ describe('ShareBranchDialog: lockdown', () => {
     expect(screen.getByTestId('share-lockdown').textContent).toMatch(
       /locked to admins and reviewers/,
     )
+    expect(screen.queryByText(LISTED_ONLY_LINE)).toBeNull()
+  })
+
+  const unlisted = access({ entries: [], restricted: false })
+
+  it('shows the owner of an unlisted branch on a closed site', async () => {
+    setup({ data: unlisted })
+
+    expect(await screen.findByText('Ana Lee (you)')).toBeTruthy()
+  })
+
+  it.each([
+    ['a system user', { branch: { createdBy: 'canopycms-system' } }],
+    [
+      'removed',
+      {
+        data: {
+          ...unlisted,
+          excluded: [
+            {
+              kind: 'user' as const,
+              id: 'ana',
+              name: 'Ana Lee',
+              by: { id: 'root', name: 'Ada' },
+              at: AT,
+              byAdmin: true,
+            },
+          ],
+        },
+      },
+    ],
+  ])('shows no Owner row for a creator who is %s', async (_label, over) => {
+    setup({ data: unlisted, ...over })
+
+    expect(await screen.findByText('No one is listed yet.')).toBeTruthy()
+  })
+})
+
+describe('ShareBranchDialog: dismissing with edits staged', () => {
+  it.each([
+    ['Esc', () => userEvent.keyboard('{Escape}')],
+    ['✕', () => fireEvent.click(modalClose())],
+  ])('%s asks before discarding, and Keep editing keeps the edits', async (_how, dismiss) => {
+    const { onClose } = setup()
+    await loaded()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Ben Ortiz' }))
+
+    await dismiss()
+
+    const confirm = await screen.findByTestId('share-discard-confirm')
+    expect(onClose).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(confirm).getByRole('button', { name: 'Keep editing' }),
+      ),
+    )
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Keep editing' }))
+    expect(screen.queryByTestId('share-discard-confirm')).toBeNull()
+    expect(within(row('Ben Ortiz')).getByText('Will be removed')).toBeTruthy()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it("closes on the confirm's Discard changes", async () => {
+    const { onClose } = setup()
+    await loaded()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Ben Ortiz' }))
+    await userEvent.keyboard('{Escape}')
+
+    const confirm = await screen.findByTestId('share-discard-confirm')
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Discard changes' }))
+
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes on Esc at once when nothing is staged', async () => {
+    const { onClose } = setup()
+    await loaded()
+
+    await userEvent.keyboard('{Escape}')
+
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 })
 

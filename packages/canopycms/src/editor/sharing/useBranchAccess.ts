@@ -16,8 +16,11 @@ const LOCKOUT_CODES: ReadonlySet<ApiErrorCode> = new Set([
   'ACCESS_MANAGE_FORBIDDEN',
 ])
 
-export const isLockout = (code: ApiErrorCode | undefined): code is ApiErrorCode =>
-  !!code && LOCKOUT_CODES.has(code)
+/** A refusal naming `ids` turns down one change, never the viewer, so it is no lockout. */
+export const isLockout = (
+  code: ApiErrorCode | undefined,
+  ids?: readonly string[],
+): code is ApiErrorCode => !!code && LOCKOUT_CODES.has(code) && !ids?.length
 
 export type BranchAccessState =
   | { status: 'loading'; data?: BranchAccess }

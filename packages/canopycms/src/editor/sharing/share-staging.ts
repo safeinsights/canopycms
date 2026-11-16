@@ -7,6 +7,7 @@ import type { UpdateBranchAccessBody } from '../../api/branch'
 import type { BranchAccessResponse } from '../../api/branch-people'
 import type { FoundPerson } from '../../api/people'
 import type { BranchAddBy } from '../../types'
+import { isSystemUserId } from '../../system-users'
 
 export type BranchAccess = NonNullable<BranchAccessResponse['data']>
 export type AccessEntry = BranchAccess['entries'][number]
@@ -115,9 +116,13 @@ export const narrows = (staged: StagedAccess, current: BranchAccess): boolean =>
   staged.restricted !== false &&
   (staged.restricted === true || staged.add.length > 0)
 
+/** Whether `id` is a person's: not a system user's, nor the placeholder of a branch with no creator. */
+export const isPersonId = (id: string | undefined): id is string =>
+  !!id && id !== 'unknown' && !isSystemUserId(id)
+
 /**
- * The branch's editors who would lose access once it is limited to its list: anyone not listed,
- * staged to be added, or its owner, whom limiting a branch keeps.
+ * The branch's editors who would lose access once it is limited to its list: people neither
+ * listed, staged to be added, removed already, nor its owner, whom limiting a branch keeps.
  */
 export function editorsLosingAccess(
   editors: readonly string[],
@@ -127,10 +132,23 @@ export function editorsLosingAccess(
 ): string[] {
   const kept = new Set([
     ...current.entries.filter((entry) => entry.kind === 'user').map((entry) => entry.id),
+    ...(current.excluded ?? []).filter((entry) => entry.kind === 'user').map((entry) => entry.id),
     ...idsOf(staged.add, 'user'),
     ...(owner ? [owner] : []),
   ])
-  return [...new Set(editors)].filter((id) => !kept.has(id))
+  return [...new Set(editors)].filter((id) => isPersonId(id) && !kept.has(id))
+}
+
+/** `add` with `addition`, unless it or an entry `listed` already has its key. */
+export function withAddition(
+  add: readonly Addition[],
+  addition: Addition,
+  listed: ReadonlySet<string> = new Set(),
+): Addition[] {
+  const key = entryKey(addition)
+  return listed.has(key) || add.some((item) => entryKey(item) === key)
+    ? [...add]
+    : [...add, addition]
 }
 
 /** "Ana", "Ana and Ben", "Ana, Ben and Chen". */

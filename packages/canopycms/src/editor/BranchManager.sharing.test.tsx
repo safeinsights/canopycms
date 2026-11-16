@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
@@ -14,6 +14,7 @@ import {
 } from './BranchManager'
 import { ApiClientProvider, type ApiClient } from './context'
 import { CanopyCMSProvider } from './theme'
+import { BranchesDrawer } from './components/BranchesDrawer'
 
 type Sharing = NonNullable<BranchSummary['sharing']>
 const rights = (over: Partial<Sharing> = {}): Sharing => ({
@@ -183,5 +184,72 @@ describe('BranchManager sharing', () => {
     expect(
       await screen.findByRole('button', { name: 'Access: anyone who can sign in' }),
     ).toBeTruthy()
+  })
+})
+
+describe('BranchManager sharing inside the Branches drawer', () => {
+  /** The drawer yields Escape to an open overlay, wired as Editor.tsx wires it. */
+  function renderInDrawer(b: BranchSummary) {
+    const api = createMockApiClient()
+    api.branches.getAccess.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        entries: [{ kind: 'user', id: 'ana', name: 'Ana Lee' }],
+        restricted: true,
+        openToEveryone: false,
+        defaultAccess: 'deny',
+        addBy: 'members',
+        rights: b.sharing ?? NONE,
+        searchable: 'cms-users',
+        addableByEmail: 'all-users',
+      },
+    })
+    const onDrawerClose = vi.fn()
+    function Harness() {
+      const [overlayOpen, setOverlayOpen] = useState(false)
+      return (
+        <BranchesDrawer opened onClose={onDrawerClose} confirmOpen={overlayOpen}>
+          <BranchManager
+            branches={[b]}
+            mode="prod"
+            user={ANA}
+            onGetOwnerMetadata={lookup}
+            onOverlayChange={setOverlayOpen}
+          />
+        </BranchesDrawer>
+      )
+    }
+    render(
+      <CanopyCMSProvider>
+        <ApiClientProvider client={api as unknown as ApiClient}>
+          <Harness />
+        </ApiClientProvider>
+      </CanopyCMSProvider>,
+    )
+    return { onDrawerClose }
+  }
+
+  it('closes only the Share dialog on Esc, leaving the drawer open', async () => {
+    const { onDrawerClose } = renderInDrawer(branch())
+    fireEvent.click(await screen.findByRole('button', { name: 'Access: Ana Lee, Ben Ortiz' }))
+    await screen.findByRole('button', { name: 'Cancel' })
+
+    await userEvent.keyboard('{Escape}')
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Share spring' })).toBeNull())
+    expect(onDrawerClose).not.toHaveBeenCalled()
+    expect(screen.getByTestId('branch-manager')).toBeTruthy()
+  })
+
+  it('closes only "Who has access" on Esc, leaving the drawer open', async () => {
+    const { onDrawerClose } = renderInDrawer(branch({ sharing: NONE, createdBy: 'zoe' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Access: Ana Lee, Ben Ortiz' }))
+    await screen.findByRole('dialog', { name: 'Who has access' })
+
+    await userEvent.keyboard('{Escape}')
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Who has access' })).toBeNull())
+    expect(onDrawerClose).not.toHaveBeenCalled()
   })
 })

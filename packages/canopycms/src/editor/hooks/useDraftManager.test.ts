@@ -558,7 +558,7 @@ describe('useDraftManager', () => {
       expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
         expect.objectContaining({
           title: 'Save not allowed',
-          message: 'You no longer have access to this branch.',
+          message: 'You no longer have access to this branch. Choose another branch in "Branches".',
         }),
       )
       consoleErrorSpy.mockRestore()

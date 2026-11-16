@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 import { createMockApiClient } from '../../api/__test__/mock-client'
 import { ApiClientProvider, type ApiClient } from '../context'
 import { CanopyCMSProvider } from '../theme'
-import { OPEN_TO_EVERYONE_LINE, LISTED_ONLY_LINE } from './share-copy'
+import { LISTED_ONLY_LINE, LOCKDOWN_LINE, OPEN_TO_EVERYONE_LINE } from './share-copy'
 import type { BranchAccess } from './share-staging'
 import { WhoHasAccessPopover } from './WhoHasAccessPopover'
 
@@ -25,14 +25,18 @@ const access = (over: Partial<BranchAccess> = {}): BranchAccess => ({
   ...over,
 })
 
-function renderPopover(data: BranchAccess) {
+function renderPopover(data: BranchAccess, lockedDown = false) {
   const api = createMockApiClient()
   api.branches.getAccess.mockResolvedValue({ ok: true, status: 200, data })
   function Harness() {
     const [opened, setOpened] = useState(false)
     return (
       <WhoHasAccessPopover
-        branch={{ name: 'spring', createdBy: 'ana' }}
+        branch={{
+          name: 'spring',
+          createdBy: 'ana',
+          access: { managerOrAdminAllowed: lockedDown },
+        }}
         opened={opened}
         onChange={setOpened}
       >
@@ -51,7 +55,7 @@ function renderPopover(data: BranchAccess) {
 }
 
 describe('WhoHasAccessPopover', () => {
-  it('lists names, groups and the general access line, focusing the first row', async () => {
+  it('lists names, groups and the general access line, focusing its heading', async () => {
     const { opener } = renderPopover(access())
 
     fireEvent.click(opener)
@@ -64,7 +68,9 @@ describe('WhoHasAccessPopover', () => {
     expect(within(rows[1]).getByText('Marketing team')).toBeTruthy()
     expect(within(rows[1]).getByText('Group')).toBeTruthy()
     expect(within(popover).getByText(LISTED_ONLY_LINE)).toBeTruthy()
-    await waitFor(() => expect(document.activeElement).toBe(rows[0]))
+    await waitFor(() =>
+      expect(document.activeElement).toBe(within(popover).getByText('Who has access')),
+    )
   })
 
   it('says an open branch is open to everyone who can sign in', async () => {
@@ -75,6 +81,15 @@ describe('WhoHasAccessPopover', () => {
     fireEvent.click(opener)
 
     expect(await screen.findByText(OPEN_TO_EVERYONE_LINE)).toBeTruthy()
+  })
+
+  it('says a locked branch is locked instead of who may open it', async () => {
+    const { opener } = renderPopover(access(), true)
+
+    fireEvent.click(opener)
+
+    expect(await screen.findByText(LOCKDOWN_LINE)).toBeTruthy()
+    expect(screen.queryByText(LISTED_ONLY_LINE)).toBeNull()
   })
 
   it('closes on Esc and returns focus to its opener', async () => {

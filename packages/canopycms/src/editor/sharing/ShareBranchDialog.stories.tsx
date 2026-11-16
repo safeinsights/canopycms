@@ -84,6 +84,15 @@ function fakeClient(load: Load, find: FindPeopleResult = PEOPLE): ApiClient {
   return client as unknown as ApiClient
 }
 
+const OWNER_SHARING: ShareTarget['sharing'] = {
+  isOwner: true,
+  canAdd: true,
+  canManage: true,
+  restricted: true,
+  openToEveryone: false,
+  addBy: 'members',
+}
+
 const Dialog: React.FC<{
   load: Load
   user?: UserContext
@@ -92,6 +101,16 @@ const Dialog: React.FC<{
 }> = ({ load, user = { userId: 'ana', groups: [] }, branch, find }) => {
   const client = useMemo(() => fakeClient(load, find), [load, find])
   const [opened, setOpened] = useState(true)
+  // The listing's rights, as the editor has them before the list loads.
+  const sharing: ShareTarget['sharing'] =
+    typeof load === 'object'
+      ? {
+          ...load.rights,
+          restricted: load.restricted,
+          openToEveryone: load.openToEveryone,
+          addBy: load.addBy,
+        }
+      : OWNER_SHARING
   return (
     <ApiClientProvider client={client}>
       <button onClick={() => setOpened(true)}>Open the Share dialog</button>
@@ -99,7 +118,13 @@ const Dialog: React.FC<{
         opened={opened}
         onClose={() => setOpened(false)}
         onChanged={() => {}}
-        branch={{ name: 'canopycms/prod/spring', shortName: 'spring', createdBy: 'ana', ...branch }}
+        branch={{
+          name: 'canopycms/prod/spring',
+          shortName: 'spring',
+          createdBy: 'ana',
+          sharing,
+          ...branch,
+        }}
         urlName="spring"
         user={user}
         getUserMetadata={lookup}
@@ -200,28 +225,9 @@ export const NarrowingWarning: Story = {
   play: () => clickLabel('Only people listed here'),
 }
 
-export const Loading: Story = {
-  args: {
-    load: 'loading',
-    branch: {
-      sharing: {
-        isOwner: true,
-        canAdd: true,
-        canManage: true,
-        restricted: true,
-        openToEveryone: false,
-        addBy: 'members',
-      },
-    },
-  },
-}
+export const Loading: Story = { args: { load: 'loading' } }
 
-export const LoadError: Story = {
-  args: {
-    load: 'error',
-    branch: Loading.args?.branch,
-  },
-}
+export const LoadError: Story = { args: { load: 'error' } }
 
 /** The viewer lost access since the list was shown. */
 export const Refused: Story = { args: { load: 'BRANCH_ACCESS_DENIED' } }

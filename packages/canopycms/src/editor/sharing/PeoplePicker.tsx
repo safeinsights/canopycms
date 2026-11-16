@@ -22,11 +22,14 @@ const MIN_NAME_QUERY = 2
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
-/** Why an exact address found no one, as the site's `addableByEmail` decides who it can find. */
+/**
+ * Why an exact address found no one. Find also skips anyone listed, removed or asking, so the copy
+ * claims nothing about whether an account exists.
+ */
 const emailNotFoundMessage = (scope: BranchAccess['addableByEmail']): string =>
   scope === 'cms-users'
-    ? 'No one who works in this editor uses that email address.'
-    : 'No account uses that email address yet. Ask them to sign in to the editor once, then try again in about 15 minutes.'
+    ? 'No one who works in this editor was found for that address, or they already have access or were removed.'
+    : 'No one found for that address, or they already have access or were removed. Someone new signs in to the editor once, then can be found about 15 minutes later.'
 
 const NO_NAME_MATCH = 'No one found. Type their full email address to add them.'
 
@@ -41,6 +44,8 @@ export interface PeoplePickerProps {
   onRefused: (code: ApiErrorCode) => void
   announce: (message: string) => void
   inputRef: RefObject<HTMLInputElement>
+  /** Why the picker can't be used yet; it is disabled while set. */
+  disabledReason?: string
 }
 
 /**
@@ -58,6 +63,7 @@ export function PeoplePicker({
   onRefused,
   announce,
   inputRef,
+  disabledReason,
 }: PeoplePickerProps) {
   const client = useApiClient()
   const combobox = useCombobox({ onDropdownClose: () => combobox.resetSelectedOption() })
@@ -67,10 +73,12 @@ export function PeoplePicker({
   const [lookingUp, setLookingUp] = useState(false)
   const [fieldError, setFieldError] = useState<string>()
   const seq = useRef(0)
+  const lookingUpRef = useRef(false)
 
   const trimmed = query.trim()
   const isEmail = looksLikeEmail(trimmed)
-  const searches = trimmed === '' || (!isEmail && trimmed.length >= MIN_NAME_QUERY)
+  const searchesNames = searchable !== 'nobody' && !isEmail && trimmed.length >= MIN_NAME_QUERY
+  const searches = trimmed === '' || searchesNames
   const opened = combobox.dropdownOpened
 
   const find = async (text: string) => {
@@ -80,9 +88,10 @@ export function PeoplePicker({
   }
 
   useEffect(() => {
+    // Bumped even when nothing is read, so an older read's late answer is never shown.
+    const mine = ++seq.current
     if (!searches || (trimmed === '' && !opened)) return
     if (found?.query === trimmed) return
-    const mine = ++seq.current
     const timer = setTimeout(
       () => {
         find(trimmed)
@@ -135,6 +144,7 @@ export function PeoplePicker({
   }
 
   const addByEmail = async (email: string) => {
+    lookingUpRef.current = true
     setLookingUp(true)
     try {
       const result = await find(email)
@@ -150,11 +160,13 @@ export function PeoplePicker({
       console.error(err)
       added({ kind: 'user', email, name: email })
     } finally {
+      lookingUpRef.current = false
       setLookingUp(false)
     }
   }
 
   const submit = (value: string) => {
+    if (lookingUpRef.current) return
     const [kind, ...rest] = value.split(':')
     const id = rest.join(':')
     if (kind === 'email') {
@@ -261,10 +273,12 @@ export function PeoplePicker({
             combobox.openDropdown()
             combobox.updateSelectedOptionIndex()
           }}
-          onFocus={() => combobox.openDropdown()}
           onClick={() => combobox.openDropdown()}
           onBlur={() => combobox.closeDropdown()}
           rightSection={lookingUp ? <Loader size="xs" aria-label="Looking up…" /> : undefined}
+          disabled={!!disabledReason}
+          description={disabledReason}
+          inputWrapperOrder={['label', 'input', 'description', 'error']}
           data-autofocus
           data-testid="share-people-input"
         />
