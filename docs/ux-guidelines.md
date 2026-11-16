@@ -1,6 +1,6 @@
 # Editor UX guidelines
 
-The standard for every change to the CanopyCMS editor (`packages/canopycms/src/editor/`).
+The standard for every change to the editor (`packages/canopycms/src/editor/`).
 [Enforcement](#enforcement) lists what checks it.
 
 ## Vocabulary
@@ -52,7 +52,7 @@ from `packages/canopycms/src/editor/branch-lock.ts`.
 ## Copy
 
 - **Sentence case** for every label, title, menu item, tab, badge, toast and placeholder:
-  "Delete branch", "Open in GitHub".
+  "Delete branch".
 - **Buttons start with a verb** and name the result. A confirm repeats the action's verb
   ("Delete entry"), never "OK" or "Yes"; a form's confirm may add its noun ("Create branch").
 - **`…`, the single character,** marks an in-progress state ("Saving…") or a command that
@@ -148,7 +148,7 @@ Never open a modal from a modal. A popover anchored to a field never covers its 
   "… may have gone through even though the server didn't answer", naming the entry and where
   to check, quoted. Keep the input, unless a retry could duplicate the write (a create): then
   close, saying where to check, and prefill that dialog's next open with what was typed.
-- An inline alert about a list sits above the list, under its heading.
+- An inline alert about a list sits above it, under its heading.
 - A placeholder takes the height of what replaces it, and a wrapping bar reserves its controls'
   widest label width, so nothing shifts.
 
@@ -251,7 +251,8 @@ branch is open, Media, a divider, the layout toggle; Settings and Account below)
 (content tree: docked, in the stacked form row, or over the form), **main** (entry header, keeping
 Save above a maximized preview; preview and form) and **overlays** (drawers, modals, toasts).
 Regions are layout only. New UI joins an existing region; adding one is a design decision.
-Switch branch… and New branch… open the Branches drawer. Unsaved is one dot (`UnsavedMark`), also
+`trailing` may lead with the branch's sharing control. Switch branch… and New branch… open the
+Branches drawer. Unsaved is one dot (`UnsavedMark`), also
 on Content while its panel is closed.
 
 ## Enforcement
