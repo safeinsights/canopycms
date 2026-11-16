@@ -36,7 +36,7 @@ import { personInitials } from '../../auth/person-name'
 import { isAdmin } from '../../authorization/helpers'
 import type { BranchSummary, UserContext } from '../BranchManager'
 import { displayBranchName } from '../branch-names'
-import { accessRefusalMessage, EDITOR_ACTIONS } from '../copy'
+import { accessRefusalMessage, adminRemovalReason, EDITOR_ACTIONS } from '../copy'
 import { useApiClient } from '../context/ApiClientContext'
 import { editorBranchLink } from '../editor-utils'
 import { isGatewayFailure, isUnanswered, UnansweredError } from '../unanswered'
@@ -918,7 +918,7 @@ function ShareBranchBody({
                           name={entry.name}
                           detail={
                             entry.byAdmin && !userIsAdmin
-                              ? 'Removed by an admin'
+                              ? `Removed by an admin. ${adminRemovalReason(entry.kind)}`
                               : `Removed by ${entry.by.id === user.userId ? 'you' : entry.by.name}`
                           }
                         />

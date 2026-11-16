@@ -117,6 +117,10 @@ const OWNER_ACCESS_REFUSALS: Partial<Record<ApiErrorCode, string>> = {
     'A group you added was removed from this branch by an admin, and only an admin can allow it back.',
 }
 
+/** Why a non-admin has no "Allow again" for someone an admin removed. */
+export const adminRemovalReason = (kind: 'user' | 'group'): string =>
+  `Only an admin can allow ${kind === 'group' ? 'it' : 'them'} back.`
+
 /**
  * The sentence for an access refusal's `code`, or undefined for any other answer; `viewerIsOwner`
  * for the branch's owner.

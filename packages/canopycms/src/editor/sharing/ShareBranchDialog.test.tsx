@@ -763,7 +763,9 @@ describe('ShareBranchDialog: removing and staging', () => {
     await loaded()
 
     fireEvent.click(screen.getByRole('button', { name: 'Removed (2)' }))
-    expect(within(row('Sam Reed')).getByText('Removed by an admin')).toBeTruthy()
+    expect(
+      within(row('Sam Reed')).getByText('Removed by an admin. Only an admin can allow them back.'),
+    ).toBeTruthy()
     expect(within(row('Sam Reed')).queryByRole('button')).toBeNull()
     expect(within(row('Pat Alvarez')).getByText('Removed by you')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Allow again: Pat Alvarez' }))
@@ -774,6 +776,57 @@ describe('ShareBranchDialog: removing and staging', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
     await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(1))
     expect(api.branches.updateAccess.mock.calls[0][1]).toEqual({ add: { users: ['pat'] } })
+  })
+
+  it('tells an owner only an admin can allow back a group an admin removed', async () => {
+    setup({
+      data: access({
+        excluded: [
+          {
+            kind: 'group',
+            id: 'ops',
+            name: 'Ops',
+            by: { id: 'root', name: 'Ada Admin' },
+            at: AT,
+            byAdmin: true,
+          },
+        ],
+      }),
+    })
+    await loaded()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Removed (1)' }))
+    expect(
+      within(row('Ops')).getByText('Removed by an admin. Only an admin can allow it back.'),
+    ).toBeTruthy()
+    expect(within(row('Ops')).queryByRole('button')).toBeNull()
+  })
+
+  it("gives an admin Allow again on an admin's removal, without saying only an admin can", async () => {
+    setup({
+      user: { userId: 'root', groups: [RESERVED_GROUPS.ADMINS] },
+      data: access({
+        rights: { isOwner: false, canAdd: true, canManage: true },
+        excluded: [
+          {
+            kind: 'user',
+            id: 'sam',
+            name: 'Sam Reed',
+            by: { id: 'root', name: 'Ada Admin' },
+            at: AT,
+            byAdmin: true,
+          },
+        ],
+      }),
+    })
+    await loaded()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Removed (1)' }))
+    expect(within(row('Sam Reed')).getByText('Removed by you')).toBeTruthy()
+    expect(within(row('Sam Reed')).queryByText(/Only an admin/)).toBeNull()
+    expect(
+      within(row('Sam Reed')).getByRole('button', { name: 'Allow again: Sam Reed' }),
+    ).toBeTruthy()
   })
 
   it('only lifts the exclusion of a group the owner is not in, and says it is not added back', async () => {
