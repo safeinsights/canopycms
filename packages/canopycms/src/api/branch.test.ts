@@ -647,6 +647,36 @@ describe('branch api', () => {
       expect(res.data?.branch.createdBy).toBe('u1')
     })
 
+    it('answers a retry naming people from the existing branch, looking up no address', async () => {
+      const registry = createMockRegistry([])
+      registry.getByKey.mockResolvedValue(
+        createMockBranchContext({
+          branchName: 'canopycms/local/feature-test',
+          createdBy: 'u1',
+          createdAt: new Date(Date.now() - 60_000).toISOString(),
+        }),
+      )
+      const findUserByEmail = vi.fn(async () => null)
+      const searchUsers = vi.fn(async () => [])
+      const ctx = createMockApiContext({
+        branchContext: createMockBranchContext({ branchName: 'main', createdBy: 'system' }),
+        services: {
+          registry: registry as unknown as BranchRegistry,
+          checkBranchAccess: vi.fn().mockReturnValue({ allowed: true, reason: 'creator' }),
+        },
+        authPlugin: { findUserByEmail, searchUsers },
+      })
+
+      const res = await createBranch(ctx, asU1, {
+        branch: unsafeAsBranchName('feature-test'),
+        access: { add: { emails: ['otto@example.org'] } },
+      })
+
+      expect(res.status).toBe(200)
+      expect(findUserByEmail).not.toHaveBeenCalled()
+      expect(searchUsers).not.toHaveBeenCalled()
+    })
+
     it('answers a creator who may no longer open the branch with a 409, not the branch', async () => {
       const res = await createAgainst({ createdBy: 'u1', ageMs: 60_000 }, 'u1', false)
       expect(res.status).toBe(409)
