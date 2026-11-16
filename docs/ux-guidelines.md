@@ -89,7 +89,7 @@ from `packages/canopycms/src/editor/branch-lock.ts`.
 | One entry's lasting state, such as a read-only draft                                         | Notice above its form |
 
 Never open a modal from a modal, though one may open over a drawer. A popover anchored to a field never covers its input; a short field's opens below it
-(`packages/canopycms/src/editor/comments/popover-placement.ts`). Don't toast what is already visible: a saved entry shows "Saved" inline, a new comment appears in its thread. Toasts sit opposite the rail (`Notifications` in
+(`packages/canopycms/src/editor/comments/popover-placement.ts`). Don't toast what is already visible, such as an inline "Saved". Toasts sit opposite the rail (`Notifications` in
 `packages/canopycms/src/editor/theme.tsx`); one with an action pauses while hovered or focused
 (`UndoToastMessage`). An error that needs action stays until dismissed.
 
@@ -226,8 +226,7 @@ included:
 - `--canopy-focus-ring` (3:1 on its surface for any brand) for focus rings, focused borders and
   checked controls; white on the primary colour sits on `--canopy-primary-fill`.
 
-Pass a plain colour; the theme brings its text and light variant to 4.5:1, at which dark mode's
-light status badges look alike. Success text is the default colour beside a green icon. Count badges put text colour on a tinted
+Pass a plain colour; the theme brings its text and light variant to 4.5:1. Success text is the default colour beside a green icon. Count badges put text colour on a tinted
 background.
 A light yellow `Alert`'s title, icon and close button take the text colour. Filled destructive
 buttons are `red.8`, filled orange ones `orange.6` with black text. Only the primary is otherwise
@@ -239,8 +238,10 @@ filled: other badges, icons and indicators take their colour's light variant.
   internal name.
 - A branch card's access list shows the names the viewer can resolve, then "and N others".
   Anyone who may open a branch receives its whole list; only admins and reviewers see emails.
-- An avatar beside a name has empty `alt`. One showing only initials is hidden from assistive
-  tech, with the person's name as visually hidden text.
+- An avatar beside a name has empty `alt`. One showing only initials (two, `personInitials`) is
+  hidden from assistive tech, with the person's name as visually hidden text.
+- Pickers leave out people a role admits. A read-only stand-in for a control says
+  who may act.
 
 ## Shell regions
 
