@@ -240,7 +240,7 @@ filled: other badges, icons and indicators take their colour's light variant.
   Anyone who may open a branch receives its whole list; only admins and reviewers see emails.
 - An avatar beside a name has empty `alt`. One showing only initials (`personInitials`) is
   hidden from assistive tech, with the person's name as visually hidden text.
-- Pickers leave out people a role admits. A read-only stand-in for a control says
+- Pickers leave out admins, whom their role admits. A read-only stand-in for a control says
   who may act.
 
 ## Shell regions

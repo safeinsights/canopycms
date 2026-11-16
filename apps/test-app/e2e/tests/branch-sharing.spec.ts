@@ -9,9 +9,10 @@ import { LONG_TIMEOUT, STANDARD_TIMEOUT } from '../fixtures/timeouts'
 /**
  * Sharing a branch: its owner shares it from the top bar, a member adds a third person, and the
  * owner's removal of the member closes the branch to them. The dev auth plugin's users stand in:
- * `editor` is User One, `viewer` User Two, and User Three goes by their dev user id. Each is added
- * by their full email address. While the test app's settings hold no rules or groups, none of them
- * works in this CMS, so the add must go by that address: this test fails if it goes by id.
+ * `editor` is User One, `viewer` User Two, and User Three goes by their dev user id. User Two and
+ * User Three are added by their full email address. While the test app's settings hold no rules or
+ * groups, neither works in this CMS (User One does, by creating the branch), so the add must go by
+ * that address: this test fails if it goes by id.
  */
 const USER_THREE = 'dev_user3_5vS1pM8kJ4'
 
