@@ -303,8 +303,8 @@ interface SalvagedBranch {
  * blocks Approve, Request changes and Mark merged; and a status read as `submitted` lets reviewers
  * Approve or Request changes on what may have been an editing branch. And the worker's GitHub sync
  * loses any record it can't read: an unreadable `lastGitHubTip` or `historyRewrittenFrom` leaves it
- * less to detect a rewrite by, an unreadable `keptOverGitHub` drops paths from the PR body, and an
- * unreadable `sync-failed` no longer holds back a retried push or a base update.
+ * less to detect a rewrite by, an unreadable `keptOverGitHub` drops paths from the PR body, and a
+ * `syncStatus` left out no longer holds back, as `sync-failed` did, a retried push or base update.
  */
 const restrictiveValues = (now: string): SalvagedFields => ({
   status: 'submitted',
@@ -347,9 +347,9 @@ const isSalvagedKey = (key: string): key is SalvagedKey => has(salvagedFieldShap
  * on its own key, so one bad field never takes another with it: a field that reads is kept, a
  * present one that doesn't takes its most restrictive value or is left out, and an absent one
  * stays absent. {@link restrictiveValues} says what that keeps from widening and what it doesn't.
- * `access` is readable only when it passes its schema whole. Keys the schema doesn't know are carried over verbatim, as a read passes them through,
- * so a restricting field a newer deployment wrote survives. Text that is not JSON, or holds no
- * `branch` object, salvages nothing.
+ * `access` is readable only when it passes its schema whole. Keys the schema doesn't know are
+ * carried over verbatim, as a read passes them through, so a restricting field a newer deployment
+ * wrote survives. Text that is not JSON, or holds no `branch` object, salvages nothing.
  */
 export function salvageBranchMetadata(raw: string, now: Date = new Date()): SalvagedBranch {
   const nothing: SalvagedBranch = {
