@@ -160,6 +160,78 @@ describe('sharing from the editor', () => {
     await waitFor(() => expect(document.activeElement).toBe(control))
   })
 
+  it.each([
+    ['before', false],
+    ['after', true],
+  ])(
+    'returns focus to the branch pill when a refusal closes, the listing dropping the branch %s the dialog has gone',
+    async (_when, holdListing) => {
+      window.history.replaceState({}, '', '/?branch=spring')
+      // Until the refusal, the listing holds the branch; after it, held back while `holdListing`.
+      let refused = false
+      let releaseListing = () => {}
+      const listingHeld = new Promise<void>((resolve) => (releaseListing = resolve))
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = urlOf(input)
+          const method = init?.method ?? 'GET'
+          if (url.endsWith('/whoami')) return okJson({ userId: 'author-1', groups: [] })
+          if (url.endsWith('/comments')) return okJson({ threads: [], users: [] })
+          if (url.endsWith('/api/canopycms/branches')) {
+            if (refused && holdListing) await listingHeld
+            return okJson({
+              branches: refused ? [] : [listed(SPRING)],
+              defaultBranch: SPRING,
+              users: [{ id: 'author-1', name: 'Ana Lee' }],
+            })
+          }
+          if (url.endsWith('/access') && method === 'GET') {
+            refused = true
+            return new Response(
+              JSON.stringify({
+                ok: false,
+                status: 403,
+                code: 'BRANCH_ACCESS_DENIED',
+                error: "You don't have access to this branch.",
+              }),
+              { status: 403, headers: { 'Content-Type': 'application/json' } },
+            )
+          }
+          if (url.includes('/schema') && !url.includes('/schema/')) {
+            return okJson({ schema: {}, flatSchema: [], entrySchemas: {} })
+          }
+          if (url.includes('/entries')) {
+            return okJson({
+              collections: [],
+              entries: [],
+              pagination: { hasMore: false, limit: 50 },
+            })
+          }
+          return okJson({})
+        }),
+      )
+      renderEditor()
+
+      const control = await screen.findByRole('button', { name: /^Share…/ })
+      control.focus()
+      fireEvent.click(control)
+      const dialog = await screen.findByRole('dialog', { name: 'Share “spring”' })
+      expect(dialog).toBeTruthy()
+      await waitFor(() => expect(document.activeElement?.textContent).toBe('Close'))
+      fireEvent.click(document.activeElement as HTMLElement)
+
+      await waitFor(() =>
+        expect(screen.queryByRole('dialog', { name: 'Share “spring”' })).toBeNull(),
+      )
+      releaseListing()
+      await waitFor(() => expect(screen.queryByTestId('branch-share-control')).toBeNull())
+      await waitFor(() =>
+        expect(document.activeElement).toBe(screen.getByTestId('branch-dropdown-button')),
+      )
+    },
+  )
+
   it('offers Share… on the toast of a create whose drawer has closed', async () => {
     window.history.replaceState({}, '', '/?branch=spring')
     let release = () => {}
