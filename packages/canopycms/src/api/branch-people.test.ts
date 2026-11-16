@@ -712,15 +712,31 @@ describe('PATCH /:branch/access adding by email', () => {
     await addBranch('feature/x', {
       access: {
         restricted: true,
+        allowedUsers: ['owner'],
+        excluded: { outsider: { by: 'admin', at: 't', byAdmin: true } },
+      },
+    })
+
+    const res = await patch(owner, 'feature/x', { add: { emails: ['otto@example.org'] } })
+
+    expect(res).toMatchObject({ ok: false, code: 'USER_EXCLUDED' })
+    expect(JSON.stringify(res)).not.toContain('outsider')
+  })
+
+  it('answers a member an address that finds someone removed as one that finds no one', async () => {
+    await addBranch('feature/x', {
+      access: {
+        restricted: true,
         allowedUsers: ['owner', 'member'],
         excluded: { outsider: { by: 'owner', at: 't', byAdmin: false } },
       },
     })
 
-    const res = await patch(member, 'feature/x', { add: { emails: ['otto@example.org'] } })
+    const removed = await patch(member, 'feature/x', { add: { emails: ['otto@example.org'] } })
+    const nobody = await patch(member, 'feature/x', { add: { emails: ['ghost@example.org'] } })
 
-    expect(res).toMatchObject({ ok: false, code: 'USER_EXCLUDED' })
-    expect(JSON.stringify(res)).not.toContain('outsider')
+    expect(removed).toEqual(nobody)
+    expect(nobody).toMatchObject({ ok: false, status: 400, code: 'USER_NOT_FOUND' })
   })
 
   it('still refuses someone outside this CMS by id', async () => {

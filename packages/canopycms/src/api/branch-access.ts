@@ -162,6 +162,8 @@ function refuseOutright(
   return null
 }
 
+const NO_SUCH_ADDRESS = 'No account uses one of these email addresses.'
+
 /** A change as a request states it: people to add may also be named by exact email address. */
 export type BranchAccessRequest = Omit<BranchAccessChange, 'add'> & {
   add?: NonNullable<BranchAccessChange['add']> & { emails?: string[] }
@@ -193,7 +195,7 @@ async function resolveEmailAdds(
   if (ids.length < found.length) {
     return {
       ok: false,
-      refused: refused(400, 'USER_NOT_FOUND', 'No account uses one of these email addresses.'),
+      refused: refused(400, 'USER_NOT_FOUND', NO_SUCH_ADDRESS),
     }
   }
   return {
@@ -225,11 +227,19 @@ export async function recordRecentShares(
 
 /**
  * `refusal` without the ids an address in the request resolved to: the caller typed the address,
- * and the id behind it is no business of theirs.
+ * and the id behind it is no business of theirs. To a caller who can't see who was removed, an
+ * address that finds someone removed answers as one that finds no one, as find skips them.
  */
-function hidingEmailIds(refusal: AccessRefused, byEmail: ReadonlySet<CanopyUserId>): AccessRefused {
+function hidingEmailIds(
+  refusal: AccessRefused,
+  byEmail: ReadonlySet<CanopyUserId>,
+  seesExclusions: boolean,
+): AccessRefused {
   if (!refusal.ids || byEmail.size === 0) return refusal
   const { ids, ...rest } = refusal
+  if (rest.code === 'USER_EXCLUDED' && !seesExclusions && ids.some((id) => byEmail.has(id))) {
+    return refused(400, 'USER_NOT_FOUND', NO_SUCH_ADDRESS)
+  }
   const shown = ids.filter((id) => !byEmail.has(id))
   return shown.length > 0 ? { ...rest, ids: shown } : rest
 }
@@ -260,9 +270,10 @@ export async function changeBranchAccess(
   const resolved = await resolveEmailAdds(ctx, actor, request)
   if (!resolved.ok) return resolved
   const { change, byEmail } = resolved
+  const seesExclusions = rightsFor(ctx, actor, context.branch).canManage
   const refuse = (refusal: AccessRefused): BranchAccessOutcome => ({
     ok: false,
-    refused: hidingEmailIds(refusal, byEmail),
+    refused: hidingEmailIds(refusal, byEmail, seesExclusions),
   })
 
   const now = new Date().toISOString()
@@ -388,7 +399,7 @@ export async function initialBranchAccess(
   if (!resolved.ok) return resolved
   const refuse = (refusal: AccessRefused) => ({
     ok: false as const,
-    refused: hidingEmailIds(refusal, resolved.byEmail),
+    refused: hidingEmailIds(refusal, resolved.byEmail, true),
   })
   const applied = applyAccessChange({}, resolved.change, {
     actor,

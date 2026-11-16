@@ -526,6 +526,15 @@ function ShareBranchBody({
     else void reload()
   }
 
+  /**
+   * Whether a scope refusal names only people staged for removal. The server checks the scope of
+   * a removal only for someone its list no longer holds, so someone took them off first.
+   */
+  const goneFromList = (code: ApiErrorCode | undefined, ids: string[] | undefined): boolean =>
+    code === 'USER_OUT_OF_SCOPE' &&
+    !!ids?.length &&
+    ids.every((id) => staged.remove.some((r) => r.kind === 'user' && r.id === id))
+
   const update = async () => {
     if (!data || !dirty || savingRef.current) return
     savingRef.current = true
@@ -539,9 +548,24 @@ function ShareBranchBody({
         finish(sent)
       } else if (isLockout(result.code, result.ids)) {
         setRefused(result.code)
+      } else if (goneFromList(result.code, result.ids)) {
+        const gone = result.ids ?? []
+        const goneNames = gone.map(
+          (id) => data.entries.find((entry) => entry.id === id)?.name ?? 'Name unavailable',
+        )
+        setStaged((prev) => ({
+          ...prev,
+          remove: prev.remove.filter((r) => !(r.kind === 'user' && gone.includes(r.id))),
+        }))
+        void reload()
+        setSaveProblem({
+          tone: 'warning',
+          message: `${joinNames(goneNames)} ${gone.length === 1 ? 'is' : 'are'} no longer on the list.`,
+          retryable: false,
+        })
       } else {
         setSaveProblem({
-          tone: 'error',
+          tone: result.code === 'LIST_CHANGED' ? 'warning' : 'error',
           message: accessRefusalMessage(result.code) ?? (result.error || UPDATE_FAILED),
           retryable:
             !result.code || result.code === 'RATE_LIMITED' || result.code === 'LIST_CHANGED',
@@ -919,22 +943,22 @@ function ShareBranchBody({
             {problemNames.length > 0 && (
               <Text size="sm">{`Applies to ${joinNames(problemNames)}.`}</Text>
             )}
-            {saveProblem.tone === 'error' &&
-              (saveProblem.retryable ? (
-                <Button variant="default" size="xs" onClick={() => void update()}>
-                  Retry
-                </Button>
-              ) : (
-                problemRows.length > 0 && (
-                  <Group gap="xs">
-                    {problemRows.map((row) => (
-                      <Button key={row.key} variant="default" size="xs" onClick={() => remove(row)}>
-                        {`Remove ${row.name}`}
-                      </Button>
-                    ))}
-                  </Group>
-                )
-              ))}
+            {saveProblem.retryable ? (
+              <Button variant="default" size="xs" onClick={() => void update()}>
+                Retry
+              </Button>
+            ) : (
+              saveProblem.tone === 'error' &&
+              problemRows.length > 0 && (
+                <Group gap="xs">
+                  {problemRows.map((row) => (
+                    <Button key={row.key} variant="default" size="xs" onClick={() => remove(row)}>
+                      {`Remove ${row.name}`}
+                    </Button>
+                  ))}
+                </Group>
+              )
+            )}
           </Stack>
         </Alert>
       )}

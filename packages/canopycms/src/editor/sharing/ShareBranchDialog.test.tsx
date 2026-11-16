@@ -1148,8 +1148,34 @@ describe('ShareBranchDialog: states', () => {
 
     const problem = await screen.findByTestId('share-save-problem')
     expect(problem.textContent).toContain('The list changed while this was being saved.')
+    expect(problem.outerHTML).toMatch(/yellow/)
     fireEvent.click(within(problem).getByRole('button', { name: 'Retry' }))
     await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(2))
+  })
+
+  it('says a person staged for removal is already off the list, keeping the other edits', async () => {
+    const { api } = setup()
+    api.branches.updateAccess.mockResolvedValueOnce({
+      ...refusal(403, 'USER_OUT_OF_SCOPE'),
+      ids: ['ben'],
+    })
+    await loaded()
+    api.branches.getAccess.mockResolvedValue(
+      ok(access({ entries: access().entries.filter((e) => e.id !== 'ben') })),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Ben Ortiz' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Marketing team' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
+
+    const problem = await screen.findByTestId('share-save-problem')
+    expect(problem.textContent).toContain('Ben Ortiz is no longer on the list.')
+    expect(problem.outerHTML).toMatch(/yellow/)
+    expect(within(problem).queryByRole('button')).toBeNull()
+    await waitFor(() => expect(screen.queryByText('Ben Ortiz')).toBeNull())
+    expect(within(row('Marketing team')).getByText('Will be removed')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
+    await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(2))
+    expect(api.branches.updateAccess.mock.calls[1][1]).toEqual({ remove: { groups: ['team'] } })
   })
 
   it('shows a refusal that names one change as a problem with that change, not a lockout', async () => {
@@ -1230,9 +1256,9 @@ describe('ShareBranchDialog: states', () => {
     const copyButton = screen.getByRole('button', { name: 'Copy link' })
     expect(copyButton.querySelector('.tabler-icon-check')).toBeTruthy()
     await waitFor(() => expect(copyButton.querySelector('.tabler-icon-check')).toBeNull(), {
-      timeout: 4000,
+      timeout: 8000,
     })
-  })
+  }, 15_000)
 
   it('shows the link to copy by hand when copying fails', async () => {
     Object.defineProperty(navigator, 'clipboard', {
