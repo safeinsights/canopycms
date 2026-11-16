@@ -96,6 +96,29 @@ function renderBar(
 }
 
 const control = () => screen.queryByTestId('branch-share-control')
+const initials = () =>
+  [...(control()?.querySelectorAll('.mantine-Avatar-root') ?? [])].map((a) => a.textContent)
+
+/** The bar for viewer Ben on `b`, below md when `narrow`. */
+const viewerBar = (b: BranchSummary) => (
+  <CanopyCMSProvider>
+    <ApiClientProvider client={createMockApiClient() as unknown as ApiClient}>
+      <EditorHeader
+        {...baseProps}
+        branchName={b.name}
+        sharing={{
+          branch: b,
+          loading: false,
+          user: { userId: 'ben' },
+          getUserMetadata: lookup,
+          onShare: vi.fn(),
+        }}
+      />
+    </ApiClientProvider>
+  </CanopyCMSProvider>
+)
+const viewOnly = (name: string) =>
+  branch({ name, sharing: rights({ isOwner: false, canAdd: false, canManage: false }) })
 
 describe('EditorHeader - sharing control', () => {
   const originalMatchMedia = window.matchMedia
@@ -152,7 +175,7 @@ describe('EditorHeader - sharing control', () => {
     expect(control()?.getAttribute('data-mode')).toBe('share')
   })
 
-  it('offers someone who may not add people "Who has access", naming two and counting the rest', async () => {
+  it('offers someone who may not add people "Who has access", naming them first as you', async () => {
     renderBar({
       user: { userId: 'ben' },
       branch: branch({ sharing: rights({ isOwner: false, canAdd: false, canManage: false }) }),
@@ -160,7 +183,7 @@ describe('EditorHeader - sharing control', () => {
 
     expect(
       await screen.findByRole('button', {
-        name: 'Who has access: Ana Lee, Ben Ortiz and 2 others',
+        name: 'Who has access: you, Ana Lee and 2 others',
       }),
     ).toBe(control())
     expect(control()?.textContent).toContain('Who has access')
@@ -193,29 +216,35 @@ describe('EditorHeader - sharing control', () => {
     expect(control()?.getAttribute('aria-haspopup')).toBe('dialog')
   })
 
-  it('shows an initial on every avatar, asking the lookup again for each listing', async () => {
+  it('leaves avatars blank until the lookup answers, then shows two-letter initials', async () => {
+    let answer: (person: UserSearchResult | null) => void = () => {}
+    const slow = vi.fn(
+      (id: string) =>
+        new Promise<UserSearchResult | null>((resolve) => {
+          answer = (person) => resolve(id === 'ana' ? person : null)
+        }),
+    )
+    renderBar({ branch: branch({ access: { users: ['ana'], groups: [] } }), getUserMetadata: slow })
+    expect(initials()).toEqual([' '])
+
+    answer({ id: 'ana', name: 'Ana Lee', email: '' })
+
+    await waitFor(() => expect(initials()).toEqual(['AL']))
+  })
+
+  it('asks again with each listing while anyone is unnamed, keeping names it had', async () => {
+    let anaKnown = true
     const lookupAgain = vi.fn(
       async (id: string): Promise<UserSearchResult | null> =>
-        id === 'ana' ? { id, name: 'Ana Lee', email: '' } : null,
+        id === 'ana' && anaKnown ? { id, name: 'Ana Lee', email: '' } : null,
     )
-    const { rerender } = renderBar({
-      branch: branch({ access: { users: ['ana', 'zed'], groups: [] } }),
-      getUserMetadata: lookupAgain,
-    })
-    await waitFor(() =>
-      expect(
-        [...(control()?.querySelectorAll('.mantine-Avatar-root') ?? [])].map((a) => a.textContent),
-      ).toEqual(['A', 'N']),
-    )
-    const asked = lookupAgain.mock.calls.length
-
-    rerender(
+    const bar = (b: BranchSummary) => (
       <CanopyCMSProvider>
         <ApiClientProvider client={createMockApiClient() as unknown as ApiClient}>
           <EditorHeader
             {...baseProps}
             sharing={{
-              branch: branch({ access: { users: ['ana', 'zed'], groups: [] } }),
+              branch: b,
               loading: false,
               user: { userId: 'ana' },
               getUserMetadata: lookupAgain,
@@ -223,9 +252,61 @@ describe('EditorHeader - sharing control', () => {
             }}
           />
         </ApiClientProvider>
-      </CanopyCMSProvider>,
+      </CanopyCMSProvider>
     )
+    const listing = () => branch({ access: { users: ['ana', 'zed'], groups: [] } })
+    const { rerender } = render(bar(listing()))
+    await waitFor(() => expect(initials()).toEqual(['AL', 'NU']))
+    const asked = lookupAgain.mock.calls.length
+    anaKnown = false
+
+    rerender(bar(listing()))
+
     await waitFor(() => expect(lookupAgain.mock.calls.length).toBeGreaterThan(asked))
+    expect(initials()).toEqual(['AL', 'NU'])
+  })
+
+  it('asks no more once everyone is named', async () => {
+    const named = vi.fn(
+      async (id: string): Promise<UserSearchResult | null> => ({ id, name: PEOPLE[id], email: '' }),
+    )
+    const bar = () => (
+      <CanopyCMSProvider>
+        <ApiClientProvider client={createMockApiClient() as unknown as ApiClient}>
+          <EditorHeader
+            {...baseProps}
+            sharing={{
+              branch: branch({ access: { users: ['ana', 'ben'], groups: [] } }),
+              loading: false,
+              user: { userId: 'ana' },
+              getUserMetadata: named,
+              onShare: vi.fn(),
+            }}
+          />
+        </ApiClientProvider>
+      </CanopyCMSProvider>
+    )
+    const { rerender } = render(bar())
+    await waitFor(() => expect(initials()).toEqual(['AL', 'BO']))
+    const asked = named.mock.calls.length
+
+    rerender(bar())
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(named.mock.calls.length).toBe(asked)
+  })
+
+  it("doesn't reopen a branch's list on coming back to it", async () => {
+    const { rerender } = render(viewerBar(viewOnly('canopycms/prod/spring')))
+    fireEvent.click(control() as HTMLElement)
+    await screen.findByRole('dialog', { name: 'Who has access' })
+
+    rerender(viewerBar(viewOnly('canopycms/prod/summer')))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Who has access' })).toBeNull())
+    rerender(viewerBar(viewOnly('canopycms/prod/spring')))
+
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(screen.queryByRole('dialog', { name: 'Who has access' })).toBeNull()
   })
 
   it('shows a globe for a branch open to everyone', () => {
@@ -356,6 +437,23 @@ describe('EditorHeader - sharing control', () => {
 
       expect(screen.getByTestId('branch-dropdown-button')).toBe(pill)
       expect(await screen.findByRole('menuitem', { name: 'Who has access' })).toBeTruthy()
+    })
+
+    it("doesn't reopen the pill's list on coming back to its branch", async () => {
+      stubNarrowWindow()
+      const { rerender } = render(viewerBar(viewOnly('canopycms/prod/spring')))
+      await userEvent.click(screen.getByTestId('branch-dropdown-button'))
+      await userEvent.click(await screen.findByRole('menuitem', { name: 'Who has access' }))
+      await screen.findByRole('dialog', { name: 'Who has access' })
+
+      rerender(viewerBar(viewOnly('canopycms/prod/summer')))
+      await waitFor(() =>
+        expect(screen.queryByRole('dialog', { name: 'Who has access' })).toBeNull(),
+      )
+      rerender(viewerBar(viewOnly('canopycms/prod/spring')))
+
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(screen.queryByRole('dialog', { name: 'Who has access' })).toBeNull()
     })
 
     it('leaves the pill menu without it where sharing is hidden', async () => {

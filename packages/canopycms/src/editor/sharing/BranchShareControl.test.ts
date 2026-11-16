@@ -40,12 +40,15 @@ describe('shareControlName', () => {
   })
 
   it('names up to two for someone who may only look, counting the rest', () => {
-    expect(shareControlName('view', listed(['ana', 'ben']), ['Ana Lee', 'Ben Ortiz'])).toBe(
-      'Who has access: Ana Lee and Ben Ortiz',
-    )
-    expect(shareControlName('view', listed(['ana', 'ben', 'cole']), ['Ana Lee'])).toBe(
-      'Who has access: Ana Lee and 2 others',
-    )
+    expect(
+      shareControlName('view', listed(['ana', 'ben']), [
+        { id: 'ana', name: 'Ana Lee' },
+        { id: 'ben', name: 'Ben Ortiz' },
+      ]),
+    ).toBe('Who has access: Ana Lee and Ben Ortiz')
+    expect(
+      shareControlName('view', listed(['ana', 'ben', 'cole']), [{ id: 'ana', name: 'Ana Lee' }]),
+    ).toBe('Who has access: Ana Lee and 2 others')
     expect(shareControlName('view', listed(['ana', 'ben'], ['design']), [])).toBe(
       'Who has access: 2 people and 1 group',
     )
@@ -69,5 +72,17 @@ describe('shareControlName with no one listed', () => {
     }
     expect(shareControlName('share', empty, [])).toBe('Share…, no one is listed')
     expect(shareControlName('view', empty, [])).toBe('Who has access: no one is listed')
+  })
+})
+
+describe('shareControlName for a listed viewer', () => {
+  it('calls them "you", first, and never one of the others', () => {
+    const named = [{ id: 'ana', name: 'Ana Lee' }]
+    expect(shareControlName('view', listed(['ana', 'ben']), named, 'ben')).toBe(
+      'Who has access: you and Ana Lee',
+    )
+    expect(shareControlName('view', listed(['ana', 'ben']), [], 'ben')).toBe(
+      'Who has access: you and 1 other',
+    )
   })
 })

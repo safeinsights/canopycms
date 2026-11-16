@@ -35,6 +35,7 @@ export interface BranchPillProps {
     branch: ShareTarget
     /** Opens the Share dialog, which returns focus to `returnFocusTo()`. */
     onShare: (returnFocusTo: () => HTMLElement | null) => void
+    viewerId?: string
   }
 }
 
@@ -61,7 +62,7 @@ export function BranchPill({
   const noBranch = branchName ? undefined : 'Open a branch first.'
   const wide = useMediaQuery('(min-width: 48em)')
   const name = branchName || (loading ? 'Loading branches…' : 'No branch open')
-  // The branch whose list is open, so a list never reopens on its own for another branch.
+  // The branch whose list is open.
   const [accessOpen, setAccessOpen] = useState<string | null>(null)
 
   const menu = (
@@ -143,6 +144,8 @@ export function BranchPill({
   // The list hangs from a wrapper: inside the menu, a popover target would take the menu's place.
   // The wrapper renders in every mode, so the pill never remounts as the mode changes.
   const listed = share?.mode === 'view' ? share.branch : undefined
+  // A list left open for another branch, or for none, is closed rather than shown again later.
+  if (accessOpen !== null && accessOpen !== listed?.name) setAccessOpen(null)
   return (
     <WhoHasAccessPopover
       branch={listed}
@@ -150,6 +153,7 @@ export function BranchPill({
       onChange={(open) => setAccessOpen(open && listed ? listed.name : null)}
       withRoles={false}
       returnFocusTo={() => trigger.current}
+      viewerId={share?.viewerId}
     >
       <Box component="span" display="inline-flex" style={{ flexShrink: 0 }}>
         {menu}

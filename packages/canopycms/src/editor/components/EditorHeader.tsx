@@ -308,9 +308,13 @@ export function EditorHeader({
 
   const pill = useRef<HTMLButtonElement>(null)
   const pillRef = useMergedRef(pill, branchToggleRef)
-  const [accessOpen, setAccessOpen] = useState(false)
+  // The branch whose list is open; one left open for another branch is closed, not shown again.
+  const [accessOpen, setAccessOpen] = useState<string | null>(null)
   const shared = sharing?.branch
   const shareMode = shared && branchName ? sharingMode(shared, sharing.user) : undefined
+  if (accessOpen !== null && (shareMode !== 'view' || narrow || accessOpen !== shared?.name)) {
+    setAccessOpen(null)
+  }
   const openShare = (opener: HTMLElement) =>
     sharing?.onShare(() => (opener.isConnected ? opener : pill.current))
   let shareControl: ReactNode = null
@@ -323,18 +327,25 @@ export function EditorHeader({
         mode="share"
         branch={shared}
         getUserMetadata={sharing.getUserMetadata}
+        viewerId={sharing.user?.userId}
         onClick={(event) => openShare(event.currentTarget)}
       />
     )
   } else if (!narrow && shared && shareMode === 'view') {
     shareControl = (
-      <WhoHasAccessPopover branch={shared} opened={accessOpen} onChange={setAccessOpen}>
+      <WhoHasAccessPopover
+        branch={shared}
+        viewerId={sharing.user?.userId}
+        opened={accessOpen === shared.name}
+        onChange={(open) => setAccessOpen(open ? shared.name : null)}
+      >
         <BranchShareControl
           ref={shareControlRef}
           mode="view"
           branch={shared}
           getUserMetadata={sharing.getUserMetadata}
-          onClick={() => setAccessOpen((open) => !open)}
+          viewerId={sharing.user?.userId}
+          onClick={() => setAccessOpen((open) => (open === shared.name ? null : shared.name))}
         />
       </WhoHasAccessPopover>
     )
@@ -356,7 +367,12 @@ export function EditorHeader({
             getLatest={narrow ? baseUpdate : undefined}
             share={
               narrow && shared && shareMode && sharing
-                ? { mode: shareMode, branch: shared, onShare: sharing.onShare }
+                ? {
+                    mode: shareMode,
+                    branch: shared,
+                    onShare: sharing.onShare,
+                    viewerId: sharing.user?.userId,
+                  }
                 : undefined
             }
           />

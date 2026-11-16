@@ -5,7 +5,7 @@ import { Avatar, Button, Skeleton } from '@mantine/core'
 import { IconWorld } from '@tabler/icons-react'
 
 import type { UserSearchResult } from '../../auth/types'
-import { personName } from '../../auth/person-name'
+import { personInitials, personName } from '../../auth/person-name'
 import type { BranchSummary } from '../BranchManager'
 import { EDITOR_ACTIONS } from '../copy'
 import { joinNames } from './share-staging'
@@ -41,13 +41,15 @@ export function accessPeople(b: SharedSummary): { users: string[]; groups: strin
 /**
  * The control's accessible name, which starts with its visible label: "Share…, 4 people have
  * access", or "Who has access: Ana Lee, Ben Ortiz and 2 others". `named` are the people the lookup
- * could name, in list order; groups and anyone unnamed count among the others.
+ * could name, in list order; groups and anyone unnamed count among the others. The viewer, when
+ * listed, is "you", first.
  * @internal Exported for tests.
  */
 export function shareControlName(
   mode: 'share' | 'view',
   b: SharedSummary,
-  named: readonly string[],
+  named: ReadonlyArray<{ id: string; name: string }>,
+  viewerId?: string,
 ): string {
   const { users, groups } = accessPeople(b)
   const open = !!b.sharing?.openToEveryone
@@ -66,7 +68,11 @@ export function shareControlName(
   }
   if (open) return 'Who has access: anyone who can sign in'
   if (total === 0) return 'Who has access: no one is listed'
-  const shown = named.slice(0, NAMED_IN_LABEL)
+  const you = !!viewerId && users.includes(viewerId) ? ['you'] : []
+  const shown = [...you, ...named.filter((p) => p.id !== viewerId).map((p) => p.name)].slice(
+    0,
+    NAMED_IN_LABEL,
+  )
   const others = total - shown.length
   if (shown.length === 0) return `Who has access: ${counted}`
   if (others === 0) return `Who has access: ${joinNames(shown)}`
@@ -74,31 +80,41 @@ export function shareControlName(
 }
 
 /**
- * The people behind `ids`, as the lookup answers, in order; null until it has. Asked again for each
- * `listing`, since a lookup that reads a cache the listing seeds can know more once it arrives.
+ * The people behind `ids`, as the lookup answers, by id; null until it first has. While anyone is
+ * still unnamed, it asks again for each `listing`, as a lookup that reads a cache the listing seeds
+ * can know more once it arrives; a later answer never takes back a name an earlier one gave.
  */
 function useLookedUp(
   ids: readonly string[],
   getUserMetadata: (userId: string) => Promise<UserSearchResult | null>,
   listing: unknown,
-): Array<UserSearchResult | null> | null {
+): Readonly<Record<string, UserSearchResult | null>> | null {
   const key = ids.join('\n')
-  const [result, setResult] = useState<{ key: string; people: Array<UserSearchResult | null> }>()
+  const [result, setResult] = useState<{
+    key: string
+    people: Record<string, UserSearchResult | null>
+  }>()
+  const known = result?.key === key ? result.people : null
+  const complete = !!known && ids.every((id) => known[id])
   useEffect(() => {
+    if (complete) return
     let current = true
-    void Promise.all(
-      key
-        .split('\n')
-        .filter(Boolean)
-        .map((id) => getUserMetadata(id).catch(() => null)),
-    ).then((people) => {
-      if (current) setResult({ key, people })
+    const wanted = key.split('\n').filter(Boolean)
+    void Promise.all(wanted.map((id) => getUserMetadata(id).catch(() => null))).then((found) => {
+      if (!current) return
+      setResult((prev) => {
+        const earlier = prev?.key === key ? prev.people : {}
+        const people = Object.fromEntries(
+          wanted.map((id, i) => [id, found[i] ?? earlier[id] ?? null]),
+        )
+        return { key, people }
+      })
     })
     return () => {
       current = false
     }
-  }, [key, getUserMetadata, listing])
-  return result?.key === key ? result.people : null
+  }, [key, getUserMetadata, listing, complete])
+  return known
 }
 
 export interface BranchShareControlProps {
@@ -106,6 +122,7 @@ export interface BranchShareControlProps {
   branch: SharedSummary
   getUserMetadata: (userId: string) => Promise<UserSearchResult | null>
   onClick: (event: React.MouseEvent<HTMLButtonElement>) => void
+  viewerId?: string
 }
 
 /**
@@ -114,13 +131,17 @@ export interface BranchShareControlProps {
  * may open the branch but not add people. Its width is fixed, so names arriving move nothing.
  */
 export const BranchShareControl = forwardRef<HTMLButtonElement, BranchShareControlProps>(
-  function BranchShareControl({ mode, branch, getUserMetadata, onClick, ...popoverTarget }, ref) {
+  function BranchShareControl(
+    { mode, branch, getUserMetadata, onClick, viewerId, ...popoverTarget },
+    ref,
+  ) {
     const { users, groups } = accessPeople(branch)
     const open = !!branch.sharing?.openToEveryone
     const people = useLookedUp(users, getUserMetadata, branch)
-    const named = (people ?? []).flatMap((person, i) => {
-      const name = person && personName(users[i], person.name)
-      return name ? [name] : []
+    const named = users.flatMap((id) => {
+      const person = people?.[id]
+      const name = person && personName(id, person.name)
+      return name ? [{ id, name }] : []
     })
     const total = users.length + groups.length
     const shownUsers = users.slice(0, SHOWN_AVATARS)
@@ -135,7 +156,7 @@ export const BranchShareControl = forwardRef<HTMLButtonElement, BranchShareContr
         px={10}
         justify="flex-start"
         style={{ flexShrink: 0 }}
-        aria-label={shareControlName(mode, branch, named)}
+        aria-label={shareControlName(mode, branch, named, viewerId)}
         aria-haspopup="dialog"
         onClick={onClick}
         data-testid="branch-share-control"
@@ -145,12 +166,15 @@ export const BranchShareControl = forwardRef<HTMLButtonElement, BranchShareContr
             <IconWorld size={18} aria-hidden="true" />
           ) : (
             <Avatar.Group spacing={8} aria-hidden="true">
-              {shownUsers.map((id, i) => {
-                const person = people?.[i]
-                const name = (person && personName(id, person.name)) ?? NAME_UNAVAILABLE
+              {shownUsers.map((id) => {
+                const person = people?.[id]
+                // Blank until the lookup answers, then the name's initials or the fallback's.
+                const name = people
+                  ? ((person && personName(id, person.name)) ?? NAME_UNAVAILABLE)
+                  : undefined
                 return (
                   <Avatar key={id} src={person?.avatarUrl} alt="" size={24} radius="xl">
-                    {name.charAt(0)}
+                    {name ? personInitials(name) : ' '}
                   </Avatar>
                 )
               })}
