@@ -21,7 +21,7 @@ import type { BranchContext, BranchMetadata } from '../types'
 import type { CanopyUser } from '../user'
 import { setBranchAccessLogSink } from '../utils/access-log'
 import { ADMIN_ROUTES } from './admin'
-import { updateBranchAccessHandler, type UpdateBranchAccessBody } from './branch'
+import { BRANCH_ROUTES, updateBranchAccessHandler, type UpdateBranchAccessBody } from './branch'
 import { changeBranchAccess, initialBranchAccess } from './branch-access'
 import {
   BRANCH_PEOPLE_ROUTES,
@@ -702,6 +702,132 @@ describe('GET /:branch/access', () => {
       searchable: 'nobody',
       addableByEmail: 'all-users',
     })
+  })
+})
+
+describe('find and PATCH agree', () => {
+  it('answers an archived branch and the base branch with the code a change gets', async () => {
+    await addBranch('feature/old', { status: 'archived' })
+    await addBranch('main', { createdBy: SYSTEM_USER_ID, baseBranch: 'main' })
+
+    for (const [actor, branch, code] of [
+      [owner, 'feature/old', 'BRANCH_ARCHIVED'],
+      [admin, 'main', 'BRANCH_NOT_SHAREABLE'],
+    ] as const) {
+      expect(await find(actor, branch, 'Co')).toMatchObject({ ok: false, status: 403, code })
+      expect(await patch(actor, branch, { add: { users: ['colleague'] } })).toMatchObject({
+        ok: false,
+        status: 403,
+        code,
+      })
+    }
+  })
+
+  it('takes an address with letters beyond ASCII alike in find, PATCH and create', async () => {
+    const rene = person('rene', 'René Roy', 'rené@example.fr')
+    const plain = plainPlugin()
+    authPlugin = {
+      ...plain,
+      searchUsers: async (query, limit) => [
+        ...(await plain.searchUsers(query, limit)),
+        ...(rene.email.includes(query) ? [rene] : []),
+      ],
+      getUserMetadata: async (id) => (id === 'rene' ? rene : plain.getUserMetadata(id)),
+    }
+    const context = await addBranch('feature/x')
+    const body = { add: { emails: ['rené@example.fr'] } }
+
+    expect((await find(owner, 'feature/x', 'rené@example.fr')).data?.people).toEqual([
+      { id: 'rene', name: 'René Roy', addByAddress: true },
+    ])
+    expect(BRANCH_ROUTES.updateAccess.body?.safeParse(body).success).toBe(true)
+    expect(
+      BRANCH_ROUTES.create.body?.safeParse({ branch: 'feature/y', access: body }).success,
+    ).toBe(true)
+    expect((await patch(owner, 'feature/x', body)).ok).toBe(true)
+    expect((await onDisk(context))?.access.allowedUsers).toEqual(['owner', 'rene'])
+    for (const notAnAddress of ['rené@example', 'rené @example.fr']) {
+      expect(
+        BRANCH_ROUTES.updateAccess.body?.safeParse({ add: { emails: [notAnAddress] } }).success,
+      ).toBe(false)
+    }
+  })
+
+  it("adds by id whom an address finds where search finds 'all-users'", async () => {
+    sharing({ searchable: 'all-users' })
+    await addBranch('feature/x')
+
+    expect((await find(owner, 'feature/x', 'otto@example.org')).data?.people).toEqual([
+      { id: 'outsider', name: 'Otto Outsider' },
+    ])
+  })
+})
+
+describe('GET /:branch/access: who would lose access', () => {
+  beforeEach(async () => {
+    config = { ...config, defaultBranchAccess: 'allow' }
+    await fs.writeFile(
+      path.join(settingsRoot, 'groups.json'),
+      JSON.stringify({
+        updatedAt: new Date().toISOString(),
+        updatedBy: 'admin',
+        groups: [
+          { id: RESERVED_GROUPS.ADMINS, name: 'Admins', members: ['admin'] },
+          { id: RESERVED_GROUPS.REVIEWERS, name: 'Reviewers', members: ['reviewer'] },
+        ],
+      }),
+    )
+  })
+
+  const openBranch = () =>
+    addBranch('feature/x', {
+      editors: [
+        'owner',
+        'colleague',
+        'admin',
+        'reviewer',
+        'pal',
+        'outsider',
+        SYSTEM_USER_ID,
+        'unknown',
+        'colleague',
+      ],
+      access: {
+        excluded: { pal: { by: 'owner', at: '2026-11-04T00:00:00.000Z', byAdmin: false } },
+      },
+    })
+
+  it('names the editors limiting an open branch would shut out, to its owner and admins', async () => {
+    await openBranch()
+
+    expect((await getAccess(owner, 'feature/x')).data?.losingAccess).toEqual([
+      { id: 'colleague', name: 'Cole Ortiz' },
+      { id: 'outsider', name: 'Otto Outsider' },
+    ])
+    expect((await getAccess(admin, 'feature/x')).data?.losingAccess).toEqual([
+      { id: 'colleague', name: 'Cole Ortiz' },
+      { id: 'outsider', name: 'Otto Outsider' },
+    ])
+  })
+
+  it('leaves the viewer out, and tells no one who cannot limit the branch', async () => {
+    await openBranch()
+
+    expect(
+      (await getAccess(user('outsider', [RESERVED_GROUPS.ADMINS]), 'feature/x')).data?.losingAccess,
+    ).toEqual([{ id: 'colleague', name: 'Cole Ortiz' }])
+    expect((await getAccess(user('colleague'), 'feature/x')).data).not.toHaveProperty(
+      'losingAccess',
+    )
+  })
+
+  it('says nothing of a branch already limited to its list', async () => {
+    await addBranch('feature/x', {
+      editors: ['colleague'],
+      access: { restricted: true, allowedUsers: ['owner'] },
+    })
+
+    expect((await getAccess(owner, 'feature/x')).data).not.toHaveProperty('losingAccess')
   })
 })
 

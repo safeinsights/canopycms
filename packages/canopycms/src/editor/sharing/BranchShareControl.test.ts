@@ -62,6 +62,23 @@ describe('shareControlName', () => {
     expect(shareControlName('share', open, [])).toBe('Share…, anyone who can sign in has access')
     expect(shareControlName('view', open, [])).toBe('Who has access: anyone who can sign in')
   })
+
+  it('names whom an open branch still keeps out, to its owner and admins, agreeing in number', () => {
+    const open = (users: number, groups: number): SharedSummary => ({
+      createdBy: 'ana',
+      access: { users: [], groups: [], removed: { users, groups } },
+      sharing: { ...rights, restricted: false, openToEveryone: true },
+    })
+    expect(shareControlName('share', open(1, 0), [])).toBe(
+      'Share…, anyone who can sign in has access, except the 1 person removed from this branch',
+    )
+    expect(shareControlName('share', open(2, 1), [])).toBe(
+      'Share…, anyone who can sign in has access, except the 2 people and 1 group removed from this branch',
+    )
+    expect(shareControlName('share', open(0, 0), [])).toBe(
+      'Share…, anyone who can sign in has access',
+    )
+  })
 })
 
 describe('shareControlName with no one listed', () => {

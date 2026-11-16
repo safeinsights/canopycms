@@ -39,6 +39,9 @@ const saveMayHaveLandedToastId = (contentId: string) => `canopy-save-may-have-la
 
 const saveTimedOutToastId = (contentId: string) => `canopy-save-timed-out:${contentId}`
 
+/** One per branch, so repeated refusals don't stack and a switch away can close it. */
+const branchLockoutToastId = (branch: string) => `canopy-branch-lockout:${branch}`
+
 /** @internal Exported for tests. A save refused because the entry was deleted. */
 export const ENTRY_DELETED_MESSAGE =
   'This entry was deleted since you opened it, so it was not saved. Your changes are still in the form until the content list next refreshes and closes it: choose "Save as new entry" to keep them.'
@@ -148,6 +151,18 @@ const parsePersistedDrafts = (
   return { drafts, baseVersions }
 }
 
+/** Refusals of a save that mean the viewer may no longer open the branch at all. */
+const BRANCH_LOCKOUT_CODES: ReadonlySet<ApiErrorCode> = new Set([
+  'BRANCH_ACCESS_DENIED',
+  'BRANCH_LOCKED_DOWN',
+])
+
+const isBranchLockout = (err: unknown): boolean =>
+  err instanceof SaveApiError &&
+  err.status === 403 &&
+  !!err.code &&
+  BRANCH_LOCKOUT_CODES.has(err.code)
+
 export interface UseDraftManagerOptions {
   branchName: string
   selectedPath: string
@@ -182,6 +197,11 @@ export interface UseDraftManagerOptions {
   onSaved?: () => void
   /** A save was refused for field errors, which the form now shows. */
   onSaveBlocked?: () => void
+  /**
+   * A save was refused because the viewer may no longer open the branch. The caller reads the
+   * branch list again, so the branch's not-available state takes over.
+   */
+  onBranchAccessLost?: () => void
   /**
    * Fired when drafts are thrown away for the server's copy: Discard (one entry, or every entry
    * when `contentId` is undefined) and Reload. Anything built on the discarded draft, such as an
@@ -475,6 +495,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       timedOutSavesRef.current.clear()
       for (const id of goneEntriesRef.current) notifications.hide(entryGoneToastId(id))
       goneEntriesRef.current.clear()
+      notifications.hide(branchLockoutToastId(prevBranchRef.current))
       // Its entries, and their "Open" and "Save as new entry" buttons, are the old branch's.
       clearSaveAllResult()
       reconciledDraftIdsRef.current = new Set()
@@ -1123,7 +1144,9 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         })
       } else {
         const explained = isValidation || isForbidden || isUnavailable
+        const lostBranch = isBranchLockout(err)
         notifications.show({
+          ...(lostBranch ? { id: branchLockoutToastId(branch) } : {}),
           ...(isValidation ? { title: 'Save rejected' } : {}),
           ...(isForbidden ? { title: 'Save not allowed' } : {}),
           ...(isUnavailable ? { title: 'Not saved yet' } : {}),
@@ -1132,9 +1155,11 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
               err.message)
             : 'Save failed',
           color: isUnavailable ? 'yellow' : 'red',
-          autoClose: getNotificationDuration(explained ? 8000 : 6000),
+          // No longer being able to open the branch needs the user to choose another.
+          autoClose: lostBranch ? false : getNotificationDuration(explained ? 8000 : 6000),
           withCloseButton: true,
         })
+        if (lostBranch) latestOptionsRef.current.onBranchAccessLost?.()
       }
     } finally {
       singleSaveRef.current = false
@@ -1170,7 +1195,9 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   const saveOneOfAll = async (
     entry: EditorEntry,
     branch: string,
-  ): Promise<{ saved: true } | { saved: false; failure: SaveAllFailure } | undefined> => {
+  ): Promise<
+    { saved: true } | { saved: false; failure: SaveAllFailure; lockout?: true } | undefined
+  > => {
     const id = entry.contentId
     const sent =
       latestRef.current.drafts[id] ??
@@ -1251,6 +1278,9 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       console.error(err)
       if (!onBranch()) return undefined
       const outcome = classifySaveAllError(err, timedOutSavesRef.current.has(id))
+      if (outcome.kind === 'blocked' && isBranchLockout(err)) {
+        return { ...fail('blocked', outcome.reason), lockout: true }
+      }
       switch (outcome.kind) {
         case 'unanswered': {
           const landed = await settleUnansweredSave(entry, sent)
@@ -1325,6 +1355,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       if (queue.length === 0) return result
       clearSaveAllResult()
       setSaveAllProgress({ done: 0, total: queue.length })
+      let lockedOut = false
       for (const [index, entry] of queue.entries()) {
         if (latestOptionsRef.current.branchName !== branch || !mountedRef.current) return undefined
         const outcome = await saveOneOfAll(entry, branch)
@@ -1332,6 +1363,20 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
           result.saved.push({ contentId: entry.contentId, label: entry.label, path: entry.path })
         } else if (outcome) {
           result.failed.push(outcome.failure)
+          // A branch that refuses this viewer refuses the rest too, so none is sent.
+          if (outcome.lockout) {
+            lockedOut = true
+            for (const rest of queue.slice(index + 1)) {
+              result.failed.push({
+                contentId: rest.contentId,
+                label: rest.label,
+                path: rest.path,
+                kind: 'blocked',
+                reason: outcome.failure.reason,
+              })
+            }
+            break
+          }
         }
         setSaveAllProgress({ done: index + 1, total: queue.length })
       }
@@ -1348,6 +1393,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       )
       result.total = result.saved.length + result.failed.length
       if (result.saved.length > 0) latestOptionsRef.current.onSaved?.()
+      if (lockedOut) latestOptionsRef.current.onBranchAccessLost?.()
       return result
     } finally {
       saveAllRunningRef.current = false

@@ -21,7 +21,6 @@ import {
   getBranchProtection,
   hasAccessList,
   isAdmin,
-  isLockedOutOfBranch,
   resolveBranchSharing,
   type BranchAccessChange,
   type BranchAccessChangeResult,
@@ -34,7 +33,8 @@ import { lookupUsersMetadata } from '../auth/user-metadata-lookup'
 import { logBranchAccessChange } from '../utils/access-log'
 import { getErrorMessage } from '../utils/error'
 import { canopyLogWarn } from '../utils/logger'
-import { loadCmsUserIds, lookupEmails, RATE_LIMITED_MESSAGE } from './people'
+import { branchAccessDenial } from './guards'
+import { addsAnyKnownAccount, loadCmsUserIds, lookupEmails, RATE_LIMITED_MESSAGE } from './people'
 
 export interface AccessRefused {
   status: 400 | 403 | 409 | 429
@@ -76,10 +76,10 @@ async function unknownUsers(
 }
 
 /**
- * Refuses users the sign-in provider does not know, and, for anyone but an admin, users who don't
- * work in this CMS ({@link loadCmsUserIds}) unless `vouched`. An id learned elsewhere (a listing, a
- * pull request) therefore adds no one a non-admin could not otherwise reach, bar someone this
- * branch's list once held.
+ * Refuses users the sign-in provider does not know, and, unless `actor` may add any account it
+ * knows ({@link addsAnyKnownAccount}), users who don't work in this CMS ({@link loadCmsUserIds})
+ * unless `vouched`. An id learned elsewhere (a listing, a pull request) therefore adds no one
+ * `actor`'s name search could not find, bar someone this branch's list once held.
  */
 async function checkUsersToAdd(
   ctx: ApiContext,
@@ -92,7 +92,7 @@ async function checkUsersToAdd(
   if (unknown.length > 0) {
     return refused(400, 'USER_NOT_FOUND', 'Some of these people could not be found.', unknown)
   }
-  if (isAdmin(actor.groups)) return null
+  if (addsAnyKnownAccount(ctx, actor)) return null
   const cmsUsers = await loadCmsUserIds(ctx)
   const outside = userIds.filter((id) => !cmsUsers.has(id) && !vouched.has(id))
   return outside.length > 0
@@ -105,7 +105,6 @@ async function checkUsersToAdd(
     : null
 }
 
-/** What `actor` may do to `branch`'s list (authorization/branch-sharing.ts). */
 /** Who besides admins may add people to `branch` ({@link effectiveAddBy}). */
 export const addByFor = (
   ctx: ApiContext,
@@ -117,6 +116,7 @@ export const addByFor = (
     whoCanAdd: resolveBranchSharing(ctx.services.config).whoCanAdd,
   })
 
+/** What `actor` may do to `branch`'s list (authorization/branch-sharing.ts). */
 export const rightsFor = (
   ctx: ApiContext,
   actor: CanopyUser,
@@ -129,39 +129,15 @@ export const rightsFor = (
   })
 
 /**
- * A refusal for a caller the branch's access check turns away: a lockdown is named only to someone
- * the list would otherwise admit, so it tells no one else anything about the branch.
+ * Why `actor` may not touch this branch's list at all, before any change is weighed. The finder
+ * asks it first too (api/branch-people.ts), so both answer one refusal with one code.
  */
-function branchAccessRefusal(
+export function refuseOutright(
   ctx: ApiContext,
   actor: CanopyUser,
   context: BranchContext,
 ): AccessRefused | null {
-  if (ctx.services.checkBranchAccess(context, actor).allowed) return null
-  const unlocked: BranchContext = {
-    ...context,
-    branch: {
-      ...context.branch,
-      access: { ...context.branch.access, managerOrAdminAllowed: false },
-    },
-  }
-  return isLockedOutOfBranch(context.branch.access, actor.groups) &&
-    ctx.services.checkBranchAccess(unlocked, actor).allowed
-    ? refused(
-        403,
-        'BRANCH_LOCKED_DOWN',
-        'An admin has limited this branch to admins and reviewers.',
-      )
-    : refused(403, 'BRANCH_ACCESS_DENIED', "You don't have access to this branch.")
-}
-
-/** Why `actor` may not touch this branch's list at all, before any change is weighed. */
-function refuseOutright(
-  ctx: ApiContext,
-  actor: CanopyUser,
-  context: BranchContext,
-): AccessRefused | null {
-  const denied = branchAccessRefusal(ctx, actor, context)
+  const denied = branchAccessDenial(ctx, context, actor)
   if (denied) return denied
   const { branch } = context
   const admin = isAdmin(actor.groups)
@@ -366,6 +342,7 @@ export async function changeBranchAccess(
   let saved: BranchMetadata | undefined
   try {
     const written = await metadata.update((existing) => {
+      outcome.applied = null
       if (!existing) return null
       outcome.current = existing.branch
       if (findsSomeoneRemoved(existing.branch)) throw new AccessChangeRefusedError(noSuchAddress)
@@ -427,7 +404,7 @@ export async function initialBranchAccess(
   })
   const applied = applyAccessChange({}, resolved.change, {
     actor,
-    rights: { isOwner: true, isMember: false, canAdd: true, canManage: true },
+    rights: { isOwner: true, isMember: false, canAdd: true, canRemoveOwn: true, canManage: true },
     creator: actor.userId,
     defaultAccess: ctx.services.config.defaultBranchAccess ?? 'deny',
     now: new Date().toISOString(),

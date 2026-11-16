@@ -46,7 +46,7 @@ import {
   type BaseUpdateControl,
   type BaseUpdateWait,
 } from '../base-update-wait'
-import { useFocusHandOff, useMenuItemFocusReturn } from '../utils/focus-return'
+import { useFocusHandOff, useMenuItemFocusReturn, useStandInOnLeave } from '../utils/focus-return'
 import type { UserSearchResult } from '../../auth/types'
 import type { BranchSummary, UserContext } from '../BranchManager'
 import { BranchShareControl, BranchShareControlSkeleton } from '../sharing/BranchShareControl'
@@ -317,13 +317,18 @@ export function EditorHeader({
   }
   const openShare = (opener: HTMLElement) =>
     sharing?.onShare(() => (opener.isConnected ? opener : pill.current))
+  // Focus Share… holds as it leaves the bar goes to the pill, or to Share… remounted in its place.
+  const shareRef = useMergedRef(
+    shareControlRef,
+    useStandInOnLeave<HTMLButtonElement>(() => pill.current),
+  )
   let shareControl: ReactNode = null
   if (!narrow && sharing?.loading && !shared && branchName) {
     shareControl = <BranchShareControlSkeleton />
   } else if (!narrow && shared && shareMode === 'share') {
     shareControl = (
       <BranchShareControl
-        ref={shareControlRef}
+        ref={shareRef}
         mode="share"
         branch={shared}
         getUserMetadata={sharing.getUserMetadata}
@@ -340,7 +345,7 @@ export function EditorHeader({
         onChange={(open) => setAccessOpen(open ? shared.name : null)}
       >
         <BranchShareControl
-          ref={shareControlRef}
+          ref={shareRef}
           mode="view"
           branch={shared}
           getUserMetadata={sharing.getUserMetadata}

@@ -58,6 +58,8 @@ const OWNER_SHARING: NonNullable<ShareTarget['sharing']> = {
   openToEveryone: false,
   addBy: 'members',
 }
+const DANA = { id: 'dana', name: 'Dana Park' }
+const CHEN = { id: 'chen', name: 'Chen Wu' }
 const names: Record<string, string> = { dana: 'Dana Park', chen: 'Chen Wu', ana: 'Ana Lee' }
 const lookup = async (id: string): Promise<UserSearchResult | null> =>
   names[id] ? { id, name: names[id], email: '' } : null
@@ -123,6 +125,18 @@ const footerClose = () =>
 const modalClose = () =>
   screen.getAllByRole('button', { name: 'Close' }).find((button) => button.textContent !== 'Close')!
 const picker = () => screen.getByRole('textbox', { name: 'Add people or groups' })
+/** A failed add by address closes the list, which would cover the error, leaving focus in the field. */
+const expectListClosedOverError = () => {
+  expect(screen.queryByRole('listbox')).toBeNull()
+  expect(screen.queryByRole('option')).toBeNull()
+  expect(document.activeElement).toBe(picker())
+}
+/** The picker's own error, which names it by `aria-describedby`. */
+const fieldError = () =>
+  (picker().getAttribute('aria-describedby') ?? '')
+    .split(' ')
+    .map((id) => document.getElementById(id))
+    .find((node) => node?.className.includes('error'))?.textContent
 const deferred = <T,>() => {
   let resolve: (value: T) => void = () => {}
   const promise = new Promise<T>((r) => {
@@ -429,7 +443,9 @@ describe('ShareBranchDialog: adding people', () => {
     )
     await userEvent.click(await screen.findByRole('option', { name: 'Add x@example.org' }))
 
-    expect(await screen.findByText(message)).toBeTruthy()
+    await waitFor(() => expect(fieldError()).toBe(message))
+    expect(status().textContent).toBe(message)
+    expectListClosedOverError()
   })
 
   it('says when email lookups are over their limit', async () => {
@@ -443,9 +459,10 @@ describe('ShareBranchDialog: adding people', () => {
     )
     await userEvent.click(await screen.findByRole('option', { name: 'Add x@example.org' }))
 
-    expect(
-      await screen.findByText('Too many email lookups. Try again in a few minutes.'),
-    ).toBeTruthy()
+    const message = 'Too many email lookups. Try again in a few minutes.'
+    await waitFor(() => expect(fieldError()).toBe(message))
+    expect(status().textContent).toBe(message)
+    expectListClosedOverError()
   })
 
   it("asks only for an address where names can't be searched", async () => {
@@ -646,7 +663,7 @@ describe('ShareBranchDialog: removing and staging', () => {
     expect(api.branches.updateAccess.mock.calls[0][1]).toEqual({ add: { users: ['cole'] } })
   })
 
-  it('focuses the input when no row follows the removed one', async () => {
+  it("focuses the removed row's own Undo when no row follows it", async () => {
     setup()
     await loaded()
 
@@ -654,9 +671,25 @@ describe('ShareBranchDialog: removing and staging', () => {
 
     await waitFor(() =>
       expect(document.activeElement).toBe(
-        screen.getByRole('textbox', { name: 'Add people or groups' }),
+        screen.getByRole('button', { name: 'Undo removing Marketing team' }),
       ),
     )
+  })
+
+  it('focuses the input when the last row was an unsaved add, which leaves no row', async () => {
+    const { api } = setup()
+    api.branches.findPeople.mockResolvedValue(
+      ok({ people: [{ id: 'cole', name: 'Cole Ortiz' }], groups: [] }),
+    )
+    await loaded()
+    await userEvent.type(picker(), 'Co')
+    await userEvent.click(await screen.findByRole('option', { name: /Cole Ortiz/ }))
+    const removes = screen.getAllByRole('button', { name: /^Remove / })
+    expect(removes.at(-1)).toBe(screen.getByRole('button', { name: 'Remove Cole Ortiz' }))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Remove Cole Ortiz' }))
+
+    await waitFor(() => expect(document.activeElement).toBe(picker()))
   })
 
   it('discards staged edits: the dismiss button says so and sends nothing', async () => {
@@ -714,6 +747,9 @@ describe('ShareBranchDialog: removing and staging', () => {
     expect(warning.parentElement?.querySelector('svg')?.getAttribute('stroke')).toBe(
       'var(--mantine-color-text)',
     )
+    expect(status().textContent).toBe(
+      "Removed Marketing team. You can't add Marketing team back yourself.",
+    )
   })
 
   it('does not warn about a group the owner belongs to', async () => {
@@ -751,7 +787,9 @@ describe('ShareBranchDialog: removing and staging', () => {
     await loaded()
 
     fireEvent.click(screen.getByRole('button', { name: 'Removed (2)' }))
-    expect(within(row('Sam Reed')).getByText('Removed by an admin')).toBeTruthy()
+    expect(
+      within(row('Sam Reed')).getByText('Removed by an admin. Only an admin can allow them back.'),
+    ).toBeTruthy()
     expect(within(row('Sam Reed')).queryByRole('button')).toBeNull()
     expect(within(row('Pat Alvarez')).getByText('Removed by you')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Allow again: Pat Alvarez' }))
@@ -762,6 +800,57 @@ describe('ShareBranchDialog: removing and staging', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
     await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(1))
     expect(api.branches.updateAccess.mock.calls[0][1]).toEqual({ add: { users: ['pat'] } })
+  })
+
+  it('tells an owner only an admin can allow back a group an admin removed', async () => {
+    setup({
+      data: access({
+        excluded: [
+          {
+            kind: 'group',
+            id: 'ops',
+            name: 'Ops',
+            by: { id: 'root', name: 'Ada Admin' },
+            at: AT,
+            byAdmin: true,
+          },
+        ],
+      }),
+    })
+    await loaded()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Removed (1)' }))
+    expect(
+      within(row('Ops')).getByText('Removed by an admin. Only an admin can allow it back.'),
+    ).toBeTruthy()
+    expect(within(row('Ops')).queryByRole('button')).toBeNull()
+  })
+
+  it("gives an admin Allow again on an admin's removal, without saying only an admin can", async () => {
+    setup({
+      user: { userId: 'root', groups: [RESERVED_GROUPS.ADMINS] },
+      data: access({
+        rights: { isOwner: false, canAdd: true, canManage: true },
+        excluded: [
+          {
+            kind: 'user',
+            id: 'sam',
+            name: 'Sam Reed',
+            by: { id: 'root', name: 'Ada Admin' },
+            at: AT,
+            byAdmin: true,
+          },
+        ],
+      }),
+    })
+    await loaded()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Removed (1)' }))
+    expect(within(row('Sam Reed')).getByText('Removed by you')).toBeTruthy()
+    expect(within(row('Sam Reed')).queryByText(/Only an admin/)).toBeNull()
+    expect(
+      within(row('Sam Reed')).getByRole('button', { name: 'Allow again: Sam Reed' }),
+    ).toBeTruthy()
   })
 
   it('only lifts the exclusion of a group the owner is not in, and says it is not added back', async () => {
@@ -881,7 +970,7 @@ describe("ShareBranchDialog: general access on an 'allow' site", () => {
   })
 
   it('names the editors who would lose access before the first add, and adds them on request', async () => {
-    const { api } = setup({ data: open, branch: { editors: ['ana', 'dana', 'chen'] } })
+    const { api } = setup({ data: { ...open, losingAccess: [DANA, CHEN] } })
     api.branches.findPeople.mockResolvedValue(
       ok({ people: [{ id: 'cole', name: 'Cole Ortiz' }], groups: [] }),
     )
@@ -910,7 +999,7 @@ describe("ShareBranchDialog: general access on an 'allow' site", () => {
   })
 
   it('warns on switching to "Only people listed here" too, and sends restricted', async () => {
-    const { api } = setup({ data: open, branch: { editors: ['dana'] } })
+    const { api } = setup({ data: { ...open, losingAccess: [DANA] } })
     fireEvent.click(await screen.findByRole('radio', { name: 'Only people listed here' }))
 
     await waitFor(() =>
@@ -930,10 +1019,57 @@ describe("ShareBranchDialog: general access on an 'allow' site", () => {
 
     fireEvent.click(screen.getByRole('radio', { name: 'Anyone who can sign in to the editor' }))
 
-    expect(within(screen.getByTestId('share-status-line')).getByText(WIDENING_LINE)).toBeTruthy()
+    expect(said(WIDENING_LINE)).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
     await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(1))
     expect(api.branches.updateAccess.mock.calls[0][1]).toEqual({ restricted: false })
+  })
+
+  it('says the removed stay out when widening, opens "Removed", and announces it', async () => {
+    const removedBy = { by: { id: 'ana', name: 'Ana Lee' }, at: AT, byAdmin: false }
+    setup({
+      data: access({
+        defaultAccess: 'allow',
+        excluded: [{ kind: 'user', id: 'pat', name: 'Pat Alvarez', ...removedBy }],
+      }),
+    })
+    await loaded()
+    expect(screen.queryByRole('button', { name: 'Allow again: Pat Alvarez' })).toBeNull()
+    expect(
+      screen.getByText('Except the 1 person removed from this branch (see "Removed").'),
+    ).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Anyone who can sign in to the editor' }))
+
+    expect(
+      said(
+        'Everyone who can sign in will be able to open this branch, except the 1 person removed from this branch (see "Removed"), and the list will be cleared.',
+      ),
+    ).toBe(true)
+    expect(screen.getByRole('button', { name: 'Allow again: Pat Alvarez' })).toBeTruthy()
+  })
+
+  it('counts removed people and groups in agreement when widening', async () => {
+    const removedBy = { by: { id: 'ana', name: 'Ana Lee' }, at: AT, byAdmin: false }
+    setup({
+      data: access({
+        defaultAccess: 'allow',
+        excluded: [
+          { kind: 'user', id: 'pat', name: 'Pat Alvarez', ...removedBy },
+          { kind: 'user', id: 'sam', name: 'Sam Reed', ...removedBy },
+          { kind: 'group', id: 'ops', name: 'Operations', ...removedBy },
+        ],
+      }),
+    })
+    await loaded()
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Anyone who can sign in to the editor' }))
+
+    expect(
+      said(
+        'Everyone who can sign in will be able to open this branch, except the 2 people and 1 group removed from this branch (see "Removed"), and the list will be cleared.',
+      ),
+    ).toBe(true)
   })
 
   it('gives way to a removal staged after "Anyone who can sign in", sending the removal', async () => {
@@ -970,10 +1106,16 @@ describe("ShareBranchDialog: general access on an 'allow' site", () => {
     })
     await loaded()
     fireEvent.click(screen.getByRole('radio', { name: 'Anyone who can sign in to the editor' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Removed (1)' }))
 
     fireEvent.click(screen.getByRole('button', { name: 'Allow again: Pat Alvarez' }))
-    expect(said('Pat Alvarez will be added back.')).toBe(true)
+    expect(
+      said(
+        "Pat Alvarez will be added back. Opening the branch to everyone can't be combined with other changes, so it stays limited to the people listed.",
+      ),
+    ).toBe(true)
+    expect(
+      (screen.getByRole('radio', { name: 'Only people listed here' }) as HTMLInputElement).checked,
+    ).toBe(true)
     fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
 
     await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(1))
@@ -989,24 +1131,17 @@ describe("ShareBranchDialog: general access on an 'allow' site", () => {
     expect(screen.getByRole('radiogroup', { name: 'Who can add people' })).toBeTruthy()
   })
 
-  it('names only editors who would lose access, skipping removed and system ids', async () => {
-    setup({
-      data: {
-        ...open,
-        excluded: [
-          {
-            kind: 'user',
-            id: 'chen',
-            name: 'Chen Wu',
-            by: { id: 'ana', name: 'Ana Lee' },
-            at: AT,
-            byAdmin: false,
-          },
-        ],
-      },
-      branch: { editors: ['dana', 'chen', 'canopycms-system', 'unknown'] },
+  it('names whom the server says would lose access, less anyone staged to be added', async () => {
+    const { api } = setup({
+      data: { ...open, losingAccess: [DANA, { id: 'cole', name: 'Cole Ortiz' }] },
     })
-    fireEvent.click(await screen.findByRole('radio', { name: 'Only people listed here' }))
+    api.branches.findPeople.mockResolvedValue(
+      ok({ people: [{ id: 'cole', name: 'Cole Ortiz' }], groups: [] }),
+    )
+    await screen.findByRole('radio', { name: 'Only people listed here' })
+
+    await userEvent.type(picker(), 'Co')
+    await userEvent.click(await screen.findByRole('option', { name: /Cole Ortiz/ }))
 
     await waitFor(() =>
       expect(screen.getByTestId('share-narrowing').textContent).toContain(
@@ -1016,7 +1151,7 @@ describe("ShareBranchDialog: general access on an 'allow' site", () => {
   })
 
   it('says editors may lose access when a group being added could hold them', async () => {
-    const { api } = setup({ data: open, branch: { editors: ['dana'] } })
+    const { api } = setup({ data: { ...open, losingAccess: [DANA] } })
     api.branches.findPeople.mockResolvedValue(
       ok({ people: [], groups: [{ id: 'design', name: 'Design' }] }),
     )
@@ -1116,7 +1251,9 @@ describe('ShareBranchDialog: states', () => {
     const alert = await screen.findByTestId('share-load-failed')
     expect(alert.textContent).toContain("Who has access couldn't be loaded.")
     expect((picker() as HTMLInputElement).disabled).toBe(true)
-    expect(screen.getAllByText("Who has access hasn't loaded yet. Retry above.")).toHaveLength(1)
+    // The picker sits above its Retry; the tooltip on Update access, below it.
+    expect(screen.getAllByText("Who has access hasn't loaded yet. Retry below.")).toHaveLength(1)
+    expect(screen.queryByText("Who has access hasn't loaded yet. Retry above.")).toBeNull()
     await userEvent.hover(screen.getByRole('button', { name: 'Update access' }))
     expect((await screen.findByRole('tooltip')).textContent).toBe(
       "Who has access hasn't loaded yet. Retry above.",
@@ -1140,6 +1277,7 @@ describe('ShareBranchDialog: states', () => {
 
     const alert = await screen.findByTestId('share-refused')
     expect(alert.textContent).toBe(message)
+    await waitFor(() => expect(document.activeElement).toBe(footerClose()))
     fireEvent.click(footerClose())
     expect(onClose).toHaveBeenCalledTimes(1)
     expect(onChanged).toHaveBeenCalledTimes(1)
@@ -1171,6 +1309,43 @@ describe('ShareBranchDialog: states', () => {
     expect((await screen.findByTestId('share-refused')).textContent).toBe(
       accessRefusalMessage('BRANCH_LOCKED_DOWN'),
     )
+    await waitFor(() => expect(document.activeElement).toBe(footerClose()))
+  })
+
+  it.each([
+    ['USER_EXCLUDED', 'Someone you added', 'them'],
+    ['GROUP_EXCLUDED', 'A group you added', 'it'],
+  ] as const)(
+    'tells an owner refused %s that only an admin can allow it back',
+    async (code, who, back) => {
+      const { api } = setup()
+      api.branches.updateAccess.mockResolvedValueOnce({ ...refusal(403, code), ids: ['x'] })
+      await loaded()
+      fireEvent.click(screen.getByRole('button', { name: 'Remove Ben Ortiz' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
+
+      expect((await screen.findByTestId('share-save-problem')).textContent).toContain(
+        `${who} was removed from this branch by an admin, and only an admin can allow ${back} back.`,
+      )
+    },
+  )
+
+  it('tells a member refused USER_EXCLUDED that its owner or an admin can allow them back', async () => {
+    const { api } = setup({
+      user: { userId: 'ben' },
+      data: access({ rights: { isOwner: false, canAdd: true, canManage: false } }),
+    })
+    api.branches.updateAccess.mockResolvedValueOnce({
+      ...refusal(403, 'USER_EXCLUDED'),
+      ids: ['x'],
+    })
+    await loaded()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Marketing team' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
+
+    expect((await screen.findByTestId('share-save-problem')).textContent).toContain(
+      accessRefusalMessage('USER_EXCLUDED'),
+    )
   })
 
   it('names whom a refused change concerns, keeps the edits, and offers their Remove, not Retry', async () => {
@@ -1189,7 +1364,7 @@ describe('ShareBranchDialog: states', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
 
     const problem = await screen.findByTestId('share-save-problem')
-    expect(problem.textContent).toContain(accessRefusalMessage('USER_EXCLUDED'))
+    expect(problem.textContent).toContain(accessRefusalMessage('USER_EXCLUDED', true))
     expect(problem.textContent).toContain('Applies to Cole Ortiz.')
     expect(within(problem).queryByRole('button', { name: 'Retry' })).toBeNull()
     expect(within(row('Ben Ortiz')).getByText('Will be removed')).toBeTruthy()
@@ -1359,6 +1534,54 @@ describe('ShareBranchDialog: states', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 
+  it("warns that the list may be out of date when it can't be read after a timeout", async () => {
+    const { api } = setup()
+    api.branches.updateAccess.mockRejectedValue(new ApiTimeoutError('PATCH', '/x', 1000))
+    await loaded()
+    api.branches.getAccess.mockResolvedValue({ ok: false, status: 500, error: 'Boom' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Ben Ortiz' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
+
+    const problem = await screen.findByTestId('share-save-problem')
+    expect(problem.textContent).toContain(
+      'Updating access may have gone through even though the server didn\'t answer, and the list couldn\'t be read again, so it may be out of date. Close this and open "Share…" again to check.',
+    )
+    expect(problem.textContent).not.toContain('The list shows what the server has now')
+  })
+
+  it('drops an address row once the read after a timeout shows that address added', async () => {
+    const { api, onClose } = setup()
+    api.branches.findPeople.mockResolvedValue({ ok: false, status: 500, error: 'Boom' })
+    api.branches.updateAccess.mockRejectedValue(new ApiTimeoutError('PATCH', '/x', 1000))
+    await loaded()
+    await userEvent.type(picker(), 'dana@example.org')
+    await userEvent.click(await screen.findByRole('option', { name: 'Add dana@example.org' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Marketing team' }))
+    api.branches.getAccess.mockResolvedValue(
+      ok(
+        access({
+          entries: [
+            ...access().entries,
+            {
+              kind: 'user',
+              id: 'dana',
+              name: 'Dana Park',
+              addedBy: { id: 'ana', name: 'Ana Lee' },
+            },
+          ],
+        }),
+      ),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
+
+    await screen.findByTestId('share-save-problem')
+    expect(screen.getByText('Dana Park')).toBeTruthy()
+    expect(screen.queryByText('dana@example.org')).toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
   it('copies a link to the branch and says so', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
@@ -1369,11 +1592,12 @@ describe('ShareBranchDialog: states', () => {
 
     await waitFor(() => expect(status().textContent).toBe('Link copied'))
     expect(writeText).toHaveBeenCalledWith(expect.stringMatching(/^http.*\?branch=spring$/))
-    const copyButton = screen.getByRole('button', { name: 'Copy link' })
+    const copyButton = screen.getByRole('button', { name: 'Link copied' })
     expect(copyButton.querySelector('.tabler-icon-check')).toBeTruthy()
     await waitFor(() => expect(copyButton.querySelector('.tabler-icon-check')).toBeNull(), {
       timeout: 8000,
     })
+    expect(copyButton.textContent).toBe('Copy link')
   }, 15_000)
 
   it('shows the link to copy by hand when copying fails', async () => {

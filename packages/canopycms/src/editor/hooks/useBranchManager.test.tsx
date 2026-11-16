@@ -337,6 +337,39 @@ describe('useBranchManager', () => {
     expect(result.current.branchSummaries[1].access?.managerOrAdminAllowed).toBe(true)
   })
 
+  it('counts who was removed from a branch, where the listing says', async () => {
+    const removedBy = { by: 'user1', at: 't', byAdmin: false }
+    mockClient.branches.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: {
+        branches: [
+          mockBranches[0],
+          {
+            ...mockBranches[1],
+            access: {
+              ...mockBranches[1].access,
+              excluded: { pat: removedBy, sam: removedBy },
+              excludedGroups: { ops: removedBy },
+            },
+          },
+        ],
+        users: [],
+      },
+    })
+
+    const { result } = renderHook(() => useBranchManager(defaultOptions), {
+      wrapper,
+    })
+
+    await waitFor(() => {
+      expect(result.current.branchSummaries).toHaveLength(2)
+    })
+
+    expect(result.current.branchSummaries[0].access?.removed).toBeUndefined()
+    expect(result.current.branchSummaries[1].access?.removed).toEqual({ users: 2, groups: 1 })
+  })
+
   it('passes pullRequestState and mergedAt through branchSummaries unchanged', async () => {
     const branchesWithPrState: BranchMetadata[] = [
       {

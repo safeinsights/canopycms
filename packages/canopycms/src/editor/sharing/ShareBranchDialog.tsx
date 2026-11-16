@@ -36,7 +36,7 @@ import { personInitials } from '../../auth/person-name'
 import { isAdmin } from '../../authorization/helpers'
 import type { BranchSummary, UserContext } from '../BranchManager'
 import { displayBranchName } from '../branch-names'
-import { accessRefusalMessage, EDITOR_ACTIONS } from '../copy'
+import { accessRefusalMessage, adminRemovalReason, EDITOR_ACTIONS } from '../copy'
 import { useApiClient } from '../context/ApiClientContext'
 import { editorBranchLink } from '../editor-utils'
 import { isGatewayFailure, isUnanswered, UnansweredError } from '../unanswered'
@@ -45,13 +45,13 @@ import { accessPeople } from './BranchShareControl'
 import { PeoplePicker } from './PeoplePicker'
 import {
   accessChangeBody,
+  addressesLanded,
   changeLanded,
-  editorsLosingAccess,
   entryKey,
-  isPersonId,
   joinNames,
   narrows,
   NOTHING_STAGED,
+  showsUnlistedOwner,
   withAddition,
   type AccessEntry,
   type Addition,
@@ -64,13 +64,14 @@ import {
   LOCKDOWN_LINE,
   MEMBER_RIGHTS_LINE,
   OPEN_TO_EVERYONE_LINE,
-  WIDENING_LINE,
+  removedFromBranch,
+  wideningLine,
 } from './share-copy'
 import { isLockout, useBranchAccess } from './useBranchAccess'
 
 export type ShareTarget = Pick<
   BranchSummary,
-  'name' | 'shortName' | 'createdBy' | 'editors' | 'sharing' | 'access'
+  'name' | 'shortName' | 'createdBy' | 'ownerName' | 'sharing' | 'access'
 >
 
 export interface ShareBranchDialogProps {
@@ -89,10 +90,15 @@ export interface ShareBranchDialogProps {
 const UPDATE_FAILED = "Access couldn't be updated. Check your connection and try again."
 const UPDATE_UNANSWERED =
   'Updating access may have gone through even though the server didn\'t answer. The list shows what the server has now; choose "Update access" to send your changes again.'
+const UPDATE_UNANSWERED_UNCHECKED =
+  'Updating access may have gone through even though the server didn\'t answer, and the list couldn\'t be read again, so it may be out of date. Close this and open "Share…" again to check.'
 const NOTHING_TO_UPDATE = 'Nothing has changed yet. Add or remove someone, or change a setting.'
 const NOT_LOADED = "Who has access hasn't loaded yet. Retry above."
+/** The picker sits above the Retry its reason points to. */
+const NOT_LOADED_BELOW = "Who has access hasn't loaded yet. Retry below."
 const STILL_LOADING = 'Who has access is still loading.'
 const COPIED_FOR_MS = 3000
+const cantAddBack = (name: string) => `You can't add ${name} back yourself.`
 const MAX_LOADING_ROWS = 8
 
 interface BodyState {
@@ -224,9 +230,10 @@ function ShareBranchBody({
   const keepEditingRef = useRef<HTMLButtonElement>(null)
   const undoRef = useRef<HTMLButtonElement>(null)
   const copyFieldRef = useRef<HTMLInputElement>(null)
+  const refusalCloseRef = useRef<HTMLButtonElement>(null)
   const beforeAskRef = useRef<HTMLElement | null>(null)
   const [pendingFocus, setPendingFocus] = useState<
-    { remove: number } | { restore: string } | { undo: true }
+    { remove: number; key: string } | { restore: string } | { undo: true }
   >()
 
   const userIsAdmin = isAdmin(user.groups)
@@ -276,6 +283,11 @@ function ShareBranchBody({
     return () => clearTimeout(timer)
   }, [copy])
 
+  // A refusal replaces the body, and with it whatever had focus.
+  useEffect(() => {
+    if (refusalCode) refusalCloseRef.current?.focus()
+  }, [refusalCode])
+
   const showDiscard = discardAsked > 0 && dirty
   useEffect(() => {
     if (discardAsked === 0) return
@@ -286,7 +298,6 @@ function ShareBranchBody({
     keepEditingRef.current?.focus()
   }, [discardAsked])
 
-  const excludedIds = new Set((data?.excluded ?? []).map((entry) => entry.id))
   const generalValue =
     staged.restricted === false
       ? 'open'
@@ -299,29 +310,23 @@ function ShareBranchBody({
   const narrowing = !!data && narrows(staged, data)
   const losing = useMemo(
     () =>
-      data && narrowing
-        ? editorsLosingAccess(branch.editors ?? [], owner, staged, data)
-        : ([] as string[]),
-    [data, narrowing, branch.editors, owner, staged],
+      narrowing
+        ? (data?.losingAccess ?? []).filter(
+            (person) => !staged.add.some((a) => a.kind === 'user' && a.id === person.id),
+          )
+        : [],
+    [data, narrowing, staged],
   )
-  const showOwnerRow =
-    !!data &&
-    !data.restricted &&
-    isPersonId(owner) &&
-    !excludedIds.has(owner) &&
-    (data.defaultAccess !== 'allow' || narrowing) &&
-    !data.entries.some((entry) => entry.kind === 'user' && entry.id === owner)
-  const toName = [...losing, ...(showOwnerRow && owner ? [owner] : [])]
-    .filter((id) => !(id in names))
-    .join('\n')
+  const showOwnerRow = !!data && showsUnlistedOwner(data, owner, narrowing)
+  const toName = showOwnerRow && owner && !(owner in names) ? owner : ''
   useEffect(() => {
     if (!toName) return
     let current = true
-    const ids = toName.split('\n')
-    void Promise.all(ids.map((id) => getUserMetadata(id).catch(() => null))).then((found) => {
-      if (current)
-        setNames((prev) => ({ ...prev, ...Object.fromEntries(ids.map((id, i) => [id, found[i]])) }))
-    })
+    void getUserMetadata(toName)
+      .catch(() => null)
+      .then((found) => {
+        if (current) setNames((prev) => ({ ...prev, [toName]: found }))
+      })
     return () => {
       current = false
     }
@@ -391,23 +396,30 @@ function ShareBranchBody({
   const allowedKeys = new Set([...staged.unexclude.map(entryKey), ...staged.add.map(entryKey)])
   const excluded = (data?.excluded ?? []).filter((entry) => !allowedKeys.has(entryKey(entry)))
   const showRemoved = canManage && excluded.length > 0
+  const removedCount = {
+    users: excluded.filter((entry) => entry.kind === 'user').length,
+    groups: excluded.filter((entry) => entry.kind === 'group').length,
+  }
+  const widening = wideningLine(removedCount)
 
   // Focus moves once the list has re-rendered without, or with, the row it acted on.
   useLayoutEffect(() => {
     if (!pendingFocus) return
     setPendingFocus(undefined)
     const fallback = inputRef.current ?? headingRef.current
+    const shareRow = (key: string) =>
+      Array.from(document.querySelectorAll<HTMLElement>('[data-share-row]')).find(
+        (row) => row.getAttribute('data-share-row') === key,
+      )
     if ('remove' in pendingFocus) {
       const buttons = listRef.current?.querySelectorAll<HTMLElement>('button[data-share-remove]')
-      ;(buttons?.[pendingFocus.remove] ?? fallback)?.focus()
+      // The last row's Remove has no next one, but a removed entry stays, struck, with its Undo.
+      const undo = shareRow(pendingFocus.key)?.querySelector<HTMLElement>('button[data-share-undo]')
+      ;(buttons?.[pendingFocus.remove] ?? undo ?? fallback)?.focus()
     } else if ('undo' in pendingFocus) {
       ;(undoRef.current ?? fallback)?.focus()
     } else {
-      const { restore } = pendingFocus
-      Array.from(document.querySelectorAll<HTMLElement>('[data-share-row]'))
-        .find((row) => row.getAttribute('data-share-row') === restore)
-        ?.querySelector<HTMLElement>('button')
-        ?.focus()
+      shareRow(pendingFocus.restore)?.querySelector<HTMLElement>('button')?.focus()
     }
   }, [pendingFocus])
 
@@ -438,8 +450,12 @@ function ShareBranchBody({
           : { ...prev, remove: [...prev.remove, { kind: entry.kind, id: entry.id }] },
       )
     }
-    announce(`Removed ${row.name}`)
-    setPendingFocus({ remove: index })
+    announce(
+      entry?.kind === 'group' && !userIsAdmin && !(user.groups ?? []).includes(entry.id)
+        ? `Removed ${row.name}. ${cantAddBack(row.name)}`
+        : `Removed ${row.name}`,
+    )
+    setPendingFocus({ remove: index, key: row.key })
   }
 
   const keep = (row: Row) => {
@@ -453,6 +469,10 @@ function ShareBranchBody({
     const key = entryKey(entry)
     // The edit below takes back a staged "Anyone who can sign in", so the list will stand.
     const listOnly = staged.restricted === false ? !!data?.restricted : generalValue === 'listed'
+    const stillListed =
+      staged.restricted === false
+        ? " Opening the branch to everyone can't be combined with other changes, so it stays limited to the people listed."
+        : ''
     const canAddBack =
       entry.kind === 'user' || userIsAdmin || (user.groups ?? []).includes(entry.id)
     if (listOnly && canAddBack) {
@@ -460,13 +480,13 @@ function ShareBranchBody({
         ...prev,
         add: withAddition(prev.add, { kind: entry.kind, id: entry.id, name: entry.name }),
       }))
-      const message = `${entry.name} will be added back.`
+      const message = `${entry.name} will be added back.${stillListed}`
       setLastAction({ kind: 'allowed', key, name: entry.name, via: 'add', message })
       announce(message)
       setPendingFocus({ restore: key })
     } else {
       const message = listOnly
-        ? `${entry.name} will be allowed again, but not added back to the list.`
+        ? `${entry.name} will be allowed again, but not added back to the list.${stillListed}`
         : `${entry.name} will be able to open this branch again.`
       edit((prev) => ({
         ...prev,
@@ -514,6 +534,17 @@ function ShareBranchBody({
           ? { ...NOTHING_STAGED, restricted: false }
           : (prev) => ({ ...prev, add: [], addBy: undefined, restricted: undefined }),
       )
+      if (data.restricted) {
+        // The removed stay out of an open branch, so they show beside the line that says so.
+        const removed = data.excluded ?? []
+        if (removed.length > 0) setRemovedOpen(true)
+        announce(
+          wideningLine({
+            users: removed.filter((entry) => entry.kind === 'user').length,
+            groups: removed.filter((entry) => entry.kind === 'group').length,
+          }),
+        )
+      }
     } else {
       setStaged((prev) => ({ ...prev, restricted: data.restricted ? undefined : true }))
     }
@@ -523,18 +554,17 @@ function ShareBranchBody({
     edit((prev) => ({
       ...prev,
       add: losing.reduce(
-        (list, id) =>
-          withAddition(list, {
-            kind: 'user',
-            id,
-            name: nameOf(id),
-            avatarUrl: names[id]?.avatarUrl,
-          }),
+        (list, person) => withAddition(list, { kind: 'user', ...person }),
         prev.add,
       ),
     }))
-    announce(`Added ${joinNames(losing.map(nameOf))}`)
+    announce(`Added ${joinNames(losing.map((person) => person.name))}`)
   }
+
+  const viewerIsOwner = !!rights?.isOwner
+  /** A refusal's sentence, which tells an owner when only an admin can lift it. */
+  const refusalMessage = (code: ApiErrorCode | undefined) =>
+    accessRefusalMessage(code, viewerIsOwner)
 
   const finish = (sent: StagedAccess) => {
     onChanged()
@@ -589,7 +619,7 @@ function ShareBranchBody({
         } else {
           setSaveProblem({
             tone: 'error',
-            message: accessRefusalMessage(result.code) ?? (result.error || UPDATE_FAILED),
+            message: refusalMessage(result.code) ?? (result.error || UPDATE_FAILED),
             retryable: false,
             ids: result.ids,
           })
@@ -597,7 +627,7 @@ function ShareBranchBody({
       } else {
         setSaveProblem({
           tone: result.code === 'LIST_CHANGED' ? 'warning' : 'error',
-          message: accessRefusalMessage(result.code) ?? (result.error || UPDATE_FAILED),
+          message: refusalMessage(result.code) ?? (result.error || UPDATE_FAILED),
           retryable:
             !result.code || result.code === 'RATE_LIMITED' || result.code === 'LIST_CHANGED',
           ids: result.ids,
@@ -609,8 +639,23 @@ function ShareBranchBody({
         setSaveProblem({ tone: 'error', message: UPDATE_FAILED, retryable: true })
       } else {
         const fresh = await reload()
-        if (fresh && changeLanded(body, fresh)) finish(sent)
-        else setSaveProblem({ tone: 'warning', message: UPDATE_UNANSWERED, retryable: false })
+        const addressesIn = !!fresh && addressesLanded(body, data, fresh, user.userId)
+        if (fresh && changeLanded(body, fresh, addressesIn)) {
+          finish(sent)
+        } else {
+          // An address can't name its row, so one that landed would show twice.
+          if (addressesIn && body.add?.emails?.length) {
+            setStaged((prev) => ({
+              ...prev,
+              add: prev.add.filter((a) => a.kind !== 'user' || a.id !== undefined),
+            }))
+          }
+          setSaveProblem({
+            tone: 'warning',
+            message: fresh ? UPDATE_UNANSWERED : UPDATE_UNANSWERED_UNCHECKED,
+            retryable: false,
+          })
+        }
       }
     } finally {
       savingRef.current = false
@@ -647,7 +692,7 @@ function ShareBranchBody({
           {accessRefusalMessage(refusalCode)}
         </Alert>
         <Group justify="flex-end">
-          <Button variant="default" onClick={onClose}>
+          <Button variant="default" onClick={onClose} ref={refusalCloseRef} data-autofocus>
             Close
           </Button>
         </Group>
@@ -656,7 +701,6 @@ function ShareBranchBody({
   }
 
   const addBy: BranchAddBy | undefined = staged.addBy ?? data?.addBy
-  const viewerIsOwner = !!rights?.isOwner
   const groupWarnings = userIsAdmin
     ? []
     : staged.remove.filter((r) => r.kind === 'group' && !(user.groups ?? []).includes(r.id))
@@ -704,7 +748,7 @@ function ShareBranchBody({
                 data
                   ? undefined
                   : state.status === 'failed'
-                    ? NOT_LOADED
+                    ? NOT_LOADED_BELOW
                     : 'Loading who has access…'
               }
             />
@@ -792,13 +836,13 @@ function ShareBranchBody({
                 {groupWarnings.map((group) => (
                   <Group key={group.id} gap={6} wrap="nowrap">
                     {warningIcon}
-                    <Text size="sm">{`You can't add ${groupName(group.id)} back yourself.`}</Text>
+                    <Text size="sm">{cantAddBack(groupName(group.id))}</Text>
                   </Group>
                 ))}
                 {staged.restricted === false && (
                   <Group gap={6} wrap="nowrap">
                     {warningIcon}
-                    <Text size="sm">{WIDENING_LINE}</Text>
+                    <Text size="sm">{widening}</Text>
                   </Group>
                 )}
                 {showDiscard && (
@@ -835,7 +879,7 @@ function ShareBranchBody({
               >
                 <Group gap="xs">
                   <Text size="sm">
-                    {`${joinNames(losing.map(nameOf))} ${losing.length === 1 ? 'is' : 'are'} working on this branch and ${mayLose ? 'may' : 'will'} lose access.`}
+                    {`${joinNames(losing.map((person) => person.name))} ${losing.length === 1 ? 'is' : 'are'} working on this branch and ${mayLose ? 'may' : 'will'} lose access.`}
                   </Text>
                   <Button variant="default" size="compact-sm" onClick={addThemToo}>
                     Add them too
@@ -876,7 +920,7 @@ function ShareBranchBody({
                           name={entry.name}
                           detail={
                             entry.byAdmin && !userIsAdmin
-                              ? 'Removed by an admin'
+                              ? `Removed by an admin. ${adminRemovalReason(entry.kind)}`
                               : `Removed by ${entry.by.id === user.userId ? 'you' : entry.by.name}`
                           }
                         />
@@ -938,7 +982,14 @@ function ShareBranchBody({
                   onChange={setGeneralAccess}
                 >
                   <Stack gap={6} mt={4}>
-                    <Radio value="open" label="Anyone who can sign in to the editor" />
+                    <Radio
+                      value="open"
+                      label="Anyone who can sign in to the editor"
+                      description={
+                        removedFromBranch(removedCount) &&
+                        `Except ${removedFromBranch(removedCount)} (see "Removed").`
+                      }
+                    />
                     <Radio value="listed" label="Only people listed here" />
                   </Stack>
                 </Radio.Group>
@@ -1021,7 +1072,7 @@ function ShareBranchBody({
           }
           onClick={copyLink}
         >
-          {EDITOR_ACTIONS.copyLink}
+          {copy === 'copied' ? 'Link copied' : EDITOR_ACTIONS.copyLink}
         </Button>
         <Group gap="sm">
           {/* While the status line asks, its own Discard changes is the one way to discard. */}
@@ -1135,6 +1186,7 @@ function AccessRow({
             size="compact-sm"
             onClick={onKeep}
             aria-label={`Undo removing ${row.name}`}
+            data-share-undo
           >
             Undo
           </Button>

@@ -561,8 +561,9 @@ const EditorContent: React.FC<EditorProps> = ({
   const barShareBranch =
     barShare &&
     (branchSummaries.find((b) => b.name === barShare.target.name) ??
-      // Past the grace nothing new opens, but an open dialog stays until it is closed.
-      (barShare.answerUntil && (!barShare.expired || barShare.opened)
+      // Past the grace nothing new opens, but an open dialog stays until it is closed. A closed
+      // one stays too, so a branch dropped as it closes can't cut short its exit's focus return.
+      ((barShare.answerUntil && (!barShare.expired || barShare.opened)) || !barShare.opened
         ? barShare.target
         : undefined))
   const summariesRef = useRef(branchSummaries)
@@ -827,6 +828,7 @@ const EditorContent: React.FC<EditorProps> = ({
     setBusy: setEntriesLoading,
     // The errors are in the form.
     onSaveBlocked: () => setPreviewMaximized(false),
+    onBranchAccessLost: () => void loadBranches().catch(console.error),
     onSaved: () => {
       void refreshEntries(branchNameState).catch((err) =>
         console.error('Failed to refresh entries after save', err),

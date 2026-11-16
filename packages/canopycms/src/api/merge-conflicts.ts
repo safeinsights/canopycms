@@ -899,7 +899,7 @@ const resolveEntryConflict = defineEndpoint({
   responseType: 'ResolveEntryConflictResponse',
   response: {} as ResolveEntryConflictResponse,
   defaultMockData: { contentId: '', openCount: 0 },
-  guards: ['schema', 'writableBranch'] as const,
+  guards: ['branchAccessWithSchema', 'writableBranch'] as const,
   handler: resolveHandler,
 })
 

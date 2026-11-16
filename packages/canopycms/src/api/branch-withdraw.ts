@@ -5,6 +5,7 @@ import type { BranchContext } from '../types'
 import { toBranchListItem, type BranchListItemResponse } from './branch'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { defineEndpoint } from './route-builder'
+import { branchAccessDenial } from './guards'
 import { canPerformWorkflowAction, getBranchProtection } from '../authorization'
 import { syncConvertToDraft } from './github-sync'
 import { syncPrComments } from './pr-comment-sync'
@@ -31,6 +32,8 @@ const withdrawBranchHandler = async (
     isProtectedBranch: isProtected,
   })
   if (!canWithdraw) {
+    const denied = branchAccessDenial(ctx, branchContext, req.user)
+    if (denied) return { ok: false, ...denied }
     return {
       ok: false,
       status: 403,

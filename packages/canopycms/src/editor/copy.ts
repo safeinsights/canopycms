@@ -109,6 +109,24 @@ const ACCESS_REFUSALS: Partial<Record<ApiErrorCode, string>> = {
   RATE_LIMITED: 'Too many email lookups. Try again in a few minutes.',
 }
 
-/** The sentence for an access refusal's `code`, or undefined for any other answer. */
-export const accessRefusalMessage = (code: ApiErrorCode | undefined): string | undefined =>
-  code ? ACCESS_REFUSALS[code] : undefined
+/** An owner is refused these only for an admin's removal, which an owner can't lift. */
+const OWNER_ACCESS_REFUSALS: Partial<Record<ApiErrorCode, string>> = {
+  USER_EXCLUDED:
+    'Someone you added was removed from this branch by an admin, and only an admin can allow them back.',
+  GROUP_EXCLUDED:
+    'A group you added was removed from this branch by an admin, and only an admin can allow it back.',
+}
+
+/** Why a non-admin has no "Allow again" for someone an admin removed. */
+export const adminRemovalReason = (kind: 'user' | 'group'): string =>
+  `Only an admin can allow ${kind === 'group' ? 'it' : 'them'} back.`
+
+/**
+ * The sentence for an access refusal's `code`, or undefined for any other answer; `viewerIsOwner`
+ * for the branch's owner.
+ */
+export const accessRefusalMessage = (
+  code: ApiErrorCode | undefined,
+  viewerIsOwner = false,
+): string | undefined =>
+  code ? (viewerIsOwner && OWNER_ACCESS_REFUSALS[code]) || ACCESS_REFUSALS[code] : undefined

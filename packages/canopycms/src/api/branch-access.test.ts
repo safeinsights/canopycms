@@ -373,7 +373,90 @@ describe('PATCH /:branch/access, round-one cases', () => {
   })
 })
 
+describe('PATCH /:branch/access, final-review cases', () => {
+  it("lets a non-admin add by id anyone a name search finds where it finds 'all-users'", async () => {
+    config = { ...config, branchSharing: { searchable: 'all-users' } }
+    const context = await addBranch('feature/x')
+
+    expect((await patch(owner, 'feature/x', { add: { users: ['outsider'] } })).ok).toBe(true)
+    expect((await onDisk(context))?.access.allowedUsers).toEqual(['owner', 'outsider'])
+    expect(await patch(owner, 'feature/x', { add: { users: ['ghost'] } })).toMatchObject({
+      status: 400,
+      code: 'USER_NOT_FOUND',
+    })
+    // Excluding someone unlisted still needs them to work in this CMS.
+    expect(await patch(owner, 'feature/x', { remove: { users: ['admin'] } })).toMatchObject({
+      code: 'USER_OUT_OF_SCOPE',
+    })
+  })
+
+  it("makes an admin's removal of someone the owner removed stick, as a change", async () => {
+    const context = await addBranch('feature/x', {
+      access: { restricted: true, allowedUsers: ['owner', 'member'] },
+    })
+    expect((await patch(owner, 'feature/x', { remove: { users: ['member'] } })).ok).toBe(true)
+    auditLines = []
+
+    expect((await patch(admin, 'feature/x', { remove: { users: ['member'] } })).ok).toBe(true)
+
+    expect((await onDisk(context))?.access.excluded?.member).toMatchObject({
+      by: 'admin',
+      byAdmin: true,
+    })
+    const audit = JSON.parse(auditLines.find((l) => l.includes('branch-access')) ?? '{}')
+    expect(audit).toMatchObject({ actor: 'admin', excluded: ['member'] })
+    expect(await patch(owner, 'feature/x', { add: { users: ['member'] } })).toMatchObject({
+      code: 'USER_EXCLUDED',
+    })
+  })
+
+  it('lets a member remove whom they added once only the owner may add', async () => {
+    const context = await addBranch('feature/x', {
+      access: { restricted: true, allowedUsers: ['owner', 'member'] },
+    })
+    expect((await patch(member, 'feature/x', { add: { users: ['pal'] } })).ok).toBe(true)
+    expect((await patch(owner, 'feature/x', { addBy: 'owner' })).ok).toBe(true)
+
+    expect((await patch(member, 'feature/x', { remove: { users: ['pal'] } })).ok).toBe(true)
+
+    const saved = await onDisk(context)
+    expect(saved?.access.allowedUsers).toEqual(['owner', 'member'])
+    expect(saved?.access.excluded).toBeUndefined()
+  })
+
+  it('reports no change when a retry finds the branch.json gone', async () => {
+    const context = await addBranch('feature/x')
+    const real = await BranchMetadataFileManager.loadOnly(context.branchRoot)
+    vi.spyOn(BranchMetadataFileManager, 'get').mockReturnValue({
+      // The first attempt loses an OCC race; the retry finds no file.
+      update: async (compute: (existing: typeof real) => unknown) => {
+        compute(real)
+        return compute(null)
+      },
+    } as unknown as BranchMetadataFileManager)
+
+    const res = await changeBranchAccess(ctx(), admin, context, { add: { users: ['colleague'] } })
+
+    expect(res).toMatchObject({ ok: true, result: null })
+    expect(auditLines.filter((l) => l.includes('branch-access'))).toEqual([])
+  })
+})
+
 describe('initialBranchAccess (sharing at create)', () => {
+  it("lets a non-admin start a branch shared with any known account where search finds 'all-users'", async () => {
+    config = { ...config, branchSharing: { searchable: 'all-users' } }
+
+    expect(await initialBranchAccess(ctx(), owner, { users: ['outsider'] })).toMatchObject({
+      ok: true,
+      access: { allowedUsers: ['owner', 'outsider'] },
+      added: ['outsider'],
+    })
+    expect(await initialBranchAccess(ctx(), owner, { users: ['ghost'] })).toMatchObject({
+      ok: false,
+      refused: { code: 'USER_NOT_FOUND' },
+    })
+  })
+
   it('starts the branch restricted to its creator and the people added', async () => {
     const res = await initialBranchAccess(ctx(), owner, {
       users: ['colleague'],

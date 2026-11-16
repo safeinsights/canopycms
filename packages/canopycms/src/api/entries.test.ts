@@ -2297,3 +2297,42 @@ describe('listEntries.validate (HTTP query params)', () => {
     }
   })
 })
+
+/** A branch whose owner removed `ben`, under the real branch access check. */
+const shutOutCtx = () =>
+  createMockApiContext({
+    services: { checkBranchAccess: createCheckBranchAccess('deny') },
+    branchContext: {
+      ...createMockBranchContext({
+        branchName: 'feature',
+        access: {
+          restricted: true,
+          allowedUsers: ['u1'],
+          excluded: { ben: { by: 'u1', at: 'now', byAdmin: false } },
+        },
+      }),
+      flatSchema: [],
+    },
+  })
+const ben = { type: 'authenticated' as const, userId: 'ben', groups: [] }
+
+describe('entries for someone the branch shuts out', () => {
+  it("answers a removed person's list and delete with BRANCH_ACCESS_DENIED", async () => {
+    const { deleteEntry } = await import('./entries')
+    const params = { branch: unsafeAsBranchName('feature') }
+    const responses = [
+      await listEntries.handler(shutOutCtx(), { user: ben }, params),
+      await deleteEntry.handler(
+        shutOutCtx(),
+        { user: ben },
+        {
+          ...params,
+          entryPath: unsafeAsLogicalPath('content/posts/hello'),
+        },
+      ),
+    ]
+    for (const res of responses) {
+      expect(res).toMatchObject({ ok: false, status: 403, code: 'BRANCH_ACCESS_DENIED' })
+    }
+  })
+})

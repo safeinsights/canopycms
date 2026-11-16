@@ -958,7 +958,7 @@ const readContent = defineEndpoint({
   responseType: 'ContentReadResponse',
   response: {} as ContentReadResponse,
   defaultMockData: { format: 'json', data: {} },
-  guards: ['schema'] as const,
+  guards: ['branchAccessWithSchema'] as const,
   handler: readContentHandler,
 })
 
@@ -978,7 +978,7 @@ const writeContent = defineEndpoint({
   responseType: 'ContentWriteResponse',
   response: {} as ContentWriteResponse,
   defaultMockData: { format: 'json', data: {} },
-  guards: ['schema', 'writableBranch'] as const,
+  guards: ['branchAccessWithSchema', 'writableBranch'] as const,
   handler: writeContentHandler,
 })
 
@@ -999,7 +999,7 @@ const validateReferences = defineEndpoint({
   responseType: 'ReferenceValidationResponse',
   response: {} as ReferenceValidationResponse,
   defaultMockData: { valid: true },
-  guards: ['schema'] as const,
+  guards: ['branchAccessWithSchema'] as const,
   handler: validateReferencesHandler,
 })
 
@@ -1019,7 +1019,7 @@ const renameEntry = defineEndpoint({
   responseType: 'RenameEntryResponse',
   response: {} as RenameEntryResponse,
   defaultMockData: { newPath: 'content/posts/new-slug' },
-  guards: ['schema', 'writableBranch'] as const,
+  guards: ['branchAccessWithSchema', 'writableBranch'] as const,
   handler: renameEntryHandler,
 })
 

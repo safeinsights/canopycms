@@ -244,6 +244,19 @@ describe('BranchManager sharing inside the Branches drawer', () => {
     expect(screen.getByTestId('branch-manager')).toBeTruthy()
   })
 
+  it('still closes "Who has access" on Esc after a Tab, leaving the drawer open', async () => {
+    const { onDrawerClose } = renderInDrawer(branch({ sharing: NONE, createdBy: 'zoe' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Access: Ana Lee, Ben Ortiz' }))
+    const popover = await screen.findByRole('dialog', { name: 'Who has access' })
+    await waitFor(() => expect(popover.contains(document.activeElement)).toBe(true))
+
+    await userEvent.tab()
+    await userEvent.keyboard('{Escape}')
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Who has access' })).toBeNull())
+    expect(onDrawerClose).not.toHaveBeenCalled()
+  })
+
   it('closes only "Who has access" on Esc, leaving the drawer open', async () => {
     const { onDrawerClose } = renderInDrawer(branch({ sharing: NONE, createdBy: 'zoe' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Access: Ana Lee, Ben Ortiz' }))

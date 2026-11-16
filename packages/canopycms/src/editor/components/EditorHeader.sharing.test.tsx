@@ -100,13 +100,13 @@ const control = () => screen.queryByTestId('branch-share-control')
 const initials = () =>
   [...(control()?.querySelectorAll('.mantine-Avatar-root') ?? [])].map((a) => a.textContent)
 
-/** The bar for viewer Ben on `b`, below md when `narrow`. */
-const viewerBar = (b: BranchSummary) => (
+/** The bar for viewer Ben on `b`, below md when `narrow`; with no `b`, a branch no listing holds. */
+const viewerBar = (b?: BranchSummary) => (
   <CanopyCMSProvider>
     <ApiClientProvider client={createMockApiClient() as unknown as ApiClient}>
       <EditorHeader
         {...baseProps}
-        branchName={b.name}
+        branchName={b?.name ?? 'canopycms/prod/spring'}
         sharing={{
           branch: b,
           loading: false,
@@ -295,6 +295,18 @@ describe('EditorHeader - sharing control', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(named.mock.calls.length).toBe(asked)
+  })
+
+  it('hands focus from the open list to the pill when the branch leaves the listing', async () => {
+    const { rerender } = render(viewerBar(viewOnly('canopycms/prod/spring')))
+    fireEvent.click(control() as HTMLElement)
+    const list = await screen.findByRole('dialog', { name: 'Who has access' })
+    await waitFor(() => expect(list.contains(document.activeElement)).toBe(true))
+
+    rerender(viewerBar())
+
+    await waitFor(() => expect(control()).toBeNull())
+    expect(document.activeElement).toBe(screen.getByTestId('branch-dropdown-button'))
   })
 
   it("doesn't reopen a branch's list on coming back to it", async () => {

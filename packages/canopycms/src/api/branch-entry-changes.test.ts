@@ -817,3 +817,36 @@ describe('POST /:branch/restore-entry/...entryPath', () => {
     })
   })
 })
+
+/** A branch whose owner removed `ben`, under the real branch access check. */
+const shutOutCtx = () =>
+  createMockApiContext({
+    services: { checkBranchAccess: createCheckBranchAccess('deny') },
+    branchContext: {
+      ...createMockBranchContext({
+        branchName: 'feature',
+        access: {
+          restricted: true,
+          allowedUsers: ['u1'],
+          excluded: { ben: { by: 'u1', at: 'now', byAdmin: false } },
+        },
+      }),
+      flatSchema: [],
+    },
+  })
+const ben = { type: 'authenticated' as const, userId: 'ben', groups: [] }
+
+describe('restoring for someone the branch shuts out', () => {
+  it("answers a removed person's restore with BRANCH_ACCESS_DENIED", async () => {
+    const res = await restoreBranchEntry.handler(
+      shutOutCtx(),
+      { user: ben },
+      {
+        branch: unsafeAsBranchName('feature'),
+        entryPath: unsafeAsLogicalPath('content/posts/hello'),
+      },
+      {} as never,
+    )
+    expect(res).toMatchObject({ ok: false, status: 403, code: 'BRANCH_ACCESS_DENIED' })
+  })
+})

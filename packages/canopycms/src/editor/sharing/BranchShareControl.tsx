@@ -8,6 +8,7 @@ import type { UserSearchResult } from '../../auth/types'
 import { personInitials, personName } from '../../auth/person-name'
 import type { BranchSummary } from '../BranchManager'
 import { EDITOR_ACTIONS } from '../copy'
+import { removedFromBranch } from './share-copy'
 import { joinNames } from './share-staging'
 
 /**
@@ -25,6 +26,12 @@ const NAME_UNAVAILABLE = 'Name unavailable'
 export type SharedSummary = Pick<BranchSummary, 'access' | 'createdBy' | 'sharing'>
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
+
+/** ", except the 1 person removed from this branch", for an open branch's owner and admins. */
+const except = (b: SharedSummary): string => {
+  const removed = b.access?.removed && removedFromBranch(b.access.removed)
+  return removed ? `, except ${removed}` : ''
+}
 
 /**
  * Who `b`'s list admits, as the viewer's listing has it: an empty list that limits nothing beyond
@@ -63,11 +70,11 @@ export function shareControlName(
     .join(' and ')
   if (mode === 'share') {
     const label = `${EDITOR_ACTIONS.share}…`
-    if (open) return `${label}, anyone who can sign in has access`
+    if (open) return `${label}, anyone who can sign in has access${except(b)}`
     if (total === 0) return `${label}, no one is listed`
     return `${label}, ${counted} ${total === 1 ? 'has' : 'have'} access`
   }
-  if (open) return 'Who has access: anyone who can sign in'
+  if (open) return `Who has access: anyone who can sign in${except(b)}`
   if (total === 0) return 'Who has access: no one is listed'
   const you = !!viewerId && users.includes(viewerId) ? ['you'] : []
   const shown = [...you, ...named.filter((p) => p.id !== viewerId).map((p) => p.name)].slice(

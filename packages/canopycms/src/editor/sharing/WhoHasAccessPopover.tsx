@@ -8,7 +8,7 @@ import { FOCUS_RETURN_ATTR, focusIfIdle } from '../utils/focus-return'
 import type { UserContext } from '../BranchManager'
 import { PersonLabel, type ShareTarget } from './ShareBranchDialog'
 import { addByLabel, LISTED_ONLY_LINE, LOCKDOWN_LINE, OPEN_TO_EVERYONE_LINE } from './share-copy'
-import { entryKey, type BranchAccess } from './share-staging'
+import { entryKey, showsUnlistedOwner, type BranchAccess } from './share-staging'
 import { useBranchAccess } from './useBranchAccess'
 
 export interface WhoHasAccessPopoverProps {
@@ -26,7 +26,10 @@ export interface WhoHasAccessPopoverProps {
   viewer?: UserContext
 }
 
-/** Who may open a branch, read-only, for someone who may open it but not add people. */
+/**
+ * Who may open a branch, read-only, for someone who may open it but not add people. It holds focus
+ * while open, so Esc, which only a key inside it reaches, always closes it.
+ */
 export function WhoHasAccessPopover({
   branch,
   opened,
@@ -44,6 +47,7 @@ export function WhoHasAccessPopover({
       position="bottom-start"
       width={320}
       shadow="md"
+      trapFocus
       withRoles={withRoles}
       disabled={!branch}
       onExitTransitionEnd={returnFocusTo && (() => focusIfIdle(returnFocusTo()))}
@@ -60,6 +64,7 @@ export function WhoHasAccessPopover({
           <WhoHasAccessBody
             branch={branch.name}
             owner={branch.createdBy}
+            ownerName={branch.ownerName}
             lockedDown={!!branch.access?.managerOrAdminAllowed}
             headingId={headingId}
             viewer={viewer}
@@ -73,12 +78,14 @@ export function WhoHasAccessPopover({
 function WhoHasAccessBody({
   branch,
   owner,
+  ownerName,
   lockedDown,
   headingId,
   viewer,
 }: {
   branch: string
   owner?: string
+  ownerName?: string
   lockedDown: boolean
   headingId: string
   viewer?: UserContext
@@ -91,6 +98,8 @@ function WhoHasAccessBody({
   }, [])
 
   const data = state.data
+  // As the Share dialog has it: an unlisted branch on a closed site still admits its owner.
+  const ownerRow = !!data && showsUnlistedOwner(data, owner)
   return (
     <Stack gap="xs">
       <Text size="sm" fw={600} id={headingId} ref={headingRef} tabIndex={-1}>
@@ -112,7 +121,7 @@ function WhoHasAccessBody({
         </Stack>
       ) : (
         <>
-          {data.entries.length > 0 && (
+          {(ownerRow || data.entries.length > 0) && (
             <Stack
               component="ul"
               gap={6}
@@ -121,6 +130,16 @@ function WhoHasAccessBody({
               aria-labelledby={headingId}
               style={{ listStyle: 'none' }}
             >
+              {ownerRow && owner && (
+                <li>
+                  <PersonLabel
+                    kind="user"
+                    name={ownerName || 'Name unavailable'}
+                    suffix={owner === viewer?.userId ? ' (you)' : undefined}
+                    detail="Owner"
+                  />
+                </li>
+              )}
               {data.entries.map((entry) => (
                 <li key={entryKey(entry)}>
                   <PersonLabel

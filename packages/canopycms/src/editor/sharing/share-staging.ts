@@ -8,6 +8,7 @@ import type { BranchAccessResponse } from '../../api/branch-people'
 import type { FoundPerson } from '../../api/people'
 import type { BranchAddBy } from '../../types'
 import { isSystemUserId } from '../../system-users'
+import { isEmailAddress } from '../../utils/email-address'
 
 export type BranchAccess = NonNullable<BranchAccessResponse['data']>
 export type AccessEntry = BranchAccess['entries'][number]
@@ -55,10 +56,8 @@ export const personToAdd = (person: FoundPerson, address?: string): PersonToAdd 
   ...(address && person.addByAddress && { email: address }),
 })
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-
-/** The server's test for a query that finds by exact address (api/people.ts `EMAIL_PATTERN`). */
-export const looksLikeEmail = (query: string): boolean => EMAIL_PATTERN.test(query.trim())
+/** Whether a query finds by exact address, as the server tests it (utils/email-address.ts). */
+export const looksLikeEmail = isEmailAddress
 
 const idsOf = (items: ReadonlyArray<{ kind: Kind; id?: string }>, kind: Kind): string[] =>
   items.flatMap((item) => (item.kind === kind && item.id !== undefined ? [item.id] : []))
@@ -105,11 +104,40 @@ export function accessChangeBody(
 }
 
 /**
- * Whether `access`, read again after an update got no answer, already shows `body` applied. An
- * address can't be matched to anyone listed, so a change adding one never reads as landed.
+ * Whether every address `body` added shows in `fresh`, read again after the update got no answer:
+ * an address can't be matched to anyone listed, so this counts people `viewer` added there who
+ * neither `before` listed nor `body` added by id.
  */
-export function changeLanded(body: UpdateBranchAccessBody, access: BranchAccess): boolean {
-  if (body.add?.emails?.length) return false
+export function addressesLanded(
+  body: UpdateBranchAccessBody,
+  before: BranchAccess,
+  fresh: BranchAccess,
+  viewer: string,
+): boolean {
+  const emails = body.add?.emails?.length ?? 0
+  if (emails === 0) return true
+  const was = new Set(before.entries.map(entryKey))
+  const byId = new Set(body.add?.users ?? [])
+  const added = fresh.entries.filter(
+    (entry) =>
+      entry.kind === 'user' &&
+      !was.has(entryKey(entry)) &&
+      !byId.has(entry.id) &&
+      entry.addedBy?.id === viewer,
+  )
+  return added.length >= emails
+}
+
+/**
+ * Whether `access`, read again after an update got no answer, already shows `body` applied, its
+ * addresses as `addressesLanded` judged them.
+ */
+export function changeLanded(
+  body: UpdateBranchAccessBody,
+  access: BranchAccess,
+  addressesIn = false,
+): boolean {
+  if (body.add?.emails?.length && !addressesIn) return false
   const listed = new Set(access.entries.map(entryKey))
   const excluded = new Set((access.excluded ?? []).map(entryKey))
   const keys = (ids: string[] | undefined, kind: Kind) => (ids ?? []).map((id) => `${kind}:${id}`)
@@ -135,27 +163,24 @@ export const narrows = (staged: StagedAccess, current: BranchAccess): boolean =>
   (staged.restricted === true || staged.add.length > 0)
 
 /** Whether `id` is a person's: not a system user's, nor the placeholder of a branch with no creator. */
-export const isPersonId = (id: string | undefined): id is string =>
+const isPersonId = (id: string | undefined): id is string =>
   !!id && id !== 'unknown' && !isSystemUserId(id)
 
 /**
- * The branch's editors who would lose access once it is limited to its list: people neither
- * listed, staged to be added, removed already, nor its owner, whom limiting a branch keeps.
+ * Whether the owner shows as a row though the list doesn't name them: an unlisted branch admits its
+ * owner, which matters on a closed site, or once staged changes limit it to its list (`narrowing`).
  */
-export function editorsLosingAccess(
-  editors: readonly string[],
+export const showsUnlistedOwner = (
+  access: BranchAccess,
   owner: string | undefined,
-  staged: StagedAccess,
-  current: BranchAccess,
-): string[] {
-  const kept = new Set([
-    ...current.entries.filter((entry) => entry.kind === 'user').map((entry) => entry.id),
-    ...(current.excluded ?? []).filter((entry) => entry.kind === 'user').map((entry) => entry.id),
-    ...idsOf(staged.add, 'user'),
-    ...(owner ? [owner] : []),
-  ])
-  return [...new Set(editors)].filter((id) => isPersonId(id) && !kept.has(id))
-}
+  narrowing = false,
+): owner is string =>
+  !access.restricted &&
+  isPersonId(owner) &&
+  (access.defaultAccess !== 'allow' || narrowing) &&
+  ![...access.entries, ...(access.excluded ?? [])].some(
+    (entry) => entry.kind === 'user' && entry.id === owner,
+  )
 
 /** `add` with `addition`, unless it or an entry `listed` already has its key. */
 export function withAddition(
