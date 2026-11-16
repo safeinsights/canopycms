@@ -275,28 +275,40 @@ interface SalvagedBranch {
   access: SalvagedAccess
   /**
    * Every other field the schema knows, each read on its own: a value that passes its own
-   * schema as it is, and a present one that doesn't at {@link RESTRICTIVE_VALUES} where it has one.
+   * schema as it is, and a present one that doesn't at {@link restrictiveValues} where it has one.
    * `createdBy` and `baseBranch` must also be non-empty.
    */
   fields: SalvagedFields
-  /** A readable `createdAt`, which only narrows: it bounds the creator's recent-create window. */
+  /** The keys the schema doesn't know, verbatim, as a read passes them through. */
+  unknownFields: Record<string, unknown>
+  /** `createdAt` as the file had it, when it reads. */
   createdAt?: string
   /** The keys present but unreadable, so given their restrictive value or left out. */
   unreadable: (keyof BranchMetadata)[]
 }
 
 /**
- * The value a present field that doesn't read takes, for the fields that hold rights back:
- * `submitted` locks writes and leaves Withdraw to recover the branch, `unpublishedAtMerge` holds
- * a delete for an admin, and a `rewrittenOnGitHub` naming no commit refuses pushes until the
- * worker can show GitHub's branch holds what it held. Any other unreadable field is left out, as
- * save()'s defaults leave it.
+ * The value a present field that doesn't read takes, for the fields that hold something back:
+ * - `status` `submitted` locks writes, and Withdraw recovers the branch;
+ * - `unpublishedAtMerge` true holds a delete for an admin;
+ * - `rewrittenOnGitHub` naming no commit refuses pushes until a sync checks GitHub's branch, which
+ *   clears it unless that branch dropped a commit it recorded, and on an archived branch holds a
+ *   delete for an admin;
+ * - `archivedAt` the repair time keeps deletion by age from counting from an older merge.
+ *
+ * Any other unreadable field is left out, as save()'s defaults leave it. That widens nothing but
+ * review and merge rights, in four cases: a `submitUnfinished` left out no longer blocks Approve; a
+ * `syncStatus` left out no longer marks a later merge as possibly unpublished; a `pullRequestState`
+ * left out, if `closed`, no longer blocks Approve, Request changes and Mark merged; and a status
+ * read as `submitted` lets reviewers Approve or Request changes on what may have been an editing
+ * branch.
  */
-const RESTRICTIVE_VALUES: SalvagedFields = {
+const restrictiveValues = (now: string): SalvagedFields => ({
   status: 'submitted',
   unpublishedAtMerge: true,
   rewrittenOnGitHub: '',
-}
+  archivedAt: now,
+})
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -329,16 +341,19 @@ const isSalvagedKey = (key: string): key is SalvagedKey => has(salvagedFieldShap
 
 /**
  * What `branch.json` text that fails {@link readBranchMetadataFile} still says, each field read
- * on its own key, so one bad field never takes another with it, and none widens access or rights:
- * a field that reads is kept, a present one that doesn't takes its most restrictive value or is
- * left out, and an absent one stays absent. `access` is readable only when it passes its schema
- * whole. Keys the schema doesn't know are dropped. Text that is not JSON, or holds no `branch`
- * object, salvages nothing.
+ * on its own key, so one bad field never takes another with it, and none widens access: a field
+ * that reads is kept, a present one that doesn't takes its most restrictive value or is left out
+ * ({@link restrictiveValues} names the four review and merge rights that can widen), and an absent
+ * one stays absent. `access` is readable only when it passes its schema
+ * whole. Keys the schema doesn't know are carried over verbatim, as a read passes them through,
+ * so a restricting field a newer deployment wrote survives. Text that is not JSON, or holds no
+ * `branch` object, salvages nothing.
  */
-export function salvageBranchMetadata(raw: string): SalvagedBranch {
+export function salvageBranchMetadata(raw: string, now: Date = new Date()): SalvagedBranch {
   const nothing: SalvagedBranch = {
     access: { readable: false, narrowing: {}, mayRestrict: false, lockdownUnreadable: false },
     fields: {},
+    unknownFields: {},
     unreadable: [],
   }
   let json: unknown
@@ -351,6 +366,7 @@ export function salvageBranchMetadata(raw: string): SalvagedBranch {
   const branch = json.branch
   if (!isPlainObject(branch)) return nothing
 
+  const restrictive = restrictiveValues(now.toISOString())
   const read: Record<string, unknown> = {}
   const unreadableKeys: (keyof BranchMetadata)[] = []
   for (const key of Object.keys(branch).filter(isSalvagedKey)) {
@@ -360,8 +376,13 @@ export function salvageBranchMetadata(raw: string): SalvagedBranch {
       continue
     }
     unreadableKeys.push(key)
-    if (has(RESTRICTIVE_VALUES, key)) read[key] = RESTRICTIVE_VALUES[key]
+    if (has(restrictive, key)) read[key] = restrictive[key]
   }
+  const unknownFields = Object.fromEntries(
+    Object.keys(branch)
+      .filter((key) => key !== '__proto__' && !has(branchMetadataShape, key))
+      .map((key) => [key, branch[key]]),
+  )
   const createdAt = has(branch, 'createdAt')
     ? readField(branchMetadataShape.createdAt, branch.createdAt)
     : undefined
@@ -370,6 +391,7 @@ export function salvageBranchMetadata(raw: string): SalvagedBranch {
     access: has(branch, 'access') ? salvageAccess(branch.access) : nothing.access,
     // Every value was read through these same schemas, so this parse only gives it its type.
     fields: salvagedFieldsSchema.parse(read),
+    unknownFields,
     ...(typeof createdAt === 'string' && { createdAt }),
     unreadable: unreadableKeys,
   }

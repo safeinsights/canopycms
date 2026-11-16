@@ -96,8 +96,11 @@ interface RepairBranchDirData {
   reset: Partial<Pick<BranchMetadata, RightsField>>
   /** The fields that bear on access or rights, read back from the corrupt file unchanged. */
   kept: Partial<Pick<BranchMetadata, RightsField | 'baseBranch'>>
-  /** Every other field: those read back unchanged, and those present but unreadable, left out. */
-  otherFields: { kept: (keyof BranchMetadata)[]; dropped: (keyof BranchMetadata)[] }
+  /**
+   * Every other field: those read back unchanged, keys the schema doesn't know among them, and
+   * those present but unreadable, left out.
+   */
+  otherFields: { kept: string[]; dropped: (keyof BranchMetadata)[] }
   /** Repair itself turned the lockdown on, rather than keeping one the file held. */
   lockedByRepair: boolean
   /** The list decides who may open the branch, even when empty. */
@@ -112,13 +115,20 @@ interface RepairBranchDirData {
 }
 
 /** The fields `reset` and `kept` always account for. */
-type RightsField = 'status' | 'access' | 'createdBy' | 'unpublishedAtMerge' | 'rewrittenOnGitHub'
+type RightsField =
+  | 'status'
+  | 'access'
+  | 'createdBy'
+  | 'unpublishedAtMerge'
+  | 'rewrittenOnGitHub'
+  | 'archivedAt'
 const RIGHTS_FIELDS: readonly RightsField[] = [
   'status',
   'access',
   'createdBy',
   'unpublishedAtMerge',
   'rewrittenOnGitHub',
+  'archivedAt',
 ]
 
 const isRightsField = (key: string): key is RightsField =>
@@ -398,19 +408,17 @@ const purgeBranchDirHandler = async (
  * trash the directory mid-sequence and have saveIf() resurrect a
  * metadata-only ghost of it.
  *
- * Rebuilt field by field: inside the lock, the corrupt file's text is read and every field the
- * schema knows is salvaged on its own (salvageBranchMetadata). A field that reads is kept; one
- * present but unreadable takes its most restrictive value (`status` `submitted`, `createdBy`
- * `'unknown'`, `unpublishedAtMerge` true, `rewrittenOnGitHub` naming no commit), or is left out;
- * an absent one gets save()'s default. `name` comes from the clone, and unreadable access becomes
- * {@link fallbackAccess}. So nothing widens access or rights against the damaged file, with two
- * exceptions among the fields left out: an unreadable `submitUnfinished` no longer blocks Approve,
- * and an unreadable `syncStatus` no longer marks a later merge as possibly unpublished.
+ * Rebuilt field by field: inside the lock, the corrupt file's text is read and every field is
+ * salvaged on its own, never widening access, by the rules salvageBranchMetadata states, which
+ * name the four review and merge rights that can widen. `name` comes from the clone, an absent field gets
+ * save()'s default, `createdBy` that doesn't read becomes `'unknown'`, and unreadable access
+ * becomes {@link fallbackAccess}.
  *
  * The write applies only over no metadata at all, so a write that created the file after the
- * archive is never merged over. A write that throws is checked on disk: if it landed whole,
- * repair answers with a warning, and if not it puts the archived file back (restoreArchived). The
- * response's `reset`, `kept` and `otherFields` say which fields came from where.
+ * archive is never merged over. A write that throws is checked on disk: if what repair decided
+ * landed, repair answers with a warning, and if not it puts the archived file back
+ * (restoreArchived). The response's `reset`, `kept` and `otherFields` say which fields came from
+ * where.
  */
 const repairBranchDirHandler = async (
   _gc: Record<string, never>,
@@ -509,6 +517,7 @@ const repairBranchDirHandler = async (
           config,
         )
     const branch: RepairedFields = {
+      ...salvaged.unknownFields,
       ...fields,
       name: branchName,
       status: fields.status ?? 'editing',
@@ -559,7 +568,7 @@ const repairBranchDirHandler = async (
       return {
         ok: false,
         status: 409,
-        error: `Another write created this branch's metadata during repair, so it holds that write's metadata and its access may be open. The corrupt file is archived as ${archived.archivedAs}. Check the branch's access in "Branches".`,
+        error: `Another write created this branch's metadata during repair, so it holds that write's metadata and its access may be open. The corrupt file is archived as ${archived.archivedAs}. Check who can open it, in "Branches".`,
       }
     }
     return respond(saved.branch)
@@ -661,9 +670,12 @@ function repairedData(
     reset,
     kept,
     otherFields: {
-      kept: (Object.keys(fields) as (keyof BranchMetadata)[]).filter(
-        (key) => !reported.has(key) && !unreadable.includes(key),
-      ),
+      kept: [
+        ...(Object.keys(fields) as (keyof BranchMetadata)[]).filter(
+          (key) => !reported.has(key) && !unreadable.includes(key),
+        ),
+        ...Object.keys(salvaged.unknownFields),
+      ],
       dropped: unreadable.filter(
         (key) => !isRightsField(key) && fields[key as keyof typeof fields] === undefined,
       ),
@@ -694,13 +706,28 @@ function fallbackAccess(
     return { access: { restricted: true, ...narrowing }, lockedByRepair: lockdownUnreadable }
   }
   return mayRestrict
-    ? { access: { ...narrowing, managerOrAdminAllowed: true }, lockedByRepair: true }
+    ? {
+        access: { ...narrowing, managerOrAdminAllowed: true },
+        // Unless the file's own lockdown read as on.
+        lockedByRepair: narrowing.managerOrAdminAllowed !== true || lockdownUnreadable,
+      }
     : { access: { ...narrowing }, lockedByRepair: lockdownUnreadable }
 }
 
+/** The fields repair decides; bookkeeping writes may change any other in between. */
+const DECIDED_FIELDS = [
+  'name',
+  'status',
+  'createdBy',
+  'access',
+  'baseBranch',
+  'unpublishedAtMerge',
+  'rewrittenOnGitHub',
+] as const satisfies readonly (keyof RepairedFields)[]
+
 /**
- * The branch.json on disk when it holds everything repair wrote, field by field; null when it
- * doesn't, or can't be read.
+ * The branch.json on disk when it holds what repair decided, field by field ({@link
+ * DECIDED_FIELDS}, and `createdAt` when repair kept one); null when it doesn't, or can't be read.
  */
 async function readBackRepair(
   dirPath: string,
@@ -709,9 +736,7 @@ async function readBackRepair(
   const onDisk = await readBranchMetadataFile(dirPath).catch(() => null)
   if (!onDisk) return null
   const matches =
-    (Object.keys(wrote.branch) as (keyof RepairedFields)[]).every((key) =>
-      isDeepStrictEqual(onDisk.branch[key], wrote.branch[key]),
-    ) &&
+    DECIDED_FIELDS.every((key) => isDeepStrictEqual(onDisk.branch[key], wrote.branch[key])) &&
     (wrote.createdAt === undefined || onDisk.branch.createdAt === wrote.createdAt)
   return matches ? onDisk.branch : null
 }

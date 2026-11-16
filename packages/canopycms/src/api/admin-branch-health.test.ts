@@ -19,6 +19,7 @@ import type { BranchMetadata } from '../types'
 import { deleteBranchHandler } from './branch'
 import { withdrawBranch } from './branch-withdraw'
 import { DELETE_NEEDS_ADMIN_REASON } from '../editor/copy'
+import { archivedCutoff, deletableByAge } from '../branch-archive'
 import { refusesPushAsRewritten } from '../worker/github-commits'
 import { unsafeAsBranchName } from '../paths/test-utils'
 import { BranchRegistry } from '../branch-registry'
@@ -469,7 +470,7 @@ describe('admin branch-health api', () => {
         expect(result.ok).toBe(false)
         expect(result.status).toBe(409)
         expect(result.error).toMatch(
-          /^Another write created this branch's metadata during repair, so it holds that write's metadata and its access may be open\. The corrupt file is archived as branch\.json\.corrupt-\d{8}T\d{6}Z\. Check the branch's access in "Branches"\.$/,
+          /^Another write created this branch's metadata during repair, so it holds that write's metadata and its access may be open\. The corrupt file is archived as branch\.json\.corrupt-\d{8}T\d{6}Z\. Check who can open it, in "Branches"\.$/,
         )
         expect(JSON.parse(await fs.readFile(metaFile, 'utf-8'))).toEqual(theirs)
       } finally {
@@ -565,6 +566,69 @@ describe('admin branch-health api', () => {
           const result = await repairWithFailingWrite(() =>
             fs.writeFile(path.join(metaDir(), 'branch.json'), JSON.stringify(theirs), 'utf-8'),
           )
+
+          expect(result.ok).toBe(false)
+          expect(result.error).toMatch(/branch\.json exists again\.$/)
+        },
+      )
+
+      /** The real write, then `change` to branch.json, then a throw, as a failed refresh would. */
+      const repairWhoseRefreshFails = async (change: (branch: Record<string, unknown>) => void) => {
+        await createCorruptBranchWithGit('write-fails')
+        // A readable createdAt, so repair keeps it and the read-back holds it to that value.
+        await fs.writeFile(
+          path.join(metaDir(), 'branch.json'),
+          JSON.stringify({
+            branch: {
+              createdAt: '2026-01-01T00:00:00.000Z',
+              lastGitHubTip: 'a'.repeat(40),
+              status: 'bogus',
+            },
+          }),
+          'utf-8',
+        )
+        const realSaveIf = BranchMetadataFileManager.prototype.saveIf
+        const saveIf = vi
+          .spyOn(BranchMetadataFileManager.prototype, 'saveIf')
+          .mockImplementationOnce(async function (this: BranchMetadataFileManager, ...args) {
+            await realSaveIf.apply(this, args)
+            const file = path.join(metaDir(), 'branch.json')
+            const json = JSON.parse(await fs.readFile(file, 'utf-8'))
+            change(json.branch)
+            await fs.writeFile(file, JSON.stringify(json), 'utf-8')
+            throw new Error('registry down')
+          })
+        try {
+          return await repairHandler(ctx, req, { dirName: 'write-fails' })
+        } finally {
+          saveIf.mockRestore()
+        }
+      }
+
+      it('takes a bookkeeping write that landed in between as no reason to fail', async () => {
+        // As recordGitHubTip would, between repair's write and its registry refresh.
+        const result = await repairWhoseRefreshFails((branch) => {
+          branch.lastGitHubTip = 'b'.repeat(40)
+          branch.editors = ['carol']
+        })
+
+        expect(result.ok).toBe(true)
+        expect(result.data?.warning).toMatch(/refreshing the branch list failed \(registry down\)/)
+      })
+
+      it.each([
+        [
+          'createdAt',
+          (branch: Record<string, unknown>) => (branch.createdAt = '2001-01-01T00:00:00.000Z'),
+        ],
+        [
+          'unpublishedAtMerge',
+          (branch: Record<string, unknown>) => (branch.unpublishedAtMerge = true),
+        ],
+      ])(
+        'takes a change to %s, which repair decides, as the write not landing',
+        async (_f, change) => {
+          const result = await repairWhoseRefreshFails(change)
 
           expect(result.ok).toBe(false)
           expect(result.error).toMatch(/branch\.json exists again\.$/)
@@ -770,6 +834,24 @@ describe('admin branch-health api', () => {
         return check({ branch: meta.branch, branchRoot, baseRoot: branchesRoot }, user).allowed
       }
 
+      /** Alice's Withdraw of the repaired branch, through the handler. */
+      const withdrawAsCreator = (dirName: string, branch: BranchMetadata) => {
+        const branchRoot = path.join(branchesRoot, dirName)
+        const config = ctx.services.config
+        return withdrawHandler(
+          createMockApiContext({
+            services: {
+              config,
+              registry,
+              checkBranchAccess: createCheckBranchAccess(site, config),
+            },
+            branchContext: { branch, branchRoot, baseRoot: branchesRoot },
+          }),
+          { user: alice, body: {} },
+          { branch: unsafeAsBranchName(dirName) },
+        )
+      }
+
       /** Alice's delete of the repaired branch, through the handler. */
       const deleteAsCreator = (dirName: string, branch: BranchMetadata) => {
         const branchRoot = path.join(branchesRoot, dirName)
@@ -928,26 +1010,9 @@ describe('admin branch-health api', () => {
               .writeBlocked,
           ).toBe(true)
 
-          const branchRoot = path.join(branchesRoot, 'in-review')
-          const branchContext = { branch: written, branchRoot, baseRoot: branchesRoot }
-          const withdrawCtx = createMockApiContext({
-            services: {
-              config,
-              registry,
-              checkBranchAccess: createCheckBranchAccess(site, config),
-            },
-            branchContext,
-          })
-          {
-            const withdrawn = await withdrawHandler(
-              withdrawCtx,
-              { user: alice, body: {} },
-              { branch: unsafeAsBranchName('in-review') },
-            )
-            expect(withdrawn.error).toBeUndefined()
-            expect(withdrawn.ok).toBe(true)
-            expect(withdrawn.data?.branch.status).toBe('editing')
-          }
+          const withdrawn = await withdrawAsCreator('in-review', written)
+          expect(withdrawn.error).toBeUndefined()
+          expect(withdrawn.data?.branch.status).toBe('editing')
         },
       )
 
@@ -970,6 +1035,62 @@ describe('admin branch-health api', () => {
             written.status,
           ).writeBlocked,
         ).toBe(true)
+        const withdrawn = await withdrawAsCreator('bad-status', written)
+        expect(withdrawn.error).toBeUndefined()
+        expect(withdrawn.data?.branch.status).toBe('editing')
+      })
+
+      it('takes an archive time it cannot read as the repair time, so age deletion does not come early', async () => {
+        await createDamaged(
+          'archived-late',
+          damagedJson({
+            name: 'archived-late',
+            status: 'archived',
+            access: {},
+            createdBy: 'alice',
+            mergedAt: '2020-01-01T00:00:00.000Z',
+            archivedAt: 7,
+          }),
+        )
+        const before = Date.now()
+
+        const result = await repairHandler(ctx, req, { dirName: 'archived-late' })
+
+        const written = result.data!.branch
+        expect(Date.parse(written.archivedAt ?? '')).toBeGreaterThanOrEqual(before - 1000)
+        expect(result.data?.reset).toEqual({ archivedAt: written.archivedAt })
+        expect(deletableByAge(written, archivedCutoff(30, Date.now()))).toBe(false)
+      })
+
+      it('carries a field it does not know over verbatim', async () => {
+        await createDamaged(
+          'future',
+          damagedJson({ name: 'future', access: {}, createdBy: 'alice', futureLock: { on: true } }),
+        )
+
+        const result = await repairHandler(ctx, req, { dirName: 'future' })
+
+        expect(result.data?.otherFields.kept).toContain('futureLock')
+        const raw = JSON.parse(
+          await fs.readFile(
+            path.join(branchesRoot, 'future', '.canopy-meta', 'branch.json'),
+            'utf-8',
+          ),
+        )
+        expect(raw.branch.futureLock).toEqual({ on: true })
+      })
+
+      it('records now for a createdAt it cannot read', async () => {
+        await createDamaged(
+          'when',
+          damagedJson({ name: 'when', access: {}, createdBy: 'alice', createdAt: 7 }),
+        )
+        const before = Date.now()
+
+        const result = await repairHandler(ctx, req, { dirName: 'when' })
+
+        expect(Date.parse(result.data!.branch.createdAt)).toBeGreaterThanOrEqual(before - 1000)
+        expect(result.data?.otherFields.dropped).toContain('createdAt')
       })
 
       it.each([
@@ -1237,6 +1358,22 @@ describe('admin branch-health api', () => {
         expect(result.data?.restricted).toBe(false)
         expect(result.data?.openToEveryone).toBe(true)
         expect(await canOpen('main', dave)).toBe(true)
+      })
+
+      it("reports a base branch's own lockdown as kept, not turned on by repair", async () => {
+        await createDamaged(
+          'main',
+          damagedJson({
+            name: 'main',
+            access: { managerOrAdminAllowed: true, allowedUsers: 'x' },
+            createdBy: 'canopycms-system',
+          }),
+        )
+
+        const result = await repairHandler(ctx, req, { dirName: 'main' })
+
+        expect(result.data?.branch.access).toEqual({ managerOrAdminAllowed: true })
+        expect(result.data?.lockedByRepair).toBe(false)
       })
 
       it('gives the base branch only its readable narrowing when nothing suggests a restriction', async () => {

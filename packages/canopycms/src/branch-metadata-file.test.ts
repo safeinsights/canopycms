@@ -215,6 +215,7 @@ describe('salvageBranchMetadata', () => {
   const nothing = {
     access: { readable: false, narrowing: {}, mayRestrict: false, lockdownUnreadable: false },
     fields: {},
+    unknownFields: {},
     unreadable: [],
   }
   const salvage = (file: unknown) => salvageBranchMetadata(JSON.stringify(file))
@@ -357,8 +358,12 @@ describe('salvageBranchMetadata', () => {
     ['status', 'bogus', 'submitted'],
     ['unpublishedAtMerge', 'yes', true],
     ['rewrittenOnGitHub', 7, ''],
+    ['archivedAt', 7, '2026-11-16T12:00:00.000Z'],
   ])('takes an unreadable %s at its most restrictive', (key, value, restrictive) => {
-    const salvaged = salvage({ branch: { [key]: value } })
+    const salvaged = salvageBranchMetadata(
+      JSON.stringify({ branch: { [key]: value } }),
+      new Date('2026-11-16T12:00:00.000Z'),
+    )
     expect(salvaged.fields).toEqual({ [key]: restrictive })
     expect(salvaged.unreadable).toEqual([key])
   })
@@ -372,7 +377,7 @@ describe('salvageBranchMetadata', () => {
         editors: ['alice'],
         syncStatus: 'damaged',
         review: { state: 'nope' },
-        futureKey: 'dropped',
+        futureKey: 'carried',
       },
     })
     expect(salvaged.fields).toEqual({
@@ -382,6 +387,15 @@ describe('salvageBranchMetadata', () => {
       editors: ['alice'],
     })
     expect(salvaged.unreadable).toEqual(['syncStatus', 'review'])
+    expect(salvaged.unknownFields).toEqual({ futureKey: 'carried' })
+  })
+
+  it('carries keys the schema does not know over verbatim, all but __proto__', () => {
+    const salvaged = salvageBranchMetadata(
+      '{"branch": {"futureLock": {"on": true}, "__proto__": {"x": 1}, "status": "bogus"}}',
+    )
+    expect(salvaged.unknownFields).toEqual({ futureLock: { on: true } })
+    expect(Object.keys(salvaged.unknownFields)).toEqual(['futureLock'])
   })
 
   it('keeps a createdAt that reads, and notes one that does not', () => {
