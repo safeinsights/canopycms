@@ -1893,6 +1893,17 @@ describe('BranchManager', () => {
       expect(screen.queryByTestId('delete-branch-button-main')).toBeNull()
     })
 
+    it('hides Delete branch from a user whose id is the unknown creator id', async () => {
+      const branches: BranchSummary[] = [
+        { ...baseBranches[0], createdBy: 'unknown', access: { users: ['unknown'] } },
+      ]
+      renderBranchManager({ branches, user: { userId: 'unknown', groups: [] }, mode: 'prod' })
+
+      await openMenu('main')
+      expect(screen.getByTestId('submit-branch-button-main')).toBeTruthy()
+      expect(screen.queryByTestId('delete-branch-button-main')).toBeNull()
+    })
+
     it('hides Delete branch on the protected branch, even from an admin', async () => {
       const branches: BranchSummary[] = [
         {

@@ -477,7 +477,7 @@ describe('useSystemHealth', () => {
       )
       expect(shown).toMatchObject({
         message:
-          'Kept its access: only the people listed can open it. Its creator couldn\'t be read, so only an admin can share it again from "Branches".' +
+          'Kept its access: only the people listed can open it. Its creator couldn\'t be read or was missing, so only an admin can share it again from "Branches".' +
           ARCHIVED,
         color: 'yellow',
         autoClose: false,
@@ -501,11 +501,27 @@ describe('useSystemHealth', () => {
       })
     })
 
+    it('says an unreadable GitHub record holds pushes on a branch not archived', async () => {
+      const shown = await repairWith(
+        {},
+        {
+          reset: { rewrittenOnGitHub: '' },
+          kept: { status: 'editing', access: {}, createdBy: 'alice' },
+          restricted: false,
+          openToEveryone: true,
+        },
+      )
+      expect(shown?.message).toBe(
+        "Kept its access: anyone who can sign in can open it. Its record of GitHub's branch couldn't be read, so nothing is pushed to GitHub until a sync checks GitHub's branch." +
+          ARCHIVED,
+      )
+    })
+
     it('says what an unreadable merge record and GitHub record hold back', async () => {
       const shown = await repairWith(
         {},
         {
-          reset: { unpublishedAtMerge: true, rewrittenOnGitHub: '' },
+          reset: { unpublishedAtMerge: true, rewrittenOnGitHub: '', archivedAt: '2026-11-16' },
           kept: { status: 'archived', access: {}, createdBy: 'alice' },
           restricted: false,
           openToEveryone: true,
@@ -515,7 +531,7 @@ describe('useSystemHealth', () => {
       )
       expect(shown).toMatchObject({
         message:
-          "Kept its access: anyone who can sign in can open it. Its merge record couldn't be read, so only an admin can delete it. Its record of GitHub's branch couldn't be read, so nothing is pushed to GitHub until CanopyCMS confirms that branch. It stays archived. The corrupt file is archived as branch.json.corrupt-x.",
+          "Kept its access: anyone who can sign in can open it. Its merge record couldn't be read, so only an admin can delete it. Its record of GitHub's branch couldn't be read, so only an admin can delete it. Its archive time couldn't be read, so deletion by age counts from this repair. It stays archived. The corrupt file is archived as branch.json.corrupt-x.",
         color: 'yellow',
         autoClose: false,
       })

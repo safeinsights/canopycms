@@ -103,19 +103,25 @@ function repairedAccess(repaired: RepairedBranch): { text: string; mustAct: bool
 
 /** What else a repair could not read and held back, each needing an admin; in sentences. */
 function repairedHolds(repaired: RepairedBranch): string[] {
-  const { reset } = repaired
+  const { reset, branch } = repaired
+  const archived = branch.status === 'archived'
   return [
     reset.status === 'submitted'
       ? "Its status couldn't be read, so it is locked as submitted until it is withdrawn."
       : '',
     reset.createdBy !== undefined && !repaired.openToEveryone
-      ? 'Its creator couldn\'t be read, so only an admin can share it again from "Branches".'
+      ? 'Its creator couldn\'t be read or was missing, so only an admin can share it again from "Branches".'
       : '',
     reset.unpublishedAtMerge
       ? "Its merge record couldn't be read, so only an admin can delete it."
       : '',
     reset.rewrittenOnGitHub !== undefined
-      ? "Its record of GitHub's branch couldn't be read, so nothing is pushed to GitHub until CanopyCMS confirms that branch."
+      ? archived
+        ? "Its record of GitHub's branch couldn't be read, so only an admin can delete it."
+        : "Its record of GitHub's branch couldn't be read, so nothing is pushed to GitHub until a sync checks GitHub's branch."
+      : '',
+    reset.archivedAt !== undefined && archived
+      ? "Its archive time couldn't be read, so deletion by age counts from this repair."
       : '',
   ].filter(Boolean)
 }
