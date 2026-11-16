@@ -23,7 +23,10 @@ import type {
   ListAdminTasksParams,
   DeleteTaskParams,
 } from '../../api/admin'
-import type { BranchHealthData } from '../../api/admin-branch-health'
+import type { BranchHealthData, RepairBranchDirResponse } from '../../api/admin-branch-health'
+import { isNobody } from '../../system-users'
+import { isExcludedFrom } from '../../authorization/helpers'
+import type { BranchAccessControl, BranchAddBy } from '../../types'
 import type { DuplicateIdScan } from '../../branch-health'
 import { BRANCHES_KEY } from '../hooks/useBranchesData'
 import { isGatewayFailure, isUnanswered, UnansweredError } from '../unanswered'
@@ -40,6 +43,139 @@ const EMPTY_DELETE = {
 
 const countBranches = (count: number): string =>
   `${count} archived ${count === 1 ? 'branch' : 'branches'}`
+
+type RepairedBranch = NonNullable<RepairBranchDirResponse['data']>
+
+const plural = (count: number, one: string, many: string): string =>
+  `${count} ${count === 1 ? one : many}`
+
+/**
+ * What `access`'s removals enforce, in sentences, '' when there are none. A removed person stays
+ * out; a removed group keeps no one out, but only a manager of the list re-adds it, and only an
+ * admin one an admin removed or where `addBy` leaves the list to admins
+ * (authorization/branch-sharing.ts).
+ */
+function stayOutSentence(access: BranchAccessControl, addBy: BranchAddBy): string {
+  const people = Object.keys(access.excluded ?? {}).length
+  const groups = Object.values(access.excludedGroups ?? {})
+  const byAdmin = groups.filter((removal) => removal.byAdmin).length
+  const reAdders =
+    addBy === 'admins' || byAdmin === groups.length
+      ? 'an admin'
+      : byAdmin === 0
+        ? 'its owner or an admin'
+        : 'its owner or an admin, and only an admin where an admin removed it'
+  return [
+    people > 0
+      ? ` The ${plural(people, 'person', 'people')} removed from it ${people === 1 ? 'stays' : 'stay'} out.`
+      : '',
+    groups.length > 0
+      ? ` The ${plural(groups.length, 'group', 'groups')} removed from it can be added back only by ${reAdders}.`
+      : '',
+  ].join('')
+}
+
+/** Who can open a repaired branch now, and whether an admin has to act on it. */
+function repairedAccess(repaired: RepairedBranch): { text: string; mustAct: boolean } {
+  const { access, createdBy } = repaired.branch
+  const stayOut = stayOutSentence(access, repaired.addBy)
+  if (repaired.reset.access) {
+    // No access-list change lifts a lockdown (authorization/branch-sharing.ts).
+    if (access.managerOrAdminAllowed) {
+      return {
+        text: repaired.lockedByRepair
+          ? `Access couldn't be read, so this branch is locked to admins and reviewers. Opening it again needs its branch.json edited by hand.${stayOut}`
+          : `Access couldn't be read, but its lockdown could, so only admins and reviewers can open it. Lifting the lockdown needs its branch.json edited by hand.${stayOut}`,
+        mustAct: true,
+      }
+    }
+    if (repaired.restricted) {
+      return {
+        text: `Access couldn't be read, so only admins and reviewers can open it. Share it again from "Branches".${stayOut}`,
+        mustAct: true,
+      }
+    }
+    // Only the base branch and dev's active branch fall back to no list.
+    return {
+      text: repaired.isBase
+        ? `Access couldn't be read. The base branch takes no access list, so anyone who can sign in can open this branch.${stayOut}`
+        : `Access couldn't be read. This is the branch a development server edits, so it is kept open to anyone who can sign in.${stayOut}`,
+      mustAct: false,
+    }
+  }
+  const who = access.managerOrAdminAllowed
+    ? 'only admins and reviewers can open it'
+    : repaired.restricted
+      ? 'only the people and groups listed, admins and reviewers can open it'
+      : repaired.openToEveryone
+        ? 'anyone who can sign in can open it'
+        : isNobody(createdBy) || isExcludedFrom(access, createdBy)
+          ? 'only admins and reviewers can open it'
+          : 'only its creator, admins and reviewers can open it'
+  return { text: `Kept its access: ${who}.${stayOut}`, mustAct: false }
+}
+
+/** What dropping each of these fields stops holding back, for an admin to check. */
+const DROPPED_HOLDS: Partial<Record<string, string>> = {
+  submitUnfinished:
+    "Whether its last submit finished couldn't be read, so Approve isn't held back for it.",
+  syncStatus:
+    "Its sync state couldn't be read, so a later merge isn't flagged as possibly missing changes, and a push or base update a failed sync held back may go ahead.",
+  pullRequestState:
+    "Its pull request state couldn't be read, so Approve, Request changes and Mark merged aren't held back for a closed pull request.",
+}
+
+/**
+ * What else repair could not read, and what that holds back or no longer holds back, in sentences
+ * for the admin to check; Withdraw, not an admin, lifts the submitted lock.
+ */
+function repairedHolds(repaired: RepairedBranch): string[] {
+  const { reset, branch } = repaired
+  const archived = branch.status === 'archived'
+  const deleteHeld = branch.unpublishedAtMerge === true || branch.rewrittenOnGitHub !== undefined
+  const inReview = branch.status === 'submitted' || branch.status === 'approved'
+  return [
+    reset.status === 'submitted'
+      ? "Its status couldn't be read or was missing, so it is locked as submitted until it is withdrawn."
+      : '',
+    reset.createdBy !== undefined && !repaired.openToEveryone && !repaired.isBase
+      ? 'Its creator couldn\'t be read or was missing, so only an admin can share it again from "Branches".'
+      : '',
+    reset.unpublishedAtMerge
+      ? `${reset.status !== undefined ? "Its status couldn't be read or was missing beside a record of a rewrite on GitHub" : "Its merge record couldn't be read"}, so ${inReview ? 'once it is withdrawn, only an admin can delete it' : 'only an admin can delete it'}.`
+      : '',
+    reset.rewrittenOnGitHub !== undefined
+      ? archived
+        ? "Its record of GitHub's branch couldn't be read, so only an admin can delete it."
+        : "Its record of GitHub's branch couldn't be read, so nothing is pushed to GitHub until a sync clears it: when GitHub has no branch of this name and no pull request is recorded, or, with this branch published, when GitHub's branch holds this branch's commits or a commit CanopyCMS recorded there."
+      : '',
+    reset.archivedAt !== undefined && archived && !deleteHeld
+      ? "Its archive time couldn't be read, so deletion by age counts from this repair."
+      : '',
+    // Only a list repair emptied is shared again; a branch it locked needs a hand edit first.
+    repaired.removalsUnreadable &&
+    repaired.restricted &&
+    !repaired.branch.access.managerOrAdminAllowed
+      ? "Its removals couldn't be read, so check who was removed before sharing it again."
+      : '',
+    ...repaired.otherFields.dropped.map((field) => DROPPED_HOLDS[field] ?? ''),
+  ].filter(Boolean)
+}
+
+/** The repaired branch's status, unless {@link repairedHolds} already says it. */
+function statusSentence(repaired: RepairedBranch): string {
+  if (repaired.reset.status === 'submitted') return ''
+  switch (repaired.branch.status) {
+    case 'archived':
+      return 'It stays archived.'
+    case 'submitted':
+      return 'It stays submitted.'
+    case 'approved':
+      return 'It stays approved.'
+    default:
+      return 'Its status is editing.'
+  }
+}
 
 /**
  * Crash-loop rider window: a worker that fatally exits and restarts
@@ -299,15 +435,29 @@ export function useSystemHealth(options: UseSystemHealthOptions): UseSystemHealt
     async (dirName: string) => {
       try {
         const result = await apiClient.admin.repairBranchDir({ dirName })
-        if (!result.ok) throw new Error(result.error || 'Failed to repair metadata')
+        if (!result.ok || !result.data) throw new Error(result.error || 'Failed to repair metadata')
+        const { text, mustAct } = repairedAccess(result.data)
+        const holds = repairedHolds(result.data)
+        const message = [
+          text,
+          ...holds,
+          statusSentence(result.data),
+          `The corrupt file is archived as ${result.data.archivedAs}.`,
+          result.data.warning ?? '',
+        ]
+          .filter(Boolean)
+          .join(' ')
+        const needsAdmin = mustAct || holds.length > 0 || result.data.warning !== undefined
         notifications.show({
-          message: `Metadata repaired (corrupt file archived as ${result.data?.archivedAs ?? 'archive'})`,
-          color: 'green',
+          title: 'Metadata repaired',
+          message,
+          ...(needsAdmin ? { color: 'yellow', autoClose: false } : { color: 'green' }),
         })
         await refresh()
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to repair metadata'
-        notifications.show({ message, color: 'red' })
+        // A failed repair can leave the branch with another write's metadata the admin must check.
+        notifications.show({ message, color: 'red', autoClose: false })
       }
     },
     [apiClient, refresh],

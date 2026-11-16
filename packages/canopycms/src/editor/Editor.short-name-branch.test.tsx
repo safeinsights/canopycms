@@ -460,7 +460,7 @@ describe('the editor on a namespace branch named by its short name', () => {
     expect(note.textContent).toContain('on "spring".')
   })
 
-  it('names the new branch by its short name in the toast that says it was created', async () => {
+  it('names the new branch by its short name where the drawer says it was created', async () => {
     window.history.replaceState({}, '', '/?branch=spring')
     const fetchMock = stubApi({ status: 'editing', userId: 'author-1' })
     renderEditor('spring')
@@ -474,12 +474,13 @@ describe('the editor on a namespace branch named by its short name', () => {
 
     fireEvent.click(screen.getByTestId('create-branch-submit'))
 
+    // The drawer is still open, so it says so in place of a toast.
     await waitFor(() =>
-      expect(notifications.show).toHaveBeenCalledWith({
-        message: 'Branch “summer” created',
-        color: 'green',
-      }),
+      expect(screen.getByTestId('branch-created-status').textContent).toContain(
+        'Branch “summer” created',
+      ),
     )
+    expect(notifications.show).not.toHaveBeenCalledWith(expect.objectContaining({ color: 'green' }))
     await waitFor(() => expect(urlBranch()).toBe('summer'))
     // The listing may not hold it yet, so the push itself carries the short name.
     expect(

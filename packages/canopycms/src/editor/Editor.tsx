@@ -48,7 +48,12 @@ import { EditorShell } from './shell/EditorShell'
 import { FORM_PANE_ID, PaneLayout } from './shell/PaneLayout'
 import { SidePanelHost } from './shell/SidePanelHost'
 import { CanopyCMSProvider, type CanopyThemeOptions } from './theme'
-import { BranchManager, getBranchPermissions } from './BranchManager'
+import { BranchManager, getBranchPermissions, type BranchSummary } from './BranchManager'
+import { ShareBranchDialog } from './sharing/ShareBranchDialog'
+import { BranchCreatedToast } from './sharing/BranchCreatedToast'
+import { canShareBranch } from './sharing/sharing-mode'
+import { createdSummary } from './sharing/created-branch'
+import { CREATED_BRANCH_GRACE_MS } from './hooks/useBranchManager'
 import { useBaseUpdate } from './hooks/useBaseUpdate'
 import { BaseUpdateNotice } from './components/BaseUpdateNotice'
 import {
@@ -341,6 +346,32 @@ const EditorContent: React.FC<EditorProps> = ({
   const [groupManagerOpen, setGroupManagerOpen] = useState(false)
   const [permissionManagerOpen, setPermissionManagerOpen] = useState(false)
   const [branchManagerOpen, setBranchManagerOpen] = useState(false)
+  const [branchOverlayOpen, setBranchOverlayOpen] = useState(false)
+  // Read as a create finishes: the drawer, while open, says so itself.
+  const branchManagerOpenRef = useRef(branchManagerOpen)
+  branchManagerOpenRef.current = branchManagerOpen
+  // The Share dialog opened from the top bar or a create's toast, kept after closing so it can exit.
+  const [barShare, setBarShare] = useState<{
+    /** The branch as it was when opened; the listing's copy stands in once it has one. */
+    target: BranchSummary
+    /**
+     * When `target` is a create's own answer, the time until which it may stand in for a listing's
+     * copy: a new branch's grace. Past it, a branch no listing holds is gone, and so is the dialog.
+     */
+    answerUntil?: number
+    expired?: true
+    opened: boolean
+    returnFocusTo: () => HTMLElement | null
+  } | null>(null)
+  useEffect(() => {
+    if (!barShare?.answerUntil || barShare.expired) return
+    const timer = setTimeout(
+      () => setBarShare((now) => (now === barShare ? { ...now, expired: true } : now)),
+      Math.max(barShare.answerUntil - Date.now(), 0),
+    )
+    return () => clearTimeout(timer)
+  }, [barShare])
+  const shareControlRef = useRef<HTMLButtonElement>(null)
   // Each opening remounts Branches; one from New branch… starts on its new-branch form.
   const [branchManagerOpening, setBranchManagerOpening] = useState({ seq: 0, create: false })
   const openBranchesDrawer = (create: boolean) => {
@@ -526,6 +557,23 @@ const EditorContent: React.FC<EditorProps> = ({
   // No lock reason is true yet while the list is unanswered; once it has failed, or answered
   // without this branch, the lock says which.
   const branchPending = !currentBranch && !branchesLoaded && !branchesLoadFailed
+  const currentSummary = branchSummaries.find((b) => b.name === currentBranch?.name)
+  const barShareBranch =
+    barShare &&
+    (branchSummaries.find((b) => b.name === barShare.target.name) ??
+      // Past the grace nothing new opens, but an open dialog stays until it is closed. A closed
+      // one stays too, so a branch dropped as it closes can't cut short its exit's focus return.
+      ((barShare.answerUntil && (!barShare.expired || barShare.opened)) || !barShare.opened
+        ? barShare.target
+        : undefined))
+  const summariesRef = useRef(branchSummaries)
+  summariesRef.current = branchSummaries
+  const openBarShare = (
+    target: BranchSummary,
+    returnFocusTo: () => HTMLElement | null = () =>
+      shareControlRef.current?.isConnected ? shareControlRef.current : branchToggleRef.current,
+    answerUntil?: number,
+  ) => setBarShare({ target, answerUntil, opened: true, returnFocusTo })
 
   // Conflicts a merge left on the open branch (api/merge-conflicts.ts): read while its listing
   // names any, and the choices made on their cards that no save has sent yet.
@@ -780,6 +828,7 @@ const EditorContent: React.FC<EditorProps> = ({
     setBusy: setEntriesLoading,
     // The errors are in the form.
     onSaveBlocked: () => setPreviewMaximized(false),
+    onBranchAccessLost: () => void loadBranches().catch(console.error),
     onSaved: () => {
       void refreshEntries(branchNameState).catch((err) =>
         console.error('Failed to refresh entries after save', err),
@@ -798,7 +847,6 @@ const EditorContent: React.FC<EditorProps> = ({
 
   // "Get latest changes" on the open branch: the worker rewrites its files meanwhile, so the form
   // is read-only while it waits (`latestWaiting`), and every clean entry is read again after.
-  const currentSummary = branchSummaries.find((b) => b.name === currentBranch?.name)
   const baseUpdate = useBaseUpdate({
     branch: currentBranch,
     operatingMode,
@@ -862,6 +910,39 @@ const EditorContent: React.FC<EditorProps> = ({
     urlBranchName,
     sameBranch: namesBranch,
     userId: userContext?.userId,
+    announceCreated: (label, created) => {
+      if (branchManagerOpenRef.current) return
+      const id = `branch-created-${created?.name ?? label}`
+      const answerUntil = Date.now() + CREATED_BRANCH_GRACE_MS
+      const share =
+        created && canShareBranch(created, userContext)
+          ? () => {
+              const listed = summariesRef.current.find((b) => b.name === created.name)
+              // The create's own answer stands in until a listing holds the branch, within its
+              // grace; past that a branch no listing holds is gone, and nothing opens.
+              if (listed) openBarShare(listed)
+              else if (Date.now() < answerUntil) {
+                openBarShare(createdSummary(created), undefined, answerUntil)
+              }
+              notifications.hide(id)
+            }
+          : undefined
+      const toast = {
+        id,
+        color: 'green',
+        message: (
+          <BranchCreatedToast
+            label={label}
+            onShare={share}
+            onHold={() => notifications.update({ ...toast, autoClose: false })}
+            onRelease={() => notifications.update(toast)}
+          />
+        ),
+        autoClose: getNotificationDuration(8000),
+        withCloseButton: true,
+      }
+      notifications.show(toast)
+    },
   })
   // Only a Back or Forward calls this: it switches to the listed branch, by an address that opens
   // it alone, replacing the entry it arrived at. With no listing, the name is unchecked and could
@@ -2922,6 +3003,15 @@ const EditorContent: React.FC<EditorProps> = ({
               baseUpdate={baseUpdateControl}
               latestWait={latestWait}
               latestChangesWaiting={baseUpdate.latestChangesWaiting}
+              sharing={{
+                branch: currentSummary,
+                loading: branchPending,
+                user: userContext,
+                getUserMetadata: getCommentUserMetadata,
+                onShare: (returnFocusTo) =>
+                  currentSummary && openBarShare(currentSummary, returnFocusTo),
+              }}
+              shareControlRef={shareControlRef}
               onBranchReloadData={() => {
                 void Promise.all([handleReloadBranchData(), refreshEntries(branchNameState)]).catch(
                   console.error,
@@ -3226,7 +3316,7 @@ const EditorContent: React.FC<EditorProps> = ({
               <BranchesDrawer
                 opened={branchManagerOpen}
                 onClose={() => setBranchManagerOpen(false)}
-                confirmOpen={branchConfirmOpen}
+                confirmOpen={branchConfirmOpen || branchOverlayOpen}
                 returnFocusTo={branchReturnTarget}
               >
                 <BranchManager
@@ -3289,8 +3379,24 @@ const EditorContent: React.FC<EditorProps> = ({
                   onGetUserMetadata={canResolveUserNames ? handleGetUserMetadata : undefined}
                   onGetOwnerMetadata={getCommentUserMetadata}
                   onGetCommentUserMetadata={getCommentUserMetadata}
+                  onAccessChanged={() => void loadBranches().catch(console.error)}
+                  onOverlayChange={setBranchOverlayOpen}
                 />
               </BranchesDrawer>
+              {barShareBranch && userContext && (
+                <ShareBranchDialog
+                  // Beside CommentsPanel, which the branch's name keys too.
+                  key={`share:${barShareBranch.name}`}
+                  opened={!!barShare?.opened}
+                  onClose={() => setBarShare((current) => current && { ...current, opened: false })}
+                  onChanged={() => void loadBranches().catch(console.error)}
+                  branch={barShareBranch}
+                  urlName={urlBranchName(barShareBranch.name)}
+                  user={userContext}
+                  getUserMetadata={getCommentUserMetadata}
+                  returnFocusTo={barShare?.returnFocusTo}
+                />
+              )}
               {changesSubject && (
                 <LazyEntryChangesDrawer
                   opened={changesOpen}

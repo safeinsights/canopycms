@@ -32,10 +32,30 @@ export type SyncStatus = 'synced' | 'pending-sync' | 'sync-failed'
 export type ConflictStatus = 'clean' | 'conflicts-detected'
 export type PullRequestState = 'open' | 'closed' | 'merged'
 
+/** Who besides admins may add people to a branch's access list (`authorization/branch-sharing.ts`). */
+export type BranchAddBy = 'members' | 'owner' | 'admins'
+
+/** A user or group taken off a branch's access list, whom members cannot add back. */
+export interface BranchAccessExclusion {
+  by: CanopyUserId
+  at: string
+  /** Only an admin lifts an exclusion an admin made. */
+  byAdmin: boolean
+}
+
 export interface BranchAccessControl {
   allowedUsers?: CanopyUserId[]
   allowedGroups?: CanopyGroupId[]
   managerOrAdminAllowed?: boolean
+  /** The list governs even when empty, and the creator passes only as a listed member. */
+  restricted?: boolean
+  excluded?: Record<CanopyUserId, BranchAccessExclusion>
+  /** Groups taken off the list, which members cannot add back. Unlike a user's, no access effect. */
+  excludedGroups?: Record<CanopyGroupId, BranchAccessExclusion>
+  /** Unset: the site's `branchSharing.whoCanAdd`. */
+  addBy?: BranchAddBy
+  /** Who added each entry, keyed `user:<id>` or `group:<id>`; an entry may have none. */
+  entryMeta?: Record<string, { addedBy: CanopyUserId; addedAt: string }>
 }
 
 /**

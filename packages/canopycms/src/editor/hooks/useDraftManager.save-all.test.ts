@@ -436,19 +436,52 @@ describe('useDraftManager - Save all', () => {
     expect(result.current.loadedValues[idOf(a)]).toBeUndefined()
   })
 
-  it("words a path rule's bare refusal as a sentence with a way forward", async () => {
+  it("words a path rule's bare refusal as a sentence with a way forward, and saves on", async () => {
     draftAll()
     server.failures.set(idOf(b), async () => {
       throw new SaveApiError(403, 'Forbidden')
     })
-    const { result } = setup()
+    const onBranchAccessLost = vi.fn()
+    const { result } = setup({ onBranchAccessLost })
     await waitFor(() => expect(result.current.modifiedCount).toBe(3))
 
     const outcome = await run(result)
     expect(outcome?.failed).toEqual([
       expect.objectContaining({ kind: 'blocked', reason: SAVE_ALL_REASONS.forbidden }),
     ])
+    expect(outcome?.saved.map((s) => s.label)).toEqual(['Entry a', 'Entry c'])
+    expect(onBranchAccessLost).not.toHaveBeenCalled()
   })
+
+  it.each([
+    ['BRANCH_LOCKED_DOWN', 'An admin has limited this branch to admins and reviewers.'],
+    [
+      'BRANCH_ACCESS_DENIED',
+      'You no longer have access to this branch. Choose another branch in "Branches".',
+    ],
+  ] as const)(
+    'stops at a %s refusal, reports the rest unsaved for it, and reads the branch list again once',
+    async (code, reason) => {
+      draftAll()
+      server.failures.set(idOf(b), async () => {
+        throw new SaveApiError(403, 'Refused', undefined, code)
+      })
+      const onBranchAccessLost = vi.fn()
+      const { result } = setup({ onBranchAccessLost })
+      await waitFor(() => expect(result.current.modifiedCount).toBe(3))
+
+      const outcome = await run(result)
+
+      expect(server.order).toEqual([idOf(a), idOf(b)])
+      expect(outcome?.saved.map((s) => s.label)).toEqual(['Entry a'])
+      expect(outcome?.failed).toEqual([
+        expect.objectContaining({ label: 'Entry b', kind: 'blocked', reason }),
+        expect.objectContaining({ label: 'Entry c', kind: 'blocked', reason }),
+      ])
+      expect(outcome?.total).toBe(3)
+      expect(onBranchAccessLost).toHaveBeenCalledTimes(1)
+    },
+  )
 
   it('keeps the entries that saved when others fail, and names each failure and its reason', async () => {
     draftAll()

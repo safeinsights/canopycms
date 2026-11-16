@@ -651,7 +651,7 @@ export const restoreBranchEntry = defineEndpoint({
   responseType: 'RestoreEntryResponse',
   response: {} as RestoreEntryResponse,
   defaultMockData: { logicalPath: '', contentId: '' },
-  guards: ['schema', 'writableBranch'] as const,
+  guards: ['branchAccessWithSchema', 'writableBranch'] as const,
   handler: restoreEntryHandler,
 })
 

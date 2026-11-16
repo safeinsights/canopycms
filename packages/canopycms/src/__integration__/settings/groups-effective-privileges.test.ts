@@ -126,7 +126,7 @@ describe('Internal groups: effective privileges (end-to-end)', () => {
 
     // Restrict the branch to that group.
     const accessRes = await adminClient.patch('/api/canopycms/acl-test-branch/access', {
-      allowedGroups: [groupId],
+      add: { groups: [groupId] },
     })
     expect(accessRes.status).toBe(200)
 

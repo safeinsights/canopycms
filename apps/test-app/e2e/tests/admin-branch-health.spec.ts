@@ -2,7 +2,6 @@ import { BASE_URL } from '../fixtures/base-url'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { test, expect, type Page } from '@playwright/test'
-import { DEV_ADMIN_USER_ID } from 'canopycms-auth-dev'
 import { EditorPage } from '../fixtures/editor-page'
 import { AdminPage } from '../fixtures/admin-page'
 import { branchKey, branchRef } from '../fixtures/branch-page'
@@ -111,7 +110,7 @@ test.describe('Admin Branch Health', () => {
     await expect(branchRow).toContainText('Editing')
   })
 
-  test('corrupt metadata repairs to editing/current-admin; registry quarantines it in the meantime (B9)', async ({
+  test('corrupt metadata repairs to submitted, closed to admins and reviewers; registry quarantines it in the meantime (B9)', async ({
     page,
   }) => {
     const dirName = `broken-${Date.now()}`
@@ -144,17 +143,15 @@ test.describe('Admin Branch Health', () => {
     // Between the rename and that write, branch.json does not exist -- a single
     // readBranchMetadata here can land in the window and throw ENOENT.
     //
-    // Expected createdBy is NOT the fixture's 'test-admin' label from
-    // test-users.ts (TEST_USERS is decorative there) -- the dev auth plugin
-    // actually maps the 'admin' test key to DEV_ADMIN_USER_ID
-    // ('dev_admin_3xY6zW1qR5'), and that's the id repairBranchDirHandler
-    // stamps as createdBy (req.user.userId).
+    // The seeded file isn't JSON, so neither its status, creator nor access can
+    // be read: it is submitted until withdrawn, its creator is recorded as
+    // 'unknown', and it lists no one.
     await expect
       .poll(async () => {
         const meta = await readBranchMetadata(dirName).catch(() => null)
-        return meta ? { status: meta.status, createdBy: meta.createdBy } : null
+        return meta ? { status: meta.status, createdBy: meta.createdBy, access: meta.access } : null
       })
-      .toEqual({ status: 'editing', createdBy: DEV_ADMIN_USER_ID })
+      .toEqual({ status: 'submitted', createdBy: 'unknown', access: { restricted: true } })
   })
 
   test('orphan directory purges to trash; retention is keyed off the NAME stamp, not mtime', async ({

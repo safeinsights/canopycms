@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { renderHook } from '@testing-library/react'
+import { createElement, Fragment } from 'react'
+import { act, render, renderHook } from '@testing-library/react'
 
 import {
   FOCUS_RETURN_ATTR,
@@ -9,6 +10,7 @@ import {
   rememberOpener,
   returnTarget,
   useFocusHandOff,
+  useStandInOnLeave,
 } from './focus-return'
 
 const add = <T extends HTMLElement>(el: T, parent: HTMLElement = document.body): T => {
@@ -245,5 +247,88 @@ describe('useFocusHandOff', () => {
     caret.remove()
     rerender()
     expect(document.activeElement).toBe(field)
+  })
+})
+
+describe('useStandInOnLeave', () => {
+  /** A control under the hook's ref, keyed by `mode`, and the popover it controls while `open`. */
+  function Bar({
+    mode,
+    open,
+    takeover,
+    standIn,
+  }: {
+    mode?: string
+    open?: boolean
+    takeover?: boolean
+    standIn: HTMLElement
+  }) {
+    const ref = useStandInOnLeave<HTMLButtonElement>(() => standIn)
+    if (takeover) return createElement('input', { autoFocus: true, 'aria-label': 'takeover' })
+    if (!mode) return null
+    return createElement(
+      Fragment,
+      null,
+      createElement(
+        'button',
+        { key: mode, ref, 'aria-controls': open ? 'who-has-access' : undefined },
+        mode,
+      ),
+      open &&
+        createElement('div', { id: 'who-has-access' }, createElement('button', null, 'inside')),
+    )
+  }
+  const named = (text: string) =>
+    Array.from(document.querySelectorAll('button')).find((b) => b.textContent === text)!
+
+  it('hands focus to the stand-in when the focused control leaves', () => {
+    const standIn = button()
+    const view = render(createElement(Bar, { mode: 'share', standIn }))
+    named('share').focus()
+
+    view.rerender(createElement(Bar, { standIn }))
+
+    expect(document.activeElement).toBe(standIn)
+  })
+
+  it('leaves focus alone when the control leaves without it', () => {
+    const standIn = button()
+    const elsewhere = button()
+    const view = render(createElement(Bar, { mode: 'share', standIn }))
+    elsewhere.focus()
+
+    view.rerender(createElement(Bar, { standIn }))
+
+    expect(document.activeElement).toBe(elsewhere)
+  })
+
+  it('leaves focus where something else in the same render took it', () => {
+    const standIn = button()
+    const view = render(createElement(Bar, { mode: 'share', standIn }))
+    named('share').focus()
+
+    view.rerender(createElement(Bar, { takeover: true, standIn }))
+
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('takeover')
+  })
+
+  it('keeps focus on the control that replaces it in the same render', () => {
+    const standIn = button()
+    const view = render(createElement(Bar, { mode: 'share', standIn }))
+    named('share').focus()
+
+    view.rerender(createElement(Bar, { mode: 'view', standIn }))
+
+    expect(document.activeElement).toBe(named('view'))
+  })
+
+  it('counts focus inside the popover the control opened as the control holding it', () => {
+    const standIn = button()
+    const view = render(createElement(Bar, { mode: 'view', open: true, standIn }))
+    act(() => named('inside').focus())
+
+    view.rerender(createElement(Bar, { standIn }))
+
+    expect(document.activeElement).toBe(standIn)
   })
 })

@@ -34,6 +34,7 @@ import { isNonApiResponse } from '../../api/client'
 import { isGatewayFailure, isUnanswered, UnansweredError } from '../unanswered'
 import type { ApiResponse } from '../../api/types'
 import type { UnsavedSummary } from './useDraftManager'
+import type { RemovedCount } from '../sharing/share-copy'
 import type { StampedEntry } from '../../stamp-on-publish'
 import { describeUnsaved } from './useBranchActions'
 import { writeEditorUrl } from './editor-history'
@@ -433,8 +434,7 @@ interface BranchSummary {
     users: string[] | undefined
     groups: string[] | undefined
     managerOrAdminAllowed: boolean | undefined
-    withheldUsers: number | undefined
-    withheldGroups: number | undefined
+    removed: RemovedCount | undefined
   }
   pullRequestUrl?: string
   pullRequestNumber?: number
@@ -475,6 +475,8 @@ interface BranchSummary {
   submitBlocked: boolean
   /** Server-computed: the API refuses Approve, as the last submit didn't finish. */
   approveBlocked?: boolean
+  editors?: string[]
+  sharing?: BranchListItem['sharing']
 }
 
 export interface UseBranchManagerOptions {
@@ -700,8 +702,13 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
           users: b.access.allowedUsers,
           groups: b.access.allowedGroups,
           managerOrAdminAllowed: b.access.managerOrAdminAllowed,
-          withheldUsers: b.withheldAccess?.users,
-          withheldGroups: b.withheldAccess?.groups,
+          removed:
+            b.access.excluded || b.access.excludedGroups
+              ? {
+                  users: Object.keys(b.access.excluded ?? {}).length,
+                  groups: Object.keys(b.access.excludedGroups ?? {}).length,
+                }
+              : undefined,
         },
         pullRequestUrl: b.pullRequestUrl,
         pullRequestNumber: b.pullRequestNumber,
@@ -713,6 +720,8 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         conflictFiles: b.conflictFiles,
         hold: b.hold,
         approveBlocked: b.approveBlocked,
+        editors: b.editors,
+        sharing: b.sharing,
         commentCount: unresolvedCount,
         // Fail CLOSED (`?? true`): these flags are optional on the wire (see
         // BranchListItem's doc comment in api/branch.ts) so a version-skewed

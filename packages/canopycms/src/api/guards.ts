@@ -11,7 +11,8 @@ import {
   BranchMetadataCorruptError,
 } from '../branch-metadata-error'
 import { canopyLogError } from '../utils/logger'
-import { isAdmin, isReviewer, isPrivileged } from '../authorization/helpers'
+import { isAdmin, isReviewer, isPrivileged, isLockedOutOfBranch } from '../authorization/helpers'
+import type { CanopyUser } from '../user'
 import { getBranchProtection, getBranchWriteProtection } from '../authorization/protected-branch'
 
 /** All available guard identifiers */
@@ -108,6 +109,41 @@ const runBranchGuard: GuardRunner = async (ctx, _req, params, accumulated) => {
   return { ok: true, context: { branchContext: context } }
 }
 
+/** A refusal to someone the branch's access check turns away. */
+export interface BranchAccessDenial {
+  status: 403
+  code: 'BRANCH_ACCESS_DENIED' | 'BRANCH_LOCKED_DOWN'
+  error: string
+}
+
+/**
+ * Why `user` may not open the branch, or null when they may. Every branch-scoped refusal of
+ * someone the access check turns away answers with it. A lockdown is named only to someone the
+ * list would otherwise admit, so the code tells no one else anything about the branch.
+ */
+export function branchAccessDenial(
+  ctx: ApiContext,
+  context: BranchContext,
+  user: CanopyUser,
+): BranchAccessDenial | null {
+  if (ctx.services.checkBranchAccess(context, user).allowed) return null
+  const unlocked: BranchContext = {
+    ...context,
+    branch: {
+      ...context.branch,
+      access: { ...context.branch.access, managerOrAdminAllowed: false },
+    },
+  }
+  return isLockedOutOfBranch(context.branch.access, user.groups) &&
+    ctx.services.checkBranchAccess(unlocked, user).allowed
+    ? {
+        status: 403,
+        code: 'BRANCH_LOCKED_DOWN',
+        error: 'An admin has limited this branch to admins and reviewers.',
+      }
+    : { status: 403, code: 'BRANCH_ACCESS_DENIED', error: "You don't have access to this branch." }
+}
+
 const runBranchAccessGuard: GuardRunner = async (ctx, req, params, accumulated) => {
   const branch = extractBranchName(params)
   if (typeof branch !== 'string') return { ok: false, response: branch }
@@ -117,13 +153,8 @@ const runBranchAccessGuard: GuardRunner = async (ctx, req, params, accumulated) 
     return { ok: false, response: { ok: false, status: 404, error: 'Branch not found' } }
   }
 
-  const access = ctx.services.checkBranchAccess(context, req.user)
-  if (!access.allowed) {
-    return {
-      ok: false,
-      response: { ok: false, status: 403, error: access.reason || 'Forbidden' },
-    }
-  }
+  const denied = branchAccessDenial(ctx, context, req.user)
+  if (denied) return { ok: false, response: { ok: false, ...denied } }
 
   return { ok: true, context: { branchContext: context } }
 }
@@ -155,13 +186,8 @@ const runBranchAccessWithSchemaGuard: GuardRunner = async (ctx, req, params, acc
     return { ok: false, response: { ok: false, status: 404, error: 'Branch not found' } }
   }
 
-  const access = ctx.services.checkBranchAccess(context, req.user)
-  if (!access.allowed) {
-    return {
-      ok: false,
-      response: { ok: false, status: 403, error: access.reason || 'Forbidden' },
-    }
-  }
+  const denied = branchAccessDenial(ctx, context, req.user)
+  if (denied) return { ok: false, response: { ok: false, ...denied } }
 
   if (!context.flatSchema) {
     return {

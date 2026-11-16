@@ -22,7 +22,8 @@ function matchesRule(rule: PathPermission, logicalPath: LogicalPath): boolean {
   return minimatch(logicalPath as string, rule.path, { dot: true })
 }
 
-function isAllowedByTarget(target: PermissionTarget, user: CanopyUser): boolean {
+/** Whether a rule's target for one level admits `user`, by id or group; an empty target admits all. */
+export function isAllowedByTarget(target: PermissionTarget, user: CanopyUser): boolean {
   const hasUserConstraint = !!target.allowedUsers?.length
   const hasGroupConstraint = !!target.allowedGroups?.length
 

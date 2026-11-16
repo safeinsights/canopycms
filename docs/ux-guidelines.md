@@ -1,6 +1,6 @@
 # Editor UX guidelines
 
-The standard for every change to the CanopyCMS editor (`packages/canopycms/src/editor/`).
+The standard for every change to the editor (`packages/canopycms/src/editor/`).
 [Enforcement](#enforcement) lists what checks it.
 
 ## Vocabulary
@@ -8,40 +8,43 @@ The standard for every change to the CanopyCMS editor (`packages/canopycms/src/e
 One word per idea, everywhere. New UI takes the verbs from `EDITOR_ACTIONS` in
 `packages/canopycms/src/editor/copy.ts`.
 
-| Say                                           | For                                                              | Not                                         |
-| --------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------- |
-| **Save**                                      | Writing the open entry to the branch                             | Save file, Commit                           |
-| **Save all**                                  | Saving every unsaved entry on the branch                         | Save branch                                 |
-| **Refresh from server**                       | Replacing the open entry with its saved copy                     | Reload entry                                |
-| **Submit for review**                         | Committing the branch and opening its pull request               | Submit branch, Publish                      |
-| **Withdraw from review**                      | Taking a submitted branch back for editing                       | Withdraw branch                             |
-| **Get latest changes**                        | Bringing the site's newer changes into a branch                  | Update from main, Sync                      |
-| **Approve**                                   | A reviewer signing off a submitted branch                        | Accept, LGTM                                |
-| **Review**                                    | Opening a submitted branch to review it                          | Inspect                                     |
-| **Request changes**                           | A reviewer sending a branch back to its editor                   | Reject                                      |
-| **Switch branch**                             | Opening another branch                                           | Change branch, Change / Manage              |
-| **New branch**                                | Creating a branch                                                | Create branch, except as its form's confirm |
-| **Remove**                                    | Taking an item out of a list or field; unlisting an entry type   | Clear, Delete                               |
-| **Clear**                                     | Resetting an optional object field to unset                      | Remove                                      |
-| **Delete**                                    | Destroying a stored entry, collection, branch or group           | Remove                                      |
-| **Archive branch**                            | Ending a branch whose pull request closed unmerged               | Close                                       |
-| **Discard changes**                           | Throwing away unsaved edits                                      | Discard drafts, Revert                      |
-| **Undo change**                               | Setting a saved change back to the base, as an unsaved edit      | Revert, Reset                               |
-| **Redo change**                               | Putting an undone change back as saved                           | Reapply                                     |
-| **Unsaved**                                   | Not yet saved                                                    | Changed, Dirty                              |
-| **Changed**                                   | Different from the base branch                                   | Modified, Diff                              |
-| **Show changes**                              | Opening an entry's diff against the base                         | Diff, Compare                               |
-| **Conflict**                                  | A value you and someone else both changed since the branch began | Merge conflict, Clash                       |
-| **Latest version**                            | The site's shared copy, as a conflict card shows it              | main, base, upstream                        |
-| **Use latest version**, **Keep your version** | A conflict's two sides                                           | Use theirs, Keep mine                       |
-| **Use both**                                  | Long text: the latest version's lines, then yours                | Merge, Combine                              |
-| **Mark resolved**                             | Settling a conflict edited by hand                               | Resolve, Done                               |
-| **Release hold**                              | Letting a held branch go on                                      | Unblock                                     |
-| **Remove it**, **Keep it**                    | A conflict on a value one side removed                           | Delete, Restore                             |
-| **entry**, **collection**                     | A content item, and the folder that holds entries                | file, page, item; folder                    |
-| **file**                                      | An item in the media library                                     | asset, media item                           |
-| **Content**                                   | The panel of collections and entries                             | All entries                                 |
-| **Change URL**                                | Changing an entry's slug; "Change slug" without a page           | Rename                                      |
+| Say                                           | For                                                            | Not                                         |
+| --------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------- |
+| **Save**                                      | Writing the open entry                                         | Save file, Commit                           |
+| **Save all**                                  | Saving every unsaved entry                                     | Save branch                                 |
+| **Refresh from server**                       | Replacing an entry with its saved copy                         | Reload entry                                |
+| **Submit for review**                         | Committing the branch and opening its pull request             | Submit branch, Publish                      |
+| **Withdraw from review**                      | Taking a submitted branch back for editing                     | Withdraw branch                             |
+| **Get latest changes**                        | Bringing the site's newer changes in                           | Update from main, Sync                      |
+| **Approve**                                   | Signing off a submitted branch                                 | Accept, LGTM                                |
+| **Review**                                    | Opening a submitted branch to review it                        | Inspect                                     |
+| **Request changes**                           | Sending a branch back to its editor                            | Reject                                      |
+| **Switch branch**                             | Opening another branch                                         | Change branch, Change / Manage              |
+| **New branch**                                | Creating a branch                                              | Create branch, except as its form's confirm |
+| **Remove**                                    | Taking an item out of a list or field; unlisting an entry type | Clear, Delete                               |
+| **Clear**                                     | Resetting an optional object field to unset                    | Remove                                      |
+| **Delete**                                    | Destroying an entry, collection, branch or group               | Remove                                      |
+| **Archive branch**                            | Ending a branch whose pull request closed unmerged             | Close                                       |
+| **Discard changes**                           | Throwing away unsaved edits                                    | Discard drafts, Revert                      |
+| **Undo change**                               | Returning a saved change to the base, unsaved                  | Revert, Reset                               |
+| **Redo change**                               | Putting an undone change back as saved                         | Reapply                                     |
+| **Unsaved**                                   | Not yet saved                                                  | Changed, Dirty                              |
+| **Changed**                                   | Different from the base branch                                 | Modified, Diff                              |
+| **Show changes**                              | Opening an entry's diff against the base                       | Diff, Compare                               |
+| **Conflict**                                  | A value both you and someone else changed                      | Merge conflict, Clash                       |
+| **Latest version**                            | The site's shared copy, on a conflict card                     | main, base, upstream                        |
+| **Use latest version**, **Keep your version** | A conflict's two sides                                         | Use theirs, Keep mine                       |
+| **Use both**                                  | Long text: the latest version's lines, then yours              | Merge, Combine                              |
+| **Mark resolved**                             | Settling a conflict edited by hand                             | Resolve, Done                               |
+| **Release hold**                              | Letting a held branch go on                                    | Unblock                                     |
+| **Remove it**, **Keep it**                    | A conflict on a value one side removed                         | Delete, Restore                             |
+| **entry**, **collection**                     | A content item, and the folder that holds entries              | file, page, item; folder                    |
+| **file**                                      | An item in the media library                                   | asset, media item                           |
+| **Content**                                   | The panel of collections and entries                           | All entries                                 |
+| **Change URL**                                | Changing an entry's slug; "Change slug" without a page         | Rename                                      |
+| **Share…**                                    | Changing who may open a branch                                 | Invite                                      |
+| **Update access**                             | Sending the Share dialog's changes                             | Save                                        |
+| **Copy link**                                 | Copying a branch's editor address                              | Share link                                  |
 
 Status labels and colours come from `packages/canopycms/src/editor/branch-status.ts`, lock labels
 from `packages/canopycms/src/editor/branch-lock.ts`.
@@ -49,7 +52,7 @@ from `packages/canopycms/src/editor/branch-lock.ts`.
 ## Copy
 
 - **Sentence case** for every label, title, menu item, tab, badge, toast and placeholder:
-  "Delete branch", "Open in GitHub".
+  "Delete branch".
 - **Buttons start with a verb** and name the result. A confirm repeats the action's verb
   ("Delete entry"), never "OK" or "Yes"; a form's confirm may add its noun ("Create branch").
 - **`…`, the single character,** marks an in-progress state ("Saving…") or a command that
@@ -59,7 +62,8 @@ from `packages/canopycms/src/editor/branch-lock.ts`.
   else's submission sees "Approve" and "Request changes" (the latter alone once approved), and
   anyone else its workflow action; another in review shows them "Review"; others, "Open".
 - **Dismissing a dialog** that mixes staged and immediate changes: "Discard changes" while edits
-  are staged, "Close" after an immediate save, otherwise "Cancel".
+  are staged, "Close" after an immediate save, otherwise "Cancel". Esc and ✕ follow it, asking
+  first while edits are staged.
 - **Quote a named control**: the "Tasks" tab.
 - **No "successfully"**: "Branch created".
 - **Human labels, never internal names**: "Page sections › Hero › Heading", never
@@ -75,17 +79,17 @@ from `packages/canopycms/src/editor/branch-lock.ts`.
 
 ## Choosing a surface
 
-| Need                                                                   | Use                   |
-| ---------------------------------------------------------------------- | --------------------- |
-| A decision that cannot be undone, or a short form of at most 3 fields  | Modal                 |
-| A list or task worked alongside the content: branches, comments, media | Drawer or panel       |
-| Context for one control: a field's comments, a picker, a short note    | Popover               |
-| The result of an action that is not otherwise visible                  | Toast                 |
-| A branch's lasting state: read-only, protected                         | Branch bar status     |
-| One entry's lasting state, such as a read-only draft                   | Notice above its form |
+| Need                                                                                         | Use                   |
+| -------------------------------------------------------------------------------------------- | --------------------- |
+| A decision that cannot be undone, a form of at most 3 fields, or a picker over a staged list | Modal                 |
+| A list or task worked alongside the content: branches, comments, media                       | Drawer or panel       |
+| Context for one control: a field's comments, a picker, a short note                          | Popover               |
+| The result of an action that is not otherwise visible                                        | Toast                 |
+| A branch's lasting state: read-only, protected                                               | Branch bar status     |
+| One entry's lasting state, such as a read-only draft                                         | Notice above its form |
 
-Never open a modal from a modal. A popover anchored to a field never covers its input; a short field's opens below it
-(`packages/canopycms/src/editor/comments/popover-placement.ts`). Don't toast what is already visible: a saved entry shows "Saved" inline, a new comment appears in its thread. Toasts go in the corner opposite the rail (`Notifications` in
+Never open a modal from a modal, though one may open over a drawer. A popover anchored to a field never covers its input; a short field's opens below it
+(`packages/canopycms/src/editor/comments/popover-placement.ts`). Don't toast what is already visible, such as an inline "Saved". Toasts sit opposite the rail (`Notifications` in
 `packages/canopycms/src/editor/theme.tsx`); one with an action pauses while hovered or focused
 (`UndoToastMessage`). An error that needs action stays until dismissed.
 
@@ -97,8 +101,8 @@ Never open a modal from a modal. A popover anchored to a field never covers its 
   it), and its red confirm button repeats the verb.
 - **Undo instead of confirm** for removals inside a form: a list item, block or image goes at
   once, and a toast offers Undo; an optional object's Clear leaves "Undo clear" behind. Undo
-  updates the current draft, not a snapshot, and focuses the restored row or object. Inside a modal, the Undo is the dialog's own status line: a toast would sit outside
-  its focus trap.
+  updates the current draft, not a snapshot, and focuses the restored row or object. Inside a modal, Undo stays in the dialog, on the struck-through row
+  or in its status line: a toast would sit outside its focus trap.
 - A removed item's comment threads move to the entry's thread, labelled "On a removed item"; the
   Remove toast says so.
 - Never both. A removal most users can't restore, such as "Remove from library", confirms.
@@ -109,7 +113,7 @@ Never open a modal from a modal. A popover anchored to a field never covers its 
   giving a full-sentence reason with the way forward ("This branch is in review.
   Withdraw it to make changes."). One reason blocking controls with different verbs names the
   condition, not a verb. The Tooltip opens clear of its control and any control stacked beside it.
-  Mantine's `data-disabled` keeps the Tooltip working on focus and touch. A control with text
+  `data-disabled` keeps it working on focus and touch. A control with text
   needs only the Tooltip; an icon-only one adds an `aria-label` for its name and the reason as
   visually hidden text.
 - No reason for a submit disabled only by an empty adjacent input (Reply) or a busy dialog's
@@ -119,10 +123,9 @@ Never open a modal from a modal. A popover anchored to a field never covers its 
 - A disabled menu item stays focusable (`aria-disabled`, not `disabled`) and shows the reason
   inline (`ReasonedMenuItem`). An empty menu shows one such item saying why, so arrow keys reach
   it; an empty section of a non-empty menu is plain text, with no not-allowed cursor.
-- **Hide** a control that can never apply for this user, such as admin items for an editor, and
+- **Hide** a control that can never apply for this user, such as an editor's admin items, and
   a read-only form's row actions ([Fields](#fields)). Where a path rule refuses an action, hide
-  the per-item "…" actions and show one collection-level line saying why ("You can't add entries
-  here").
+  the per-item "…" actions and show one collection-level line saying why.
 - A locked branch keeps each row's "…" slot and draws a lock there on the hovered, focused or
   selected row, by opacity; its Tooltip says why.
 
@@ -144,7 +147,7 @@ Never open a modal from a modal. A popover anchored to a field never covers its 
   "… may have gone through even though the server didn't answer", naming the entry and where
   to check, quoted. Keep the input, unless a retry could duplicate the write (a create): then
   close, saying where to check, and prefill that dialog's next open with what was typed.
-- An inline alert about a list sits above the list, under its heading.
+- An inline alert about a list sits above it, under its heading.
 - A placeholder takes the height of what replaces it, and a wrapping bar reserves its controls'
   widest label width, so nothing shifts.
 
@@ -223,8 +226,7 @@ included:
 - `--canopy-focus-ring` (3:1 on its surface for any brand) for focus rings, focused borders and
   checked controls; white on the primary colour sits on `--canopy-primary-fill`.
 
-Pass a plain colour; the theme brings its text and light variant to 4.5:1, at which dark mode's
-light status badges look alike. Success text is the default colour beside a green icon. Count badges put text colour on a tinted
+Pass a plain colour; the theme brings its text and light variant to 4.5:1. Success text is the default colour beside a green icon. Count badges put text colour on a tinted
 background.
 A light yellow `Alert`'s title, icon and close button take the text colour. Filled destructive
 buttons are `red.8`, filled orange ones `orange.6` with black text. Only the primary is otherwise
@@ -234,10 +236,12 @@ filled: other badges, icons and indicators take their colour's light variant.
 
 - Show a person's name or a fallback ("Name unavailable"), never a raw user id: an id is an
   internal name.
-- A branch card's access list shows the names the viewer can resolve, then "and N others". A
-  caller without the privileged lookup never receives `access.allowedUsers` ids.
-- An avatar beside a name has empty `alt`. One showing only initials is hidden from assistive
-  tech, with the person's name as visually hidden text.
+- A branch card's access list shows the names the viewer can resolve, then "and N others".
+  Anyone who may open a branch receives its whole list; only admins and reviewers see emails.
+- An avatar beside a name has empty `alt`. One showing only initials (`personInitials`) is
+  hidden from assistive tech, with the person's name as visually hidden text.
+- Pickers leave out admins, whom their role admits. A read-only stand-in for a control says
+  who may act.
 
 ## Shell regions
 
@@ -247,7 +251,8 @@ branch is open, Media, a divider, the layout toggle; Settings and Account below)
 (content tree: docked, in the stacked form row, or over the form), **main** (entry header, keeping
 Save above a maximized preview; preview and form) and **overlays** (drawers, modals, toasts).
 Regions are layout only. New UI joins an existing region; adding one is a design decision.
-Switch branch… and New branch… open the Branches drawer. Unsaved is one dot (`UnsavedMark`), also
+`trailing` may lead with the branch's sharing control. Switch branch… and a locked branch's New branch…
+open the Branches drawer. Unsaved is one dot (`UnsavedMark`), also
 on Content while its panel is closed.
 
 ## Enforcement

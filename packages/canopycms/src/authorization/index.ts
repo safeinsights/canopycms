@@ -24,6 +24,8 @@ export {
 export {
   checkBranchAccessWithDefault,
   createCheckBranchAccess,
+  opensToEveryone,
+  opensWithoutList,
   canPerformWorkflowAction,
 } from './branch'
 
@@ -34,7 +36,28 @@ export {
   type BranchWriteProtection,
 } from './protected-branch'
 
-export { checkPathAccess, createCheckPathAccess, resolveDefaultPathAccess } from './path'
+export {
+  checkPathAccess,
+  createCheckPathAccess,
+  isAllowedByTarget,
+  resolveDefaultPathAccess,
+} from './path'
+
+export {
+  accessForViewer,
+  applyAccessChange,
+  branchSharingRights,
+  collectCmsUserIds,
+  effectiveAddBy,
+  hasAccessList,
+  resolveBranchSharing,
+  type BranchAccessChange,
+  type BranchAccessChangeResult,
+  type BranchAccessRefusal,
+  type BranchAccessRefusalCode,
+  type BranchSharingRights,
+  type ResolvedBranchSharing,
+} from './branch-sharing'
 
 export {
   RESERVED_GROUPS,
@@ -45,6 +68,7 @@ export {
   isReviewer,
   isPrivileged,
   isLockedOutOfBranch,
+  isExcludedFrom,
 } from './helpers'
 
 export {

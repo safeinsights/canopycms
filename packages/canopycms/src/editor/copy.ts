@@ -1,3 +1,5 @@
+import type { ApiErrorCode } from '../api/types'
+
 /**
  * The editor's fixed action verbs, sentence case and verb first. "…" is appended only where
  * the command asks for more before it acts ("Switch branch…"); see docs/ux-guidelines.md.
@@ -38,6 +40,9 @@ export const EDITOR_ACTIONS = {
   keepIt: 'Keep it',
   keepItDeleted: 'Keep it deleted',
   chooseAgain: 'Choose again',
+  share: 'Share',
+  updateAccess: 'Update access',
+  copyLink: 'Copy link',
 } as const
 
 /** Withdraw's confirm on a branch that conflicts with its base, which then gets the latest changes. */
@@ -74,3 +79,54 @@ export const DELETE_NEEDS_ADMIN_REASON =
 /** Why Approve and Request changes can't act: the pull request they act on is gone. */
 export const CLOSED_PULL_REQUEST_REASON =
   'The pull request was closed on GitHub. Use "Withdraw from review", then submit it again to open a new one.'
+
+/** What a refusal to open a branch, to create one or to change who may open one tells the person refused. */
+const ACCESS_REFUSALS: Partial<Record<ApiErrorCode, string>> = {
+  BRANCH_CREATE_FORBIDDEN:
+    "You can't create branches, because you don't have edit access to any content here. Ask a CanopyCMS admin to grant it.",
+  BRANCH_ACCESS_DENIED:
+    'You no longer have access to this branch. Choose another branch in "Branches".',
+  BRANCH_LOCKED_DOWN: 'An admin has limited this branch to admins and reviewers.',
+  BRANCH_ARCHIVED: "This branch is archived, so who has access can't change.",
+  BRANCH_NOT_SHAREABLE: 'Only an admin can share this branch.',
+  ACCESS_ADD_FORBIDDEN: 'You can no longer add people to this branch.',
+  ACCESS_MANAGE_FORBIDDEN: "Only this branch's owner or an admin can make that change.",
+  ACCESS_CHANGE_INVALID:
+    'These changes can\'t be made together. Choose "Discard changes", then open "Share…" again.',
+  EXCLUSION_CAP:
+    'Too many people and groups have been removed from this branch. Allow some back first.',
+  LIST_CHANGED: 'The list changed while this was being saved. Try again.',
+  USER_NOT_FOUND: "Some of the people you added couldn't be found. Remove them and try again.",
+  USER_OUT_OF_SCOPE:
+    "Some of the people you added don't work in this editor. Add them by their full email address instead.",
+  USER_EXCLUDED:
+    'Someone you added was removed from this branch, and only its owner or an admin can allow them back.',
+  GROUP_EXCLUDED:
+    'A group you added was removed from this branch, and only its owner or an admin can allow it back.',
+  GROUP_NOT_YOURS: 'You can add only groups you belong to.',
+  RESERVED_GROUP: 'Admins and reviewers already have access.',
+  OPEN_NOT_ALLOWED: 'Branches on this site are open only to the people listed.',
+  RATE_LIMITED: 'Too many email lookups. Try again in a few minutes.',
+}
+
+/** An owner is refused these only for an admin's removal, which an owner can't lift. */
+const OWNER_ACCESS_REFUSALS: Partial<Record<ApiErrorCode, string>> = {
+  USER_EXCLUDED:
+    'Someone you added was removed from this branch by an admin, and only an admin can allow them back.',
+  GROUP_EXCLUDED:
+    'A group you added was removed from this branch by an admin, and only an admin can allow it back.',
+}
+
+/** Why a non-admin has no "Allow again" for someone an admin removed. */
+export const adminRemovalReason = (kind: 'user' | 'group'): string =>
+  `Only an admin can allow ${kind === 'group' ? 'it' : 'them'} back.`
+
+/**
+ * The sentence for an access refusal's `code`, or undefined for any other answer; `viewerIsOwner`
+ * for the branch's owner.
+ */
+export const accessRefusalMessage = (
+  code: ApiErrorCode | undefined,
+  viewerIsOwner = false,
+): string | undefined =>
+  code ? (viewerIsOwner && OWNER_ACCESS_REFUSALS[code]) || ACCESS_REFUSALS[code] : undefined

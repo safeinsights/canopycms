@@ -1,4 +1,7 @@
+import React from 'react'
 import type { Meta, StoryObj } from '@storybook/react'
+
+import { ApiClientProvider, type ApiClient } from './context'
 
 import { BranchManager } from './BranchManager'
 import type { BranchSummary } from './BranchManager'
@@ -530,11 +533,268 @@ export const NewBranchFormServerRefusal: Story = {
     ...NewBranchForm.args,
     onCreate: async () => ({
       refusal: '"spring-update" is already the name of another branch. Choose a different name.',
+      field: 'name',
     }),
   },
   play: async () => {
     await typeBranchName('spring-update')
     document.querySelector<HTMLButtonElement>('[data-testid="create-branch-submit"]')?.click()
     await new Promise((resolve) => setTimeout(resolve, 0))
+  },
+}
+
+const SHARING_NAMES: Record<string, string> = {
+  alice: 'Alice Chen',
+  bob: 'Bob Diaz',
+  cara: 'Cara Ito',
+}
+const sharingLookup = async (id: string) =>
+  SHARING_NAMES[id] ? { id, name: SHARING_NAMES[id], email: '' } : null
+
+/** Each Sharing story branch's list, as its card shows it. */
+const SHARING_LISTS: Record<string, string[]> = {
+  'canopycms/prod/landing': ['alice', 'bob'],
+  'canopycms/prod/pricing': ['bob', 'alice', 'cara'],
+}
+
+/** The access endpoints, answering for whichever branch is asked about. */
+const sharingClient = {
+  branches: {
+    getAccess: async ({ branch }: Record<string, string>) => ({
+      ok: true,
+      status: 200,
+      data: {
+        entries: (SHARING_LISTS[branch] ?? []).map((id) => ({
+          kind: 'user',
+          id,
+          name: SHARING_NAMES[id],
+          maskedEmail: `${id[0]}•••@example.org`,
+        })),
+        restricted: branch !== 'canopycms/prod/faq',
+        openToEveryone: branch === 'canopycms/prod/faq',
+        defaultAccess: branch === 'canopycms/prod/faq' ? 'allow' : 'deny',
+        addBy: 'members',
+        whoCanAdd: 'members',
+        rights:
+          branch === 'canopycms/prod/landing'
+            ? { isOwner: true, canAdd: true, canManage: true }
+            : { isOwner: false, canAdd: false, canManage: false },
+        searchable: 'cms-users',
+        addableByEmail: 'all-users',
+      },
+    }),
+    findPeople: async () => ({ ok: true, status: 200, data: { people: [], groups: [] } }),
+    updateAccess: async () => ({ ok: true, status: 200, data: { branch: {} } }),
+  },
+} as unknown as ApiClient
+
+/**
+ * Sharing from a card: Share… in the owner's "…" menu, and the Access line as a button that opens
+ * the Share dialog there, "Who has access" on a branch the viewer can't add to, and on an open
+ * branch reads "anyone who can sign in".
+ */
+export const Sharing: Story = {
+  decorators: [
+    (Story) => (
+      <ApiClientProvider client={sharingClient}>
+        <Story />
+      </ApiClientProvider>
+    ),
+  ],
+  args: {
+    user: { userId: 'alice', groups: [] },
+    onGetOwnerMetadata: sharingLookup,
+    branches: [
+      {
+        name: 'canopycms/prod/landing',
+        shortName: 'landing',
+        status: 'editing',
+        updatedAt: ago(HOUR),
+        createdBy: 'alice',
+        access: { users: ['alice', 'bob'] },
+        submitBlocked: false,
+        sharing: {
+          isOwner: true,
+          canAdd: true,
+          canManage: true,
+          restricted: true,
+          openToEveryone: false,
+          addBy: 'members',
+        },
+      },
+      {
+        name: 'canopycms/prod/pricing',
+        shortName: 'pricing',
+        status: 'editing',
+        updatedAt: ago(2 * HOUR),
+        createdBy: 'bob',
+        access: { users: ['bob', 'alice', 'cara'] },
+        sharing: {
+          isOwner: false,
+          canAdd: false,
+          canManage: false,
+          restricted: true,
+          openToEveryone: false,
+          addBy: 'owner',
+        },
+      },
+      {
+        name: 'canopycms/prod/faq',
+        shortName: 'faq',
+        status: 'editing',
+        updatedAt: ago(DAY),
+        createdBy: 'cara',
+        access: {},
+        sharing: {
+          isOwner: false,
+          canAdd: false,
+          canManage: false,
+          restricted: false,
+          openToEveryone: true,
+          addBy: 'members',
+        },
+      },
+    ],
+    currentBranchName: 'canopycms/prod/landing',
+  },
+}
+
+/** The owner's "…" menu, open on Share…. */
+export const SharingMenu: Story = {
+  ...Sharing,
+  play: async () => {
+    document
+      .querySelector<HTMLButtonElement>(
+        '[data-testid="branch-actions-menu-canopycms/prod/landing"]',
+      )
+      ?.click()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  },
+}
+
+/** The branchless finder, on a site whose branches are open to everyone who can sign in. */
+const newBranchClient = {
+  branches: {
+    findPeopleForNewBranch: async () => ({
+      ok: true,
+      status: 200,
+      data: {
+        people: [
+          { id: 'bob', name: 'Bob Diaz', maskedEmail: 'b•••@example.org' },
+          { id: 'cara', name: 'Cara Ito', maskedEmail: 'c•••@example.org' },
+        ],
+        groups: [{ id: 'design', name: 'Design' }],
+        newBranch: { defaultAccess: 'allow', searchable: 'cms-users', addableByEmail: 'all-users' },
+      },
+    }),
+  },
+} as unknown as ApiClient
+
+const withNewBranchClient: Story['decorators'] = [
+  (Story) => (
+    <ApiClientProvider client={newBranchClient}>
+      <Story />
+    </ApiClientProvider>
+  ),
+]
+
+const until = async <T,>(find: () => T | null | undefined): Promise<T | undefined> => {
+  for (let i = 0; i < 50; i++) {
+    const found = find()
+    if (found) return found
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  return undefined
+}
+
+/** Opens "Share with" and picks its first suggestion. */
+async function pickFirstSuggestion(): Promise<void> {
+  const input = await until(() =>
+    document.querySelector<HTMLInputElement>('[data-testid="share-people-input"]'),
+  )
+  input?.focus()
+  input?.click()
+  const option = await until(() => document.querySelector<HTMLElement>('[role="option"]'))
+  option?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+  option?.click()
+}
+
+/**
+ * "Share with" on the New branch form, its suggestions recent shares and groups: Bob Diaz chosen, and on
+ * a site open to everyone the line saying the branch will be private.
+ */
+export const NewBranchShareWith: Story = {
+  decorators: withNewBranchClient,
+  args: NewBranchForm.args,
+  play: async () => {
+    await typeBranchName('spring-update')
+    await pickFirstSuggestion()
+  },
+}
+
+/** A create refused because the user may not create branches: the reason, with their values kept. */
+export const NewBranchFormNotAllowed: Story = {
+  decorators: withNewBranchClient,
+  args: {
+    ...NewBranchForm.args,
+    onCreate: async () => ({
+      refusal:
+        "You can't create branches, because you don't have edit access to any content here. Ask a CanopyCMS admin to grant it.",
+      field: 'form',
+    }),
+  },
+  play: async () => {
+    await typeBranchName('spring-update')
+    document.querySelector<HTMLButtonElement>('[data-testid="create-branch-submit"]')?.click()
+  },
+}
+
+/** A create refused for someone chosen in "Share with": the reason under the field, chips kept. */
+export const NewBranchShareWithRefused: Story = {
+  decorators: withNewBranchClient,
+  args: {
+    ...NewBranchForm.args,
+    onCreate: async () => ({
+      refusal:
+        "Some of the people you added don't work in this editor. Add them by their full email address instead.",
+      field: 'shareWith',
+    }),
+  },
+  play: async () => {
+    await typeBranchName('spring-update')
+    await pickFirstSuggestion()
+    document.querySelector<HTMLButtonElement>('[data-testid="create-branch-submit"]')?.click()
+  },
+}
+
+/** Just after Create branch: the drawer says the branch was created and offers Share… for it. */
+export const BranchCreatedShareOffer: Story = {
+  decorators: withNewBranchClient,
+  args: {
+    ...NewBranchForm.args,
+    branches: [
+      ...(Default.args?.branches ?? []),
+      {
+        name: 'canopycms/prod/spring-update',
+        shortName: 'spring-update',
+        status: 'editing',
+        updatedAt: ago(0),
+        createdBy: 'alice',
+        access: {},
+        sharing: {
+          isOwner: true,
+          canAdd: true,
+          canManage: true,
+          restricted: false,
+          openToEveryone: false,
+          addBy: 'members',
+        },
+      },
+    ],
+    onCreate: async () => ({ created: 'canopycms/prod/spring-update' }),
+  },
+  play: async () => {
+    await typeBranchName('spring-update')
+    document.querySelector<HTMLButtonElement>('[data-testid="create-branch-submit"]')?.click()
   },
 }

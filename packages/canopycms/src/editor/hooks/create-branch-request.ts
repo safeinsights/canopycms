@@ -1,6 +1,7 @@
 import type { BranchListItem, CreateBranchBody } from '../../api/branch'
 import { isCreatorsRecentBranch } from '../../api/branch-create-window'
 import { isApiTimeoutError, isNonApiResponse, type CanopyApiClient } from '../../api/client'
+import type { ApiErrorCode } from '../../api/types'
 import { GATEWAY_MAX_TIMEOUT_MS } from '../../api/request-deadline'
 import { parseCreatedBranchName } from '../../paths/validation'
 
@@ -15,9 +16,22 @@ export const CREATE_BRANCH_DEADLINE_MS = GATEWAY_MAX_TIMEOUT_MS + 30_000
 export const CREATE_TIMED_OUT_MESSAGE =
   "Creating the branch didn't finish (the server timed out). It's safe to try again."
 
-/** The typed name cannot be created: the create form shows `refusal` in place, with no toast. */
+/**
+ * Why the create form's values can't be created, which it shows in place with no toast: under the
+ * name, under "Share with", or above its button for a refusal of the user.
+ */
 export interface CreateRefusal {
   refusal: string
+  field: 'name' | 'shareWith' | 'form'
+  code?: ApiErrorCode
+  /** The people or groups chosen that the refusal names. */
+  ids?: string[]
+}
+
+/** The full name of the branch a create made, which is now open, and the server's answer for it. */
+export interface CreatedBranch {
+  created: string
+  branch?: BranchListItem
 }
 
 export type CreateBranchOutcome =
@@ -26,7 +40,7 @@ export type CreateBranchOutcome =
    * `refused`: the server refused this name (`BRANCH_NAME_REFUSED`), or the listing a busy or
    * unanswered create settles on holds another user's branch of it. Retrying it cannot pass.
    */
-  | { kind: 'failed'; message: string; refused?: true }
+  | { kind: 'failed'; message: string; refused?: true; code?: ApiErrorCode; ids?: string[] }
 
 /**
  * Create a branch. Past the deadline, after an error page from in front of the API, or after a
@@ -58,7 +72,7 @@ export async function requestBranchCreate(
   // Only a refusal of the name carries this code; any other failure is the toast's to report.
   return result.code === 'BRANCH_NAME_REFUSED'
     ? { kind: 'failed', message, refused: true }
-    : { kind: 'failed', message }
+    : { kind: 'failed', message, code: result.code, ...(result.ids && { ids: result.ids }) }
 }
 
 /** A same-named branch the server would not answer this create with is a name conflict. */

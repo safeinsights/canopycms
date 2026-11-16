@@ -2,6 +2,7 @@ import type { BranchContext } from '../types'
 import type { AuthPlugin } from '../auth/plugin'
 import type { CanopyServices } from '../services'
 import type { CanopyUser } from '../user'
+import type { BranchAccessRefusalCode } from '../authorization/branch-sharing'
 import type { AssetStore } from '../assets/types'
 import type { CanopyRequest } from '../http/types'
 
@@ -51,6 +52,8 @@ export interface ApiResponse<TData = unknown> {
   fieldErrors?: Array<{ fieldPath: string; message: string }>
   /** A machine-readable reason for some failures; see {@link ApiErrorCode}. */
   code?: ApiErrorCode
+  /** The users or groups a refused access change names, from among those it sent. */
+  ids?: string[]
 }
 
 /**
@@ -74,6 +77,14 @@ export interface ApiResponse<TData = unknown> {
  * `CONFLICT_CHANGED`: a resolve-entry named a conflict the record no longer holds as shown (a 409);
  * re-read the branch's conflicts. `BRANCH_MOVED`: an approval or a request for changes named a commit
  * other than the branch's head, or none (a 409, api/branch-review.ts); reload the branch first.
+ * `BRANCH_ACCESS_DENIED` / `BRANCH_LOCKED_DOWN`: the caller may not open the branch, or an admin has
+ * locked it to admins and reviewers (a 403). The access-list codes (`BRANCH_ARCHIVED`,
+ * `BRANCH_NOT_SHAREABLE`, `USER_NOT_FOUND`, `USER_OUT_OF_SCOPE` and
+ * {@link BranchAccessRefusalCode}) refuse a change to who may open a branch (api/branch-access.ts);
+ * the list is unchanged. `LIST_CHANGED`: another change to the list landed while this one was
+ * saved (a 409), so a retry can pass. `RATE_LIMITED`: the caller made too many email lookups while finding
+ * people (a 429, api/people.ts); a retry in a few minutes can pass. `BRANCH_CREATE_FORBIDDEN`: the
+ * caller may not create branches (a 403), by api/branch.ts `canCreateBranch`'s rule.
  */
 export type ApiErrorCode =
   | 'SCHEMA_UNAVAILABLE'
@@ -87,3 +98,13 @@ export type ApiErrorCode =
   | 'OPEN_CONFLICTS'
   | 'CONFLICT_CHANGED'
   | 'BRANCH_MOVED'
+  | 'BRANCH_ACCESS_DENIED'
+  | 'BRANCH_LOCKED_DOWN'
+  | 'BRANCH_ARCHIVED'
+  | 'BRANCH_NOT_SHAREABLE'
+  | 'USER_NOT_FOUND'
+  | 'USER_OUT_OF_SCOPE'
+  | 'LIST_CHANGED'
+  | 'RATE_LIMITED'
+  | 'BRANCH_CREATE_FORBIDDEN'
+  | BranchAccessRefusalCode

@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState, type ReactNode } from 'react'
 
 import {
   ActionIcon,
+  Alert,
   Anchor,
   Badge,
   Button,
@@ -21,8 +22,17 @@ import {
   UnstyledButton,
   VisuallyHidden,
 } from '@mantine/core'
-import { IconChevronDown, IconChevronRight, IconDots, IconExternalLink } from '@tabler/icons-react'
+import {
+  IconAlertTriangle,
+  IconCheck,
+  IconChevronDown,
+  IconChevronRight,
+  IconDots,
+  IconExternalLink,
+  IconUserPlus,
+} from '@tabler/icons-react'
 import type { OperatingMode } from '../operating-mode'
+import type { BranchListItem } from '../api/branch'
 import type { BranchHold, ConflictStatus, PullRequestState, SyncStatus } from '../types'
 import type { CommentThread } from '../comment-store'
 import type { UserSearchResult } from '../auth/types'
@@ -46,9 +56,20 @@ import {
   type HoldViewer,
 } from './branch-status'
 import { TooltipDetail } from './components/TooltipDetail'
-import { branchAddress, displayBranchName } from './branch-names'
-import type { CreateRefusal } from './hooks/create-branch-request'
+import { branchAddress, branchUrlName, displayBranchName } from './branch-names'
+import { ShareBranchDialog } from './sharing/ShareBranchDialog'
+import { WhoHasAccessPopover } from './sharing/WhoHasAccessPopover'
+import { canShareBranch } from './sharing/sharing-mode'
+import { returnTarget } from './utils/focus-return'
+import type { CreatedBranch, CreateRefusal } from './hooks/create-branch-request'
+import { createdSummary } from './sharing/created-branch'
+import { CREATED_BRANCH_GRACE_MS } from './hooks/useBranchManager'
+import type { NewBranchRequest } from './hooks/useBranchActions'
+import { ShareWithField } from './sharing/ShareWithField'
+import { additionsBody, entryKey, joinNames, type Addition } from './sharing/share-staging'
+import type { RemovedCount } from './sharing/share-copy'
 import {
+  accessRefusalMessage,
   CLOSED_PULL_REQUEST_REASON,
   DELETE_NEEDS_ADMIN_REASON,
   EDITOR_ACTIONS,
@@ -58,7 +79,7 @@ import {
 import { GetLatestChangesButton } from './components/GetLatestChangesButton'
 import type { BaseUpdateControl } from './base-update-wait'
 import { isReviewerOfOthersReview } from '../authorization/review-role'
-import { SYSTEM_USER_ID } from '../system-users'
+import { isNobody, SYSTEM_USER_ID } from '../system-users'
 
 /** @internal Exported for tests. */
 export interface BranchSummary {
@@ -75,9 +96,8 @@ export interface BranchSummary {
     users?: string[]
     groups?: string[]
     managerOrAdminAllowed?: boolean
-    /** Entries the server withheld from this viewer; see `BranchListItem.withheldAccess`. */
-    withheldUsers?: number
-    withheldGroups?: number
+    /** How many were removed from it, which the listing tells only its owner and admins. */
+    removed?: RemovedCount
   }
   pullRequestUrl?: string
   pullRequestNumber?: number
@@ -106,6 +126,10 @@ export interface BranchSummary {
   submitBlocked?: boolean
   /** Server-computed: the API refuses Approve, as the last submit didn't finish. */
   approveBlocked?: boolean
+  /** People who have saved to the branch. */
+  editors?: string[]
+  /** What the viewer may do to the branch's access list. */
+  sharing?: BranchListItem['sharing']
 }
 
 export interface UserContext {
@@ -147,7 +171,7 @@ export const getBranchPermissions = (
 
   const userIsAdmin = isAdmin(user.groups)
   const userIsReviewer = isReviewer(user.groups)
-  const userIsCreator = branch.createdBy === user.userId
+  const userIsCreator = branch.createdBy === user.userId && !isNobody(user.userId)
   // The system-branch grant is disabled on the protected base branch -- its
   // auto-provision marker (createdBy: SYSTEM_USER_ID) would otherwise let
   // anyone with general access submit/withdraw/delete it.
@@ -235,14 +259,10 @@ export interface BranchManagerProps {
   onBeforeCreate?: () => Promise<boolean>
   /**
    * Resolving `false` means the branch was not created, so the form stays open with the user's
-   * values; `{ refusal }` also shows why under the name field. Any other return (including none)
-   * closes it.
+   * values; `{ refusal }` also shows why, where its `field` says. Any other return (including none)
+   * closes it, and `{ created }` says so in its place, offering Share… for the new branch.
    */
-  onCreate?: (branch: {
-    name: string
-    title?: string
-    description?: string
-  }) => Promise<boolean | CreateRefusal> | void
+  onCreate?: (branch: NewBranchRequest) => Promise<boolean | CreateRefusal | CreatedBranch> | void
   onDelete?: (name: string) => void
   onSubmit?: (name: string) => void
   onWithdraw?: (name: string) => void
@@ -270,6 +290,10 @@ export interface BranchManagerProps {
   onGetOwnerMetadata?: (userId: string) => Promise<UserSearchResult | null>
   /** Names the people in branch comments; without it they show as ids */
   onGetCommentUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
+  /** Who may open a branch changed, or may have: read the list again. */
+  onAccessChanged?: () => void
+  /** The Share dialog or "Who has access" is open, so the drawer leaves Escape to it. */
+  onOverlayChange?: (open: boolean) => void
 }
 
 /** The lookup when a card has none: an owner reads "Name unavailable" and access users are counted, not named. */
@@ -354,7 +378,14 @@ interface BranchCardProps {
   onDelete?: (name: string) => void
   onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
   onGetOwnerMetadata?: (userId: string) => Promise<UserSearchResult | null>
+  /** Opens the Share dialog; focus goes back to `returnFocusTo()` when it closes. */
+  onShare?: (returnFocusTo: () => HTMLElement | null) => void
+  accessPopoverOpen?: boolean
+  onAccessPopoverChange?: (open: boolean) => void
 }
+
+/** @internal Exported for tests. */
+export { canShareBranch }
 
 /** Lets the card's details shrink beside its actions, which a long unbroken name would push out. */
 const CARD_DETAILS = { minWidth: 0, flex: 1 }
@@ -382,6 +413,9 @@ const BranchCard: React.FC<BranchCardProps> = ({
   onDelete,
   onGetUserMetadata,
   onGetOwnerMetadata = onGetUserMetadata,
+  onShare,
+  accessPopoverOpen = false,
+  onAccessPopoverChange,
 }) => {
   const statusBadge = branchStatusPresentation(b.status, b.isProtected)
   const perms = getBranchPermissions(b, user)
@@ -454,11 +488,30 @@ const BranchCard: React.FC<BranchCardProps> = ({
   const menuActions = [approve, requestChanges, workflow, archive].filter(
     (a): a is BranchWorkflowAction => !!a && a !== primary && a !== secondary,
   )
+  const showShare = canShareBranch(b, user) && !!onShare
   const showViewPullRequest = !!b.pullRequestUrl
-  const showDelete = !b.isProtected && (userIsAdmin || (!!user && b.createdBy === user.userId))
-  const hasMenu = menuActions.length > 0 || showViewPullRequest || showDelete
+  const showDelete =
+    !b.isProtected &&
+    (userIsAdmin || (!!user && b.createdBy === user.userId && !isNobody(user.userId)))
+  const hasMenu = menuActions.length > 0 || showShare || showViewPullRequest || showDelete
   const menuLabel = `More actions for ${displayBranchName(b)}`
   const [menuOpen, setMenuOpen] = useState(false)
+  const menuTriggerRef = useRef<HTMLButtonElement>(null)
+  const share = (opener: HTMLElement | null) =>
+    onShare?.(() => returnTarget(opener, () => menuTriggerRef.current))
+  const accessLine = b.access && !b.isProtected && (
+    <BranchAccessList
+      users={b.access.users}
+      groups={b.access.groups}
+      openToEveryone={b.sharing?.openToEveryone}
+      getUserMetadata={onGetOwnerMetadata ?? noUserLookup}
+      onClick={(event) =>
+        showShare ? share(event.currentTarget) : onAccessPopoverChange?.(!accessPopoverOpen)
+      }
+      aria-haspopup="dialog"
+      data-testid={`branch-access-${b.name}`}
+    />
+  )
 
   const inReview = b.status === 'submitted' || b.status === 'approved'
   const holdViewer: HoldViewer = {
@@ -607,15 +660,19 @@ const BranchCard: React.FC<BranchCardProps> = ({
               </Group>
             )}
           </Group>
-          {b.access && (
-            <BranchAccessList
-              users={b.access.users}
-              groups={b.access.groups}
-              withheldUsers={b.access.withheldUsers}
-              withheldGroups={b.access.withheldGroups}
-              getUserMetadata={onGetOwnerMetadata ?? noUserLookup}
-            />
-          )}
+          {accessLine &&
+            (showShare ? (
+              accessLine
+            ) : (
+              <WhoHasAccessPopover
+                branch={b}
+                viewer={user}
+                opened={accessPopoverOpen}
+                onChange={(open) => onAccessPopoverChange?.(open)}
+              >
+                {accessLine}
+              </WhoHasAccessPopover>
+            ))}
         </Stack>
         <Group gap={8} wrap="nowrap">
           {!isCurrent && (
@@ -635,6 +692,7 @@ const BranchCard: React.FC<BranchCardProps> = ({
               <Tooltip label={menuLabel} disabled={menuOpen}>
                 <Menu.Target>
                   <ActionIcon
+                    ref={menuTriggerRef}
                     variant="subtle"
                     color="gray"
                     aria-label={menuLabel}
@@ -660,6 +718,15 @@ const BranchCard: React.FC<BranchCardProps> = ({
                     {action.label}
                   </ReasonedMenuItem>
                 ))}
+                {showShare && (
+                  <Menu.Item
+                    leftSection={<IconUserPlus size={14} aria-hidden />}
+                    onClick={() => share(null)}
+                    data-testid={`share-branch-${b.name}`}
+                  >
+                    {`${EDITOR_ACTIONS.share}…`}
+                  </Menu.Item>
+                )}
                 {showViewPullRequest && (
                   <Menu.Item
                     component="a"
@@ -676,7 +743,9 @@ const BranchCard: React.FC<BranchCardProps> = ({
                 )}
                 {showDelete && (
                   <>
-                    {(menuActions.length > 0 || showViewPullRequest) && <Menu.Divider />}
+                    {(menuActions.length > 0 || showShare || showViewPullRequest) && (
+                      <Menu.Divider />
+                    )}
                     <DestructiveMenuItem
                       data-testid={`delete-branch-button-${b.name}`}
                       blockedReason={
@@ -828,6 +897,22 @@ const ArchivedSection: React.FC<{
   )
 }
 
+/**
+ * Why a create refused the people chosen, naming those of `named` it refused: an outsider is told
+ * how to add them, any other refusal says whom it applies to.
+ */
+function chosenRefusal(
+  refused: { reason: string; code?: CreateRefusal['code'] },
+  named: readonly Addition[],
+): string {
+  if (named.length === 0) return refused.reason
+  const names = joinNames(named.map((chip) => chip.name))
+  if (refused.code === 'USER_OUT_OF_SCOPE') {
+    return `${names} ${named.length === 1 ? "doesn't" : "don't"} work in this editor yet. Remove them, or add them by their full email address.`
+  }
+  return `${refused.reason} Applies to ${names}.`
+}
+
 export const BranchManager: React.FC<BranchManagerProps> = ({
   branches,
   mode,
@@ -855,16 +940,45 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   onGetUserMetadata,
   onGetOwnerMetadata,
   onGetCommentUserMetadata,
+  onAccessChanged,
+  onOverlayChange,
 }) => {
   const supportsBranching = clientOperatingStrategy(mode).supportsBranching()
   const [showCreateForm, setShowCreateForm] = useState(startCreating)
   const [newBranchName, setNewBranchName] = useState('')
   const [newBranchTitle, setNewBranchTitle] = useState('')
   const [newBranchDescription, setNewBranchDescription] = useState('')
+  const [shareWith, setShareWith] = useState<Addition[]>([])
+  const shareWithKey = shareWith.map(entryKey).join('\n')
+  // The branch the last create made, which the drawer says, offering to share it.
+  // `expired` once the grace a listing gives a new branch has passed: from then on only a
+  // listing's copy stands for it, and a branch no listing holds is no longer offered.
+  const [created, setCreated] = useState<(CreatedBranch & { expired?: true }) | null>(null)
+  useEffect(() => {
+    if (!created || created.expired) return
+    const timer = setTimeout(
+      () => setCreated((now) => (now === created ? { ...now, expired: true } : now)),
+      CREATED_BRANCH_GRACE_MS,
+    )
+    return () => clearTimeout(timer)
+  }, [created])
+  // Set by a create that passed: the created line's Share… takes focus, else New branch…, as the
+  // form that held it has gone.
+  const focusCreatedRef = useRef(false)
+  const createdShareRef = useRef<HTMLButtonElement>(null)
+  const newBranchButtonRef = useRef<HTMLButtonElement>(null)
 
   const [creating, setCreating] = useState(false)
-  // Why a create refused the name, shown while that name is still what is typed.
-  const [refused, setRefused] = useState<{ typed: string; reason: string } | null>(null)
+  // Why a create refused the form's values: a name or the people chosen, shown while they are
+  // still what is typed and chosen, else the user, shown until the form closes.
+  const [refused, setRefused] = useState<{
+    field: CreateRefusal['field']
+    typed: string
+    chosen: string
+    reason: string
+    code?: CreateRefusal['code']
+    ids?: string[]
+  } | null>(null)
   const nameInputRef = useRef<HTMLInputElement>(null)
   // Set by a refusal: the name field takes focus once it is enabled again, so its error is read.
   const focusNameRef = useRef(false)
@@ -873,6 +987,11 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
     focusNameRef.current = false
     nameInputRef.current?.focus()
   }, [creating, refused])
+  useEffect(() => {
+    if (creating || !focusCreatedRef.current) return
+    focusCreatedRef.current = false
+    ;(createdShareRef.current ?? newBranchButtonRef.current)?.focus()
+  }, [creating, created])
   // Read synchronously: state would not yet show a first click to a second one in the same tick.
   const creatingRef = useRef(false)
 
@@ -882,9 +1001,16 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   const nameError =
     createdBranchName?.ok === false
       ? createdBranchName.error
-      : refused?.typed === typedBranchName
+      : refused?.field === 'name' && refused.typed === typedBranchName
         ? refused.reason
         : undefined
+  const shareWithRefused =
+    refused?.field === 'shareWith' && refused.chosen === shareWithKey ? refused : undefined
+  const refusedChips = shareWith.filter(
+    (chip) => chip.id !== undefined && !!shareWithRefused?.ids?.includes(chip.id),
+  )
+  const shareWithError = shareWithRefused && chosenRefusal(shareWithRefused, refusedChips)
+  const formRefusal = refused?.field === 'form' ? refused.reason : undefined
 
   const handleCreate = async () => {
     if (creatingRef.current || !createdBranchName?.ok) return
@@ -892,22 +1018,34 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
     try {
       if (onBeforeCreate && !(await onBeforeCreate())) return
       setCreating(true)
-      const created = await onCreate?.({
+      const add = additionsBody(shareWith)
+      const outcome = await onCreate?.({
         name: typedBranchName,
         title: newBranchTitle.trim() || undefined,
         description: newBranchDescription.trim() || undefined,
+        ...(add && { access: { add } }),
       })
-      if (created === false) return
-      if (typeof created === 'object') {
-        focusNameRef.current = true
-        setRefused({ typed: typedBranchName, reason: created.refusal })
+      if (outcome === false) return
+      if (typeof outcome === 'object' && 'refusal' in outcome) {
+        focusNameRef.current = outcome.field === 'name'
+        setRefused({
+          field: outcome.field,
+          typed: typedBranchName,
+          chosen: shareWithKey,
+          reason: outcome.refusal,
+          code: outcome.code,
+          ids: outcome.ids,
+        })
         return
       }
       setRefused(null)
       setNewBranchName('')
       setNewBranchTitle('')
       setNewBranchDescription('')
+      setShareWith([])
       setShowCreateForm(false)
+      focusCreatedRef.current = true
+      setCreated(typeof outcome === 'object' ? outcome : null)
     } finally {
       creatingRef.current = false
       setCreating(false)
@@ -933,6 +1071,35 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   )
   const matchCount = live.length + archived.length
 
+  const [sharing, setSharing] = useState<{
+    name: string
+    opened: boolean
+    returnFocusTo: () => HTMLElement | null
+    /** The branch as it was opened, which stands in while the dialog is open and no listing has it. */
+    target?: BranchSummary
+  } | null>(null)
+  const [accessPopoverFor, setAccessPopoverFor] = useState<string | null>(null)
+  const overlayOpen = !!sharing?.opened || accessPopoverFor !== null
+  useEffect(() => {
+    onOverlayChange?.(overlayOpen)
+    return () => onOverlayChange?.(false)
+  }, [overlayOpen, onOverlayChange])
+  // The listing's copy once it has one; until then, within the grace, the create's own answer.
+  const createdBranch = created
+    ? (branches.find((b) => b.name === created.created) ??
+      branches.find((b) => b.shortName === created.created) ??
+      (created.branch && !created.expired ? createdSummary(created.branch) : undefined))
+    : undefined
+  // An open dialog stays until it is closed, even once the grace has passed: closing it is the user's.
+  const sharedBranch =
+    sharing &&
+    (branches.find((b) => b.name === sharing.name) ??
+      (createdBranch?.name === sharing.name
+        ? createdBranch
+        : sharing.opened
+          ? sharing.target
+          : undefined))
+
   const renderCard = (b: BranchSummary) => {
     // The editor resolves a shadowed outside branch's full name to the namespace branch whose
     // short name it is, so a card's actions name its branch by `branchAddress`.
@@ -957,6 +1124,11 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
         onDelete={act(onDelete)}
         onGetUserMetadata={onGetUserMetadata}
         onGetOwnerMetadata={onGetOwnerMetadata}
+        onShare={(returnFocusTo) => setSharing({ name: b.name, opened: true, returnFocusTo })}
+        accessPopoverOpen={accessPopoverFor === b.name}
+        onAccessPopoverChange={(open) =>
+          setAccessPopoverFor((current) => (open ? b.name : current === b.name ? null : current))
+        }
       />
     )
   }
@@ -987,11 +1159,13 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
       {!!supportsBranching && (
         <Stack gap="sm" pt="sm">
           <Button
+            ref={newBranchButtonRef}
             variant="light"
             size="sm"
             fullWidth
             onClick={() => {
               if (showCreateForm) setRefused(null)
+              setCreated(null)
               setShowCreateForm(!showCreateForm)
             }}
             disabled={creating}
@@ -1042,19 +1216,91 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                   disabled={creating}
                   data-testid="branch-description-textarea"
                 />
-                <Button
-                  size="sm"
-                  onClick={handleCreate}
-                  disabled={!createdBranchName?.ok}
-                  loading={creating}
-                  fullWidth
-                  data-testid="create-branch-submit"
-                >
-                  Create branch
-                </Button>
+                {/* Mounted while open, so the finder's answers are read afresh each time. */}
+                {showCreateForm && (
+                  <ShareWithField
+                    value={shareWith}
+                    onChange={setShareWith}
+                    error={shareWithError}
+                    refusedKeys={new Set(refusedChips.map(entryKey))}
+                    disabled={creating}
+                    onRefused={(code) =>
+                      setRefused({
+                        field: 'form',
+                        typed: typedBranchName,
+                        chosen: shareWithKey,
+                        reason: accessRefusalMessage(code) ?? '',
+                      })
+                    }
+                  />
+                )}
+                {formRefusal && (
+                  <Alert
+                    color="red"
+                    variant="light"
+                    icon={<IconAlertTriangle size={18} aria-hidden />}
+                    role="alert"
+                    data-testid="create-branch-refused"
+                  >
+                    {formRefusal}
+                  </Alert>
+                )}
+                {/* Refused for the user, no retry can pass, so it waits, saying why; Cancel leaves. */}
+                <Tooltip label={formRefusal} disabled={!formRefusal} multiline maw={300}>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      if (!formRefusal) void handleCreate()
+                    }}
+                    disabled={!createdBranchName?.ok}
+                    data-disabled={formRefusal ? true : undefined}
+                    aria-disabled={formRefusal ? true : undefined}
+                    loading={creating}
+                    fullWidth
+                    data-testid="create-branch-submit"
+                  >
+                    Create branch
+                  </Button>
+                </Tooltip>
               </Stack>
             </Paper>
           </Collapse>
+          <div role="status" data-testid="branch-created-status">
+            {created && (createdBranch || !created.expired) && !showCreateForm && (
+              <Group gap="xs" wrap="nowrap" pb="sm">
+                <IconCheck
+                  size={16}
+                  color="var(--mantine-color-green-text)"
+                  aria-hidden
+                  style={{ flexShrink: 0 }}
+                />
+                <Text size="sm" style={{ ...WRAP_ANYWHERE, flex: 1 }}>
+                  {`Branch “${createdBranch ? displayBranchName(createdBranch) : created.created}” created`}
+                </Text>
+                {createdBranch && canShareBranch(createdBranch, user) && (
+                  <Button
+                    ref={createdShareRef}
+                    variant="default"
+                    size="compact-sm"
+                    style={{ flexShrink: 0 }}
+                    aria-haspopup="dialog"
+                    onClick={() =>
+                      setSharing({
+                        name: createdBranch.name,
+                        target: createdBranch,
+                        opened: true,
+                        returnFocusTo: () =>
+                          returnTarget(createdShareRef.current, () => newBranchButtonRef.current),
+                      })
+                    }
+                    data-testid="branch-created-share"
+                  >
+                    {`${EDITOR_ACTIONS.share}…`}
+                  </Button>
+                )}
+              </Group>
+            )}
+          </div>
         </Stack>
       )}
 
@@ -1081,6 +1327,20 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
         <VisuallyHidden role="status" data-testid="branch-filter-status">
           {query && `${matchCount} ${matchCount === 1 ? 'branch matches' : 'branches match'}`}
         </VisuallyHidden>
+      )}
+
+      {sharedBranch && user && (
+        <ShareBranchDialog
+          key={sharedBranch.name}
+          opened={!!sharing?.opened}
+          onClose={() => setSharing((current) => current && { ...current, opened: false })}
+          onChanged={() => onAccessChanged?.()}
+          branch={sharedBranch}
+          urlName={branchUrlName(branches, sharedBranch)}
+          user={user}
+          getUserMetadata={onGetOwnerMetadata ?? onGetUserMetadata ?? noUserLookup}
+          returnFocusTo={sharing?.returnFocusTo}
+        />
       )}
 
       <ScrollArea style={{ flex: 1 }} pt={showFilter ? 'sm' : undefined} pb="md">

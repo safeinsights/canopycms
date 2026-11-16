@@ -117,6 +117,7 @@ Which guards run, in what order, and what each one catches are in
 Route handlers, one file per endpoint namespace:
 
 - `branch.ts` — `/branches`: create, list, delete; `toBranchListItem` shapes branch responses, with server-computed `isProtected` / `readOnly`
+- `branch-people.ts` — `GET /:branch/access` and both `access/find` endpoints; `people.ts` holds who may be found
 - `branch-status.ts` — `/branch-status`: status and submit (`SubmitBranchResponse`)
 - `branch-update-from-base.ts` — `POST /:branch/update-from-base` (`updateFromBase`): `commitSavedWork`, `sync-branch` or `runBaseUpdateNow`
 - `branch-withdraw.ts` — `/branch-withdraw`: withdraw a PR
@@ -167,10 +168,11 @@ the dependency-free modules above.
 
 **Location**: `packages/canopycms/src/auth/`
 
-- `plugin.ts` — `AuthPlugin` interface (optional `getUsersMetadata`), `verifiesCredentials` marker, `assertAuthPluginAllowedForMode`
+- `plugin.ts` — `AuthPlugin` interface (optional `getUsersMetadata`, `findUserByEmail`), `verifiesCredentials` marker, `assertAuthPluginAllowedForMode`
 - `user-metadata-lookup.ts` — `lookupUsersMetadata`: per-process cached, batched `/users` lookups; `lookupUserProfiles`, emailless
 - `types.ts` — `CanopyUser`, `AuthPluginConfig`, `AuthenticationResult`, `GroupMetadata`, `PermissionGroupOption`
 - `person-name.ts` — `personName`: no name when blank or the id
+- `find-user-by-email.ts` — `findUserByEmail`: exact match, falling back to `searchUsers`
 - `context-helpers.ts` — auth context helpers, `extractHeaders` and `isCanopyRequest`
 - `caching-auth-plugin.ts` — `CachingAuthPlugin`, `AuthCacheProvider`, `TokenVerifier`: local token verify plus cached metadata
 - `file-based-auth-cache.ts` — `FileBasedAuthCache` reads the EFS JSON cache; `writeAuthCacheSnapshot` writes it atomically
@@ -187,10 +189,11 @@ and [Auth Caching](ARCHITECTURE.md#auth-caching-cachingauthplugin).
 **Location**: `packages/canopycms/src/authorization/` —
 [AGENTS.md](packages/canopycms/src/authorization/AGENTS.md)
 
-- `content.ts` — `checkContentAccess` and `createContentAccessChecker`, combined branch plus path access
+- `content.ts` — `checkContentAccess` and `createContentAccessChecker`, branch plus path access
 - `branch.ts` — branch-level access: `checkBranchAccessWithDefault`, `createCheckBranchAccess`, `canPerformWorkflowAction`
+- `branch-sharing.ts` — sharing rules
 - `path.ts` — path-level permissions: `checkPathAccess`, `resolveDefaultPathAccess`
-- `protected-branch.ts` — `getBranchProtection`, the single source of truth for protected-base-branch policy
+- `protected-branch.ts` — `getBranchProtection`, the source of truth for protected-base-branch policy
 - `helpers.ts` — `isAdmin`, `isReviewer`, `isPrivileged`, and `isLockedOutOfBranch` (the browser-safe branch-lockdown check)
 - `review-role.ts` — `reviewRoleOf` / `isReviewerOfOthersReview`, `REQUEST_CHANGES_NOTE_MAX_LENGTH`
 - `types.ts` — `BranchAccessResult`, `ContentAccessResult`, `PermissionPath`
@@ -611,7 +614,7 @@ Field components, in `editor/fields/`:
 Components, in `editor/components/`:
 
 - `TooltipDetail.tsx` — tooltip detail keyboards can reach
-- `EditorHeader.tsx` — branch bar: `BranchPill`, status, "N unsaved", `SaveAllButton.tsx`, Submit/Withdraw (split narrow); toast: `SaveAllResult`
+- `EditorHeader.tsx` — branch bar: `BranchPill`, status, "N unsaved", `sharing/BranchShareControl.tsx`, `SaveAllButton.tsx`, Submit/Withdraw (split narrow); toast: `SaveAllResult`
 - `EntryHeader.tsx` — above the panes: `EntryBreadcrumb`, `EntrySaveButton.tsx`
 - `UnsavedMark.tsx` — unsaved dot
 - `EditorRail.tsx` — rail buttons, Settings menu
@@ -711,6 +714,7 @@ All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 - `branch-archive.ts` — `deletableByAge`: the one age-based deletion rule, client-safe
 - `branch-delete.ts` — `deleteBranchWorkspace`: the one delete path (API, admin bulk, worker sweep)
 - `branch-param.ts` — `resolveBranchParam` (the exact form first), `shortNameOf`
+- `people-store.ts` — `.people/` seen markers and recent shares; see [docs/concurrency.md](docs/concurrency.md)
 - `branch-metadata.ts` — `branch.json` persistence under layered concurrency; `baseBranch` immutable; `buildMergedBranchUpdate`, `buildInitialBranchMetadata`; `update` (a computed save), `recordEditor`, `markEditorsCommitted`, `recordBranchEditor`
 - `base-update.ts` — dependency-free "Get latest changes" constants and `isBaseUpdatePending`; metadata `baseUpdateRequestedAt`, `lastBaseUpdate`
 - `branch-metadata-file.ts` — schema-checked `branch.json` reads; a deliberate leaf module
@@ -731,10 +735,8 @@ All site-side hooks accept an optional `{ editorOrigin }`. The trust model is in
 Key types: `BranchContext` (branch state plus `branchRoot` / `baseRoot`), `BranchMetadata`,
 `BranchPaths`, `SyncStatus` (`synced`, `pending-sync`, `sync-failed`).
 
-Branch storage: `.canopy-meta/branch.json` (per-branch metadata) and
-`.canopy-meta/comments.json` (comment threads, never committed) inside each branch root, and
-`branches.json` (the registry snapshot) at the branches root. The lifecycle, the branch-identity
-fields and the protected-base-branch policy are in
+Branch storage (`.canopy-meta/branch.json`, `comments.json`; `branches.json` at the branches
+root), the lifecycle and the protected-base-branch policy:
 [ARCHITECTURE.md](ARCHITECTURE.md#branch-based-editing).
 
 ### Protected Base Branch

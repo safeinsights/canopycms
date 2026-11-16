@@ -125,6 +125,11 @@ const MAX_LISTED_PATH_LENGTH = 200
 export const REWRITTEN_PUSH_REFUSAL =
   "This branch was changed on GitHub in a way CanopyCMS can't combine with the work here, so nothing was pushed. Nothing is lost."
 
+/** A rewrite recorded on `branch`, naming a commit or not, refuses every push (task-runner.ts). */
+export const refusesPushAsRewritten = (
+  branch: Pick<BranchMetadata, 'rewrittenOnGitHub'>,
+): boolean => branch.rewrittenOnGitHub !== undefined
+
 /** Why a push was refused before any sync had seen the rewrite (task-runner.ts). */
 export const SEEN_COMMIT_GONE_PUSH_REFUSAL =
   'A commit this branch had on GitHub is no longer there, so nothing was pushed. Nothing is lost.'
@@ -201,7 +206,7 @@ export async function bringInGitHubCommits(
   const gitHubTip = args.gitHub?.tips.get(branchRef)
   // No GitHub branch leaves nothing a push could restore. Ahead of `isPublished`: withdrawing drops
   // a closed PR's number, which can be all that marked the branch published.
-  if (args.gitHub !== undefined && gitHubTip === undefined && branch.rewrittenOnGitHub) {
+  if (args.gitHub !== undefined && gitHubTip === undefined && refusesPushAsRewritten(branch)) {
     await clearRewritten(ctx, args)
   }
   if (!isPublished(metaFile)) return { kind: 'in-step' }
@@ -329,7 +334,9 @@ async function pushedSinceFetch(
  * replaced, since GitHub stays there until that push lands. A tip holding everything the clone and
  * `remote.git` hold has nothing to restore, whatever the record says. A commit in neither was
  * never taken in, so `remote.git`'s head has to be part of that test: the clone can lag it for a
- * cycle, and the fast-forward below would then bring back what GitHub dropped.
+ * cycle, and the fast-forward below would then bring back what GitHub dropped. A standing marker
+ * naming no commit, as repair leaves one, has nothing to compare, so it stands until that last test
+ * passes: its own value is returned.
  */
 async function rewrittenFrom(
   { git, metaFile }: GitHubCommitsArgs,
@@ -337,7 +344,7 @@ async function rewrittenFrom(
   head: string,
   published: string | null,
 ): Promise<string | null> {
-  const { lastGitHubTip, historyRewrittenFrom } = metaFile.branch
+  const { lastGitHubTip, historyRewrittenFrom, rewrittenOnGitHub } = metaFile.branch
   // A branch with no record yet: a `remote.git` head the clone lags, diverged from GitHub, is a
   // commit reconcile took in before a force-push, barring a crash mid-merge on that first cycle.
   const unrecorded =
@@ -350,10 +357,11 @@ async function rewrittenFrom(
       : undefined
   // The marker first: what is named here must be a commit GitHub really held, and a rewrite's
   // stamp may not have reached it yet.
-  const known = [historyRewrittenFrom, lastGitHubTip ?? unrecorded].filter(
+  // A marker naming a commit names one GitHub held, so its return there resolves it too.
+  const known = [historyRewrittenFrom, lastGitHubTip ?? unrecorded, rewrittenOnGitHub].filter(
     (sha): sha is string => sha !== undefined && COMMIT_ID.test(sha),
   )
-  if (known.length === 0) return null
+  if (known.length === 0 && rewrittenOnGitHub === undefined) return null
   if (
     (await contains(git, tip, head)) &&
     (published === null || (await contains(git, tip, published)))
@@ -365,7 +373,7 @@ async function rewrittenFrom(
   // tip's history makes "not contained" an answer.
   const walked = await git.raw(['rev-list', '--count', '--end-of-options', tip])
   if (walked.trim() === '') throw new Error(`No answer reading the history of ${tip}`)
-  return known[0]
+  return known[0] ?? rewrittenOnGitHub ?? null
 }
 
 /** Record the rewrite, which refuses pushes (task-runner.ts) for as long as it stands. */
@@ -382,11 +390,18 @@ async function blockAsRewritten(
   }
   return {
     kind: 'blocked',
-    reason:
-      `GitHub's ${branchRef} no longer contains ${lastSeen}, the last commit this deployment saw ` +
-      `there: it was force-pushed or rewritten. Nothing was merged or pushed, so the rewrite ` +
-      `stands, and this branch's changes cannot reach GitHub. To continue, a developer merges ` +
-      `that commit back into the branch on GitHub.`,
+    reason: COMMIT_ID.test(lastSeen)
+      ? `GitHub's ${branchRef} no longer contains ${lastSeen}, the last commit this deployment saw ` +
+        `there: it was force-pushed or rewritten. Nothing was merged or pushed, so the rewrite ` +
+        `stands, and this branch's changes cannot reach GitHub. To continue, a developer merges ` +
+        `that commit back into the branch on GitHub.`
+      : `CanopyCMS can't confirm that GitHub's ${branchRef} holds this branch's commits, as its ` +
+        `record of that branch was lost, so nothing was merged or pushed. To continue, a ` +
+        `developer merges this branch's commits into the branch on GitHub. If they exist only ` +
+        `here, delete the branch on GitHub instead: with no pull request recorded, the next sync ` +
+        `clears this; with one, withdraw the branch once CanopyCMS has seen that pull request ` +
+        `closed. A branch being edited with a pull request still recorded needs an admin to ` +
+        `remove rewrittenOnGitHub from its branch.json by hand.`,
   }
 }
 

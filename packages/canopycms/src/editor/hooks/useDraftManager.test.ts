@@ -535,6 +535,121 @@ describe('useDraftManager', () => {
       consoleErrorSpy.mockRestore()
     })
 
+    it("words a branch access refusal by its code, not the server's text", async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      mockSaveEntry.mockRejectedValueOnce(
+        new SaveApiError(
+          403,
+          "You don't have access to this branch.",
+          undefined,
+          'BRANCH_ACCESS_DENIED',
+        ),
+      )
+      const { result } = renderHook(() => useDraftManager(defaultOptions))
+
+      act(() => {
+        result.current.setDrafts({ abc123def456: { title: 'Draft' } })
+      })
+      await act(async () => {
+        await result.current.handleSave()
+      })
+
+      const { notifications } = await import('@mantine/notifications')
+      expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'Save not allowed',
+          message: 'You no longer have access to this branch. Choose another branch in "Branches".',
+        }),
+      )
+      consoleErrorSpy.mockRestore()
+    })
+
+    it.each(['BRANCH_ACCESS_DENIED', 'BRANCH_LOCKED_DOWN'] as const)(
+      'keeps a %s refusal up until dismissed and reads the branch list again',
+      async (code) => {
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+        mockSaveEntry.mockRejectedValueOnce(new SaveApiError(403, 'Refused', undefined, code))
+        const onBranchAccessLost = vi.fn()
+        const { result } = renderHook(() =>
+          useDraftManager({ ...defaultOptions, onBranchAccessLost }),
+        )
+
+        act(() => {
+          result.current.setDrafts({ abc123def456: { title: 'Draft' } })
+        })
+        await act(async () => {
+          await result.current.handleSave()
+        })
+
+        const { notifications } = await import('@mantine/notifications')
+        expect(vi.mocked(notifications.show)).toHaveBeenLastCalledWith(
+          expect.objectContaining({ title: 'Save not allowed', autoClose: false }),
+        )
+        expect(onBranchAccessLost).toHaveBeenCalledTimes(1)
+        consoleErrorSpy.mockRestore()
+      },
+    )
+
+    it('shows one lockout toast however often a save is refused, and closes it on a branch switch', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      mockSaveEntry.mockRejectedValue(
+        new SaveApiError(403, 'Refused', undefined, 'BRANCH_ACCESS_DENIED'),
+      )
+      const { result, rerender } = renderHook(
+        (props: { branchName: string }) => useDraftManager({ ...defaultOptions, ...props }),
+        { initialProps: { branchName: 'main' } },
+      )
+      const { notifications } = await import('@mantine/notifications')
+      const lockoutShows = () =>
+        vi
+          .mocked(notifications.show)
+          .mock.calls.map(([shown]) => shown)
+          .filter((shown) => shown.title === 'Save not allowed')
+
+      for (const draft of ['Draft', 'Draft again']) {
+        act(() => {
+          result.current.setDrafts({ abc123def456: { title: draft } })
+        })
+        await act(async () => {
+          await result.current.handleSave()
+        })
+      }
+
+      const ids = lockoutShows().map((shown) => shown.id)
+      expect(ids).toHaveLength(2)
+      expect(ids[0]).toBeTruthy()
+      expect(ids[1]).toBe(ids[0])
+      expect(vi.mocked(notifications.hide)).not.toHaveBeenCalledWith(ids[0])
+
+      rerender({ branchName: 'other' })
+
+      expect(vi.mocked(notifications.hide)).toHaveBeenCalledWith(ids[0])
+      consoleErrorSpy.mockRestore()
+    })
+
+    it("closes a path rule's refusal by itself, leaving the branch list alone", async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      mockSaveEntry.mockRejectedValueOnce(new SaveApiError(403, 'Forbidden'))
+      const onBranchAccessLost = vi.fn()
+      const { result } = renderHook(() =>
+        useDraftManager({ ...defaultOptions, onBranchAccessLost }),
+      )
+
+      act(() => {
+        result.current.setDrafts({ abc123def456: { title: 'Draft' } })
+      })
+      await act(async () => {
+        await result.current.handleSave()
+      })
+
+      const { notifications } = await import('@mantine/notifications')
+      const shown = vi.mocked(notifications.show).mock.calls.at(-1)?.[0]
+      expect(shown).toMatchObject({ title: 'Save not allowed' })
+      expect(typeof shown?.autoClose).toBe('number')
+      expect(onBranchAccessLost).not.toHaveBeenCalled()
+      consoleErrorSpy.mockRestore()
+    })
+
     it("shows the server's own message on a 409, untitled", async () => {
       const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
       const busy =

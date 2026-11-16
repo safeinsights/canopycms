@@ -270,6 +270,19 @@ export class ClerkAuthPlugin implements AuthPlugin {
     return users
   }
 
+  /** Only a user whose primary address, the one the auth cache holds, is `email`; errors propagate. */
+  async findUserByEmail(email: string): Promise<UserSearchResult | null> {
+    const clerkClient = this.getClerkClient()
+    const response = (await clerkClient.users.getUserList({
+      emailAddress: [email],
+      limit: 2,
+    })) as ClerkResponse<ClerkUserData>
+    const matches = unwrapClerkResponse(response)
+      .map(toUserSearchResult)
+      .filter((user) => user.email.toLowerCase() === email.toLowerCase())
+    return matches.length === 1 ? matches[0] : null
+  }
+
   async getGroupMetadata(groupId: string): Promise<GroupMetadata | null> {
     if (!this.config.useOrganizationsAsGroups) {
       return null

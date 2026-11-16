@@ -460,8 +460,13 @@ function deleteConfirmText(status: AdminTaskStatus): string {
 const MARK_MERGED_CONFIRM_TEXT =
   'In production the server cannot verify the PR actually merged (no GitHub access from the API) — confirm the PR is merged on GitHub first.'
 
-const REPAIR_CONFIRM_TEXT =
-  "Recreates metadata with defaults: status becomes 'editing', you become the creator, branch ACLs are reset. The corrupt file is archived alongside for forensics."
+const REPAIR_CONFIRM_PARAGRAPHS = [
+  "Rebuilds the branch's metadata from what the corrupt file still holds, field by field, and archives the file alongside.",
+  "A field that can be read is kept, except that the branch's name comes from its clone, an empty creator or base branch counts as unreadable, its merge record is set to hold its delete for an admin when its status is unknown beside a record of a rewrite on GitHub, and of access that can't be read whole only the lockdown, who may add people, and the removals are kept.",
+  "A status that can't be read or is missing becomes archived when the file records an archive or merge time, and otherwise submitted, which Withdraw undoes. A creator that can't be read or is missing becomes unknown, so only an admin can share the branch. If the access can't be read, or the file isn't JSON, only admins and reviewers can open the branch, unless it is one of the two below. Removals that can be read are kept entry by entry, a malformed entry as an admin's, and removals that can't be read leave re-adding people to admins. A lockdown is kept, or turned on when it can't be read.",
+  "The base branch takes no access list, so it stays open to anyone who can sign in when its file isn't JSON, when it has no access, and when its access can't be read but nothing in the file may have limited it; if something may have, it is locked to admins and reviewers. In development, the active branch is kept open the same way while its creator reads as CanopyCMS's own, as it is the branch the development server edits.",
+  "Nothing that decides who can open, edit or delete the branch widens. Review and merge rights can: an unfinished submit or a closed pull request it can't read no longer holds back Approve, that closed pull request no longer holds back Request changes and Mark merged, a sync state it can't read no longer flags a later merge, and reviewers can act on a status taken as submitted because it couldn't be read or was missing. GitHub sync records it can't read are dropped, except the record of a rewrite, which is kept as one naming no commit. A file that isn't JSON leaves nothing to go on: its creator is unknown, so only admins and reviewers can withdraw, share or delete the branch.",
+]
 
 const DUPLICATE_REPAIR_CONFIRM_TEXT =
   'These files share a content ID, so the editor uses only the one marked Keep. Archiving renames each other file to a hidden name in the same folder. Nothing is deleted.'
@@ -1220,7 +1225,15 @@ function BranchesTab({ health }: { health: UseSystemHealthReturn }) {
   const handleRepairClick = (dirName: string) => {
     openConfirm({
       title: 'Repair metadata',
-      children: <Text size="sm">{REPAIR_CONFIRM_TEXT}</Text>,
+      children: (
+        <Stack gap="xs">
+          {REPAIR_CONFIRM_PARAGRAPHS.map((paragraph) => (
+            <Text key={paragraph} size="sm">
+              {paragraph}
+            </Text>
+          ))}
+        </Stack>
+      ),
       labels: { confirm: 'Repair', cancel: 'Cancel' },
       confirmProps: { color: 'brand' },
       onConfirm: () => health.repairDir(dirName),

@@ -3,7 +3,7 @@ import type { ApiErrorCode } from '../../api/types'
 import { ENTRY_CHANGED_MESSAGE } from '../../api/entries-constants'
 import { SCHEMA_UNAVAILABLE_CODE } from '../unavailable-entry-type'
 import { isUnanswered } from '../unanswered'
-import { EDITOR_ACTIONS } from '../copy'
+import { accessRefusalMessage, EDITOR_ACTIONS } from '../copy'
 import { SaveApiError } from './useEntryManager'
 
 /**
@@ -110,7 +110,11 @@ export function classifySaveAllError(
   // A path rule's refusal says only "Forbidden"; the guards' own refusals explain themselves.
   if (err.status === 403) {
     const bare = !err.serverMessage || err.serverMessage === 'Forbidden'
-    return { kind: 'blocked', reason: bare ? SAVE_ALL_REASONS.forbidden : err.serverMessage }
+    return {
+      kind: 'blocked',
+      reason:
+        accessRefusalMessage(err.code) ?? (bare ? SAVE_ALL_REASONS.forbidden : err.serverMessage),
+    }
   }
   return { kind: 'error', reason: SAVE_ALL_REASONS.failed }
 }

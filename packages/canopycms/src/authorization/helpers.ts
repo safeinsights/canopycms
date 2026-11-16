@@ -57,3 +57,15 @@ export function isLockedOutOfBranch(
 ): boolean {
   return (access?.managerOrAdminAllowed ?? false) && !isPrivileged(groups)
 }
+
+/**
+ * Whether the branch's list excludes `userId`. An exclusion shuts out everyone but admins and
+ * reviewers, whatever else would admit them (a group on the list, an open branch), so a removal
+ * holds. Own keys only, so an id like `constructor` never reads an inherited property.
+ */
+export function isExcludedFrom(
+  access: { excluded?: Record<string, unknown> } | undefined,
+  userId: string,
+): boolean {
+  return !!access?.excluded && Object.prototype.hasOwnProperty.call(access.excluded, userId)
+}

@@ -438,6 +438,26 @@ export interface CanopyEditorConfig {
 }
 
 export type DefaultBranchAccess = 'allow' | 'deny'
+
+/**
+ * Who may share a branch besides admins. Read through `resolveBranchSharing`
+ * (authorization/branch-sharing.ts), which supplies the defaults.
+ */
+export interface BranchSharingConfig {
+  /** The default for a branch's `access.addBy`: its listed members, or its owner only. Default 'members'. */
+  whoCanAdd?: 'members' | 'owner'
+  /**
+   * Whose names a person sharing a branch can search: people who work in this CMS, everyone the
+   * sign-in provider knows, or nobody (an exact email only). Default 'cms-users'.
+   */
+  searchable?: 'cms-users' | 'all-users' | 'nobody'
+  /**
+   * Whom an exact email address finds: anyone the sign-in provider knows, or only people who work
+   * in this CMS, the stricter choice. Default 'all-users'.
+   */
+  addableByEmail?: 'all-users' | 'cms-users'
+}
+
 export type DefaultPathAccessLevel = 'allow' | 'deny'
 /** Per-permission-level scoping for `defaultPathAccess`. An omitted level resolves to 'deny' (fail-closed). */
 export type DefaultPathAccessLevels = Partial<Record<PermissionLevel, DefaultPathAccessLevel>>
@@ -527,6 +547,7 @@ export interface CanopyConfig {
   gitBotAuthorEmail: GitBotAuthorEmail
   gitEditedByTrailers?: boolean
   gitCoAuthoredByTrailers?: boolean
+  branchSharing?: BranchSharingConfig
   githubTokenEnvVar?: GithubTokenEnvVar
   mode: CanopyOperatingMode
   /** How this build is deployed — see {@link CanopyConfigInput.deployedAs}. */
@@ -582,6 +603,7 @@ export interface CanopyConfigInput {
   gitEditedByTrailers?: boolean
   /** Also add `Co-authored-by: Name <email>`. Default false: emails in public history are public. */
   gitCoAuthoredByTrailers?: boolean
+  branchSharing?: BranchSharingConfig
   githubTokenEnvVar?: string
   /**
    * Operating mode: 'prod' or 'dev'. Required — no default (SEC-C1). A prod deploy that

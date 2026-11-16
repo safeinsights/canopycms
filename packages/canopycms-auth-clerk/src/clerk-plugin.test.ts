@@ -419,6 +419,83 @@ describe('ClerkAuthPlugin', () => {
     })
   })
 
+  describe('findUserByEmail', () => {
+    const ana = {
+      id: 'user_ana',
+      fullName: 'Ana Lee',
+      primaryEmailAddress: { emailAddress: 'ana@example.org' },
+    }
+
+    it("asks Clerk's exact email filter and maps the one user it finds", async () => {
+      const plugin = new ClerkAuthPlugin()
+      mockGetUserList.mockResolvedValue({ data: [ana], totalCount: 1 })
+
+      expect(await plugin.findUserByEmail('ana@example.org')).toEqual({
+        id: 'user_ana',
+        name: 'Ana Lee',
+        email: 'ana@example.org',
+        avatarUrl: undefined,
+      })
+      expect(mockGetUserList).toHaveBeenCalledWith({ emailAddress: ['ana@example.org'], limit: 2 })
+    })
+
+    it('finds no one when Clerk answers with nobody, or with more than one user', async () => {
+      const plugin = new ClerkAuthPlugin()
+      mockGetUserList.mockResolvedValueOnce({ data: [], totalCount: 0 })
+      expect(await plugin.findUserByEmail('nobody@example.org')).toBeNull()
+      mockGetUserList.mockResolvedValueOnce([ana, { ...ana, id: 'user_other' }])
+      expect(await plugin.findUserByEmail('ana@example.org')).toBeNull()
+    })
+
+    it("finds no one whose matched address isn't their primary one", async () => {
+      const plugin = new ClerkAuthPlugin()
+      mockGetUserList.mockResolvedValue({
+        data: [{ ...ana, primaryEmailAddress: { emailAddress: 'ana.lee@example.org' } }],
+        totalCount: 1,
+      })
+
+      expect(await plugin.findUserByEmail('ana@example.org')).toBeNull()
+    })
+
+    it('compares the primary address ignoring case, in either SDK shape', async () => {
+      const plugin = new ClerkAuthPlugin()
+      mockGetUserList.mockResolvedValue([
+        {
+          id: 'user_ben',
+          full_name: 'Ben Ortiz',
+          email_addresses: [{ email_address: 'Ben@Example.org' }],
+        },
+      ])
+
+      expect((await plugin.findUserByEmail('ben@example.org'))?.id).toBe('user_ben')
+    })
+
+    it("takes the snake_case shape's primary address by its id, not the first one", async () => {
+      const plugin = new ClerkAuthPlugin()
+      const cy = {
+        id: 'user_cy',
+        full_name: 'Cy Park',
+        primary_email_address_id: 'idn_2',
+        email_addresses: [
+          { id: 'idn_1', email_address: 'old@example.org' },
+          { id: 'idn_2', email_address: 'cy@example.org' },
+        ],
+      }
+      mockGetUserList.mockResolvedValue([cy])
+
+      expect((await plugin.findUserByEmail('cy@example.org'))?.email).toBe('cy@example.org')
+      expect(await plugin.findUserByEmail('old@example.org')).toBeNull()
+      mockGetUserList.mockResolvedValue([{ ...cy, primary_email_address_id: 'idn_gone' }])
+      expect(await plugin.findUserByEmail('old@example.org')).toBeNull()
+    })
+
+    it('rejects on a Clerk failure, so it never reads as "nobody uses that address"', async () => {
+      const plugin = new ClerkAuthPlugin()
+      mockGetUserList.mockRejectedValue(new Error('Too Many Requests'))
+      await expect(plugin.findUserByEmail('ana@example.org')).rejects.toThrow('Too Many Requests')
+    })
+  })
+
   describe('a user with no usable name', () => {
     const nameless = {
       id: 'user_2abNameless',

@@ -102,6 +102,14 @@ export class DevAuthPlugin implements AuthPlugin {
       .map((u) => ({ id: u.userId, name: u.name, email: u.email, avatarUrl: u.avatarUrl }))
   }
 
+  async findUserByEmail(email: string): Promise<UserSearchResult | null> {
+    const wanted = email.trim().toLowerCase()
+    const matches = this.users.filter((u) => u.email.toLowerCase() === wanted)
+    if (matches.length !== 1) return null
+    const [user] = matches
+    return { id: user.userId, name: user.name, email: user.email, avatarUrl: user.avatarUrl }
+  }
+
   async getGroupMetadata(groupId: CanopyGroupId): Promise<GroupMetadata | null> {
     const group = this.groups.find((g) => g.id === groupId)
     if (!group) return null

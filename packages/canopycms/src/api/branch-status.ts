@@ -11,6 +11,7 @@ import { requestChanges, approveBranch } from './branch-review'
 import { markAsMerged } from './branch-merge'
 import { ARCHIVE_BRANCH_ROUTES } from './archived-branches'
 import { defineEndpoint } from './route-builder'
+import { branchAccessDenial } from './guards'
 import { canPerformWorkflowAction, getBranchProtection, isAdmin } from '../authorization'
 import { syncSubmitPr } from './github-sync'
 import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from '../utils/error'
@@ -107,6 +108,8 @@ const submitBranchForMergeHandler = async (
     isProtectedBranch: isProtected,
   })
   if (!canSubmit) {
+    const denied = branchAccessDenial(ctx, branchContext, req.user)
+    if (denied) return { ok: false, ...denied }
     return {
       ok: false,
       status: 403,

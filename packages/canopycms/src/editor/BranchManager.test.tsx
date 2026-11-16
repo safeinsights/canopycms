@@ -11,6 +11,9 @@ import {
 } from './BranchManager'
 import { HOLD_BADGE, SYNC_FAILED_IN_REVIEW_NOTE, syncFailedFallback } from './branch-status'
 import type { BranchSummary } from './BranchManager'
+import type { CreateRefusal } from './hooks/create-branch-request'
+import { createMockApiClient } from '../api/__test__/mock-client'
+import { ApiClientProvider, type ApiClient } from './context'
 import { CanopyCMSProvider } from './theme'
 import { BranchesDrawer } from './components/BranchesDrawer'
 import { RESERVED_GROUPS } from '../authorization'
@@ -54,11 +57,16 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-const renderBranchManager = (props: React.ComponentProps<typeof BranchManager>) => {
+const renderBranchManager = (
+  props: React.ComponentProps<typeof BranchManager>,
+  api = createMockApiClient(),
+) => {
   return render(
     <SWRConfig value={{ provider: () => new Map() }}>
       <CanopyCMSProvider>
-        <BranchManager {...props} />
+        <ApiClientProvider client={api as unknown as ApiClient}>
+          <BranchManager {...props} />
+        </ApiClientProvider>
       </CanopyCMSProvider>
     </SWRConfig>,
   )
@@ -78,6 +86,16 @@ describe('getBranchPermissions', () => {
     expect(perms.canDelete).toBe(false)
     expect(perms.canRequestChanges).toBe(false)
   })
+
+  it.each(['unknown'])(
+    'gives a user whose id is the creator id %s no creator permissions',
+    (id) => {
+      const branch: BranchSummary = { name: 'work', status: 'editing', createdBy: id }
+      const perms = getBranchPermissions(branch, { userId: id, groups: [] })
+      expect(perms.hasWorkflowAccess).toBe(false)
+      expect(perms.canDelete).toBe(false)
+    },
+  )
 
   it('grants workflow access to the creator, people given access, reviewers and admins only', () => {
     const branch: BranchSummary = {
@@ -1063,7 +1081,7 @@ describe('BranchManager', () => {
 
     it("shows the server's refusal under the field, keeping the form as typed, until the name changes", async () => {
       const refusal = '"spring" is already the name of another branch. Choose a different name.'
-      const onCreate = vi.fn(async () => ({ refusal }))
+      const onCreate = vi.fn(async () => ({ refusal, field: 'name' as const }))
       renderBranchManager({ branches: baseBranches, onCreate, mode: 'prod' })
       await userEvent.click(screen.getByRole('button', { name: 'New branch…' }))
       const input = (await screen.findByLabelText(/branch name/i)) as HTMLInputElement
@@ -1085,7 +1103,7 @@ describe('BranchManager', () => {
       const refusal = '"spring" is already the name of another branch. Choose a different name.'
       renderBranchManager({
         branches: baseBranches,
-        onCreate: vi.fn(async () => ({ refusal })),
+        onCreate: vi.fn(async () => ({ refusal, field: 'name' as const })),
         mode: 'prod',
       })
       await userEvent.click(screen.getByRole('button', { name: 'New branch…' }))
@@ -1113,8 +1131,8 @@ describe('BranchManager', () => {
     ])('forgets a refusal after %s', async (_after, leave) => {
       const refusal = '"spring" is already the name of another branch. Choose a different name.'
       const onCreate = vi
-        .fn<() => Promise<boolean | { refusal: string }>>()
-        .mockResolvedValueOnce({ refusal })
+        .fn<() => Promise<boolean | CreateRefusal>>()
+        .mockResolvedValueOnce({ refusal, field: 'name' })
         .mockResolvedValue(true)
       renderBranchManager({ branches: baseBranches, onCreate, mode: 'prod' })
       await userEvent.click(screen.getByRole('button', { name: 'New branch…' }))
@@ -1875,6 +1893,17 @@ describe('BranchManager', () => {
       expect(screen.queryByTestId('delete-branch-button-main')).toBeNull()
     })
 
+    it('hides Delete branch from a user whose id is the unknown creator id', async () => {
+      const branches: BranchSummary[] = [
+        { ...baseBranches[0], createdBy: 'unknown', access: { users: ['unknown'] } },
+      ]
+      renderBranchManager({ branches, user: { userId: 'unknown', groups: [] }, mode: 'prod' })
+
+      await openMenu('main')
+      expect(screen.getByTestId('submit-branch-button-main')).toBeTruthy()
+      expect(screen.queryByTestId('delete-branch-button-main')).toBeNull()
+    })
+
     it('hides Delete branch on the protected branch, even from an admin', async () => {
       const branches: BranchSummary[] = [
         {
@@ -2054,7 +2083,7 @@ describe('BranchManager', () => {
       expect(container.textContent).not.toContain('owner1')
     })
 
-    it('names the access users it can, then counts the rest with those the server withheld', async () => {
+    it('names the access users it can, then counts the rest', async () => {
       const onGetOwnerMetadata = vi.fn(async (id: string) =>
         id === 'known' || id === 'owner1' ? { id, name: `Name of ${id}`, email: '' } : null,
       )
@@ -2064,12 +2093,7 @@ describe('BranchManager', () => {
             name: 'feature/shared',
             status: 'editing',
             createdBy: 'owner1',
-            access: {
-              users: ['known', 'unknown'],
-              groups: ['team-a'],
-              withheldUsers: 2,
-              withheldGroups: 1,
-            },
+            access: { users: ['known', 'unknown', 'gone'], groups: ['team-a'] },
           },
         ],
         mode: 'prod',
@@ -2077,7 +2101,7 @@ describe('BranchManager', () => {
         onGetOwnerMetadata,
       })
 
-      expect(await screen.findByText('Access: Name of known, team-a and 4 others')).toBeDefined()
+      expect(await screen.findByText('Access: Name of known, team-a and 2 others')).toBeDefined()
       expect(screen.queryByText('Name unavailable')).toBeNull()
     })
   })

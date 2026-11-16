@@ -17,6 +17,10 @@ export default defineCanopyConfig({
   // server deployments" section recommends, applied from the start so the
   // first run isn't a wall. Tighten to 'deny' yourself if you don't want
   // public read (e.g. an internal-only site).
+  //
+  // With edit closed, only admins and reviewers can create branches: an admin
+  // must add an edit rule for your editors in the editor's Permission Manager
+  // before editors can create branches or edit anything.
   defaultBranchAccess: 'deny',
   defaultPathAccess: { read: 'allow' },
   // Leave this as 'dev'. This file is loaded by `next dev`, by `next build`

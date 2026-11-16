@@ -964,7 +964,7 @@ describe('CanopyApiClient', () => {
 
     it('should send PATCH requests with JSON body', async () => {
       const client = new CanopyApiClient({ fetch: mockFetch })
-      await client.branches.updateAccess({ branch: 'test-branch' }, { allowedUsers: ['user-1'] })
+      await client.branches.updateAccess({ branch: 'test-branch' }, { add: { users: ['user-1'] } })
 
       expect(mockFetch).toHaveBeenCalledWith(
         expect.any(String),

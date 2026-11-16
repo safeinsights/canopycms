@@ -7,6 +7,7 @@
 
 import type { RouteDefinition } from '../http/router'
 import { BRANCH_ROUTES } from './branch'
+import { BRANCH_PEOPLE_ROUTES } from './branch-people'
 import { BRANCH_CHANGES_ROUTES } from './branch-changes'
 import { BRANCH_ENTRY_CHANGE_ROUTES } from './branch-entry-changes'
 import { MERGE_CONFLICT_ROUTES } from './merge-conflicts'
@@ -30,6 +31,7 @@ import { ADMIN_ROUTES } from './admin'
 export function buildCanopyRoutes(): RouteDefinition[] {
   return [
     ...Object.values(BRANCH_ROUTES),
+    ...Object.values(BRANCH_PEOPLE_ROUTES),
     ...Object.values(BRANCH_CHANGES_ROUTES),
     ...Object.values(BRANCH_ENTRY_CHANGE_ROUTES),
     ...Object.values(MERGE_CONFLICT_ROUTES),

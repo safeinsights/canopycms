@@ -1,0 +1,226 @@
+import { describe, expect, it } from 'vitest'
+
+import {
+  accessChangeBody,
+  additionsBody,
+  addressesLanded,
+  changeLanded,
+  joinNames,
+  narrows,
+  NOTHING_STAGED,
+  personToAdd,
+  showsUnlistedOwner,
+  withAddition,
+  type BranchAccess,
+} from './share-staging'
+
+const current = (over: Partial<BranchAccess> = {}): BranchAccess => ({
+  entries: [
+    { kind: 'user', id: 'ana', name: 'Ana' },
+    { kind: 'group', id: 'team', name: 'Team' },
+  ],
+  excluded: [
+    {
+      kind: 'user',
+      id: 'pat',
+      name: 'Pat',
+      by: { id: 'ana', name: 'Ana' },
+      at: '',
+      byAdmin: false,
+    },
+  ],
+  restricted: true,
+  openToEveryone: false,
+  defaultAccess: 'allow',
+  addBy: 'members',
+  whoCanAdd: 'members',
+  rights: { isOwner: true, canAdd: true, canManage: true },
+  searchable: 'cms-users',
+  addableByEmail: 'all-users',
+  ...over,
+})
+
+describe('accessChangeBody', () => {
+  it('is empty with nothing staged, or a setting put back to what it was', () => {
+    expect(accessChangeBody(NOTHING_STAGED, current())).toEqual({})
+    expect(accessChangeBody({ ...NOTHING_STAGED, addBy: 'members' }, current())).toEqual({})
+    expect(accessChangeBody({ ...NOTHING_STAGED, restricted: true }, current())).toEqual({})
+  })
+
+  it('puts ids, groups and unlooked-up addresses each where the server reads them', () => {
+    const body = accessChangeBody(
+      {
+        add: [
+          { kind: 'user', id: 'cole', name: 'Cole' },
+          { kind: 'user', email: 'dana@example.org', name: 'dana@example.org' },
+          { kind: 'group', id: 'design', name: 'Design' },
+        ],
+        remove: [{ kind: 'group', id: 'team' }],
+        unexclude: [{ kind: 'user', id: 'pat' }],
+        addBy: 'owner',
+      },
+      current(),
+    )
+
+    expect(body).toEqual({
+      add: { users: ['cole'], groups: ['design'], emails: ['dana@example.org'] },
+      remove: { groups: ['team'] },
+      unexclude: { users: ['pat'] },
+      addBy: 'owner',
+    })
+  })
+
+  it('opens a branch with nothing else, and restricts an open one', () => {
+    expect(
+      accessChangeBody(
+        { ...NOTHING_STAGED, add: [{ kind: 'user', id: 'x', name: 'X' }], restricted: false },
+        current(),
+      ),
+    ).toEqual({ restricted: false })
+    expect(
+      accessChangeBody(
+        { ...NOTHING_STAGED, restricted: true },
+        current({ restricted: false, openToEveryone: true }),
+      ),
+    ).toEqual({ restricted: true })
+  })
+})
+
+describe('changeLanded', () => {
+  it('reads a change as landed only when the list shows every part of it', () => {
+    const landed = current({
+      entries: [{ kind: 'user', id: 'cole', name: 'Cole' }],
+      excluded: [],
+      addBy: 'owner',
+    })
+    const body = {
+      add: { users: ['cole'] },
+      remove: { users: ['ana'], groups: ['team'] },
+      unexclude: { users: ['pat'] },
+      addBy: 'owner' as const,
+    }
+
+    expect(changeLanded(body, landed)).toBe(true)
+    expect(changeLanded(body, current())).toBe(false)
+    expect(changeLanded({ add: { emails: ['x@example.org'] } }, landed)).toBe(false)
+    expect(changeLanded({ restricted: false }, current())).toBe(false)
+    expect(changeLanded({ remove: { users: ['ana'] } }, current())).toBe(false)
+    expect(changeLanded({ unexclude: { users: ['pat'] } }, current())).toBe(false)
+  })
+})
+
+describe('addressesLanded', () => {
+  const before = current({ entries: [{ kind: 'user', id: 'ana', name: 'Ana' }] })
+  const body = { add: { users: ['cole'], emails: ['dana@example.org'] } }
+
+  it('counts as landed an address that brought in someone the viewer added', () => {
+    const fresh = current({
+      entries: [
+        { kind: 'user', id: 'ana', name: 'Ana' },
+        { kind: 'user', id: 'cole', name: 'Cole', addedBy: { id: 'ana', name: 'Ana' } },
+        { kind: 'user', id: 'dana', name: 'Dana', addedBy: { id: 'ana', name: 'Ana' } },
+      ],
+    })
+    expect(addressesLanded(body, before, fresh, 'ana')).toBe(true)
+    expect(changeLanded(body, fresh, true)).toBe(true)
+  })
+
+  it('does not count someone added by id, by someone else, or listed before', () => {
+    const fresh = current({
+      entries: [
+        { kind: 'user', id: 'ana', name: 'Ana', addedBy: { id: 'ana', name: 'Ana' } },
+        { kind: 'user', id: 'cole', name: 'Cole', addedBy: { id: 'ana', name: 'Ana' } },
+        { kind: 'user', id: 'eve', name: 'Eve', addedBy: { id: 'ben', name: 'Ben' } },
+      ],
+    })
+    expect(addressesLanded(body, before, fresh, 'ana')).toBe(false)
+  })
+})
+
+describe('showsUnlistedOwner', () => {
+  const unlisted = current({ entries: [], excluded: [], restricted: false, defaultAccess: 'deny' })
+
+  it('shows the owner of an unlisted branch on a closed site, or one being limited', () => {
+    expect(showsUnlistedOwner(unlisted, 'ana')).toBe(true)
+    const open = { ...unlisted, defaultAccess: 'allow' as const }
+    expect(showsUnlistedOwner(open, 'ana')).toBe(false)
+    expect(showsUnlistedOwner(open, 'ana', true)).toBe(true)
+  })
+
+  it('never for a listed branch, a listed or removed owner, or no person', () => {
+    expect(showsUnlistedOwner({ ...unlisted, restricted: true }, 'ana')).toBe(false)
+    expect(
+      showsUnlistedOwner(
+        { ...unlisted, entries: [{ kind: 'user', id: 'ana', name: 'Ana' }] },
+        'ana',
+      ),
+    ).toBe(false)
+    expect(showsUnlistedOwner(current({ restricted: false, defaultAccess: 'deny' }), 'pat')).toBe(
+      false,
+    )
+    expect(showsUnlistedOwner(unlisted, 'canopycms-system')).toBe(false)
+    expect(showsUnlistedOwner(unlisted, undefined)).toBe(false)
+  })
+})
+
+describe('narrowing an open branch', () => {
+  const open = current({ entries: [], restricted: false, openToEveryone: true })
+
+  it('narrows on the first add or a switch to the list, never when opening', () => {
+    expect(narrows(NOTHING_STAGED, open)).toBe(false)
+    expect(narrows({ ...NOTHING_STAGED, add: [{ kind: 'user', id: 'x', name: 'X' }] }, open)).toBe(
+      true,
+    )
+    expect(narrows({ ...NOTHING_STAGED, restricted: true }, open)).toBe(true)
+    expect(narrows({ ...NOTHING_STAGED, restricted: true }, current())).toBe(false)
+    expect(
+      narrows(
+        { ...NOTHING_STAGED, add: [{ kind: 'user', id: 'x', name: 'X' }], restricted: false },
+        open,
+      ),
+    ).toBe(false)
+  })
+
+  it('stages an addition once, and never one already listed', () => {
+    const cole = { kind: 'user' as const, id: 'cole', name: 'Cole' }
+    expect(withAddition([cole], cole)).toEqual([cole])
+    expect(withAddition([], cole, new Set(['user:cole']))).toEqual([])
+    expect(withAddition([], cole)).toEqual([cole])
+  })
+})
+
+describe('joinNames', () => {
+  it('joins with commas and a final "and"', () => {
+    expect(joinNames(['Ana'])).toBe('Ana')
+    expect(joinNames(['Ana', 'Ben'])).toBe('Ana and Ben')
+    expect(joinNames(['Ana', 'Ben', 'Chen'])).toBe('Ana, Ben and Chen')
+  })
+})
+
+describe('personToAdd and additionsBody', () => {
+  it('sends by address only someone the find says must go by it', () => {
+    const insider = personToAdd(
+      { id: 'cole', name: 'Cole', maskedEmail: 'c•••@example.org' },
+      'cole@example.org',
+    )
+    const outsider = personToAdd(
+      { id: 'dana', name: 'Dana', addByAddress: true },
+      'dana@example.org',
+    )
+    // An admin's or reviewer's find shows the full address, never a masked one.
+    const shownInFull = personToAdd(
+      { id: 'finn', name: 'Finn', email: 'finn@example.org' },
+      'finn@example.org',
+    )
+    const byName = personToAdd({ id: 'eve', name: 'Eve' })
+
+    expect(additionsBody([insider, outsider, shownInFull, byName])).toEqual({
+      users: ['cole', 'finn', 'eve'],
+      emails: ['dana@example.org'],
+    })
+  })
+
+  it('is undefined with nothing to add', () => {
+    expect(additionsBody([])).toBeUndefined()
+  })
+})

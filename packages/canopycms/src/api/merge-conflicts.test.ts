@@ -1218,3 +1218,36 @@ describe("waking the worker for the pull request's conflicts status", () => {
     expect(await listTasks(devTasks, 'pending')).toEqual([])
   })
 })
+
+/** A branch whose owner removed `ben`, under the real branch access check. */
+const shutOutCtx = () =>
+  createMockApiContext({
+    services: { checkBranchAccess: createCheckBranchAccess('deny') },
+    branchContext: {
+      ...createMockBranchContext({
+        branchName: 'feature',
+        access: {
+          restricted: true,
+          allowedUsers: ['u1'],
+          excluded: { ben: { by: 'u1', at: 'now', byAdmin: false } },
+        },
+      }),
+      flatSchema: [],
+    },
+  })
+const ben = { type: 'authenticated' as const, userId: 'ben', groups: [] }
+
+describe('resolving for someone the branch shuts out', () => {
+  it("answers a removed person's resolve with BRANCH_ACCESS_DENIED", async () => {
+    const res = await MERGE_CONFLICT_ROUTES.resolveEntry.handler(
+      shutOutCtx(),
+      { user: ben },
+      {
+        branch: unsafeAsBranchName('feature'),
+        entryPath: unsafeAsLogicalPath('content/posts/hello'),
+      },
+      {} as ResolveEntryConflictBody,
+    )
+    expect(res).toMatchObject({ ok: false, status: 403, code: 'BRANCH_ACCESS_DENIED' })
+  })
+})

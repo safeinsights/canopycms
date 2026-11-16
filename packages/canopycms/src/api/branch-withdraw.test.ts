@@ -32,6 +32,8 @@ vi.mock('./pr-comment-sync', () => ({ syncPrComments: mockSyncPrComments }))
 import { withdrawBranch } from './branch-withdraw'
 import { mockConsole, createMockApiContext, createMockBranchContext } from '../test-utils'
 import { RESERVED_GROUPS } from '../authorization'
+import { createCheckBranchAccess } from '../authorization/branch'
+import type { CanopyServices } from '../services'
 
 // Extract handler for testing
 const withdrawHandler = withdrawBranch.handler
@@ -73,14 +75,42 @@ describe('branch withdraw api', () => {
   })
 
   it('returns 403 if access forbidden', async () => {
-    // User 'u2' is not the creator (u1) and has no ACL access
+    // User 'u2' may open the branch, but is not the creator (u1) and has no ACL access
     const res = await withdrawHandler(
-      makeCtx(false),
+      makeCtx(),
       { user: { type: 'authenticated', userId: 'u2', groups: [] } },
       { branch: 'feature/x' as BranchName },
     )
     expect(res.status).toBe(403)
     expect(res.error).toContain('You do not have permission to withdraw this branch from review.')
+  })
+
+  it('answers someone removed from the branch with BRANCH_ACCESS_DENIED', async () => {
+    const ctx = createMockApiContext({
+      branchContext: {
+        ...baseContext,
+        branch: {
+          ...baseContext.branch,
+          access: {
+            restricted: true,
+            allowedUsers: ['u1'],
+            excluded: { u2: { by: 'u1', at: 'now', byAdmin: false } },
+          },
+        },
+      },
+      services: {
+        checkBranchAccess: createCheckBranchAccess('allow'),
+        config: { defaultBranchAccess: 'allow' } as unknown as CanopyServices['config'],
+      },
+    })
+
+    const res = await withdrawHandler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u2', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+    )
+
+    expect(res).toMatchObject({ ok: false, status: 403, code: 'BRANCH_ACCESS_DENIED' })
   })
 
   it('returns 400 if branch not submitted', async () => {

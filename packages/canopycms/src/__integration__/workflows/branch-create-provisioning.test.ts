@@ -60,7 +60,7 @@ describe('POST /branches over provisioning outcomes', () => {
 
     const res = await client.post('/api/canopycms/branches', {
       branch: 'feat',
-      access: { allowedUsers: [TEST_USERS.editor.userId] },
+      access: { add: { users: [TEST_USERS.editor.userId] } },
     })
 
     expect(res.status).toBe(409)

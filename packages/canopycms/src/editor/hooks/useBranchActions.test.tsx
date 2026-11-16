@@ -3,11 +3,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { notifications } from '@mantine/notifications'
 import { isValidElement, type ReactNode } from 'react'
 import { useBranchActions } from './useBranchActions'
+import { accessRefusalMessage } from '../copy'
 import { useDraftManager, type UnsavedSummary } from './useDraftManager'
 import type { EditorEntry } from '../Editor'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../../paths/test-utils'
 import type { MockApiClient } from '../../api/__test__/mock-client'
-import { CREATE_BRANCH_DEADLINE_MS, type CreateRefusal } from './create-branch-request'
+import {
+  CREATE_BRANCH_DEADLINE_MS,
+  type CreatedBranch,
+  type CreateRefusal,
+} from './create-branch-request'
 import {
   setupMockApiClient,
   setupMockLocation,
@@ -259,12 +264,12 @@ describe('useBranchActions', () => {
 
     const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
 
-    let created: boolean | CreateRefusal | undefined
+    let created: false | CreateRefusal | CreatedBranch | undefined
     await act(async () => {
       created = await result.current.handleCreateBranch({ name: 'new-branch' })
     })
 
-    expect(created).toBe(true)
+    expect(created).toMatchObject({ created: 'new-branch', branch: { name: 'new-branch' } })
     expect(mockOnReloadBranches).toHaveBeenCalledTimes(1)
     expect(mockOnBranchCreated).toHaveBeenCalledWith(createdBranch)
     expect(mockSetBranchName).toHaveBeenCalledWith('new-branch')
@@ -289,6 +294,7 @@ describe('useBranchActions', () => {
 
     expect(created).toEqual({
       refusal: '"new-branch" is already the name of another branch. Choose a different name.',
+      field: 'name',
     })
     expect(notifications.show).not.toHaveBeenCalled()
     expect(mockOnBranchCreated).not.toHaveBeenCalled()
@@ -319,6 +325,70 @@ describe('useBranchActions', () => {
       expect(mockOnBranchSwitch).not.toHaveBeenCalled()
     },
   )
+
+  it.each([
+    ['BRANCH_CREATE_FORBIDDEN', 403, 'form'],
+    ['USER_OUT_OF_SCOPE', 403, 'shareWith'],
+    ['RATE_LIMITED', 429, 'shareWith'],
+  ] as const)(
+    'hands the form a refused %s in words, where it applies, with no toast',
+    async (code, status, field) => {
+      mockClient.branches.create.mockResolvedValueOnce({
+        ok: false,
+        status,
+        error: 'refused',
+        code,
+      })
+      const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+
+      let created: unknown
+      await act(async () => {
+        created = await result.current.handleCreateBranch({ name: 'new-branch' })
+      })
+
+      expect(created).toEqual({ refusal: accessRefusalMessage(code), field, code })
+      expect(notifications.show).not.toHaveBeenCalled()
+      expect(mockSetBranchName).not.toHaveBeenCalled()
+    },
+  )
+
+  it('sends the people to share the branch with, and lets the caller say it was created', async () => {
+    mockClient.branches.create.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: {
+        branch: {
+          name: 'new-branch',
+          status: 'editing',
+          access: { allowedUsers: [], allowedGroups: [] },
+          createdBy: 'user1',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      },
+    })
+    const announceCreated = vi.fn()
+    const { result } = renderHook(() => useBranchActions({ ...defaultOptions, announceCreated }), {
+      wrapper,
+    })
+
+    await act(async () => {
+      await result.current.handleCreateBranch({
+        name: 'new-branch',
+        access: { add: { users: ['bob'], emails: ['dana@example.org'] } },
+      })
+    })
+
+    expect(mockClient.branches.create.mock.calls[0][0]).toEqual({
+      branch: 'new-branch',
+      access: { add: { users: ['bob'], emails: ['dana@example.org'] } },
+    })
+    expect(announceCreated).toHaveBeenCalledWith(
+      'new-branch',
+      expect.objectContaining({ name: 'new-branch' }),
+    )
+    expect(notifications.show).not.toHaveBeenCalled()
+  })
 
   describe('confirmCreate', () => {
     it('resolves true without a dialog when nothing is unsaved', async () => {
@@ -477,12 +547,12 @@ describe('useBranchActions', () => {
     })
     const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
 
-    let created: boolean | CreateRefusal | undefined
+    let created: false | CreateRefusal | CreatedBranch | undefined
     await act(async () => {
       created = await result.current.handleCreateBranch({ name: 'new-branch' })
     })
 
-    expect(created).toBe(true)
+    expect(created).toMatchObject({ created: 'new-branch', branch: { name: 'new-branch' } })
     expect(modals.openConfirmModal).not.toHaveBeenCalled()
     expect(mockClient.branches.create).toHaveBeenCalledTimes(1)
   })

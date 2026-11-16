@@ -535,6 +535,8 @@ describe('createCanopyRequestHandler', () => {
 
   it('handles POST requests with valid body', async () => {
     const services: any = createMockServices()
+    // With no path rules, only an edit default of 'allow' lets the mock user create a branch.
+    services.config.defaultPathAccess = 'allow'
     const authPlugin = createMockAuthPlugin()
 
     const handler = createCanopyRequestHandler({

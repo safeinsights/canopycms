@@ -326,7 +326,7 @@ function mergeBranchMetadata(
       },
       // Immutable after creation
       createdBy: existing?.branch.createdBy ?? incoming.branch?.createdBy ?? defaults.createdBy,
-      createdAt: existing?.branch.createdAt ?? defaults.createdAt,
+      createdAt: existing?.branch.createdAt ?? incoming.createdAt ?? defaults.createdAt,
       // Fork point is recorded once at creation; later saves must not move it
       baseBranch: existing?.branch.baseBranch ?? incoming.branch?.baseBranch,
       // Always stamped fresh; the spreads above would otherwise let the creation-time value win
@@ -345,11 +345,13 @@ export function buildInitialBranchMetadata(
 }
 
 /**
- * Fields save() accepts. `createdBy` applies on creation only and is ignored
- * once metadata exists; createdAt/updatedAt are managed here, not by callers.
+ * Fields save() accepts. `createdBy` and `createdAt` apply on creation only and are ignored once
+ * metadata exists; `createdAt` defaults to now, and only a repair rebuilding a branch passes it.
+ * `updatedAt` is managed here, never by callers.
  */
 export interface BranchMetadataUpdate {
   branch?: Partial<Omit<BranchMetadata, 'createdAt' | 'updatedAt'>>
+  createdAt?: string
 }
 
 /** A failed submit whose pull request step hasn't run; no other task's success clears its failure. */

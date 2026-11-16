@@ -330,7 +330,7 @@ export const listEntries = defineEndpoint({
       limit: DEFAULT_ENTRIES_LIMIT,
     },
   },
-  guards: ['schema'] as const,
+  guards: ['branchAccessWithSchema'] as const,
   handler: listEntriesHandler,
 })
 
@@ -677,7 +677,7 @@ export const deleteEntry = defineEndpoint({
   responseType: 'DeleteEntryResponse',
   response: {} as DeleteEntryResponse,
   defaultMockData: { deleted: true },
-  guards: ['schema', 'writableBranch'] as const,
+  guards: ['branchAccessWithSchema', 'writableBranch'] as const,
   handler: deleteEntryHandler,
 })
 

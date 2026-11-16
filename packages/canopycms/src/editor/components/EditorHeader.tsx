@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useRef, type ReactNode, type Ref } from 'react'
+import React, { useLayoutEffect, useRef, useState, type ReactNode, type Ref } from 'react'
 import {
   Badge,
   Box,
@@ -46,7 +46,12 @@ import {
   type BaseUpdateControl,
   type BaseUpdateWait,
 } from '../base-update-wait'
-import { useFocusHandOff, useMenuItemFocusReturn } from '../utils/focus-return'
+import { useFocusHandOff, useMenuItemFocusReturn, useStandInOnLeave } from '../utils/focus-return'
+import type { UserSearchResult } from '../../auth/types'
+import type { BranchSummary, UserContext } from '../BranchManager'
+import { BranchShareControl, BranchShareControlSkeleton } from '../sharing/BranchShareControl'
+import { sharingMode } from '../sharing/sharing-mode'
+import { WhoHasAccessPopover } from '../sharing/WhoHasAccessPopover'
 
 export interface EditorHeaderProps {
   branchName: string
@@ -129,6 +134,21 @@ export interface EditorHeaderProps {
   latestWait?: BaseUpdateWait
   /** The base has changes the open branch's saved work keeps the automatic sync from bringing in. */
   latestChangesWaiting?: boolean
+  /** Who has access to the open branch, first in the bar's actions, or in the pill's menu below `md`. */
+  sharing?: BranchBarSharing
+  /** The bar's sharing control, while it shows. */
+  shareControlRef?: Ref<HTMLButtonElement>
+}
+
+/** @internal Exported for stories and tests. */
+export interface BranchBarSharing {
+  /** The open branch as listed; absent while its listing loads, and then `loading`. */
+  branch?: BranchSummary
+  loading: boolean
+  user?: UserContext
+  getUserMetadata: (userId: string) => Promise<UserSearchResult | null>
+  /** Opens the Share dialog, which returns focus to `returnFocusTo()` as it closes. */
+  onShare: (returnFocusTo: () => HTMLElement | null) => void
 }
 
 /**
@@ -175,6 +195,8 @@ export function EditorHeader({
   latestChangesWaiting = false,
   openConflicts = 0,
   conflictRecordHeld,
+  sharing,
+  shareControlRef,
 }: EditorHeaderProps) {
   const reviewRole = reviewRoleOf(
     {
@@ -284,6 +306,56 @@ export function EditorHeader({
 
   const caretOnWay = narrow && !!barAction && !!workflow
 
+  const pill = useRef<HTMLButtonElement>(null)
+  const pillRef = useMergedRef(pill, branchToggleRef)
+  // The branch whose list is open; one left open for another branch is closed, not shown again.
+  const [accessOpen, setAccessOpen] = useState<string | null>(null)
+  const shared = sharing?.branch
+  const shareMode = shared && branchName ? sharingMode(shared, sharing.user) : undefined
+  if (accessOpen !== null && (shareMode !== 'view' || narrow || accessOpen !== shared?.name)) {
+    setAccessOpen(null)
+  }
+  const openShare = (opener: HTMLElement) =>
+    sharing?.onShare(() => (opener.isConnected ? opener : pill.current))
+  // Focus Share… holds as it leaves the bar goes to the pill, or to Share… remounted in its place.
+  const shareRef = useMergedRef(
+    shareControlRef,
+    useStandInOnLeave<HTMLButtonElement>(() => pill.current),
+  )
+  let shareControl: ReactNode = null
+  if (!narrow && sharing?.loading && !shared && branchName) {
+    shareControl = <BranchShareControlSkeleton />
+  } else if (!narrow && shared && shareMode === 'share') {
+    shareControl = (
+      <BranchShareControl
+        ref={shareRef}
+        mode="share"
+        branch={shared}
+        getUserMetadata={sharing.getUserMetadata}
+        viewerId={sharing.user?.userId}
+        onClick={(event) => openShare(event.currentTarget)}
+      />
+    )
+  } else if (!narrow && shared && shareMode === 'view') {
+    shareControl = (
+      <WhoHasAccessPopover
+        branch={shared}
+        viewer={sharing.user}
+        opened={accessOpen === shared.name}
+        onChange={(open) => setAccessOpen(open ? shared.name : null)}
+      >
+        <BranchShareControl
+          ref={shareRef}
+          mode="view"
+          branch={shared}
+          getUserMetadata={sharing.getUserMetadata}
+          viewerId={sharing.user?.userId}
+          onClick={() => setAccessOpen((open) => (open === shared.name ? null : shared.name))}
+        />
+      </WhoHasAccessPopover>
+    )
+  }
+
   return (
     <TopBar
       leading={
@@ -295,9 +367,19 @@ export function EditorHeader({
             onSwitchBranch={onBranchManagerOpen}
             onRefreshBranch={onBranchReloadData}
             onDiscardAll={onBranchDiscardDrafts}
-            pillRef={branchToggleRef}
-            // Below `md` the bar has no room for it, so the branch's menu offers it.
+            pillRef={pillRef}
+            // Below `md` the bar has no room for these, so the branch's menu offers them.
             getLatest={narrow ? baseUpdate : undefined}
+            share={
+              narrow && shared && shareMode && sharing
+                ? {
+                    mode: shareMode,
+                    branch: shared,
+                    onShare: sharing.onShare,
+                    viewer: sharing.user,
+                  }
+                : undefined
+            }
           />
           {/* The way out stays beside the hold it ends, however the bar wraps. */}
           <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0 }}>
@@ -358,6 +440,7 @@ export function EditorHeader({
       }
       trailing={
         <>
+          {shareControl}
           <DraftStorageWarning shown={draftStorageFailed && modifiedCount > 0} />
           {!narrow && baseUpdate && <GetLatestChangesButton control={baseUpdate} />}
           {/* A lock can end, so wide Save all stays and says why; below `md` space wins. */}

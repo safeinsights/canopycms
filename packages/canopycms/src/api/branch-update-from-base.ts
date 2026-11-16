@@ -4,6 +4,7 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { BranchContext } from '../types'
 import { toBranchListItem, type BranchListItem } from './branch'
 import { defineEndpoint } from './route-builder'
+import { branchAccessDenial } from './guards'
 import { canPerformWorkflowAction, getBranchProtection } from '../authorization'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
 import { clientOperatingStrategy, operatingStrategy } from '../operating-mode'
@@ -68,6 +69,8 @@ const updateFromBaseHandler = async (
     { isProtectedBranch: isProtected },
   )
   if (!allowed) {
+    const denied = branchAccessDenial(ctx, branchContext, req.user)
+    if (denied) return { ok: false, ...denied }
     return {
       ok: false,
       status: 403,
