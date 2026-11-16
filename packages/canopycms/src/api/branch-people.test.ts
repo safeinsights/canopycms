@@ -366,7 +366,7 @@ describe('POST /:branch/access/find', () => {
     await addBranch('feature/x')
 
     expect((await find(owner, 'feature/x', 'OTTO@example.org')).data?.people).toEqual([
-      { id: 'outsider', name: 'Otto Outsider' },
+      { id: 'outsider', name: 'Otto Outsider', addByAddress: true },
     ])
     expect(ids(await find(owner, 'feature/x', 'otto@example'))).toEqual([])
 
@@ -375,6 +375,25 @@ describe('POST /:branch/access/find', () => {
     expect((await find(owner, 'feature/x', 'cole@example.org')).data?.people).toEqual([
       { id: 'colleague', name: 'Cole Ortiz', maskedEmail: 'c•••@example.org' },
     ])
+  })
+
+  it('asks for an add by address only where an id would be out of scope', async () => {
+    await addBranch('feature/x', { access: { allowedUsers: ['reviewer', 'member'] } })
+    const found = async (actor: CanopyUser, email: string) =>
+      (await find(actor, 'feature/x', email)).data?.people[0]
+
+    expect(await found(reviewer, 'cole@example.org')).toEqual({
+      id: 'colleague',
+      name: 'Cole Ortiz',
+      email: 'cole@example.org',
+    })
+    expect((await found(reviewer, 'otto@example.org'))?.addByAddress).toBe(true)
+    expect((await found(member, 'otto@example.org'))?.addByAddress).toBe(true)
+    expect(await found(admin, 'otto@example.org')).toEqual({
+      id: 'outsider',
+      name: 'Otto Outsider',
+      email: 'otto@example.org',
+    })
   })
 
   it('refuses email lookups past the limit, and counts no name search', async () => {

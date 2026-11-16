@@ -42,9 +42,9 @@ export const entryKey = (entry: { kind: Kind; id?: string; email?: string }): st
   entry.id !== undefined ? `${entry.kind}:${entry.id}` : `email:${entry.email?.toLowerCase()}`
 
 /**
- * `person` to add, found by `address` when given. Only someone who works in this CMS carries a
- * masked email (api/people.ts `personFor`); anyone else found by an address goes by that address,
- * which vouches for them where their id alone is refused as out of scope (api/branch-access.ts).
+ * `person` to add, found by `address` when given. One the server would refuse by id (its
+ * `addByAddress`) goes by that address, which vouches for them; anyone else goes by id, sparing the
+ * email lookup the address would cost again.
  */
 export const personToAdd = (person: FoundPerson, address?: string): PersonToAdd => ({
   kind: 'user',
@@ -52,7 +52,7 @@ export const personToAdd = (person: FoundPerson, address?: string): PersonToAdd 
   name: person.name,
   avatarUrl: person.avatarUrl,
   shownEmail: person.email ?? person.maskedEmail,
-  ...(address && !person.maskedEmail && { email: address }),
+  ...(address && person.addByAddress && { email: address }),
 })
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/

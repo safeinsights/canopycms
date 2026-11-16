@@ -164,16 +164,24 @@ describe('joinNames', () => {
 })
 
 describe('personToAdd and additionsBody', () => {
-  it('sends someone found by an address by that address unless they work in this CMS', () => {
+  it('sends by address only someone the find says must go by it', () => {
     const insider = personToAdd(
       { id: 'cole', name: 'Cole', maskedEmail: 'c•••@example.org' },
       'cole@example.org',
     )
-    const outsider = personToAdd({ id: 'dana', name: 'Dana' }, 'dana@example.org')
+    const outsider = personToAdd(
+      { id: 'dana', name: 'Dana', addByAddress: true },
+      'dana@example.org',
+    )
+    // An admin's or reviewer's find shows the full address, never a masked one.
+    const shownInFull = personToAdd(
+      { id: 'finn', name: 'Finn', email: 'finn@example.org' },
+      'finn@example.org',
+    )
     const byName = personToAdd({ id: 'eve', name: 'Eve' })
 
-    expect(additionsBody([insider, outsider, byName])).toEqual({
-      users: ['cole', 'eve'],
+    expect(additionsBody([insider, outsider, shownInFull, byName])).toEqual({
+      users: ['cole', 'finn', 'eve'],
       emails: ['dana@example.org'],
     })
   })

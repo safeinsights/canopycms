@@ -222,6 +222,12 @@ export interface FoundPerson {
   email?: string
   /** Everyone else, and only for people who work in this CMS. */
   maskedEmail?: string
+  /**
+   * Found by exact address for a finder whose add of this person by id would be refused as out of
+   * scope (api/branch-access.ts `checkUsersToAdd`): not an admin, and they don't work in this CMS.
+   * Only that address, sent with the add, vouches for them.
+   */
+  addByAddress?: true
 }
 
 interface FoundGroup {
@@ -367,10 +373,11 @@ export async function findPeople(
   if (isEmail) {
     const found = await lookupEmails(ctx, actor, [trimmed], cmsUsers)
     if (found === false) return { ok: false }
-    return {
-      ok: true,
-      result: { people: shown(found.flatMap((user) => (user ? [user] : []))), groups: [] },
-    }
+    const vouches = !isAdmin(actor.groups)
+    const people = shown(found.flatMap((user) => (user ? [user] : []))).map((person) =>
+      vouches && !cmsUsers.has(person.id) ? { ...person, addByAddress: true as const } : person,
+    )
+    return { ok: true, result: { people, groups: [] } }
   }
 
   let people: UserSearchResult[]

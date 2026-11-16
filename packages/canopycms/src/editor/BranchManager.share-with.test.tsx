@@ -164,7 +164,7 @@ describe('New branch: Share with', () => {
     const { api } = setup(onCreate)
     api.branches.findPeopleForNewBranch.mockImplementation(async ({ query }) =>
       query === 'dana@example.org'
-        ? found('deny', [{ id: 'dana', name: 'Dana Park' }])
+        ? found('deny', [{ id: 'dana', name: 'Dana Park', addByAddress: true }])
         : found('deny', []),
     )
     await userEvent.type(nameField(), 'spring')
