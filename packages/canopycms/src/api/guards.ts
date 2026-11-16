@@ -11,7 +11,8 @@ import {
   BranchMetadataCorruptError,
 } from '../branch-metadata-error'
 import { canopyLogError } from '../utils/logger'
-import { isAdmin, isReviewer, isPrivileged } from '../authorization/helpers'
+import { isAdmin, isReviewer, isPrivileged, isLockedOutOfBranch } from '../authorization/helpers'
+import type { CanopyUser } from '../user'
 import { getBranchProtection, getBranchWriteProtection } from '../authorization/protected-branch'
 
 /** All available guard identifiers */
@@ -108,6 +109,39 @@ const runBranchGuard: GuardRunner = async (ctx, _req, params, accumulated) => {
   return { ok: true, context: { branchContext: context } }
 }
 
+/**
+ * A 403 for a caller the branch's access check refused. A lockdown is named only to someone the
+ * list would otherwise admit, so the code tells no one else anything about the branch.
+ */
+const branchAccessRefused = (
+  ctx: ApiContext,
+  context: BranchContext,
+  user: CanopyUser,
+): ApiResponse<never> =>
+  isLockedOutOfBranch(context.branch.access, user.groups) &&
+  ctx.services.checkBranchAccess(
+    {
+      ...context,
+      branch: {
+        ...context.branch,
+        access: { ...context.branch.access, managerOrAdminAllowed: false },
+      },
+    },
+    user,
+  ).allowed
+    ? {
+        ok: false,
+        status: 403,
+        error: 'An admin has limited this branch to admins and reviewers.',
+        code: 'BRANCH_LOCKED_DOWN',
+      }
+    : {
+        ok: false,
+        status: 403,
+        error: "You don't have access to this branch.",
+        code: 'BRANCH_ACCESS_DENIED',
+      }
+
 const runBranchAccessGuard: GuardRunner = async (ctx, req, params, accumulated) => {
   const branch = extractBranchName(params)
   if (typeof branch !== 'string') return { ok: false, response: branch }
@@ -121,7 +155,7 @@ const runBranchAccessGuard: GuardRunner = async (ctx, req, params, accumulated) 
   if (!access.allowed) {
     return {
       ok: false,
-      response: { ok: false, status: 403, error: access.reason || 'Forbidden' },
+      response: branchAccessRefused(ctx, context, req.user),
     }
   }
 
@@ -159,7 +193,7 @@ const runBranchAccessWithSchemaGuard: GuardRunner = async (ctx, req, params, acc
   if (!access.allowed) {
     return {
       ok: false,
-      response: { ok: false, status: 403, error: access.reason || 'Forbidden' },
+      response: branchAccessRefused(ctx, context, req.user),
     }
   }
 

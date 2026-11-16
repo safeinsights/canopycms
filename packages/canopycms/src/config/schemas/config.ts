@@ -115,6 +115,12 @@ export const CanopyConfigSchema = z
     // Unset reads as on for Edited-by and off for Co-authored-by (services.ts submitBranch).
     gitEditedByTrailers: z.boolean().optional(),
     gitCoAuthoredByTrailers: z.boolean().optional(),
+    branchSharing: z
+      .object({
+        whoCanAdd: z.enum(['members', 'owner']).optional(),
+      })
+      .strict()
+      .optional(),
     githubTokenEnvVar: githubTokenEnvVarSchema.optional(),
     // Required by design (follow-up to SEC-C1): a prod deploy that omits `mode` must fail
     // validation loudly rather than silently running header-trusting dev auth semantics.

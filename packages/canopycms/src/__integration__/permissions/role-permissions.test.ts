@@ -79,8 +79,8 @@ describe('Role Permission Integration', () => {
 
     // Admin modifies access control
     const patchResponse = await adminClient.patch('/api/canopycms/test-branch/access', {
-      allowedUsers: ['test-admin'],
-      allowedGroups: [],
+      add: { users: ['test-admin'] },
+      remove: { users: ['test-editor'] },
     })
 
     expect(patchResponse.status).toBe(200)
@@ -105,8 +105,7 @@ describe('Role Permission Integration', () => {
 
     // Reviewer cannot modify access control
     const patchResponse = await reviewerClient.patch('/api/canopycms/reviewer-test/access', {
-      allowedUsers: ['test-reviewer'],
-      allowedGroups: [],
+      add: { users: ['test-reviewer'] },
     })
 
     expect(patchResponse.status).toBe(403)
@@ -132,10 +131,7 @@ describe('Role Permission Integration', () => {
       title: 'Admin Branch',
     })
 
-    await adminClient.patch('/api/canopycms/admin-branch/access', {
-      allowedUsers: ['test-admin'],
-      allowedGroups: [],
-    })
+    await adminClient.patch('/api/canopycms/admin-branch/access', { restricted: true })
 
     // Editor cannot access admin's restricted branch
     const adminBranchResponse = await editorClient.get('/api/canopycms/admin-branch/status')
@@ -273,9 +269,7 @@ describe('Role Permission Integration', () => {
     await adminClient.post('/api/canopycms/branches', {
       branch: 'group-test',
       title: 'Group Test',
-      access: {
-        allowedGroups: ['Admins', 'Reviewers'],
-      },
+      access: { add: { groups: ['Translators'] } },
     })
 
     // Admin (Admins group) can access
@@ -296,9 +290,7 @@ describe('Role Permission Integration', () => {
     await adminClient.post('/api/canopycms/branches', {
       branch: 'admin-only',
       title: 'Admin Only',
-      access: {
-        allowedUsers: ['test-admin'],
-      },
+      access: { add: { users: ['test-admin'] } },
     })
 
     await editorClient.post('/api/canopycms/branches', {
@@ -336,7 +328,7 @@ describe('Role Permission Integration', () => {
     await editorClient.post('/api/canopycms/branches', {
       branch: 'locked-branch',
       title: 'Locked Branch',
-      access: { allowedUsers: ['test-editor'], allowedGroups: ['ContentEditors'] },
+      access: { add: { users: ['test-editor'], groups: ['ContentEditors'] } },
     })
     await saveSamplePost(editorClient, 'locked-branch')
     const editorBefore = await editorClient.get('/api/canopycms/locked-branch/status')
@@ -411,8 +403,7 @@ describe('Role Permission Integration', () => {
 
     // Editor modifies access on their own branch - should succeed
     const response = await editorClient.patch('/api/canopycms/editor-access-branch/access', {
-      allowedUsers: ['other-user'],
-      allowedGroups: [],
+      restricted: true,
     })
 
     expect(response.status).toBe(200)

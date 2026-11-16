@@ -23,6 +23,50 @@ const baseContext: BranchContext = {
 }
 
 describe('branch access', () => {
+  it('shuts an excluded user out through a group and on an open branch, but not admins', () => {
+    const excluded = { x: { by: 'owner', at: 't', byAdmin: false } }
+    for (const access of [{ allowedGroups: ['team'], excluded }, { excluded }]) {
+      const context: BranchContext = { ...baseContext, branch: { ...baseContext.branch, access } }
+      expect(
+        checkBranchAccessWithDefault(
+          context,
+          { type: 'authenticated', userId: 'x', groups: ['team'] },
+          'allow',
+        ).allowed,
+      ).toBe(false)
+      expect(
+        checkBranchAccessWithDefault(
+          context,
+          { type: 'authenticated', userId: 'x', groups: [RESERVED_GROUPS.ADMINS] },
+          'allow',
+        ).allowed,
+      ).toBe(true)
+    }
+  })
+
+  it('lets a restricted empty list admit only admins and reviewers, under either default', () => {
+    const restricted: BranchContext = {
+      ...baseContext,
+      branch: { ...baseContext.branch, access: { restricted: true } },
+    }
+    for (const defaultAccess of ['allow', 'deny'] as const) {
+      expect(
+        checkBranchAccessWithDefault(
+          restricted,
+          { type: 'authenticated', userId: 'user-1', groups: [] },
+          defaultAccess,
+        ),
+      ).toEqual({ allowed: false, reason: 'denied_by_acl' })
+      expect(
+        checkBranchAccessWithDefault(
+          restricted,
+          { type: 'authenticated', userId: 'u', groups: [RESERVED_GROUPS.REVIEWERS] },
+          defaultAccess,
+        ).allowed,
+      ).toBe(true)
+    }
+  })
+
   it('allows Admins', () => {
     const res = checkBranchAccessWithDefault(baseContext, {
       type: 'authenticated',

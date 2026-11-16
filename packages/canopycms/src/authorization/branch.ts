@@ -1,6 +1,6 @@
 import type { BranchContext } from '../types'
 import type { CanopyConfig, DefaultBranchAccess } from '../config'
-import { isAdmin, isLockedOutOfBranch, isReviewer } from './helpers'
+import { isAdmin, isExcludedFrom, isLockedOutOfBranch, isReviewer } from './helpers'
 import { getBranchProtection } from './protected-branch'
 import type { CanopyUser } from '../user'
 import type { BranchAccessResult } from './types'
@@ -18,7 +18,7 @@ interface BranchAccessOptions {
    * directions (see the fallback site below).
    *
    * The grant is load-bearing: the base branch takes no ACL
-   * (`updateBranchAccessHandler` rejects one, since an entry there would feed
+   * (`api/branch-access.ts` refuses one, since an entry there would feed
    * `allowed_by_acl` and confer Withdraw rights) and its `createdBy` is
    * `canopycms-system`, so nobody is its creator -- without this it is
    * unreachable under `defaultBranchAccess: 'deny'` with no way to configure
@@ -61,9 +61,10 @@ function isDevActiveBranch(
  *
  * Precedence, highest first:
  * 1. Admins and Reviewers
- * 2. `managerOrAdminAllowed` lockdown
- * 3. An explicit user/group ACL -- an allowlist omitting the creator still
- *    denies them, so an admin can lock down a branch someone else created
+ * 2. `managerOrAdminAllowed` lockdown, and a user the list excludes
+ * 3. An explicit user/group ACL, or a `restricted` one even when empty -- an
+ *    allowlist omitting the creator still denies them, so an admin can lock
+ *    down a branch someone else created
  * 4. With no ACL: the branch creator, then `defaultAccess`, and only where that
  *    would deny, the base branch or dev active branch grant ({@link BranchAccessOptions})
  * @internal Exported for tests.
@@ -79,17 +80,17 @@ export function checkBranchAccessWithDefault(
   }
 
   const access = context.branch.access
-  if (isLockedOutOfBranch(access, user.groups)) {
+  if (isLockedOutOfBranch(access, user.groups) || isExcludedFrom(access, user.userId)) {
     return { allowed: false, reason: 'denied_by_acl' }
   }
 
   const hasUserConstraint = !!access.allowedUsers?.length
   const hasGroupConstraint = !!access.allowedGroups?.length
 
-  if (!hasUserConstraint && !hasGroupConstraint) {
-    // The branch creator owns their own un-ACL'd branch, as canDeleteBranch and
-    // canModifyBranchAccess also grant: without it, under 'deny' a creator could
-    // delete their branch and rewrite its ACL but not read a file on it. Scoped to the no-ACL case on purpose -- an EXPLICIT
+  // A restricted list governs even when empty, so an emptied list never reopens the branch.
+  if (!hasUserConstraint && !hasGroupConstraint && !access.restricted) {
+    // The branch creator owns their own un-ACL'd branch: without it, under 'deny' a creator
+    // could not open a branch they had just made. Scoped to the no-ACL case on purpose -- an EXPLICIT
     // allowlist omitting the creator still denies them, which is how an admin
     // locks down a branch someone else created.
     if (context.branch.createdBy === user.userId) {

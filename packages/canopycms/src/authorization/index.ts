@@ -37,6 +37,21 @@ export {
 export { checkPathAccess, createCheckPathAccess, resolveDefaultPathAccess } from './path'
 
 export {
+  accessForViewer,
+  applyAccessChange,
+  branchSharingRights,
+  collectCmsUserIds,
+  hasAccessList,
+  resolveBranchSharing,
+  type BranchAccessChange,
+  type BranchAccessChangeResult,
+  type BranchAccessRefusal,
+  type BranchAccessRefusalCode,
+  type BranchSharingRights,
+  type ResolvedBranchSharing,
+} from './branch-sharing'
+
+export {
   RESERVED_GROUPS,
   type ReservedGroupId,
   isReservedGroup,
@@ -45,6 +60,7 @@ export {
   isReviewer,
   isPrivileged,
   isLockedOutOfBranch,
+  isExcludedFrom,
 } from './helpers'
 
 export {

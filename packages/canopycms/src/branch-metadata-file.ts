@@ -14,6 +14,7 @@ import { z } from 'zod'
 
 import type { ContentId } from './paths/types'
 import type {
+  BranchAddBy,
   BranchMetadata,
   BranchStatus,
   ConflictStatus,
@@ -75,6 +76,27 @@ const branchMetadataShape = {
       allowedUsers: z.array(z.string()).optional(),
       allowedGroups: z.array(z.string()).optional(),
       managerOrAdminAllowed: z.boolean().optional(),
+      restricted: z.boolean().optional(),
+      excluded: z
+        .record(
+          z.string(),
+          z.object({ by: z.string(), at: z.string(), byAdmin: z.boolean() }).passthrough(),
+        )
+        .optional(),
+      excludedGroups: z
+        .record(
+          z.string(),
+          z.object({ by: z.string(), at: z.string(), byAdmin: z.boolean() }).passthrough(),
+        )
+        .optional(),
+      addBy: enumOf<BranchAddBy>({
+        members: 'members',
+        owner: 'owner',
+        admins: 'admins',
+      }).optional(),
+      entryMeta: z
+        .record(z.string(), z.object({ addedBy: z.string(), addedAt: z.string() }).passthrough())
+        .optional(),
     })
     .passthrough(),
   createdBy: z.string().default('unknown'),

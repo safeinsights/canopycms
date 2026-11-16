@@ -2054,7 +2054,7 @@ describe('BranchManager', () => {
       expect(container.textContent).not.toContain('owner1')
     })
 
-    it('names the access users it can, then counts the rest with those the server withheld', async () => {
+    it('names the access users it can, then counts the rest', async () => {
       const onGetOwnerMetadata = vi.fn(async (id: string) =>
         id === 'known' || id === 'owner1' ? { id, name: `Name of ${id}`, email: '' } : null,
       )
@@ -2064,12 +2064,7 @@ describe('BranchManager', () => {
             name: 'feature/shared',
             status: 'editing',
             createdBy: 'owner1',
-            access: {
-              users: ['known', 'unknown'],
-              groups: ['team-a'],
-              withheldUsers: 2,
-              withheldGroups: 1,
-            },
+            access: { users: ['known', 'unknown', 'gone'], groups: ['team-a'] },
           },
         ],
         mode: 'prod',
@@ -2077,7 +2072,7 @@ describe('BranchManager', () => {
         onGetOwnerMetadata,
       })
 
-      expect(await screen.findByText('Access: Name of known, team-a and 4 others')).toBeDefined()
+      expect(await screen.findByText('Access: Name of known, team-a and 2 others')).toBeDefined()
       expect(screen.queryByText('Name unavailable')).toBeNull()
     })
   })

@@ -187,10 +187,11 @@ and [Auth Caching](ARCHITECTURE.md#auth-caching-cachingauthplugin).
 **Location**: `packages/canopycms/src/authorization/` —
 [AGENTS.md](packages/canopycms/src/authorization/AGENTS.md)
 
-- `content.ts` — `checkContentAccess` and `createContentAccessChecker`, combined branch plus path access
+- `content.ts` — `checkContentAccess` and `createContentAccessChecker`, branch plus path access
 - `branch.ts` — branch-level access: `checkBranchAccessWithDefault`, `createCheckBranchAccess`, `canPerformWorkflowAction`
+- `branch-sharing.ts` — sharing rules
 - `path.ts` — path-level permissions: `checkPathAccess`, `resolveDefaultPathAccess`
-- `protected-branch.ts` — `getBranchProtection`, the single source of truth for protected-base-branch policy
+- `protected-branch.ts` — `getBranchProtection`, the source of truth for protected-base-branch policy
 - `helpers.ts` — `isAdmin`, `isReviewer`, `isPrivileged`, and `isLockedOutOfBranch` (the browser-safe branch-lockdown check)
 - `review-role.ts` — `reviewRoleOf` / `isReviewerOfOthersReview`, `REQUEST_CHANGES_NOTE_MAX_LENGTH`
 - `types.ts` — `BranchAccessResult`, `ContentAccessResult`, `PermissionPath`
