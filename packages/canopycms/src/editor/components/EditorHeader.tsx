@@ -317,7 +317,7 @@ export function EditorHeader({
   }
   const openShare = (opener: HTMLElement) =>
     sharing?.onShare(() => (opener.isConnected ? opener : pill.current))
-  // Focus the control drops on leaving, as its branch stops being available, goes to the pill.
+  // Focus Share… holds as it leaves the bar goes to the pill, or to Share… remounted in its place.
   const shareRef = useMergedRef(
     shareControlRef,
     useStandInOnLeave<HTMLButtonElement>(() => pill.current),

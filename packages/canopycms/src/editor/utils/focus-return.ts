@@ -140,8 +140,9 @@ export function useFocusAfterRemove<L extends HTMLElement = HTMLDivElement>() {
 }
 
 /**
- * A ref for a control that can leave the page while it holds focus, as Share… does once its
- * branch is no longer available: focus then moves to `standIn()`.
+ * A ref for a control that can leave the page while it, or the open menu or popover it controls,
+ * holds focus. If nothing else has taken focus, it moves to the control's replacement when one
+ * attached in the same render, else to `standIn()`.
  */
 export function useStandInOnLeave<T extends HTMLElement>(
   standIn: () => HTMLElement | null,
@@ -149,14 +150,16 @@ export function useStandInOnLeave<T extends HTMLElement>(
   const control = useRef<T | null>(null)
   const left = useRef(false)
   const ref = useCallback((el: T | null) => {
-    if (!el && control.current && document.activeElement === control.current) left.current = true
+    if (!el && control.current && holdsFocus(control.current)) left.current = true
     control.current = el
   }, [])
   useLayoutEffect(() => {
     if (!left.current) return
     left.current = false
     const active = document.activeElement
-    if (!active || active === document.body) standIn()?.focus({ preventScroll: true })
+    if (!active || active === document.body) {
+      ;(control.current ?? standIn())?.focus({ preventScroll: true })
+    }
   })
   return ref
 }
