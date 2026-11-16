@@ -419,6 +419,41 @@ describe('ClerkAuthPlugin', () => {
     })
   })
 
+  describe('findUserByEmail', () => {
+    const ana = {
+      id: 'user_ana',
+      fullName: 'Ana Lee',
+      primaryEmailAddress: { emailAddress: 'ana@example.org' },
+    }
+
+    it("asks Clerk's exact email filter and maps the one user it finds", async () => {
+      const plugin = new ClerkAuthPlugin()
+      mockGetUserList.mockResolvedValue({ data: [ana], totalCount: 1 })
+
+      expect(await plugin.findUserByEmail('ana@example.org')).toEqual({
+        id: 'user_ana',
+        name: 'Ana Lee',
+        email: 'ana@example.org',
+        avatarUrl: undefined,
+      })
+      expect(mockGetUserList).toHaveBeenCalledWith({ emailAddress: ['ana@example.org'], limit: 2 })
+    })
+
+    it('finds no one when Clerk answers with nobody, or with more than one user', async () => {
+      const plugin = new ClerkAuthPlugin()
+      mockGetUserList.mockResolvedValueOnce({ data: [], totalCount: 0 })
+      expect(await plugin.findUserByEmail('nobody@example.org')).toBeNull()
+      mockGetUserList.mockResolvedValueOnce([ana, { ...ana, id: 'user_other' }])
+      expect(await plugin.findUserByEmail('ana@example.org')).toBeNull()
+    })
+
+    it('rejects on a Clerk failure, so it never reads as "nobody uses that address"', async () => {
+      const plugin = new ClerkAuthPlugin()
+      mockGetUserList.mockRejectedValue(new Error('Too Many Requests'))
+      await expect(plugin.findUserByEmail('ana@example.org')).rejects.toThrow('Too Many Requests')
+    })
+  })
+
   describe('a user with no usable name', () => {
     const nameless = {
       id: 'user_2abNameless',

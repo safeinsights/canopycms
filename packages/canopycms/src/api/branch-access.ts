@@ -11,13 +11,10 @@ import type { CanopyUser } from '../user'
 import {
   applyAccessChange,
   branchSharingRights,
-  collectCmsUserIds,
   getBranchProtection,
   hasAccessList,
   isAdmin,
   isLockedOutOfBranch,
-  loadInternalGroups,
-  loadPathPermissions,
   resolveBranchSharing,
   type BranchAccessChange,
   type BranchAccessChangeResult,
@@ -28,9 +25,12 @@ import { isSystemUserId } from '../system-users'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { lookupUsersMetadata } from '../auth/user-metadata-lookup'
 import { logBranchAccessChange } from '../utils/access-log'
+import { getErrorMessage } from '../utils/error'
+import { canopyLogWarn } from '../utils/logger'
+import { loadCmsUserIds, lookupEmails, RATE_LIMITED_MESSAGE } from './people'
 
 export interface AccessRefused {
-  status: 400 | 403
+  status: 400 | 403 | 429
   error: string
   code: ApiErrorCode
   ids?: string[]
@@ -56,22 +56,6 @@ class AccessChangeRefusedError extends Error {
   constructor(readonly refused: AccessRefused) {
     super(refused.error)
   }
-}
-
-/** {@link collectCmsUserIds} over the settings files and the branch registry. */
-async function loadCmsUserIds(ctx: ApiContext): Promise<Set<CanopyUserId>> {
-  const { config, bootstrapAdminIds, registry } = ctx.services
-  const settingsRoot = await ctx.services.getSettingsBranchRoot()
-  const [pathPermissions, internalGroups, branches] = await Promise.all([
-    loadPathPermissions(settingsRoot, config.mode),
-    loadInternalGroups(settingsRoot, config.mode, bootstrapAdminIds),
-    registry ? registry.list() : Promise.resolve([]),
-  ])
-  return collectCmsUserIds({
-    pathPermissions,
-    internalGroups,
-    branches: branches.map((context) => context.branch),
-  })
 }
 
 /** The ids the sign-in provider does not know; none when no auth plugin can say. */
@@ -112,7 +96,8 @@ async function checkUsersToAdd(
     : null
 }
 
-const rightsFor = (
+/** What `actor` may do to `branch`'s list (authorization/branch-sharing.ts). */
+export const rightsFor = (
   ctx: ApiContext,
   actor: CanopyUser,
   branch: Pick<BranchMetadata, 'access' | 'createdBy' | 'status' | 'name' | 'baseBranch'>,
@@ -176,22 +161,92 @@ function refuseOutright(
   return null
 }
 
+/** A change as a request states it: people to add may also be named by exact email address. */
+export type BranchAccessRequest = Omit<BranchAccessChange, 'add'> & {
+  add?: NonNullable<BranchAccessChange['add']> & { emails?: string[] }
+}
+
+/**
+ * `request` with each email replaced by the id of the user it finds (api/people.ts
+ * `lookupEmails`), and those ids. They need no further scope check: the lookup applied
+ * `branchSharing.addableByEmail`, which may reach people outside this CMS. An address that finds
+ * no one refuses the whole request, naming no address; so does passing the email limit.
+ */
+async function resolveEmailAdds(
+  ctx: ApiContext,
+  actor: CanopyUser,
+  request: BranchAccessRequest,
+): Promise<
+  | { ok: true; change: BranchAccessChange; byEmail: Set<CanopyUserId> }
+  | { ok: false; refused: AccessRefused }
+> {
+  const { add: requested, ...rest } = request
+  const { emails, ...add } = requested ?? {}
+  const change: BranchAccessChange = requested ? { ...rest, add } : rest
+  if (!emails?.length) return { ok: true, change, byEmail: new Set() }
+  const found = await lookupEmails(ctx, actor, emails)
+  if (found === false) {
+    return { ok: false, refused: refused(429, 'RATE_LIMITED', RATE_LIMITED_MESSAGE) }
+  }
+  const ids = found.flatMap((user) => (user ? [user.id] : []))
+  if (ids.length < found.length) {
+    return {
+      ok: false,
+      refused: refused(400, 'USER_NOT_FOUND', 'No account uses one of these email addresses.'),
+    }
+  }
+  return {
+    ok: true,
+    change: { ...change, add: { ...add, users: [...(add.users ?? []), ...ids] } },
+    byEmail: new Set(ids),
+  }
+}
+
+/**
+ * Remembers whom `actor` just shared with, for their suggestions (people-store.ts). Best effort,
+ * and called only once the branch.json lock is released: the two locks never nest.
+ */
+export async function recordRecentShares(
+  ctx: ApiContext,
+  actor: CanopyUser,
+  userIds: readonly CanopyUserId[],
+): Promise<void> {
+  const store = ctx.services.peopleStore
+  const others = userIds.filter((id) => id !== actor.userId)
+  if (!store || others.length === 0) return
+  try {
+    await store.recordShares(actor.userId, others)
+  } catch (err: unknown) {
+    canopyLogWarn('[canopy] Could not record recent shares:', getErrorMessage(err))
+  }
+}
+
 export type BranchAccessOutcome =
   | { ok: true; branch: BranchMetadata; result: BranchAccessChangeResult | null }
   | { ok: false; refused: AccessRefused }
 
 /**
- * Applies `change` to the branch's list for `actor`. A change already in effect writes nothing and
- * answers with the branch as it is, so a retry after a lost answer is safe.
+ * Applies `request` to the branch's list for `actor`. A change already in effect writes nothing
+ * and answers with the branch as it is, so a retry after a lost answer is safe.
  */
 export async function changeBranchAccess(
   ctx: ApiContext,
   actor: CanopyUser,
   context: BranchContext,
-  change: BranchAccessChange,
+  request: BranchAccessRequest,
 ): Promise<BranchAccessOutcome> {
   const outright = refuseOutright(ctx, actor, context)
   if (outright) return { ok: false, refused: outright }
+  // Before any address is looked up, so someone who can't add learns nothing from one.
+  if (request.add?.emails?.length && !rightsFor(ctx, actor, context.branch).canAdd) {
+    return {
+      ok: false,
+      refused: refused(403, 'ACCESS_ADD_FORBIDDEN', "You can't add people to this branch."),
+    }
+  }
+  const resolved = await resolveEmailAdds(ctx, actor, request)
+  if (!resolved.ok) return resolved
+  const { change, byEmail } = resolved
 
   const now = new Date().toISOString()
   const defaultAccess = ctx.services.config.defaultBranchAccess ?? 'deny'
@@ -213,7 +268,11 @@ export async function changeBranchAccess(
   const checked = new Set(
     (change.add?.users ?? []).filter((id) => id !== actor.userId && !listed.has(id)),
   )
-  const scope = await checkUsersToAdd(ctx, actor, [...checked])
+  const scope = await checkUsersToAdd(
+    ctx,
+    actor,
+    [...checked].filter((id) => !byEmail.has(id)),
+  )
   if (scope) return { ok: false, refused: scope }
   // Excluding someone not on the list records an id nothing else vouches for, so it must be a real
   // person, never an arbitrary string. Only exclusions this change records are looked up.
@@ -270,37 +329,46 @@ export async function changeBranchAccess(
     throw err
   }
 
-  if (outcome.applied) logAccessChange(context.branch.name, actor.userId, outcome.applied)
+  if (outcome.applied) {
+    logAccessChange(context.branch.name, actor.userId, outcome.applied)
+    await recordRecentShares(ctx, actor, outcome.applied.added.users)
+  }
   return { ok: true, branch: saved ?? outcome.current, result: outcome.applied }
 }
 
 /**
  * The list a new branch starts with when its creator shares it at once: the same rules as a change,
- * applied by its owner-to-be to an empty list. Undefined when nobody is added.
+ * applied by its owner-to-be to an empty list, and the people it adds. Undefined when nobody is
+ * added.
  */
 export async function initialBranchAccess(
   ctx: ApiContext,
   actor: CanopyUser,
-  add: BranchAccessChange['add'],
+  add: BranchAccessRequest['add'],
 ): Promise<
-  { ok: true; access: BranchAccessControl | undefined } | { ok: false; refused: AccessRefused }
+  | { ok: true; access: BranchAccessControl | undefined; added: CanopyUserId[] }
+  | { ok: false; refused: AccessRefused }
 > {
-  if (!add?.users?.length && !add?.groups?.length) return { ok: true, access: undefined }
-  const applied = applyAccessChange(
-    {},
-    { add },
-    {
-      actor,
-      rights: { isOwner: true, isMember: false, canAdd: true, canManage: true },
-      creator: actor.userId,
-      defaultAccess: ctx.services.config.defaultBranchAccess ?? 'deny',
-      now: new Date().toISOString(),
-    },
-  )
+  if (!add?.users?.length && !add?.groups?.length && !add?.emails?.length) {
+    return { ok: true, access: undefined, added: [] }
+  }
+  const resolved = await resolveEmailAdds(ctx, actor, { add })
+  if (!resolved.ok) return resolved
+  const applied = applyAccessChange({}, resolved.change, {
+    actor,
+    rights: { isOwner: true, isMember: false, canAdd: true, canManage: true },
+    creator: actor.userId,
+    defaultAccess: ctx.services.config.defaultBranchAccess ?? 'deny',
+    now: new Date().toISOString(),
+  })
   if ('refusal' in applied) return { ok: false, refused: fromRefusal(applied.refusal) }
-  const scope = await checkUsersToAdd(ctx, actor, applied.added.users)
+  const scope = await checkUsersToAdd(
+    ctx,
+    actor,
+    applied.added.users.filter((id) => !resolved.byEmail.has(id)),
+  )
   if (scope) return { ok: false, refused: scope }
-  return { ok: true, access: applied.access }
+  return { ok: true, access: applied.access, added: applied.added.users }
 }
 
 /** Who changed which branch's list, and how: what the change did, not what was asked. */

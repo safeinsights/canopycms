@@ -61,6 +61,7 @@ import { assertNoOpenConflicts } from './merge-conflicts'
 import { ContentStore } from './content-store'
 import { entryLogicalPathOfFile } from './content-id-index'
 import { stampNewEntries, type StampedEntry } from './stamp-on-publish'
+import { PEOPLE_DIR, PeopleStore } from './people-store'
 
 /**
  * A per-instance active-branch detector with its own 5s TTL cache, in priority
@@ -267,6 +268,11 @@ export interface CanopyServices {
   getSettingsBranchRoot: () => Promise<string>
   /** Records `user` as an editor of the branch for its next submit (branch-metadata.ts). */
   recordBranchEditor: (context: BranchPaths, user: CanopyUser) => Promise<void>
+  /**
+   * Who has opened the editor, and whom each person shared branches with (people-store.ts), under
+   * the workspace root. Absent only from services a test builds by hand.
+   */
+  peopleStore?: PeopleStore
 }
 
 export interface CreateCanopyServicesOptions {
@@ -867,6 +873,7 @@ async function _createCanopyServicesInternal(
     commitToSettingsBranch,
     getSettingsBranchRoot,
     recordBranchEditor,
+    peopleStore: new PeopleStore(path.join(strategy.getWorkspaceRoot(), PEOPLE_DIR)),
     refreshActiveBranch: async () => {
       if (services.config.mode !== 'dev') return
       // Static deployments and builds serve from the checkout — no git HEAD to track

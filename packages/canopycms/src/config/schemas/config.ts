@@ -118,6 +118,8 @@ export const CanopyConfigSchema = z
     branchSharing: z
       .object({
         whoCanAdd: z.enum(['members', 'owner']).optional(),
+        searchable: z.enum(['cms-users', 'all-users', 'nobody']).optional(),
+        addableByEmail: z.enum(['all-users', 'cms-users']).optional(),
       })
       .strict()
       .optional(),

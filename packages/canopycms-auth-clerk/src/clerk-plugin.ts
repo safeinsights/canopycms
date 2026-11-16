@@ -270,6 +270,17 @@ export class ClerkAuthPlugin implements AuthPlugin {
     return users
   }
 
+  /** Exact match on any of a user's addresses; errors propagate, never reading as "nobody". */
+  async findUserByEmail(email: string): Promise<UserSearchResult | null> {
+    const clerkClient = this.getClerkClient()
+    const response = (await clerkClient.users.getUserList({
+      emailAddress: [email],
+      limit: 2,
+    })) as ClerkResponse<ClerkUserData>
+    const users = unwrapClerkResponse(response)
+    return users.length === 1 ? toUserSearchResult(users[0]) : null
+  }
+
   async getGroupMetadata(groupId: string): Promise<GroupMetadata | null> {
     if (!this.config.useOrganizationsAsGroups) {
       return null

@@ -387,6 +387,7 @@ describe('initialBranchAccess (sharing at create)', () => {
     expect(await initialBranchAccess(ctx(), owner, undefined)).toEqual({
       ok: true,
       access: undefined,
+      added: [],
     })
   })
 })

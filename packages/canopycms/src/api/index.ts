@@ -73,10 +73,8 @@ export type {
   WorkerLiveness,
 } from './admin'
 
-// Export route definitions
-export { USER_ROUTES } from './user'
-// Note: SCHEMA_ROUTES is not exported here because it imports server-only code (fs module).
-// Import it directly from './schema' in server-side code when needed.
+// No route table is exported here: each reaches server-only code. Server code imports them
+// from api/routes.ts.
 
 // Export client
 export { CanopyApiClient, createApiClient } from './client'

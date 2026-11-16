@@ -79,7 +79,8 @@ export interface ApiResponse<TData = unknown> {
  * locked it to admins and reviewers (a 403). The access-list codes (`BRANCH_ARCHIVED`,
  * `BRANCH_NOT_SHAREABLE`, `USER_NOT_FOUND`, `USER_OUT_OF_SCOPE` and
  * {@link BranchAccessRefusalCode}) refuse a change to who may open a branch (api/branch-access.ts);
- * the list is unchanged.
+ * the list is unchanged. `RATE_LIMITED`: the caller made too many email lookups while finding
+ * people (a 429, api/people.ts); a retry in a few minutes can pass.
  */
 export type ApiErrorCode =
   | 'SCHEMA_UNAVAILABLE'
@@ -99,4 +100,5 @@ export type ApiErrorCode =
   | 'BRANCH_NOT_SHAREABLE'
   | 'USER_NOT_FOUND'
   | 'USER_OUT_OF_SCOPE'
+  | 'RATE_LIMITED'
   | BranchAccessRefusalCode

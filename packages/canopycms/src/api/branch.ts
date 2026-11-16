@@ -159,16 +159,26 @@ const accessEntriesSchema = z
   })
   .strict()
 
+/** Addresses one request may look up; each counts against the email limit (api/people.ts). */
+const MAX_ACCESS_EMAILS = 20
+const accessAddSchema = z
+  .object({
+    users: z.array(accessIdSchema).max(MAX_ACCESS_ENTRIES).optional(),
+    groups: z.array(accessIdSchema).max(MAX_ACCESS_ENTRIES).optional(),
+    emails: z.array(z.string().trim().email().max(320)).max(MAX_ACCESS_EMAILS).optional(),
+  })
+  .strict()
+
 const createBranchBodySchema = z.object({
   branch: branchNameSchema,
   title: z.string().optional(),
   description: z.string().optional(),
-  access: z.object({ add: accessEntriesSchema.optional() }).strict().optional(),
+  access: z.object({ add: accessAddSchema.optional() }).strict().optional(),
 })
 
 const updateBranchAccessBodySchema = z
   .object({
-    add: accessEntriesSchema.optional(),
+    add: accessAddSchema.optional(),
     remove: accessEntriesSchema.optional(),
     restricted: z.boolean().optional(),
     addBy: z.enum(['members', 'owner', 'admins']).optional(),
@@ -187,7 +197,7 @@ import {
   getBranchWriteProtection,
   resolveBranchSharing,
 } from '../authorization'
-import { changeBranchAccess, initialBranchAccess } from './branch-access'
+import { changeBranchAccess, initialBranchAccess, recordRecentShares } from './branch-access'
 import { logBranchAccessChange } from '../utils/access-log'
 import type { PathPermission } from '../config'
 import type { CanopyUser } from '../user'
@@ -234,12 +244,28 @@ export const canCreateBranch = (
   return { allowed: false, reason: 'no_path_access' }
 }
 
+/**
+ * {@link canCreateBranch} over the path permissions in the base branch's own permissions file,
+ * the resolved fork point baked into config at service creation (dev: git HEAD when not set).
+ */
+export const branchCreatePermission = async (
+  ctx: ApiContext,
+  user: CanopyUser,
+): Promise<{ allowed: boolean; reason: string }> => {
+  const { config } = ctx.services
+  const baseBranchContext = await ctx.getBranchContext(baseBranchOf(config))
+  const pathPermissions: PathPermission[] = baseBranchContext
+    ? await loadPathPermissions(baseBranchContext.branchRoot, config.mode)
+    : []
+  return canCreateBranch(user, pathPermissions)
+}
+
 export interface CreateBranchBody {
   branch: string
   title?: string
   description?: string
   /** People to share the new branch with at once, by the same rules as a later share. */
-  access?: { add?: { users?: string[]; groups?: string[] } }
+  access?: { add?: { users?: string[]; groups?: string[]; emails?: string[] } }
 }
 
 /**
@@ -637,19 +663,7 @@ export const createBranchHandler = async (
       }
     }
 
-    // Load path permissions from the base branch's JSON file (the resolved
-    // fork point — baked into config at service creation; dev-mode git HEAD
-    // when not explicitly configured)
-    const baseBranch = baseBranchOf(config)
-    const baseBranchContext = await ctx.getBranchContext(baseBranch)
-
-    let pathPermissions: PathPermission[] = []
-    if (baseBranchContext) {
-      const operatingMode = config.mode
-      pathPermissions = await loadPathPermissions(baseBranchContext.branchRoot, operatingMode)
-    }
-
-    const canCreate = canCreateBranch(req.user, pathPermissions)
+    const canCreate = await branchCreatePermission(ctx, req.user)
     if (!canCreate.allowed) {
       log.debug('api', 'Permission denied', { reason: canCreate.reason })
       return {
@@ -701,6 +715,7 @@ export const createBranchHandler = async (
         removed: { users: [], groups: [] },
         restricted: true,
       })
+      await recordRecentShares(ctx, req.user, initialAccess.added)
     }
     return {
       ok: true,

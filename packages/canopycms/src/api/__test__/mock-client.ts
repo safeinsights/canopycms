@@ -9,11 +9,12 @@ import type { ApiResponse } from '../types'
 import { createLogicalPath, createPhysicalPath } from '../../paths'
 import type { ContentId } from '../../paths'
 import type { BranchDeleteResponse, BranchListItemResponse, BranchListResponse, CreateBranchBody, UpdateBranchAccessBody } from '../branch'
+import type { BranchAccessResponse, FindPeopleBody, FindPeopleResponse } from '../branch-people'
 import type { BranchChangesResponse } from '../branch-changes'
 import type { BranchEntryChangeResponse, RestoreEntryBody, RestoreEntryResponse } from '../branch-entry-changes'
 import type { EntryConflictResponse, MergeConflictsResponse, ReleaseConflictsHoldResponse, ResolveEntryConflictBody, ResolveEntryConflictResponse } from '../merge-conflicts'
 import type { ApproveBody, BranchMergeResponse, RequestChangesBody, SubmitBranchBody, SubmitBranchResponse, UpdateFromBaseResponse } from '../branch-status'
-import type { AdminDeleteTaskResponse, AdminRetryTaskResponse, AdminStatusResponse, AdminTasksResponse, BranchHealthResponse, DeleteArchivedBranchesBody, DeleteArchivedBranchesResponse, DismissUnpublishedResponse, PurgeBranchDirResponse, RepairBranchDirResponse, RepairContentDuplicatesResponse } from '../admin'
+import type { AdminDeleteTaskResponse, AdminRemoveSeenResponse, AdminRetryTaskResponse, AdminStatusResponse, AdminTasksResponse, BranchHealthResponse, DeleteArchivedBranchesBody, DeleteArchivedBranchesResponse, DismissUnpublishedResponse, PurgeBranchDirResponse, RepairBranchDirResponse, RepairContentDuplicatesResponse } from '../admin'
 import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from '../comments'
 import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse, RenameEntryBody, RenameEntryResponse, ValidateReferencesBody, WriteContentBody } from '../content'
 import type { ReferenceOptionsResponse } from '../reference-options'
@@ -49,6 +50,9 @@ export function createMockApiClient(): MockApiClient {
     create: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"test-branch","status":"editing","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})),
     delete: vi.fn().mockResolvedValue(mockSuccess({"deleted":true})),
     updateAccess: vi.fn().mockResolvedValue(mockSuccess({"branch":{"name":"test-branch","status":"editing","access":{},"createdBy":"user-1","createdAt":"2024-01-01","updatedAt":"2024-01-01"}})),
+    getAccess: vi.fn().mockResolvedValue(mockSuccess({"entries":[],"restricted":false,"openToEveryone":false,"defaultAccess":"deny","addBy":"members","rights":{"isOwner":false,"canAdd":false,"canManage":false}})),
+    findPeople: vi.fn().mockResolvedValue(mockSuccess({"people":[],"groups":[]})),
+    findPeopleForNewBranch: vi.fn().mockResolvedValue(mockSuccess({"people":[],"groups":[]})),
   },
 
   changes: {
@@ -86,6 +90,7 @@ export function createMockApiClient(): MockApiClient {
     listTasks: vi.fn().mockResolvedValue(mockSuccess({"tasks":[]})),
     retryTask: vi.fn().mockResolvedValue(mockSuccess({"newTaskId":"00000000-0000-0000-0000-000000000000"})),
     deleteTask: vi.fn().mockResolvedValue(mockSuccess({"deleted":true})),
+    removeSeen: vi.fn().mockResolvedValue(mockSuccess({"removed":true})),
   },
 
   comments: {
@@ -179,6 +184,14 @@ export function mockBranchDeleteResponse(): BranchDeleteResponse {
   return mockSuccess({"deleted":true})
 }
 
+export function mockBranchAccessResponse(): BranchAccessResponse {
+  return mockSuccess({"entries":[],"restricted":false,"openToEveryone":false,"defaultAccess":"deny","addBy":"members","rights":{"isOwner":false,"canAdd":false,"canManage":false}})
+}
+
+export function mockFindPeopleResponse(): FindPeopleResponse {
+  return mockSuccess({"people":[],"groups":[]})
+}
+
 export function mockBranchChangesResponse(): BranchChangesResponse {
   return mockSuccess({"base":"main","entries":[],"collections":[],"hiddenChanges":false})
 }
@@ -257,6 +270,10 @@ export function mockAdminRetryTaskResponse(): AdminRetryTaskResponse {
 
 export function mockAdminDeleteTaskResponse(): AdminDeleteTaskResponse {
   return mockSuccess({"deleted":true})
+}
+
+export function mockAdminRemoveSeenResponse(): AdminRemoveSeenResponse {
+  return mockSuccess({"removed":true})
 }
 
 export function mockCommentsResponse(): CommentsResponse {

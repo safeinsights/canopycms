@@ -104,6 +104,7 @@ import type { CanopyConfig } from '../config'
 import type { GitHubService } from '../github-service'
 import { createCheckBranchAccess } from '../authorization/branch'
 import type { BranchMetadata } from '../types'
+import type { PeopleStore } from '../people-store'
 import type { ApiContext, ApiRequest } from './types'
 
 /**
@@ -482,6 +483,35 @@ describe('branch api', () => {
         added: { users: ['u1', 'u2'], groups: [] },
       }),
     ])
+  })
+
+  it('remembers whom the creator shared with, once the branch exists', async () => {
+    const recordShares = vi.fn(async () => {})
+    vi.mocked(BranchWorkspaceManager).mockImplementationOnce(function () {
+      return {
+        provisionBranch: async ({ branchName }: { branchName: string }) => ({
+          kind: 'created',
+          context: createMockBranchContext({ branchName, createdBy: 'u1' }),
+        }),
+      }
+    } as unknown as typeof BranchWorkspaceManager)
+    const ctx = {
+      ...baseCtx,
+      services: {
+        ...baseCtx.services,
+        peopleStore: {
+          recordShares,
+          listSeen: async () => new Set<string>(),
+        } as unknown as PeopleStore,
+      },
+    }
+
+    await createBranch(ctx, asU1, {
+      branch: unsafeAsBranchName('feature-test'),
+      access: { add: { users: ['u2'] } },
+    })
+
+    expect(recordShares).toHaveBeenCalledWith('u1', ['u2'])
   })
 
   it('refuses a share at create by the rules of a later share, before provisioning anything', async () => {

@@ -423,6 +423,26 @@ const deleteTaskHandler = async (
   }
 }
 
+/** Response type for DELETE /admin/people/:userId/seen */
+export type AdminRemoveSeenResponse = ApiResponse<{ removed: boolean }>
+
+const removeSeenParamsSchema = z.object({ userId: z.string().min(1).max(256) })
+
+/**
+ * Takes someone out of the people who have opened the editor (people-store.ts), so a non-admin no
+ * longer finds them by name. `removed` is false when they were not recorded.
+ */
+const removeSeenHandler = async (
+  _gc: Record<string, never>,
+  ctx: ApiContext,
+  _req: ApiRequest,
+  params: z.infer<typeof removeSeenParamsSchema>,
+): Promise<AdminRemoveSeenResponse> => {
+  const store = ctx.services.peopleStore
+  const removed = store ? await store.removeSeen(params.userId) : false
+  return { ok: true, status: 200, data: { removed } }
+}
+
 /**
  * Task queue stats + worker liveness snapshot
  */
@@ -496,6 +516,20 @@ const deleteTask = defineEndpoint({
   handler: deleteTaskHandler,
 })
 
+/** They are recorded again on their next visit while they still hold a group that reaches content. */
+const removeSeen = defineEndpoint({
+  namespace: 'admin',
+  name: 'removeSeen',
+  method: 'DELETE',
+  path: '/admin/people/:userId/seen',
+  params: removeSeenParamsSchema,
+  responseType: 'AdminRemoveSeenResponse',
+  response: {} as AdminRemoveSeenResponse,
+  defaultMockData: { removed: true },
+  guards: ['admin'] as const,
+  handler: removeSeenHandler,
+})
+
 /**
  * Exported routes for router registration.
  *
@@ -509,6 +543,7 @@ export const ADMIN_ROUTES = {
   listTasks: listAdminTasks,
   retryTask,
   deleteTask,
+  removeSeen,
   ...ADMIN_BRANCH_HEALTH_ROUTES,
   ...ADMIN_ARCHIVED_BRANCH_ROUTES,
 } as const

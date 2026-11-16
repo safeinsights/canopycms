@@ -32,6 +32,15 @@ export type TokenVerifier = (context: unknown) => Promise<{ userId: CanopyUserId
  */
 export class CachingAuthPlugin implements AuthPlugin {
   private refreshPromise: Promise<void> | null = null
+  /**
+   * Users by lower-cased email, built from one `getAllUsers()` answer and rebuilt when the cache
+   * answers with another list, as it does after reloading its files. An address two users share
+   * maps to null: it names no one.
+   */
+  private emailIndex: {
+    users: UserSearchResult[]
+    byEmail: Map<string, UserSearchResult | null>
+  } | null = null
   readonly verifiesCredentials: boolean
 
   constructor(
@@ -106,6 +115,29 @@ export class CachingAuthPlugin implements AuthPlugin {
     } catch {
       return []
     }
+  }
+
+  /** Every cached user, for matching on name alone; empty when the cache can't be read. */
+  async getAllUsers(): Promise<UserSearchResult[]> {
+    try {
+      return await this.cache.getAllUsers()
+    } catch {
+      return []
+    }
+  }
+
+  /** A cache that can't be read rejects, so it never answers "nobody uses that address". */
+  async findUserByEmail(email: string): Promise<UserSearchResult | null> {
+    const users = await this.cache.getAllUsers()
+    if (this.emailIndex?.users !== users) {
+      const byEmail = new Map<string, UserSearchResult | null>()
+      for (const user of users) {
+        const key = typeof user.email === 'string' ? user.email.trim().toLowerCase() : ''
+        if (key) byEmail.set(key, byEmail.has(key) ? null : user)
+      }
+      this.emailIndex = { users, byEmail }
+    }
+    return this.emailIndex.byEmail.get(email.trim().toLowerCase()) ?? null
   }
 
   async getUserMetadata(userId: CanopyUserId): Promise<UserSearchResult | null> {

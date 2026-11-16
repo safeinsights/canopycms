@@ -3,6 +3,7 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { BuildIdentity } from '../types'
 import { isAdmin } from '../authorization/helpers'
 import { getBuildIdentity } from '../build-identity'
+import { enrolSeenUser } from './people'
 
 export type UserInfoResponse = ApiResponse<{
   userId: string
@@ -12,9 +13,11 @@ export type UserInfoResponse = ApiResponse<{
 }>
 
 /**
- * This is a PUBLIC endpoint - no special permissions required
+ * This is a PUBLIC endpoint - no special permissions required. The editor calls it on opening,
+ * which is when someone reaching content through a group joins the people others can find.
  */
 const getUserInfoHandler = async (ctx: ApiContext, req: ApiRequest): Promise<UserInfoResponse> => {
+  await enrolSeenUser(ctx, req.user)
   // Every authenticated request has req.user populated by the auth middleware
   return {
     ok: true,

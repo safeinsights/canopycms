@@ -160,6 +160,66 @@ describe('CachingAuthPlugin', () => {
     })
   })
 
+  describe('findUserByEmail', () => {
+    it('finds the user with exactly that address, ignoring case, and no one for part of one', async () => {
+      expect((await plugin.findUserByEmail('  Bob@Example.COM '))?.id).toBe('user_2')
+      expect(await plugin.findUserByEmail('bob@example')).toBeNull()
+      expect(await plugin.findUserByEmail('ob@example.com')).toBeNull()
+    })
+
+    it('indexes each list the cache answers with once, and again after the cache reloads', async () => {
+      const first: UserSearchResult[] = [{ id: 'u1', name: 'One', email: 'one@example.com' }]
+      const reloaded: UserSearchResult[] = [{ id: 'u2', name: 'Two', email: 'one@example.com' }]
+      let current = first
+      const cache = createMockCache({ getAllUsers: vi.fn(async () => current) })
+      const indexed = new CachingAuthPlugin(mockVerifier, cache)
+
+      expect((await indexed.findUserByEmail('one@example.com'))?.id).toBe('u1')
+      // The same list is not indexed again, so a change made to it in place goes unseen.
+      first.push({ id: 'u3', name: 'Three', email: 'three@example.com' })
+      expect(await indexed.findUserByEmail('three@example.com')).toBeNull()
+      current = reloaded
+      expect((await indexed.findUserByEmail('one@example.com'))?.id).toBe('u2')
+    })
+
+    it('finds no one for an address two users share', async () => {
+      const cache = createMockCache({
+        getAllUsers: vi.fn(async () => [
+          { id: 'u1', name: 'One', email: 'same@example.com' },
+          { id: 'u2', name: 'Two', email: 'SAME@example.com' },
+        ]),
+      })
+
+      expect(
+        await new CachingAuthPlugin(mockVerifier, cache).findUserByEmail('same@example.com'),
+      ).toBeNull()
+    })
+
+    it('rejects when the cache cannot be read, rather than finding no one', async () => {
+      const cache = createMockCache({
+        getAllUsers: vi.fn(async () => {
+          throw new Error('unreadable')
+        }),
+      })
+
+      await expect(
+        new CachingAuthPlugin(mockVerifier, cache).findUserByEmail('bob@example.com'),
+      ).rejects.toThrow('unreadable')
+    })
+  })
+
+  describe('getAllUsers', () => {
+    it("answers with the cache's users, or none when it can't be read", async () => {
+      expect((await plugin.getAllUsers()).map((u) => u.id)).toEqual(['user_1', 'user_2'])
+      const broken = createMockCache({
+        getAllUsers: vi.fn(async () => {
+          throw new Error('unreadable')
+        }),
+      })
+      expect(await new CachingAuthPlugin(mockVerifier, broken).getAllUsers()).toEqual([])
+    })
+  })
+
   describe('getUserMetadata', () => {
     it('returns user from cache', async () => {
       const user = await plugin.getUserMetadata('user_1')
