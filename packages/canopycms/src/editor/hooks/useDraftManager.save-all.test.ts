@@ -450,6 +450,23 @@ describe('useDraftManager - Save all', () => {
     ])
   })
 
+  it('words a lockdown by its code', async () => {
+    draftAll()
+    server.failures.set(idOf(b), async () => {
+      throw new SaveApiError(403, 'Refused', undefined, 'BRANCH_LOCKED_DOWN')
+    })
+    const { result } = setup()
+    await waitFor(() => expect(result.current.modifiedCount).toBe(3))
+
+    const outcome = await run(result)
+    expect(outcome?.failed).toEqual([
+      expect.objectContaining({
+        kind: 'blocked',
+        reason: 'An admin has limited this branch to admins and reviewers.',
+      }),
+    ])
+  })
+
   it('keeps the entries that saved when others fail, and names each failure and its reason', async () => {
     draftAll()
     server.failures.set(idOf(b), async () => {

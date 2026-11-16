@@ -14,6 +14,7 @@ import { SCHEMA_UNAVAILABLE_CODE } from '../unavailable-entry-type'
 import { ENTRY_CHANGED_MESSAGE } from '../../api/entries-constants'
 import type { ApiErrorCode } from '../../api/types'
 import { isUnanswered } from '../unanswered'
+import { accessRefusalMessage } from '../copy'
 import { withItemKeys } from '../../item-keys'
 import { RetryToastMessage } from '../components/RetryToastMessage'
 import { clearSaveAllResult, settleSaveAllEntry } from '../components/SaveAllResult'
@@ -1126,7 +1127,10 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
           ...(isValidation ? { title: 'Save rejected' } : {}),
           ...(isForbidden ? { title: 'Save not allowed' } : {}),
           ...(isUnavailable ? { title: 'Not saved yet' } : {}),
-          message: explained ? err.message : 'Save failed',
+          message: explained
+            ? (accessRefusalMessage(err instanceof SaveApiError ? err.code : undefined) ??
+              err.message)
+            : 'Save failed',
           color: isUnavailable ? 'yellow' : 'red',
           autoClose: getNotificationDuration(explained ? 8000 : 6000),
           withCloseButton: true,

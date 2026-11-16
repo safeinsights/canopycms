@@ -69,6 +69,12 @@ const appendBranch = (url: string, branchName?: string): string => {
   return `${beforeHash}${separator}branch=${encodeURIComponent(branchName)}${hash}`
 }
 
+/** The editor page at `href` opened on the branch `urlName` (a `?branch=` value), and nothing else. */
+export const editorBranchLink = (href: string, urlName: string): string => {
+  const url = new URL(href)
+  return appendBranch(`${url.origin}${url.pathname}`, urlName)
+}
+
 /** `src` with its last `?branch=` value set to `branchName`; a `src` without one is returned as is. */
 export const withPreviewBranch = (src: string, branchName: string): string => {
   const hashIndex = src.indexOf('#')

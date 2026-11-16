@@ -8,40 +8,43 @@ The standard for every change to the CanopyCMS editor (`packages/canopycms/src/e
 One word per idea, everywhere. New UI takes the verbs from `EDITOR_ACTIONS` in
 `packages/canopycms/src/editor/copy.ts`.
 
-| Say                                           | For                                                              | Not                                         |
-| --------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------- |
-| **Save**                                      | Writing the open entry to the branch                             | Save file, Commit                           |
-| **Save all**                                  | Saving every unsaved entry on the branch                         | Save branch                                 |
-| **Refresh from server**                       | Replacing the open entry with its saved copy                     | Reload entry                                |
-| **Submit for review**                         | Committing the branch and opening its pull request               | Submit branch, Publish                      |
-| **Withdraw from review**                      | Taking a submitted branch back for editing                       | Withdraw branch                             |
-| **Get latest changes**                        | Bringing the site's newer changes into a branch                  | Update from main, Sync                      |
-| **Approve**                                   | A reviewer signing off a submitted branch                        | Accept, LGTM                                |
-| **Review**                                    | Opening a submitted branch to review it                          | Inspect                                     |
-| **Request changes**                           | A reviewer sending a branch back to its editor                   | Reject                                      |
-| **Switch branch**                             | Opening another branch                                           | Change branch, Change / Manage              |
-| **New branch**                                | Creating a branch                                                | Create branch, except as its form's confirm |
-| **Remove**                                    | Taking an item out of a list or field; unlisting an entry type   | Clear, Delete                               |
-| **Clear**                                     | Resetting an optional object field to unset                      | Remove                                      |
-| **Delete**                                    | Destroying a stored entry, collection, branch or group           | Remove                                      |
-| **Archive branch**                            | Ending a branch whose pull request closed unmerged               | Close                                       |
-| **Discard changes**                           | Throwing away unsaved edits                                      | Discard drafts, Revert                      |
-| **Undo change**                               | Setting a saved change back to the base, as an unsaved edit      | Revert, Reset                               |
-| **Redo change**                               | Putting an undone change back as saved                           | Reapply                                     |
-| **Unsaved**                                   | Not yet saved                                                    | Changed, Dirty                              |
-| **Changed**                                   | Different from the base branch                                   | Modified, Diff                              |
-| **Show changes**                              | Opening an entry's diff against the base                         | Diff, Compare                               |
-| **Conflict**                                  | A value you and someone else both changed since the branch began | Merge conflict, Clash                       |
-| **Latest version**                            | The site's shared copy, as a conflict card shows it              | main, base, upstream                        |
-| **Use latest version**, **Keep your version** | A conflict's two sides                                           | Use theirs, Keep mine                       |
-| **Use both**                                  | Long text: the latest version's lines, then yours                | Merge, Combine                              |
-| **Mark resolved**                             | Settling a conflict edited by hand                               | Resolve, Done                               |
-| **Release hold**                              | Letting a held branch go on                                      | Unblock                                     |
-| **Remove it**, **Keep it**                    | A conflict on a value one side removed                           | Delete, Restore                             |
-| **entry**, **collection**                     | A content item, and the folder that holds entries                | file, page, item; folder                    |
-| **file**                                      | An item in the media library                                     | asset, media item                           |
-| **Content**                                   | The panel of collections and entries                             | All entries                                 |
-| **Change URL**                                | Changing an entry's slug; "Change slug" without a page           | Rename                                      |
+| Say                                           | For                                                            | Not                                         |
+| --------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------- |
+| **Save**                                      | Writing the open entry                                         | Save file, Commit                           |
+| **Save all**                                  | Saving every unsaved entry                                     | Save branch                                 |
+| **Refresh from server**                       | Replacing an entry with its saved copy                         | Reload entry                                |
+| **Submit for review**                         | Committing the branch and opening its pull request             | Submit branch, Publish                      |
+| **Withdraw from review**                      | Taking a submitted branch back for editing                     | Withdraw branch                             |
+| **Get latest changes**                        | Bringing the site's newer changes in                           | Update from main, Sync                      |
+| **Approve**                                   | Signing off a submitted branch                                 | Accept, LGTM                                |
+| **Review**                                    | Opening a submitted branch to review it                        | Inspect                                     |
+| **Request changes**                           | Sending a branch back to its editor                            | Reject                                      |
+| **Switch branch**                             | Opening another branch                                         | Change branch, Change / Manage              |
+| **New branch**                                | Creating a branch                                              | Create branch, except as its form's confirm |
+| **Remove**                                    | Taking an item out of a list or field; unlisting an entry type | Clear, Delete                               |
+| **Clear**                                     | Resetting an optional object field to unset                    | Remove                                      |
+| **Delete**                                    | Destroying an entry, collection, branch or group               | Remove                                      |
+| **Archive branch**                            | Ending a branch whose pull request closed unmerged             | Close                                       |
+| **Discard changes**                           | Throwing away unsaved edits                                    | Discard drafts, Revert                      |
+| **Undo change**                               | Returning a saved change to the base, unsaved                  | Revert, Reset                               |
+| **Redo change**                               | Putting an undone change back as saved                         | Reapply                                     |
+| **Unsaved**                                   | Not yet saved                                                  | Changed, Dirty                              |
+| **Changed**                                   | Different from the base branch                                 | Modified, Diff                              |
+| **Show changes**                              | Opening an entry's diff against the base                       | Diff, Compare                               |
+| **Conflict**                                  | A value both you and someone else changed                      | Merge conflict, Clash                       |
+| **Latest version**                            | The site's shared copy, on a conflict card                     | main, base, upstream                        |
+| **Use latest version**, **Keep your version** | A conflict's two sides                                         | Use theirs, Keep mine                       |
+| **Use both**                                  | Long text: the latest version's lines, then yours              | Merge, Combine                              |
+| **Mark resolved**                             | Settling a conflict edited by hand                             | Resolve, Done                               |
+| **Release hold**                              | Letting a held branch go on                                    | Unblock                                     |
+| **Remove it**, **Keep it**                    | A conflict on a value one side removed                         | Delete, Restore                             |
+| **entry**, **collection**                     | A content item, and the folder that holds entries              | file, page, item; folder                    |
+| **file**                                      | An item in the media library                                   | asset, media item                           |
+| **Content**                                   | The panel of collections and entries                           | All entries                                 |
+| **Change URL**                                | Changing an entry's slug; "Change slug" without a page         | Rename                                      |
+| **Share…**                                    | Changing who may open a branch                                 | Invite                                      |
+| **Update access**                             | Sending the Share dialog's changes                             | Save                                        |
+| **Copy link**                                 | Copying a branch's editor address                              | Share link                                  |
 
 Status labels and colours come from `packages/canopycms/src/editor/branch-status.ts`, lock labels
 from `packages/canopycms/src/editor/branch-lock.ts`.
