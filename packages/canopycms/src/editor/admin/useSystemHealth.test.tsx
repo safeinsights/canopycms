@@ -342,59 +342,59 @@ describe('useSystemHealth', () => {
       expect(mockClient.permissions.batchGetUserMetadata).not.toHaveBeenCalled()
     })
 
-    it('names the creator a fallen-back branch is limited to, and stays until dismissed', async () => {
-      mockClient.permissions.batchGetUserMetadata.mockResolvedValueOnce(
-        mockSuccess({ users: [{ id: 'alice', name: 'Alice Ng', email: 'alice@example.com' }] }),
-      )
-      const access = { restricted: true, allowedUsers: ['alice'] }
+    it('adds the removals a fallen-back branch carried', async () => {
+      const access = { restricted: true, excluded: { bob: removal } }
       const shown = await repairWith(access, {
         reset: { status: 'editing', access },
         kept: { createdBy: 'alice' },
         restricted: true,
         openToEveryone: false,
       })
-      expect(mockClient.permissions.batchGetUserMetadata).toHaveBeenCalledWith({
-        userIds: ['alice'],
-      })
       expect(shown).toMatchObject({
         message:
-          'Access couldn\'t be read, so only Alice Ng, admins and reviewers can open it. Share it again from "Branches".' +
+          'Access couldn\'t be read, so only admins and reviewers can open it. Share it again from "Branches". The 1 person removed from it stays out.' +
           ARCHIVED,
         color: 'yellow',
         autoClose: false,
       })
     })
 
-    it('names the creator by id when the lookup fails', async () => {
-      mockClient.permissions.batchGetUserMetadata.mockRejectedValueOnce(new Error('offline'))
-      const access = { restricted: true, allowedUsers: ['alice'] }
-      const shown = await repairWith(access, {
-        reset: { status: 'editing', access, createdBy: 'alice' },
-        kept: {},
-        restricted: true,
-        openToEveryone: false,
-      })
-      expect(shown?.message).toMatch(
-        /^Access couldn't be read, so only alice, admins and reviewers/,
-      )
-    })
-
-    it('says the base branch, which takes no list, stays open', async () => {
+    it('says a branch that takes no list, its access unreadable, opens to anyone who can sign in', async () => {
+      const access = { excluded: { bob: removal } }
       const shown = await repairWith(
-        {},
+        access,
         {
-          reset: { status: 'editing', access: {} },
-          kept: { createdBy: 'alice' },
+          reset: { status: 'editing', access },
+          kept: { createdBy: 'canopycms-system' },
           restricted: false,
           openToEveryone: true,
         },
+        'canopycms-system',
       )
       expect(shown).toMatchObject({
         message:
-          "Access couldn't be read. The base branch takes no access list, so anyone who can sign in can open it." +
+          "Access couldn't be read. This branch takes no access list, so anyone who can sign in can open this branch. The 1 person removed from it stays out." +
           ARCHIVED,
         color: 'green',
       })
+    })
+
+    it('says a branch that takes no list kept its lockdown', async () => {
+      const access = { managerOrAdminAllowed: true }
+      const shown = await repairWith(
+        access,
+        {
+          reset: { status: 'editing', access },
+          kept: { createdBy: 'canopycms-system' },
+          restricted: false,
+          openToEveryone: false,
+        },
+        'canopycms-system',
+      )
+      expect(shown?.message).toBe(
+        "Access couldn't be read. Its lockdown was kept, so only admins and reviewers can open it." +
+          ARCHIVED,
+      )
     })
   })
 
