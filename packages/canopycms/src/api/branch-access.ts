@@ -1,7 +1,8 @@
 /**
  * Changing who may open a branch: the I/O around `authorization/branch-sharing.ts`'s rules. Users
- * are resolved and the caller's scope checked before the branch.json lock; the rules then run
- * again inside it, against the list on disk, so a concurrent change is never overwritten.
+ * are resolved and the caller's scope checked before the branch.json lock; `applyAccessChange` and
+ * the caller's rights then run again inside it, against the list on disk, so a concurrent change
+ * is never overwritten.
  */
 
 import type { ApiContext, ApiErrorCode } from './types'
@@ -26,7 +27,7 @@ import {
 import { isSystemUserId } from '../system-users'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { lookupUsersMetadata } from '../auth/user-metadata-lookup'
-import { canopyLog } from '../utils/logger'
+import { logBranchAccessChange } from '../utils/access-log'
 
 export interface AccessRefused {
   status: 400 | 403
@@ -84,9 +85,9 @@ async function unknownUsers(
 }
 
 /**
- * Refuses users the sign-in provider does not know, and, for anyone but an admin, users outside
- * the people they may find. Checking here, not only in the people finder, stops an id learned
- * elsewhere (a listing, a pull request) from adding someone the caller could not have found.
+ * Refuses users the sign-in provider does not know, and, for anyone but an admin, users who don't
+ * work in this CMS ({@link loadCmsUserIds}). An id learned elsewhere (a listing, a pull request)
+ * therefore adds no one a non-admin could not otherwise reach.
  */
 async function checkUsersToAdd(
   ctx: ApiContext,
@@ -214,9 +215,12 @@ export async function changeBranchAccess(
   )
   const scope = await checkUsersToAdd(ctx, actor, [...checked])
   if (scope) return { ok: false, refused: scope }
-  // An owner's removal of someone not on the list records an exclusion, so the id must be a real
-  // person, never an arbitrary string.
-  const unlisted = (change.remove?.users ?? []).filter((id) => !listed.has(id))
+  // Excluding someone not on the list records an id nothing else vouches for, so it must be a real
+  // person, never an arbitrary string. Only exclusions this change records are looked up.
+  const newlyExcluded = new Set(dryRun.excluded)
+  const unlisted = (change.remove?.users ?? []).filter(
+    (id) => !listed.has(id) && newlyExcluded.has(id),
+  )
   const unknown = await unknownUsers(ctx, unlisted)
   if (unknown.length > 0) {
     return {
@@ -291,35 +295,20 @@ export async function initialBranchAccess(
   return { ok: true, access: applied.access }
 }
 
-const defaultAccessLogSink = (line: string): void => canopyLog(line)
-let accessLogSink = defaultAccessLogSink
-
-/**
- * Replace where access-change lines go; no argument restores `canopyLog`. The test setup silences
- * them, as it does provisioning lines.
- * @internal Exported for tests.
- */
-export function setBranchAccessLogSink(next?: (line: string) => void): void {
-  accessLogSink = next ?? defaultAccessLogSink
-}
-
-/** One line per change, printed unconditionally: who changed which branch's list, and how. */
+/** Who changed which branch's list, and how: what the change did, not what was asked. */
 function logAccessChange(
   branch: string,
   actor: CanopyUserId,
   result: BranchAccessChangeResult,
 ): void {
-  accessLogSink(
-    JSON.stringify({
-      event: 'branch-access',
-      branch,
-      actor,
-      added: result.added,
-      removed: result.removed,
-      restricted: hasAccessList(result.access),
-      ...(result.addBy && { addBy: result.addBy }),
-      ...(result.unexcluded.length > 0 && { unexcluded: result.unexcluded }),
-      ...(result.excluded.length > 0 && { excluded: result.excluded }),
-    }),
-  )
+  logBranchAccessChange({
+    branch,
+    actor,
+    added: result.added,
+    removed: result.removed,
+    restricted: hasAccessList(result.access),
+    ...(result.addBy && { addBy: result.addBy }),
+    ...(result.unexcluded.length > 0 && { unexcluded: result.unexcluded }),
+    ...(result.excluded.length > 0 && { excluded: result.excluded }),
+  })
 }

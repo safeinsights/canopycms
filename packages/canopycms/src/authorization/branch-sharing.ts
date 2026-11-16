@@ -6,7 +6,8 @@
  * The owner is the branch's creator while the list admits them. Owners and admins remove people,
  * restrict or open the branch and set who may add; listed members add people when the branch's
  * `addBy` allows it, and remove only the entries they added. `addBy: 'admins'` leaves the list to
- * admins alone. Removing a user records an exclusion, so a member cannot add them back.
+ * admins alone. An owner's or admin's removal of a user or group records an exclusion, so a member
+ * cannot add them back; an excluded user cannot open the branch at all.
  */
 
 import type {
@@ -34,8 +35,6 @@ export function resolveBranchSharing(
 ): ResolvedBranchSharing {
   return {
     whoCanAdd: config.branchSharing?.whoCanAdd ?? 'members',
-    searchable: config.branchSharing?.searchable ?? 'cms-users',
-    addableByEmail: config.branchSharing?.addableByEmail ?? 'all-users',
   }
 }
 
@@ -79,7 +78,8 @@ const NO_RIGHTS: BranchSharingRights = {
 /**
  * What `user` may do to the branch's list. Membership is read from the list itself, never from
  * the access check's reason, which reports a reviewer as privileged whether or not they are listed.
- * The lockdown, the base branch and a system-owned branch leave everything to admins.
+ * The base branch takes no list. The lockdown, archiving, `addBy: 'admins'` and a system-owned
+ * branch leave the list to admins.
  */
 export function branchSharingRights(
   user: Pick<CanopyUser, 'userId' | 'groups'>,
@@ -114,8 +114,8 @@ export interface BranchAccessChange {
   /** true: only listed people may open the branch. false: back to the site default ('allow' only). */
   restricted?: boolean
   addBy?: BranchAddBy
-  /** Users whose exclusion to lift. */
-  unexclude?: CanopyUserId[]
+  /** Users and groups whose exclusion to lift. */
+  unexclude?: { users?: CanopyUserId[]; groups?: CanopyGroupId[] }
 }
 
 /** Why a change was refused; each maps to an `ApiErrorCode` of the same name. */
@@ -188,7 +188,8 @@ export function applyAccessChange(
   const addGroups = unique(change.add?.groups)
   const removeUsers = unique(change.remove?.users)
   const removeGroups = unique(change.remove?.groups)
-  const unexclude = unique(change.unexclude)
+  const unexclude = unique(change.unexclude?.users)
+  const unexcludeGroups = unique(change.unexclude?.groups)
   const adding = addUsers.length > 0 || addGroups.length > 0
 
   const both = [
@@ -200,7 +201,9 @@ export function applyAccessChange(
   }
   if (
     change.restricted === false &&
-    (adding || removeUsers.length + removeGroups.length + unexclude.length > 0 || change.addBy)
+    (adding ||
+      removeUsers.length + removeGroups.length + unexclude.length + unexcludeGroups.length > 0 ||
+      change.addBy)
   ) {
     return refuse(
       'ACCESS_CHANGE_INVALID',
@@ -212,7 +215,9 @@ export function applyAccessChange(
     return refuse('ACCESS_ADD_FORBIDDEN', "You can't add people to this branch.")
   }
   const managing =
-    change.restricted !== undefined || change.addBy !== undefined || unexclude.length > 0
+    change.restricted !== undefined ||
+    change.addBy !== undefined ||
+    unexclude.length + unexcludeGroups.length > 0
   if (managing && !rights.canManage) {
     return refuse('ACCESS_MANAGE_FORBIDDEN', "You can't change who has access to this branch.")
   }
@@ -221,7 +226,10 @@ export function applyAccessChange(
   }
   const exclusionOf = (id: CanopyUserId) =>
     isExcludedFrom(access, id) ? access.excluded?.[id] : undefined
-  const adminExclusions = unexclude.filter((id) => exclusionOf(id)?.byAdmin)
+  const adminExclusions = [
+    ...unexclude.filter((id) => exclusionOf(id)?.byAdmin),
+    ...unexcludeGroups.filter((id) => ownEntry(access.excludedGroups, id)?.byAdmin),
+  ]
   if (!actorIsAdmin && adminExclusions.length > 0) {
     return refuse(
       'ACCESS_MANAGE_FORBIDDEN',
@@ -377,16 +385,25 @@ export function applyAccessChange(
       newlyExcluded.push(entryKey('group', id))
     }
   }
-  if (Object.keys(excluded).length + Object.keys(excludedGroups).length > MAX_EXCLUSIONS) {
-    return refuse(
-      'ACCESS_CHANGE_INVALID',
-      'Too many people and groups have been removed from this branch. Ask an admin to tidy its list.',
-    )
-  }
+
   for (const id of unexclude) {
     if (!isExcluded(id)) continue
     delete excluded[id]
     unexcluded.push(id)
+  }
+  for (const id of unexcludeGroups) {
+    if (!ownEntry(excludedGroups, id)) continue
+    delete excludedGroups[id]
+    unexcluded.push(entryKey('group', id))
+  }
+  if (
+    newlyExcluded.length > 0 &&
+    Object.keys(excluded).length + Object.keys(excludedGroups).length > MAX_EXCLUSIONS
+  ) {
+    return refuse(
+      'ACCESS_CHANGE_INVALID',
+      'Too many people and groups have been removed from this branch. Allow some back first.',
+    )
   }
 
   const restricted = hasAccessList(access) || restricting || undefined

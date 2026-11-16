@@ -15,7 +15,8 @@ import type { BranchName } from '../paths/types'
 import { SYSTEM_USER_ID } from '../system-users'
 import type { BranchContext, BranchMetadata } from '../types'
 import type { CanopyUser } from '../user'
-import { changeBranchAccess, initialBranchAccess, setBranchAccessLogSink } from './branch-access'
+import { changeBranchAccess, initialBranchAccess } from './branch-access'
+import { setBranchAccessLogSink } from '../utils/access-log'
 import { updateBranchAccessHandler, type UpdateBranchAccessBody } from './branch'
 import type { ApiContext } from './types'
 
@@ -298,6 +299,20 @@ describe('PATCH /:branch/access, round-one cases', () => {
 
     expect(res).toMatchObject({ ok: false, refused: { code: 'USER_OUT_OF_SCOPE' } })
     expect((await onDisk(context))?.access.allowedUsers).toEqual(['owner'])
+  })
+
+  it('looks no one up for a removal that records nothing new, so a retry stays a no-op', async () => {
+    const context = await addBranch('feature/x', {
+      access: {
+        restricted: true,
+        allowedUsers: ['owner'],
+        excluded: { departed: { by: 'owner', at: 't', byAdmin: false } },
+      },
+    })
+    const before = await onDisk(context)
+
+    expect((await patch(owner, 'feature/x', { remove: { users: ['departed'] } })).ok).toBe(true)
+    expect(await onDisk(context)).toEqual(before)
   })
 
   it('refuses excluding an id the sign-in provider does not know', async () => {

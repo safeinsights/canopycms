@@ -171,8 +171,12 @@ describe('applyAccessChange', () => {
 
     const byAdmin = accessOf(apply(admin, shared, { remove: { users: ['member'] } }))
     expect(codeOf(apply(owner, byAdmin, { add: { users: ['member'] } }))).toBe('USER_EXCLUDED')
-    expect(codeOf(apply(owner, byAdmin, { unexclude: ['member'] }))).toBe('ACCESS_MANAGE_FORBIDDEN')
-    expect(accessOf(apply(admin, byAdmin, { unexclude: ['member'] })).excluded).toBeUndefined()
+    expect(codeOf(apply(owner, byAdmin, { unexclude: { users: ['member'] } }))).toBe(
+      'ACCESS_MANAGE_FORBIDDEN',
+    )
+    expect(
+      accessOf(apply(admin, byAdmin, { unexclude: { users: ['member'] } })).excluded,
+    ).toBeUndefined()
   })
 
   it('lets a member remove only what they added, leaving no exclusion behind', () => {
@@ -288,6 +292,41 @@ describe('applyAccessChange: exclusions and opening', () => {
     expect('refusal' in back).toBe(false)
   })
 
+  it('lets the owner lift a group exclusion they made, and only an admin one an admin made', () => {
+    const byOwner = accessOf(apply(owner, shared, { remove: { groups: ['team'] } }))
+    expect(
+      accessOf(apply(owner, byOwner, { unexclude: { groups: ['team'] } })).excludedGroups,
+    ).toBeUndefined()
+    const byAdmin = accessOf(apply(admin, shared, { remove: { groups: ['team'] } }))
+    expect(codeOf(apply(owner, byAdmin, { unexclude: { groups: ['team'] } }))).toBe(
+      'ACCESS_MANAGE_FORBIDDEN',
+    )
+    expect(
+      accessOf(apply(admin, byAdmin, { unexclude: { groups: ['team'] } })).excludedGroups,
+    ).toBeUndefined()
+  })
+
+  it('refuses only a change that would take a branch past the cap, never one that lifts', () => {
+    const atCap = Object.fromEntries(
+      Array.from({ length: 500 }, (_, i) => [
+        `gone-${i}`,
+        { by: 'owner', at: 't', byAdmin: false },
+      ]),
+    )
+    const full = { ...shared, excluded: atCap }
+    expect(
+      codeOf(
+        apply(owner, full, { unexclude: { users: ['gone-0'] }, remove: { users: ['member'] } }),
+      ),
+    ).toBeUndefined()
+    const over = {
+      ...shared,
+      excluded: { ...atCap, extra: { by: 'owner', at: 't', byAdmin: false } },
+    }
+    expect(codeOf(apply(owner, over, { unexclude: { users: ['gone-0'] } }))).toBeUndefined()
+    expect(codeOf(apply(owner, over, { add: { users: ['pal'] } }))).toBeUndefined()
+  })
+
   it('caps how many exclusions one branch holds', () => {
     const many = Object.fromEntries(
       Array.from({ length: 500 }, (_, i) => [
@@ -303,7 +342,7 @@ describe('applyAccessChange: exclusions and opening', () => {
   it('refuses opening a branch together with any other change', () => {
     for (const change of [
       { restricted: false, addBy: 'owner' as const },
-      { restricted: false, unexclude: ['x'] },
+      { restricted: false, unexclude: { users: ['x'] } },
       { restricted: false, remove: { users: ['member'] } },
     ]) {
       expect(codeOf(apply(owner, shared, change, { defaultAccess: 'allow' }))).toBe(
@@ -351,7 +390,10 @@ describe('applyAccessChange: exclusions and opening', () => {
     const removed = apply(owner, shared, { remove: { users: ['member'] } })
     if ('refusal' in removed) throw new Error('refused')
     expect(removed.excluded).toEqual(['member'])
-    const back = apply(owner, removed.access, { unexclude: ['member', 'nobody'], addBy: 'owner' })
+    const back = apply(owner, removed.access, {
+      unexclude: { users: ['member', 'nobody'] },
+      addBy: 'owner',
+    })
     if ('refusal' in back) throw new Error('refused')
     expect(back.unexcluded).toEqual(['member'])
     expect(back.addBy).toBe('owner')

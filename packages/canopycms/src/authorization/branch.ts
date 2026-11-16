@@ -18,7 +18,7 @@ interface BranchAccessOptions {
    * directions (see the fallback site below).
    *
    * The grant is load-bearing: the base branch takes no ACL
-   * (`updateBranchAccessHandler` rejects one, since an entry there would feed
+   * (`api/branch-access.ts` refuses one, since an entry there would feed
    * `allowed_by_acl` and confer Withdraw rights) and its `createdBy` is
    * `canopycms-system`, so nobody is its creator -- without this it is
    * unreachable under `defaultBranchAccess: 'deny'` with no way to configure
@@ -89,9 +89,8 @@ export function checkBranchAccessWithDefault(
 
   // A restricted list governs even when empty, so an emptied list never reopens the branch.
   if (!hasUserConstraint && !hasGroupConstraint && !access.restricted) {
-    // The branch creator owns their own un-ACL'd branch, as canDeleteBranch and
-    // canModifyBranchAccess also grant: without it, under 'deny' a creator could
-    // delete their branch and rewrite its ACL but not read a file on it. Scoped to the no-ACL case on purpose -- an EXPLICIT
+    // The branch creator owns their own un-ACL'd branch: without it, under 'deny' a creator
+    // could not open a branch they had just made. Scoped to the no-ACL case on purpose -- an EXPLICIT
     // allowlist omitting the creator still denies them, which is how an admin
     // locks down a branch someone else created.
     if (context.branch.createdBy === user.userId) {

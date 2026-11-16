@@ -51,21 +51,21 @@ export function isPrivileged(groups: readonly string[] | undefined): boolean {
  * ceiling over everything else that grants branch access -- the ACL, the creator, the default --
  * so only Admins and Reviewers pass it. Dependency-free, so the editor's gating shares it.
  */
+export function isLockedOutOfBranch(
+  access: { managerOrAdminAllowed?: boolean } | undefined,
+  groups: readonly string[] | undefined,
+): boolean {
+  return (access?.managerOrAdminAllowed ?? false) && !isPrivileged(groups)
+}
+
 /**
- * Whether the branch's list excludes `userId`. An exclusion shuts the person out whatever else
- * would admit them, a group on the list or an open branch, so a removal holds. Own keys only, so
- * an id like `constructor` never reads an inherited property.
+ * Whether the branch's list excludes `userId`. An exclusion shuts out everyone but admins and
+ * reviewers, whatever else would admit them (a group on the list, an open branch), so a removal
+ * holds. Own keys only, so an id like `constructor` never reads an inherited property.
  */
 export function isExcludedFrom(
   access: { excluded?: Record<string, unknown> } | undefined,
   userId: string,
 ): boolean {
   return !!access?.excluded && Object.prototype.hasOwnProperty.call(access.excluded, userId)
-}
-
-export function isLockedOutOfBranch(
-  access: { managerOrAdminAllowed?: boolean } | undefined,
-  groups: readonly string[] | undefined,
-): boolean {
-  return (access?.managerOrAdminAllowed ?? false) && !isPrivileged(groups)
 }

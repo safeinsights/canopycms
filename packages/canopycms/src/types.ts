@@ -35,7 +35,7 @@ export type PullRequestState = 'open' | 'closed' | 'merged'
 /** Who besides admins may add people to a branch's access list (`authorization/branch-sharing.ts`). */
 export type BranchAddBy = 'members' | 'owner' | 'admins'
 
-/** A user taken off a branch's access list, whom members cannot add back. */
+/** A user or group taken off a branch's access list, whom members cannot add back. */
 export interface BranchAccessExclusion {
   by: CanopyUserId
   at: string

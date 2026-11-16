@@ -440,23 +440,14 @@ export interface CanopyEditorConfig {
 export type DefaultBranchAccess = 'allow' | 'deny'
 
 /**
- * Who may share a branch besides admins, and how sharers find people. Read through
- * `resolveBranchSharing` (authorization/branch-sharing.ts), which supplies the defaults.
+ * Who may share a branch besides admins. Read through `resolveBranchSharing`
+ * (authorization/branch-sharing.ts), which supplies the defaults.
  */
 export interface BranchSharingConfig {
   /** The default for a branch's `access.addBy`: its listed members, or its owner only. Default 'members'. */
   whoCanAdd?: 'members' | 'owner'
-  /**
-   * Who turns up when a sharer searches by name. 'cms-users' (default): people who already work in
-   * this CMS. 'all-users': everyone the sign-in provider knows. 'nobody': no search; add by email.
-   */
-  searchable?: 'cms-users' | 'all-users' | 'nobody'
-  /**
-   * Who a sharer can add by typing their exact email address. 'all-users' (default): anyone the
-   * sign-in provider knows. 'cms-users', the stricter option: only people who work in this CMS.
-   */
-  addableByEmail?: 'all-users' | 'cms-users'
 }
+
 export type DefaultPathAccessLevel = 'allow' | 'deny'
 /** Per-permission-level scoping for `defaultPathAccess`. An omitted level resolves to 'deny' (fail-closed). */
 export type DefaultPathAccessLevels = Partial<Record<PermissionLevel, DefaultPathAccessLevel>>

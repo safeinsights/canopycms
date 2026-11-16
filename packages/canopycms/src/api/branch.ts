@@ -95,7 +95,7 @@ export interface BranchListItem extends Omit<
     canManage: boolean
     /** The list decides who may open the branch, even when empty. */
     restricted: boolean
-    /** No list is in force and the site default lets everyone who can sign in open it. */
+    /** No list is in force and the site default lets everyone who can sign in, bar exclusions, open it. */
     openToEveryone: boolean
     addBy: BranchAddBy
   }
@@ -169,7 +169,7 @@ const updateBranchAccessBodySchema = z
     remove: accessEntriesSchema.optional(),
     restricted: z.boolean().optional(),
     addBy: z.enum(['members', 'owner', 'admins']).optional(),
-    unexclude: z.array(accessIdSchema).max(MAX_ACCESS_ENTRIES).optional(),
+    unexclude: accessEntriesSchema.optional(),
   })
   .strict()
 
@@ -695,7 +695,8 @@ export const createBranchHandler = async (
 
 /**
  * A create whose key an existing workspace holds: 409, unless that workspace is the branch this
- * create names (`named.name`) and the create is its creator's recent retry. A workspace with
+ * create names (`named.name`) and the create is the recent retry of a creator who may still open
+ * it. A workspace with
  * another stored name only shares the key, so answering with it would hand back another branch.
  */
 const existingBranchResponse = (
@@ -841,8 +842,8 @@ const mayHoldLostCommits = (branch: BranchMetadata): boolean =>
   (branch.status === 'archived' && branch.rewrittenOnGitHub !== undefined)
 
 /**
- * Admins, and a creator who may still open the branch: one an admin locked out or excluded may not
- * delete it.
+ * Admins, and a creator who may still open the branch: one the list no longer admits, or a
+ * lockdown shuts out, may not delete it.
  * @internal Exported for tests.
  */
 export const canDeleteBranch = (

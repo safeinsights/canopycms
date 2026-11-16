@@ -1,6 +1,6 @@
 import { beforeEach } from 'vitest'
 
-import { setBranchAccessLogSink } from '../api/branch-access'
+import { setBranchAccessLogSink } from '../utils/access-log'
 import { setProvisionLogSink } from '../utils/provision-log'
 
 // Node-project setup file: provisioning step lines and access-change lines are unconditional,
