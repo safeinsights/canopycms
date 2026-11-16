@@ -157,6 +157,12 @@ const BRANCH_LOCKOUT_CODES: ReadonlySet<ApiErrorCode> = new Set([
   'BRANCH_LOCKED_DOWN',
 ])
 
+const isBranchLockout = (err: unknown): boolean =>
+  err instanceof SaveApiError &&
+  err.status === 403 &&
+  !!err.code &&
+  BRANCH_LOCKOUT_CODES.has(err.code)
+
 export interface UseDraftManagerOptions {
   branchName: string
   selectedPath: string
@@ -1138,11 +1144,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         })
       } else {
         const explained = isValidation || isForbidden || isUnavailable
-        const lostBranch =
-          isForbidden &&
-          err instanceof SaveApiError &&
-          !!err.code &&
-          BRANCH_LOCKOUT_CODES.has(err.code)
+        const lostBranch = isBranchLockout(err)
         notifications.show({
           ...(lostBranch ? { id: branchLockoutToastId(branch) } : {}),
           ...(isValidation ? { title: 'Save rejected' } : {}),
@@ -1193,7 +1195,9 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   const saveOneOfAll = async (
     entry: EditorEntry,
     branch: string,
-  ): Promise<{ saved: true } | { saved: false; failure: SaveAllFailure } | undefined> => {
+  ): Promise<
+    { saved: true } | { saved: false; failure: SaveAllFailure; lockout?: true } | undefined
+  > => {
     const id = entry.contentId
     const sent =
       latestRef.current.drafts[id] ??
@@ -1274,6 +1278,9 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       console.error(err)
       if (!onBranch()) return undefined
       const outcome = classifySaveAllError(err, timedOutSavesRef.current.has(id))
+      if (outcome.kind === 'blocked' && isBranchLockout(err)) {
+        return { ...fail('blocked', outcome.reason), lockout: true }
+      }
       switch (outcome.kind) {
         case 'unanswered': {
           const landed = await settleUnansweredSave(entry, sent)
@@ -1348,6 +1355,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       if (queue.length === 0) return result
       clearSaveAllResult()
       setSaveAllProgress({ done: 0, total: queue.length })
+      let lockedOut = false
       for (const [index, entry] of queue.entries()) {
         if (latestOptionsRef.current.branchName !== branch || !mountedRef.current) return undefined
         const outcome = await saveOneOfAll(entry, branch)
@@ -1355,6 +1363,20 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
           result.saved.push({ contentId: entry.contentId, label: entry.label, path: entry.path })
         } else if (outcome) {
           result.failed.push(outcome.failure)
+          // The branch now refuses this viewer, so the rest would be refused too: none is sent.
+          if (outcome.lockout) {
+            lockedOut = true
+            for (const rest of queue.slice(index + 1)) {
+              result.failed.push({
+                contentId: rest.contentId,
+                label: rest.label,
+                path: rest.path,
+                kind: 'blocked',
+                reason: outcome.failure.reason,
+              })
+            }
+            break
+          }
         }
         setSaveAllProgress({ done: index + 1, total: queue.length })
       }
@@ -1371,6 +1393,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       )
       result.total = result.saved.length + result.failed.length
       if (result.saved.length > 0) latestOptionsRef.current.onSaved?.()
+      if (lockedOut) latestOptionsRef.current.onBranchAccessLost?.()
       return result
     } finally {
       saveAllRunningRef.current = false
