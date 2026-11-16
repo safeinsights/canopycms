@@ -3,7 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useSystemHealth } from './useSystemHealth'
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import { mockSuccess } from '../../api/__test__/mock-client'
-import type { BranchHealthData, BranchHealthResponse } from '../../api/admin-branch-health'
+import type {
+  BranchHealthData,
+  BranchHealthResponse,
+  RepairBranchDirResponse,
+} from '../../api/admin-branch-health'
+import type { BranchAccessControl } from '../../types'
 import type { BranchHealthEntry, DuplicateIdScan } from '../../branch-health'
 import { unsafeAsContentId, unsafeAsPhysicalPath } from '../../paths/test-utils'
 import { setupMockApiClient, createApiClientWrapper } from '../hooks/__test__/test-utils'
@@ -194,6 +199,149 @@ describe('useSystemHealth', () => {
       await result.current.dismissUnpublished('foo')
     })
     expect(mockClient.admin.dismissUnpublished).toHaveBeenCalledWith({ dirName: 'foo' })
+  })
+
+  describe('repairDir says who can open the repaired branch', () => {
+    const removal = { by: 'alice', at: '2026-11-01T00:00:00.000Z', byAdmin: false }
+    const ARCHIVED =
+      ' Its status is back to editing. The corrupt file is archived as branch.json.corrupt-x.'
+
+    const repairWith = async (
+      access: BranchAccessControl,
+      fields: Pick<
+        NonNullable<RepairBranchDirResponse['data']>,
+        'reset' | 'kept' | 'restricted' | 'openToEveryone'
+      >,
+    ) => {
+      mockClient.admin.repairBranchDir.mockResolvedValueOnce(
+        mockSuccess({
+          branch: {
+            name: 'foo',
+            status: 'editing',
+            access,
+            createdBy: 'alice',
+            createdAt: '2026-01-01',
+            updatedAt: '2026-01-01',
+          },
+          archivedAs: 'branch.json.corrupt-x',
+          ...fields,
+        }),
+      )
+      const { notifications } = await import('@mantine/notifications')
+      const { result } = renderHook(() => useSystemHealth({ isOpen: false }), { wrapper })
+      await act(async () => {
+        await result.current.repairDir('foo')
+      })
+      return vi.mocked(notifications.show).mock.calls.at(-1)?.[0]
+    }
+
+    it('says a kept list still decides, and that the people removed stay out', async () => {
+      const access = {
+        restricted: true,
+        allowedUsers: ['alice'],
+        excluded: { bob: removal, carol: removal },
+      }
+      const shown = await repairWith(access, {
+        reset: { status: 'editing' },
+        kept: { access, createdBy: 'alice' },
+        restricted: true,
+        openToEveryone: false,
+      })
+      expect(shown).toMatchObject({
+        title: 'Metadata repaired',
+        message:
+          'Kept its access: only the people listed can open it. The 2 people removed from it stay out.' +
+          ARCHIVED,
+        color: 'green',
+      })
+      expect(mockClient.permissions.batchGetUserMetadata).not.toHaveBeenCalled()
+    })
+
+    it('says a kept open branch is open to anyone who can sign in, bar the person removed', async () => {
+      const access = { excluded: { bob: removal } }
+      const shown = await repairWith(access, {
+        reset: { status: 'editing' },
+        kept: { access, createdBy: 'alice' },
+        restricted: false,
+        openToEveryone: true,
+      })
+      expect(shown).toMatchObject({
+        message:
+          'Kept its access: anyone who can sign in can open it. The 1 person removed from it stays out.' +
+          ARCHIVED,
+        color: 'green',
+      })
+    })
+
+    it('says a kept open branch on a closed site opens only to its creator, admins and reviewers', async () => {
+      const shown = await repairWith(
+        {},
+        {
+          reset: { status: 'editing' },
+          kept: { access: {}, createdBy: 'alice' },
+          restricted: false,
+          openToEveryone: false,
+        },
+      )
+      expect(shown?.message).toBe(
+        'Kept its access: only its creator, admins and reviewers can open it.' + ARCHIVED,
+      )
+    })
+
+    it('names the creator a fallen-back branch is limited to, and stays until dismissed', async () => {
+      mockClient.permissions.batchGetUserMetadata.mockResolvedValueOnce(
+        mockSuccess({ users: [{ id: 'alice', name: 'Alice Ng', email: 'alice@example.com' }] }),
+      )
+      const access = { restricted: true, allowedUsers: ['alice'] }
+      const shown = await repairWith(access, {
+        reset: { status: 'editing', access },
+        kept: { createdBy: 'alice' },
+        restricted: true,
+        openToEveryone: false,
+      })
+      expect(mockClient.permissions.batchGetUserMetadata).toHaveBeenCalledWith({
+        userIds: ['alice'],
+      })
+      expect(shown).toMatchObject({
+        message:
+          'Access couldn\'t be read, so only Alice Ng, admins and reviewers can open it. Share it again from "Branches".' +
+          ARCHIVED,
+        color: 'yellow',
+        autoClose: false,
+      })
+    })
+
+    it('names the creator by id when the lookup fails', async () => {
+      mockClient.permissions.batchGetUserMetadata.mockRejectedValueOnce(new Error('offline'))
+      const access = { restricted: true, allowedUsers: ['alice'] }
+      const shown = await repairWith(access, {
+        reset: { status: 'editing', access, createdBy: 'alice' },
+        kept: {},
+        restricted: true,
+        openToEveryone: false,
+      })
+      expect(shown?.message).toMatch(
+        /^Access couldn't be read, so only alice, admins and reviewers/,
+      )
+    })
+
+    it('says the base branch, which takes no list, stays open', async () => {
+      const shown = await repairWith(
+        {},
+        {
+          reset: { status: 'editing', access: {} },
+          kept: { createdBy: 'alice' },
+          restricted: false,
+          openToEveryone: true,
+        },
+      )
+      expect(shown).toMatchObject({
+        message:
+          "Access couldn't be read. The base branch takes no access list, so anyone who can sign in can open it." +
+          ARCHIVED,
+        color: 'green',
+      })
+    })
   })
 
   it('takes an already-dismissed warning as a conflict, and refreshes the list', async () => {

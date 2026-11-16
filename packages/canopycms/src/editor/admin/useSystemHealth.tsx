@@ -16,14 +16,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSWRConfig } from 'swr'
 import { notifications } from '@mantine/notifications'
-import { useApiClient } from '../context'
+import { useApiClient, type ApiClient } from '../context'
 import type {
   AdminStatusData,
   AdminTasksData,
   ListAdminTasksParams,
   DeleteTaskParams,
 } from '../../api/admin'
-import type { BranchHealthData } from '../../api/admin-branch-health'
+import type { BranchHealthData, RepairBranchDirResponse } from '../../api/admin-branch-health'
+import { isSystemUserId } from '../../system-users'
+import type { CanopyUserId } from '../../types'
+import { SYSTEM_USER_LABEL } from '../user-display'
 import type { DuplicateIdScan } from '../../branch-health'
 import { BRANCHES_KEY } from '../hooks/useBranchesData'
 import { isGatewayFailure, isUnanswered, UnansweredError } from '../unanswered'
@@ -40,6 +43,54 @@ const EMPTY_DELETE = {
 
 const countBranches = (count: number): string =>
   `${count} archived ${count === 1 ? 'branch' : 'branches'}`
+
+type RepairedBranch = NonNullable<RepairBranchDirResponse['data']>
+
+/** The name the editor shows for `userId`, or the id when the lookup finds none. */
+async function nameOf(apiClient: ApiClient, userId: CanopyUserId): Promise<string> {
+  if (isSystemUserId(userId)) return SYSTEM_USER_LABEL
+  const result = await apiClient.permissions
+    .batchGetUserMetadata({ userIds: [userId] })
+    .catch(() => null)
+  return (result?.ok && result.data?.users.find((u) => u.id === userId)?.name) || userId
+}
+
+/** Who can open a repaired branch now, and whether the admin has to share it again. */
+async function repairedAccess(
+  apiClient: ApiClient,
+  repaired: RepairedBranch,
+): Promise<{ text: string; mustShare: boolean }> {
+  const { access, createdBy } = repaired.branch
+  if (repaired.reset.access) {
+    // Only the base branch, which takes no list, falls back to none.
+    if (!repaired.restricted) {
+      return {
+        text: "Access couldn't be read. The base branch takes no access list, so anyone who can sign in can open it.",
+        mustShare: false,
+      }
+    }
+    const creator = await nameOf(apiClient, createdBy)
+    return {
+      text: `Access couldn't be read, so only ${creator}, admins and reviewers can open it. Share it again from "Branches".`,
+      mustShare: true,
+    }
+  }
+  const who = access.managerOrAdminAllowed
+    ? 'only admins and reviewers can open it'
+    : repaired.restricted
+      ? 'only the people listed can open it'
+      : repaired.openToEveryone
+        ? 'anyone who can sign in can open it'
+        : 'only its creator, admins and reviewers can open it'
+  const removed = Object.keys(access.excluded ?? {}).length
+  const stayOut =
+    removed === 0
+      ? ''
+      : removed === 1
+        ? ' The 1 person removed from it stays out.'
+        : ` The ${removed} people removed from it stay out.`
+  return { text: `Kept its access: ${who}.${stayOut}`, mustShare: false }
+}
 
 /**
  * Crash-loop rider window: a worker that fatally exits and restarts
@@ -299,10 +350,12 @@ export function useSystemHealth(options: UseSystemHealthOptions): UseSystemHealt
     async (dirName: string) => {
       try {
         const result = await apiClient.admin.repairBranchDir({ dirName })
-        if (!result.ok) throw new Error(result.error || 'Failed to repair metadata')
+        if (!result.ok || !result.data) throw new Error(result.error || 'Failed to repair metadata')
+        const { text, mustShare } = await repairedAccess(apiClient, result.data)
         notifications.show({
-          message: `Metadata repaired (corrupt file archived as ${result.data?.archivedAs ?? 'archive'})`,
-          color: 'green',
+          title: 'Metadata repaired',
+          message: `${text} Its status is back to editing. The corrupt file is archived as ${result.data.archivedAs}.`,
+          ...(mustShare ? { color: 'yellow', autoClose: false } : { color: 'green' }),
         })
         await refresh()
       } catch (err) {

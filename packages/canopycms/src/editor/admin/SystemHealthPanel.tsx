@@ -461,7 +461,7 @@ const MARK_MERGED_CONFIRM_TEXT =
   'In production the server cannot verify the PR actually merged (no GitHub access from the API) — confirm the PR is merged on GitHub first.'
 
 const REPAIR_CONFIRM_TEXT =
-  "Recreates metadata with defaults: status becomes 'editing', you become the creator, branch ACLs are reset. The corrupt file is archived alongside for forensics."
+  "Rebuilds the branch's metadata, archiving the corrupt file alongside. Its status goes back to editing. Its creator and who can open it are kept if the corrupt file still shows them. If the creator can't be read, you become it; if access can't be read, only the creator, admins and reviewers can open the branch."
 
 const DUPLICATE_REPAIR_CONFIRM_TEXT =
   'These files share a content ID, so the editor uses only the one marked Keep. Archiving renames each other file to a hidden name in the same folder. Nothing is deleted.'
