@@ -2,9 +2,14 @@ import { useState } from 'react'
 import { openConfirm } from '../utils/confirm-modal'
 import { notifications } from '@mantine/notifications'
 import { Text } from '@mantine/core'
-import type { BranchListItem } from '../../api/branch'
+import type { BranchListItem, CreateBranchBody } from '../../api/branch'
 import { useApiClient } from '../context'
-import { requestBranchCreate, type CreateRefusal } from './create-branch-request'
+import { accessRefusalMessage } from '../copy'
+import {
+  requestBranchCreate,
+  type CreatedBranch,
+  type CreateRefusal,
+} from './create-branch-request'
 import type { UnsavedSummary } from './useDraftManager'
 import { displayBranchName } from '../branch-names'
 import { writeEditorUrl } from './editor-history'
@@ -30,6 +35,19 @@ export interface UseBranchActionsOptions {
   sameBranch?: (next: string, branchName: string) => boolean
   /** The current user; a create the server never answered adopts only a listed branch they made. */
   userId?: string
+  /**
+   * Says a branch was created, in place of the plain toast: `created` is the server's answer, absent
+   * when a create that went unanswered settled on the listing.
+   */
+  announceCreated?: (label: string, created: BranchListItem | undefined) => void
+}
+
+/** A new branch as the create form sends it. */
+export interface NewBranchRequest {
+  name: string
+  title?: string
+  description?: string
+  access?: CreateBranchBody['access']
 }
 
 export interface UseBranchActionsReturn {
@@ -43,11 +61,7 @@ export interface UseBranchActionsReturn {
   ) => Promise<void>
   /** True when nothing is unsaved or the user accepted the warning. Run before any in-flight UI. */
   confirmCreate: () => Promise<boolean>
-  handleCreateBranch: (branch: {
-    name: string
-    title?: string
-    description?: string
-  }) => Promise<boolean | CreateRefusal>
+  handleCreateBranch: (branch: NewBranchRequest) => Promise<false | CreateRefusal | CreatedBranch>
   /** True while the unsaved-changes confirm is on screen. */
   confirmOpen: boolean
 }
@@ -133,14 +147,12 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
   const confirmCreate = () => confirmIfDirty('Create the new branch anyway?')
 
   /**
-   * Resolves true when the branch was created and switched to, false when it was not and a toast
-   * says why, or a {@link CreateRefusal} when the name cannot be created.
+   * Resolves to the branch created and switched to, false when none was and a toast says why, or a
+   * {@link CreateRefusal} when the form's values can't be created as they are.
    */
-  const handleCreateBranch = async (branch: {
-    name: string
-    title?: string
-    description?: string
-  }): Promise<boolean | CreateRefusal> => {
+  const handleCreateBranch = async (
+    branch: NewBranchRequest,
+  ): Promise<false | CreateRefusal | CreatedBranch> => {
     try {
       const outcome = await requestBranchCreate(
         apiClient,
@@ -148,11 +160,19 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
           branch: branch.name,
           title: branch.title,
           description: branch.description,
+          ...(branch.access && { access: branch.access }),
         },
         options.userId,
       )
       if (outcome.kind === 'failed') {
-        if (outcome.refused) return { refusal: outcome.message }
+        if (outcome.refused) return { refusal: outcome.message, field: 'name' }
+        const reason = accessRefusalMessage(outcome.code)
+        if (reason) {
+          return {
+            refusal: reason,
+            field: outcome.code === 'BRANCH_CREATE_FORBIDDEN' ? 'form' : 'shareWith',
+          }
+        }
         throw new Error(outcome.message)
       }
 
@@ -167,7 +187,8 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
         : typed.ok
           ? typed.shortName
           : branch.name
-      notifications.show({ message: `Branch “${createdLabel}” created`, color: 'green' })
+      if (options.announceCreated) options.announceCreated(createdLabel, created)
+      else notifications.show({ message: `Branch “${createdLabel}” created`, color: 'green' })
 
       // A listing may not hold it yet, so its own short name stands in for the lookup.
       performBranchSwitch(createdName, created?.shortName)
@@ -175,7 +196,7 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
       // Not awaited: a listing can lag the create, and the switch must not wait
       // on it. loadBranches reports its own failures and never rejects.
       void options.onReloadBranches()
-      return true
+      return { created: createdName }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to create branch'
       notifications.show({ message, color: 'red' })

@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest'
 
 import {
   accessChangeBody,
+  additionsBody,
   changeLanded,
   editorsLosingAccess,
   joinNames,
   narrows,
   NOTHING_STAGED,
+  personToAdd,
   withAddition,
   type BranchAccess,
 } from './share-staging'
@@ -158,5 +160,25 @@ describe('joinNames', () => {
     expect(joinNames(['Ana'])).toBe('Ana')
     expect(joinNames(['Ana', 'Ben'])).toBe('Ana and Ben')
     expect(joinNames(['Ana', 'Ben', 'Chen'])).toBe('Ana, Ben and Chen')
+  })
+})
+
+describe('personToAdd and additionsBody', () => {
+  it('sends someone found by an address by that address unless they work in this CMS', () => {
+    const insider = personToAdd(
+      { id: 'cole', name: 'Cole', maskedEmail: 'c•••@example.org' },
+      'cole@example.org',
+    )
+    const outsider = personToAdd({ id: 'dana', name: 'Dana' }, 'dana@example.org')
+    const byName = personToAdd({ id: 'eve', name: 'Eve' })
+
+    expect(additionsBody([insider, outsider, byName])).toEqual({
+      users: ['cole', 'eve'],
+      emails: ['dana@example.org'],
+    })
+  })
+
+  it('is undefined with nothing to add', () => {
+    expect(additionsBody([])).toBeUndefined()
   })
 })

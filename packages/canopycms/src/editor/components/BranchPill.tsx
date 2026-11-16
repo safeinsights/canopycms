@@ -1,7 +1,7 @@
 'use client'
 
-import React, { useRef, type Ref } from 'react'
-import { Button, Menu, Text, Tooltip } from '@mantine/core'
+import React, { useRef, useState, type Ref } from 'react'
+import { Box, Button, Menu, Text, Tooltip } from '@mantine/core'
 import { useMediaQuery, useMergedRef } from '@mantine/hooks'
 import { IconChevronDown, IconGitBranch } from '@tabler/icons-react'
 import { EDITOR_ACTIONS } from '../copy'
@@ -10,6 +10,8 @@ import { ReasonedMenuItem } from './ReasonedMenuItem'
 import { useMenuItemFocusReturn } from '../utils/focus-return'
 import type { BaseUpdateControl } from '../base-update-wait'
 import { getLatestChangesReason } from './GetLatestChangesButton'
+import { WhoHasAccessPopover } from '../sharing/WhoHasAccessPopover'
+import type { ShareTarget } from '../sharing/ShareBranchDialog'
 
 export interface BranchPillProps {
   branchName: string
@@ -24,6 +26,16 @@ export interface BranchPillProps {
   pillRef?: Ref<HTMLButtonElement>
   /** "Get latest changes" as a menu item, where the bar has no room for its button. */
   getLatest?: BaseUpdateControl
+  /**
+   * The branch's sharing control as a menu item, where the bar has no room for it: "Share…", or
+   * "Who has access", whose list hangs from the pill.
+   */
+  share?: {
+    mode: 'share' | 'view'
+    branch: ShareTarget
+    /** Opens the Share dialog, which returns focus to `returnFocusTo()`. */
+    onShare: (returnFocusTo: () => HTMLElement | null) => void
+  }
 }
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
@@ -41,6 +53,7 @@ export function BranchPill({
   onDiscardAll,
   pillRef,
   getLatest,
+  share,
 }: BranchPillProps) {
   const trigger = useRef<HTMLButtonElement>(null)
   const triggerRef = useMergedRef(trigger, pillRef)
@@ -48,8 +61,9 @@ export function BranchPill({
   const noBranch = branchName ? undefined : 'Open a branch first.'
   const wide = useMediaQuery('(min-width: 48em)')
   const name = branchName || (loading ? 'Loading branches…' : 'No branch open')
+  const [accessOpen, setAccessOpen] = useState(false)
 
-  return (
+  const menu = (
     <Menu withinPortal shadow="sm" position="bottom-start" {...menuFocus.menu}>
       <Tooltip label={name} disabled={wide} events={{ hover: true, focus: true, touch: true }}>
         <Menu.Target>
@@ -78,6 +92,17 @@ export function BranchPill({
         <Menu.Item onClick={onSwitchBranch} data-testid="manage-branches-menu-item">
           {`${EDITOR_ACTIONS.switchBranch}…`}
         </Menu.Item>
+        {share && (
+          <Menu.Item
+            onClick={() =>
+              share.mode === 'share' ? share.onShare(() => trigger.current) : setAccessOpen(true)
+            }
+            aria-haspopup="dialog"
+            data-testid="share-branch-menu-item"
+          >
+            {share.mode === 'share' ? `${EDITOR_ACTIONS.share}…` : 'Who has access'}
+          </Menu.Item>
+        )}
         <ReasonedMenuItem
           onClick={onRefreshBranch}
           blockedReason={noBranch}
@@ -110,5 +135,21 @@ export function BranchPill({
         </DestructiveMenuItem>
       </Menu.Dropdown>
     </Menu>
+  )
+
+  if (share?.mode !== 'view') return menu
+  // The list hangs from a wrapper: inside the menu, a popover target would take the menu's place.
+  return (
+    <WhoHasAccessPopover
+      branch={share.branch}
+      opened={accessOpen}
+      onChange={setAccessOpen}
+      withRoles={false}
+      returnFocusTo={() => trigger.current}
+    >
+      <Box component="span" display="inline-flex" style={{ flexShrink: 0 }}>
+        {menu}
+      </Box>
+    </WhoHasAccessPopover>
   )
 }

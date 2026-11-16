@@ -301,6 +301,27 @@ describe('ShareBranchDialog: adding people', () => {
     expect(api.branches.updateAccess.mock.calls[0][1]).toEqual({ add: { users: ['dana'] } })
   })
 
+  it('adds someone found outside the editor by the address that found them', async () => {
+    const { api } = setup()
+    api.branches.findPeople.mockResolvedValue(
+      ok({ people: [{ id: 'dana', name: 'Dana Park' }], groups: [] }),
+    )
+    await loaded()
+
+    await userEvent.type(
+      screen.getByRole('textbox', { name: 'Add people or groups' }),
+      'dana@example.org',
+    )
+    await userEvent.click(await screen.findByRole('option', { name: 'Add dana@example.org' }))
+    await screen.findByText('Dana Park')
+    fireEvent.click(screen.getByRole('button', { name: 'Update access' }))
+
+    await waitFor(() => expect(api.branches.updateAccess).toHaveBeenCalledTimes(1))
+    expect(api.branches.updateAccess.mock.calls[0][1]).toEqual({
+      add: { emails: ['dana@example.org'] },
+    })
+  })
+
   it('sends an address as an email only when its find never answered', async () => {
     const { api } = setup()
     api.branches.findPeople.mockRejectedValue(new TypeError('Failed to fetch'))

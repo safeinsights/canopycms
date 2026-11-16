@@ -533,6 +533,7 @@ export const NewBranchFormServerRefusal: Story = {
     ...NewBranchForm.args,
     onCreate: async () => ({
       refusal: '"spring-update" is already the name of another branch. Choose a different name.',
+      field: 'name',
     }),
   },
   play: async () => {
@@ -667,5 +668,132 @@ export const SharingMenu: Story = {
       )
       ?.click()
     await new Promise((resolve) => setTimeout(resolve, 0))
+  },
+}
+
+/** The branchless finder, on a site whose branches are open to everyone who can sign in. */
+const newBranchClient = {
+  branches: {
+    findPeopleForNewBranch: async () => ({
+      ok: true,
+      status: 200,
+      data: {
+        people: [
+          { id: 'bob', name: 'Bob Diaz', maskedEmail: 'b•••@example.org' },
+          { id: 'cara', name: 'Cara Ito', maskedEmail: 'c•••@example.org' },
+        ],
+        groups: [{ id: 'design', name: 'Design' }],
+        newBranch: { defaultAccess: 'allow', searchable: 'cms-users', addableByEmail: 'all-users' },
+      },
+    }),
+  },
+} as unknown as ApiClient
+
+const withNewBranchClient: Story['decorators'] = [
+  (Story) => (
+    <ApiClientProvider client={newBranchClient}>
+      <Story />
+    </ApiClientProvider>
+  ),
+]
+
+const until = async <T,>(find: () => T | null | undefined): Promise<T | undefined> => {
+  for (let i = 0; i < 50; i++) {
+    const found = find()
+    if (found) return found
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  return undefined
+}
+
+/** Opens "Share with" and picks its first suggestion. */
+async function pickFirstSuggestion(): Promise<void> {
+  const input = await until(() =>
+    document.querySelector<HTMLInputElement>('[data-testid="share-people-input"]'),
+  )
+  input?.focus()
+  input?.click()
+  const option = await until(() => document.querySelector<HTMLElement>('[role="option"]'))
+  option?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+  option?.click()
+}
+
+/**
+ * "Share with" on the New branch form, its suggestions recent shares only: Bob Diaz chosen, and on
+ * a site open to everyone the line saying the branch will be private.
+ */
+export const NewBranchShareWith: Story = {
+  decorators: withNewBranchClient,
+  args: NewBranchForm.args,
+  play: async () => {
+    await typeBranchName('spring-update')
+    await pickFirstSuggestion()
+  },
+}
+
+/** A create refused because the user may not create branches: the reason, with their values kept. */
+export const NewBranchFormNotAllowed: Story = {
+  decorators: withNewBranchClient,
+  args: {
+    ...NewBranchForm.args,
+    onCreate: async () => ({
+      refusal:
+        "You can't create branches, because you don't have edit access to any content here. Ask a CanopyCMS admin to grant it.",
+      field: 'form',
+    }),
+  },
+  play: async () => {
+    await typeBranchName('spring-update')
+    document.querySelector<HTMLButtonElement>('[data-testid="create-branch-submit"]')?.click()
+  },
+}
+
+/** A create refused for someone chosen in "Share with": the reason under the field, chips kept. */
+export const NewBranchShareWithRefused: Story = {
+  decorators: withNewBranchClient,
+  args: {
+    ...NewBranchForm.args,
+    onCreate: async () => ({
+      refusal:
+        "Some of the people you added don't work in this editor. Add them by their full email address instead.",
+      field: 'shareWith',
+    }),
+  },
+  play: async () => {
+    await typeBranchName('spring-update')
+    await pickFirstSuggestion()
+    document.querySelector<HTMLButtonElement>('[data-testid="create-branch-submit"]')?.click()
+  },
+}
+
+/** Just after Create branch: the drawer says the branch was created and offers Share… for it. */
+export const BranchCreatedShareOffer: Story = {
+  decorators: withNewBranchClient,
+  args: {
+    ...NewBranchForm.args,
+    branches: [
+      ...(Default.args?.branches ?? []),
+      {
+        name: 'canopycms/prod/spring-update',
+        shortName: 'spring-update',
+        status: 'editing',
+        updatedAt: ago(0),
+        createdBy: 'alice',
+        access: {},
+        sharing: {
+          isOwner: true,
+          canAdd: true,
+          canManage: true,
+          restricted: false,
+          openToEveryone: false,
+          addBy: 'members',
+        },
+      },
+    ],
+    onCreate: async () => ({ created: 'canopycms/prod/spring-update' }),
+  },
+  play: async () => {
+    await typeBranchName('spring-update')
+    document.querySelector<HTMLButtonElement>('[data-testid="create-branch-submit"]')?.click()
   },
 }

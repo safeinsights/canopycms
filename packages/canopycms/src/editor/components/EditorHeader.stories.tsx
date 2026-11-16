@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react'
 
-import { EditorHeader, type EditorHeaderProps } from './EditorHeader'
+import { EditorHeader, type BranchBarSharing, type EditorHeaderProps } from './EditorHeader'
+import type { UserSearchResult } from '../../auth/types'
 import { EntryHeader, type EntryHeaderProps } from './EntryHeader'
 import { RESERVED_GROUPS } from '../../authorization/helpers'
 import { unsafeAsContentId, unsafeAsLogicalPath } from '../../paths/test-utils'
@@ -570,4 +571,122 @@ export const NarrowLatestChangesWaitingHeld: Story = {
     baseUpdate: getLatest,
     latestChangesWaiting: true,
   },
+}
+
+const sharingPeople: Record<string, UserSearchResult> = {
+  bob: { id: 'bob', name: 'Bob Ortiz', email: 'bob@example.org' },
+  ana: { id: 'ana', name: 'Ana Lee', email: 'ana@example.org' },
+  chen: { id: 'chen', name: 'Chen Wu', email: 'chen@example.org' },
+  dana: { id: 'dana', name: 'Dana Park', email: 'dana@example.org' },
+}
+const ownerRights = {
+  isOwner: true,
+  canAdd: true,
+  canManage: true,
+  restricted: true,
+  openToEveryone: false,
+  addBy: 'members',
+} as const
+
+/** The open branch's sharing control for `userId`, on a branch `bob` shared with three more. */
+const sharing = (
+  userId: string,
+  over: Partial<NonNullable<BranchBarSharing['branch']>> = {},
+  groups: string[] = [],
+): BranchBarSharing => ({
+  branch: {
+    name: 'feature/landing',
+    status: 'submitted',
+    createdBy: 'bob',
+    access: { users: ['bob', 'ana', 'chen', 'dana'], groups: ['design'] },
+    sharing: ownerRights,
+    ...over,
+  },
+  loading: false,
+  user: { userId, groups },
+  getUserMetadata: async (id) => sharingPeople[id] ?? null,
+  onShare: noop,
+})
+
+const ownerInReviewHeld = {
+  ...InReviewNeedsAction.args,
+  sharing: sharing('bob'),
+} satisfies Partial<HeadersProps>
+
+/** The owner in review with a hold: "Share…" with who has access leads the bar's actions. */
+export const SharingOwner: Story = { args: ownerInReviewHeld }
+
+/** A member who may add people sees the same "Share…". */
+export const SharingMember: Story = {
+  args: {
+    ...ownerInReviewHeld,
+    userContext: { userId: 'ana' },
+    sharing: sharing('ana', {
+      sharing: { ...ownerRights, isOwner: false, canManage: false },
+    }),
+  },
+}
+
+/** Someone who may open the branch but not add people: "Who has access", opening the list. */
+export const SharingViewer: Story = {
+  args: {
+    ...ownerInReviewHeld,
+    userContext: { userId: 'ana' },
+    sharing: sharing('ana', {
+      sharing: { ...ownerRights, isOwner: false, canManage: false, canAdd: false },
+    }),
+  },
+}
+
+/** An admin, who manages any branch's list. */
+export const SharingAdmin: Story = {
+  args: {
+    ...ownerInReviewHeld,
+    userContext: { userId: 'ada', groups: [RESERVED_GROUPS.ADMINS] },
+    sharing: sharing('ada', {}, [RESERVED_GROUPS.ADMINS]),
+  },
+}
+
+/** A reviewer of someone else's submission, beside Approve and Request changes. */
+export const SharingReviewer: Story = {
+  args: {
+    ...reviewing,
+    sharing: sharing('rita', {
+      createdBy: 'someone-else',
+      sharing: { ...ownerRights, isOwner: false, canManage: false, canAdd: false },
+    }),
+  },
+}
+
+/** A branch open to everyone who can sign in: a globe in place of the avatars. */
+export const SharingOpenBranch: Story = {
+  args: {
+    sharing: sharing('bob', {
+      status: 'editing',
+      access: { users: [], groups: [] },
+      sharing: { ...ownerRights, restricted: false, openToEveryone: true },
+    }),
+  },
+}
+
+/** While the branch's listing loads, a skeleton of the control's size holds its place. */
+export const SharingLoading: Story = {
+  args: {
+    ...BranchLoading.args,
+    sharing: { ...sharing('bob'), branch: undefined, loading: true },
+  },
+}
+
+/** Below `md` the control moves into the branch pill's menu as "Share…". */
+export const NarrowSharing: Story = {
+  parameters: phone,
+  args: ownerInReviewHeld,
+  play: openMenu('branch-dropdown-button'),
+}
+
+/** Below `md`, someone who may not add people finds "Who has access" in the same menu. */
+export const NarrowSharingViewer: Story = {
+  parameters: phone,
+  args: SharingViewer.args,
+  play: openMenu('branch-dropdown-button'),
 }

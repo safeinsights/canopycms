@@ -13,6 +13,7 @@ import { ApiTimeoutError } from '../../api/request-deadline'
 import {
   CREATE_BRANCH_DEADLINE_MS,
   CREATE_TIMED_OUT_MESSAGE,
+  type CreatedBranch,
   type CreateRefusal,
 } from './create-branch-request'
 import { useBranchActions } from './useBranchActions'
@@ -78,11 +79,11 @@ describe('useBranchActions create past the deadline', () => {
     )
   }
 
-  async function createAfterDeadline(): Promise<boolean | CreateRefusal | undefined> {
+  async function createAfterDeadline(): Promise<false | CreateRefusal | CreatedBranch | undefined> {
     const { result } = renderHook(() => useBranchActions(options), {
       wrapper: createApiClientWrapper(mockClient),
     })
-    let created: boolean | CreateRefusal | undefined
+    let created: false | CreateRefusal | CreatedBranch | undefined
     await act(async () => {
       const pending = result.current.handleCreateBranch({ name: 'feature/x' })
       await vi.advanceTimersByTimeAsync(CREATE_BRANCH_DEADLINE_MS)
@@ -99,7 +100,7 @@ describe('useBranchActions create past the deadline', () => {
       data: { branches: [listedBranch], users: [] },
     })
 
-    expect(await createAfterDeadline()).toBe(true)
+    expect(await createAfterDeadline()).toEqual({ created: listedBranch.name })
     expect(options.onBranchCreated).toHaveBeenCalledWith(listedBranch)
     expect(options.setBranchName).toHaveBeenCalledWith('canopycms/local/feature-x')
     expect(options.onBranchSwitch).toHaveBeenCalledWith('canopycms/local/feature-x')
@@ -115,6 +116,7 @@ describe('useBranchActions create past the deadline', () => {
 
     expect(await createAfterDeadline()).toEqual({
       refusal: 'A branch named “feature-x” already exists',
+      field: 'name',
     })
     expect(notifications.show).not.toHaveBeenCalled()
     expect(options.onBranchCreated).not.toHaveBeenCalled()
@@ -158,7 +160,7 @@ describe('useBranchActions create past the deadline', () => {
       data: { branches: [listedBranch], users: [] },
     })
 
-    expect(await createAfterDeadline()).toBe(true)
+    expect(await createAfterDeadline()).toEqual({ created: listedBranch.name })
     expect(mockClient.branches.list).toHaveBeenCalledTimes(1)
     expect(options.setBranchName).toHaveBeenCalledWith('canopycms/local/feature-x')
   })

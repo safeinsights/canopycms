@@ -4,6 +4,7 @@ import React, { useEffect, useId, useRef } from 'react'
 import { Button, Popover, Skeleton, Stack, Text } from '@mantine/core'
 
 import { accessRefusalMessage } from '../copy'
+import { focusIfIdle } from '../utils/focus-return'
 import { PersonLabel, type ShareTarget } from './ShareBranchDialog'
 import { LISTED_ONLY_LINE, LOCKDOWN_LINE, OPEN_TO_EVERYONE_LINE } from './share-copy'
 import { entryKey } from './share-staging'
@@ -15,6 +16,10 @@ export interface WhoHasAccessPopoverProps {
   onChange: (opened: boolean) => void
   /** The control the popover hangs from; it takes focus back on Esc. */
   children: React.ReactElement
+  /** False for a target that is no control, such as a wrapper, which takes no popup attributes. */
+  withRoles?: boolean
+  /** Where focus goes once the list has closed, when its opener is gone, such as a menu item. */
+  returnFocusTo?: () => HTMLElement | null
 }
 
 /** Who may open a branch, read-only, for someone who may open it but not add people. */
@@ -23,12 +28,27 @@ export function WhoHasAccessPopover({
   opened,
   onChange,
   children,
+  withRoles = true,
+  returnFocusTo,
 }: WhoHasAccessPopoverProps) {
   const headingId = useId()
   return (
-    <Popover opened={opened} onChange={onChange} position="bottom-start" width={320} shadow="md">
+    <Popover
+      opened={opened}
+      onChange={onChange}
+      position="bottom-start"
+      width={320}
+      shadow="md"
+      withRoles={withRoles}
+      onExitTransitionEnd={returnFocusTo && (() => focusIfIdle(returnFocusTo()))}
+    >
       <Popover.Target>{children}</Popover.Target>
-      <Popover.Dropdown aria-labelledby={headingId} data-testid="who-has-access">
+      <Popover.Dropdown
+        role="dialog"
+        aria-labelledby={headingId}
+        tabIndex={-1}
+        data-testid="who-has-access"
+      >
         <WhoHasAccessBody
           branch={branch.name}
           owner={branch.createdBy}

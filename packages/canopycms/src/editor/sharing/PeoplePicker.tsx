@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState, type RefObject } from 'rea
 import { Avatar, Combobox, Group, Loader, Text, TextInput, useCombobox } from '@mantine/core'
 import { IconMail, IconUsers } from '@tabler/icons-react'
 
+import type { FindPeopleResponse } from '../../api/branch-people'
 import type { FindPeopleResult } from '../../api/people'
 import type { ApiErrorCode } from '../../api/types'
 import { accessRefusalMessage } from '../copy'
@@ -34,7 +35,9 @@ const emailNotFoundMessage = (scope: BranchAccess['addableByEmail']): string =>
 const NO_NAME_MATCH = 'No one found. Type their full email address to add them.'
 
 export interface PeoplePickerProps {
-  branch: string
+  /** The branch being shared; absent for one not yet created, which has its own finder. */
+  branch?: string
+  label?: string
   searchable: BranchAccess['searchable']
   addableByEmail: BranchAccess['addableByEmail']
   /** Keys (`entryKey`) of entries already staged, which the picker no longer offers. */
@@ -46,16 +49,24 @@ export interface PeoplePickerProps {
   inputRef: RefObject<HTMLInputElement>
   /** Why the picker can't be used yet; it is disabled while set. */
   disabledReason?: string
+  /** Takes focus as its dialog opens. */
+  focusOnOpen?: boolean
+  disabled?: boolean
+  /** Why the people chosen can't be added, shown while the picker has no error of its own. */
+  error?: string
+  /** Each answer a find gave. */
+  onAnswer?: (data: NonNullable<FindPeopleResponse['data']>) => void
 }
 
 /**
- * The Share dialog's search: suggestions while empty, people by name from two characters, and one
+ * The search of the Share dialog and the New branch form: suggestions while empty, people by name from two characters, and one
  * "Add ‹email›" option for an address, which is looked up only once picked, sparing the email
  * lookup limit. While open the list always shows something, since Mantine's combobox target marks
  * the input `data-mantine-stop-propagation` then, so Esc closes the list, never the dialog behind.
  */
 export function PeoplePicker({
   branch,
+  label = 'Add people or groups',
   searchable,
   addableByEmail,
   staged,
@@ -64,6 +75,10 @@ export function PeoplePicker({
   announce,
   inputRef,
   disabledReason,
+  focusOnOpen = true,
+  disabled = false,
+  error,
+  onAnswer,
 }: PeoplePickerProps) {
   const client = useApiClient()
   const combobox = useCombobox({ onDropdownClose: () => combobox.resetSelectedOption() })
@@ -82,7 +97,11 @@ export function PeoplePicker({
   const opened = combobox.dropdownOpened
 
   const find = async (text: string) => {
-    const result = await client.branches.findPeople({ branch }, { query: text })
+    const result =
+      branch === undefined
+        ? await client.branches.findPeopleForNewBranch({ query: text })
+        : await client.branches.findPeople({ branch }, { query: text })
+    if (result.ok && result.data) onAnswer?.(result.data)
     if (!result.ok && isLockout(result.code)) onRefused(result.code)
     return result
   }
@@ -150,7 +169,7 @@ export function PeoplePicker({
       const result = await find(email)
       if (result.ok && result.data) {
         const person = result.data.people[0]
-        if (person) added(personToAdd(person))
+        if (person) added(personToAdd(person, email))
         else setFieldError(emailNotFoundMessage(addableByEmail))
         return
       }
@@ -263,10 +282,10 @@ export function PeoplePicker({
       <Combobox.Target withExpandedAttribute>
         <TextInput
           ref={inputRef}
-          label="Add people or groups"
+          label={label}
           placeholder={searchable === 'nobody' ? 'Email address' : 'Name or email address'}
           value={query}
-          error={fieldError}
+          error={fieldError ?? error}
           onChange={(event) => {
             setQuery(event.currentTarget.value)
             setFieldError(undefined)
@@ -276,10 +295,10 @@ export function PeoplePicker({
           onClick={() => combobox.openDropdown()}
           onBlur={() => combobox.closeDropdown()}
           rightSection={lookingUp ? <Loader size="xs" aria-label="Looking up…" /> : undefined}
-          disabled={!!disabledReason}
+          disabled={disabled || !!disabledReason}
           description={disabledReason}
           inputWrapperOrder={['label', 'input', 'description', 'error']}
-          data-autofocus={!disabledReason || undefined}
+          data-autofocus={(focusOnOpen && !disabledReason) || undefined}
           data-testid="share-people-input"
         />
       </Combobox.Target>
