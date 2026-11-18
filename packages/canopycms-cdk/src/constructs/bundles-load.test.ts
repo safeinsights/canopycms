@@ -33,10 +33,10 @@ afterAll(() => rmSync(scratch, { recursive: true, force: true }))
 /** Copies `files` into a fresh directory under `scratch`, which nothing above resolves modules from. */
 function isolate(name: string, files: string[]): string {
   const dir = path.join(scratch, name)
-  for (let up = dir; up !== path.dirname(up); up = path.dirname(up)) {
-    if (existsSync(path.join(up, 'node_modules'))) {
-      throw new Error(`${up}/node_modules would resolve what the bundle lacks`)
-    }
+  for (let up = dir; ; up = path.dirname(up)) {
+    const lookup = path.join(up, 'node_modules')
+    if (existsSync(lookup)) throw new Error(`${lookup} would resolve what the bundle lacks`)
+    if (up === path.dirname(up)) break
   }
   mkdirSync(dir)
   for (const file of files) copyFileSync(file, path.join(dir, path.basename(file)))
