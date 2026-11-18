@@ -19,9 +19,10 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 // Packages whose `main` is a UMD wrapper that loads its own sibling files through a `require`
 // esbuild cannot follow, so the bundle would look for them beside itself at run time and the
 // process would die at load. Their `module` entry is plain ESM, which esbuild inlines. Only these
-// packages are redirected: making `module` win everywhere (`mainFields`) also swaps other
-// dependencies to their browser builds. src/constructs/bundles-load.test.ts loads the built bundle
-// with nothing beside it, which is what catches the next package of this shape.
+// packages are redirected: making `module` win everywhere (`mainFields`) also swaps @octokit/core,
+// @octokit/rest and universal-github-app-jwt, among others, to their `dist-web` browser builds.
+// src/constructs/bundles-load.test.ts scans the built bundle for relative requires and loads it
+// away from any node_modules, which is what catches the next package of this shape.
 const ESM_ENTRY_PACKAGES = ['jsonc-parser']
 
 const esmEntry: Plugin = {

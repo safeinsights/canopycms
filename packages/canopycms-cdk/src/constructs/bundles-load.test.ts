@@ -1,6 +1,6 @@
 /**
- * Every esbuild bundle this package ships starts under plain Node on its own, as it does once
- * deployed: one file in a directory with no `node_modules` anywhere above it. A bundle that still
+ * Every esbuild bundle this package ships loads under plain Node from a directory with no
+ * `node_modules` anywhere above it, beside only what its deployment provides. A bundle that still
  * reaches for a file esbuild did not inline (a dependency's UMD entry loading its siblings through
  * a `require` esbuild cannot follow) builds cleanly and passes every synth test, then dies at load
  * on the instance.
@@ -66,8 +66,8 @@ describe('the worker bundle', () => {
   })
 
   // As user data installs it: the bundle beside a `{"type":"module"}` package.json and nothing
-  // else. Each role runs all of the bundle's module-level code, then stops at its first missing
-  // setting, before any AWS, socket or git call; that message is what shows the load completed.
+  // else. Each role first loads everything the bundle imports at startup, then stops at its first
+  // missing setting (worker/run.ts, worker/gateway-run.ts), before any AWS, socket or git call.
   // scripts/smoke/worker-platform.mjs runs the same two on the installed file in AL2023.
   const dir = isolate('worker', [WORKER_BUNDLE])
   writeFileSync(path.join(dir, 'package.json'), '{"type":"module"}')
@@ -92,7 +92,7 @@ describe('the asset-transform Lambda bundle', () => {
   it('loads under Node with only its declared externals provided', () => {
     // build.mjs's `external` list: sharp and @img/* come from its platform-targeted install and
     // @aws-sdk/* from the Lambda runtime. They are stubbed here; anything else must be inlined.
-    // A new external that build.mjs adds without adding it here fails this test, not production.
+    // An external build.mjs adds that the handler loads at startup must be added here too.
     const dir = isolate('lambda', [
       path.join(LAMBDA_DIST, 'handler.js'),
       path.join(LAMBDA_DIST, 'package.json'),
@@ -112,7 +112,7 @@ Module._load = function (request, ...rest) {
 }
 `,
     )
-    // The two variables the handler reads at load, as the function's environment sets them.
+    // The two variables handler.ts's module-level `createStore` requires.
     const { status, output } = runNode(
       dir,
       [

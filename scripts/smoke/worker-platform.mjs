@@ -119,9 +119,9 @@ const EXPECTED_CALLS = [
 ]
 
 /**
- * Starts the installed bundle as `role` with no environment. Each role runs all of the bundle's
- * module-level code, then stops at its first missing setting (`expected`) before any AWS, socket
- * or git call, so that message shows the file loads with nothing beside it. `--check` only parses.
+ * Starts the installed bundle as `role` with no environment. Each role first loads everything the
+ * bundle imports at startup, then stops at its first missing setting (`expected`) before any AWS,
+ * socket or git call, so that message shows the installed file loads. `--check` only parses.
  */
 function bundleLoads(role, expected) {
   return (
