@@ -118,6 +118,18 @@ const EXPECTED_CALLS = [
   /^systemctl enable --now logrotate\.timer$/,
 ]
 
+/**
+ * Starts the installed bundle as `role` with no environment. Each role first loads everything the
+ * bundle imports at startup, then stops at its first missing setting (`expected`) before any AWS,
+ * socket or git call, so that message shows the installed file loads. `--check` only parses.
+ */
+function bundleLoads(role, expected) {
+  return (
+    `out=$(cd / && env -i /usr/bin/node-22 /opt/canopy-worker/index.js ${role} 2>&1); ` +
+    `printf '%s\\n' "$out"; grep -qF '${expected}' <<<"$out"`
+  )
+}
+
 /** What the installed system must hold once the boot has run, each checked in the container. */
 const POST_BOOT_CHECKS = [
   [
@@ -159,13 +171,18 @@ const POST_BOOT_CHECKS = [
   ],
   ['the EFS fstab entry is written', 'grep -q " /mnt/efs efs _netdev,tls,iam," /etc/fstab'],
   ['logrotate accepts the worker logs config', 'logrotate -d /etc/logrotate.d/canopy-worker'],
-  // Syntax only: running the bundle would start the worker.
-  // --check parses an ESM bundle only under this marker; without it, it skips the parse.
   [
     'the bundle is marked as a module',
     `test "$(cat /opt/canopy-worker/package.json)" = '{"type":"module"}'`,
   ],
-  ['node-22 parses the installed bundle', '/usr/bin/node-22 --check /opt/canopy-worker/index.js'],
+  [
+    'the installed bundle loads as the worker',
+    bundleLoads('', 'CANOPYCMS_WORKSPACE_ROOT is required'),
+  ],
+  [
+    'the installed bundle loads as the gateway',
+    bundleLoads('gateway', 'The GitHub gateway runs socket-activated'),
+  ],
   [
     'the CloudWatch agent config is JSON',
     '/usr/bin/node-22 -e \'JSON.parse(require("fs").readFileSync("/opt/aws/amazon-cloudwatch-agent/etc/canopy-worker-logs.json", "utf8"))\'',
